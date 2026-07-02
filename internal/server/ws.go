@@ -122,6 +122,12 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 	case "send_turn":
 		go s.runWSTurn(ctx, writer, msg)
 		return nil
+	case "dream":
+		if msg.AgentName == "" {
+			return errors.New("agent_name is required")
+		}
+		go s.runWSDream(writer, msg)
+		return nil
 	case "attach_session":
 		if msg.SessionID == "" {
 			return errors.New("session_id is required")
@@ -293,6 +299,54 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	s.turns.finish(session.ID)
 	stateCtx, stateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stateCancel()
+	_ = s.writeState(stateCtx, writer)
+}
+
+// runWSDream runs a manual dream and streams its phases to the requesting
+// connection so the dream-sequence overlay can animate. It uses a daemon-scoped
+// context so closing the overlay (which ends the request context) does not cancel
+// the dream mid-flight. The terminal message carries the finished journal row.
+func (s *Server) runWSDream(writer *wsWriter, msg ClientMessage) {
+	daemonCtx := context.Background()
+	emit := func(phase string, dream *store.Dream) {
+		_ = writer.write(daemonCtx, ServerMessage{
+			Type:       "dream_state",
+			RequestID:  msg.RequestID,
+			AgentName:  msg.AgentName,
+			DreamPhase: phase,
+			Dream:      dream,
+		})
+	}
+	res, err := s.core.DreamAgent(daemonCtx, msg.AgentName, core.DreamOptions{
+		Trigger: store.DreamManual,
+		OnPhase: func(phase string) {
+			// The terminal phases are emitted below with their payload.
+			switch phase {
+			case core.DreamPhaseDone, core.DreamPhaseNoop, core.DreamPhaseError:
+				return
+			}
+			emit(phase, nil)
+		},
+	})
+	if err != nil {
+		_ = writer.write(daemonCtx, ServerMessage{
+			Type:       "dream_state",
+			RequestID:  msg.RequestID,
+			AgentName:  msg.AgentName,
+			DreamPhase: core.DreamPhaseError,
+			Error:      err.Error(),
+		})
+		return
+	}
+	if res.NoOp {
+		emit(core.DreamPhaseNoop, nil)
+	} else {
+		dream := res.Dream
+		emit(core.DreamPhaseDone, &dream)
+	}
+	// Refresh shared state so DreamedAt and session lists update everywhere.
+	stateCtx, cancel := context.WithTimeout(daemonCtx, 5*time.Second)
+	defer cancel()
 	_ = s.writeState(stateCtx, writer)
 }
 

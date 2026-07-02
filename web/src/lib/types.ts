@@ -110,6 +110,53 @@ export interface Session {
   TaskID: string;
   ProjectID: string;
   ProviderHandle: string;
+  // Set once a session has been consolidated into the agent's memory. Empty
+  // means the session is un-dreamed (pending consolidation).
+  DreamedAt?: string;
+}
+
+// DreamTrigger and DreamStatus mirror store.Dream* enums.
+export type DreamTrigger = "nightly" | "manual";
+export type DreamStatus = "running" | "success" | "error";
+
+// DreamNewItem is a memory bullet a dream added, used for NEW badges and dates.
+export interface DreamNewItem {
+  section: string;
+  text: string;
+}
+
+// Dream mirrors store.Dream (Go-exported field names): one memory-consolidation
+// run, doubling as a "dream journal" entry.
+export interface Dream {
+  ID: string;
+  AgentName: string;
+  RanAt: string;
+  FinishedAt: string;
+  Trigger: DreamTrigger;
+  Status: DreamStatus;
+  Error: string;
+  SessionCount: number;
+  Kept: number;
+  Merged: number;
+  Pruned: number;
+  Note: string;
+  NewItems: DreamNewItem[] | null;
+}
+
+// MemoryInfo mirrors GET/PUT /api/agents/<name>/memory.
+export interface MemoryInfo {
+  agent: string;
+  memory: string;
+  lines: number;
+  budget_lines: number;
+  pending_sessions: number;
+  last_dream: Dream | null;
+}
+
+// DreamResult mirrors POST /api/agents/<name>/dream.
+export interface DreamResult {
+  noop: boolean;
+  dream: Dream | null;
 }
 
 export type TaskStatus = "backlog" | "in_progress" | "review" | "done";
@@ -411,7 +458,8 @@ export type ClientMessage =
       project_id?: string;
     }
   | { type: "permission_decision"; request_id: string; decision: PermissionDecision }
-  | { type: "user_input_decision"; request_id: string; input: UserInputDecision };
+  | { type: "user_input_decision"; request_id: string; input: UserInputDecision }
+  | { type: "dream"; request_id: string; agent_name: string };
 
 export interface ServerMessage {
   type:
@@ -427,6 +475,7 @@ export interface ServerMessage {
     | "turn_state"
     | "notice"
     | "done"
+    | "dream_state"
     | "error";
   request_id?: string;
   session_id?: string;
@@ -443,7 +492,21 @@ export interface ServerMessage {
   input?: UserInputRequest;
   turn_state?: TurnState;
   error?: string;
+  // dream_state fields.
+  agent_name?: string;
+  dream_phase?: DreamPhase;
+  dream?: Dream;
 }
+
+// DreamPhase is the lifecycle a manual dream streams over the WebSocket so the
+// dream-sequence overlay can animate.
+export type DreamPhase =
+  | "gathering"
+  | "distilling"
+  | "integrating"
+  | "done"
+  | "noop"
+  | "error";
 
 // Skills catalogue (read-only). Mirrors internal/skills.Skill. `agents` is the
 // shared union (~/.agents/skills); `claude`/`codex` are the providers' own dirs.

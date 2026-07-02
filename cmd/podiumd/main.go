@@ -20,6 +20,7 @@ import (
 	"github.com/mar-schmidt/Podium/internal/buildinfo"
 	"github.com/mar-schmidt/Podium/internal/config"
 	"github.com/mar-schmidt/Podium/internal/core"
+	"github.com/mar-schmidt/Podium/internal/dream"
 	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
 	"github.com/mar-schmidt/Podium/internal/notify"
 	"github.com/mar-schmidt/Podium/internal/schedule"
@@ -212,6 +213,15 @@ func run() error {
 		Notifier:       notifier,
 		VAPIDPublicKey: vapidPublic,
 	})
+
+	// The dream runner needs to know which sessions have a live turn so it never
+	// consolidates one mid-flight. Wire it now that the server (turn registry)
+	// exists, then start the nightly memory-consolidation loop.
+	coreSvc.SetActiveTurnChecker(srv.HasActiveTurn)
+	dreamRunner := dream.New(dream.Options{Core: coreSvc, Logger: log})
+	dreamRunner.Start()
+	defer dreamRunner.Stop()
+	log.Info("dream runner started", "dream_time", cfg.Global.DreamTime)
 
 	// Serve until a termination signal arrives, then shut down gracefully.
 	errc := make(chan error, 1)

@@ -4,6 +4,8 @@
 import type {
   Agent,
   AgentDetail,
+  Dream,
+  DreamResult,
   GitHubDevicePoll,
   GitHubDeviceStart,
   GitHubRepo,
@@ -15,6 +17,7 @@ import type {
   LogStreamEvent,
   MCPSnapshot,
   MCPServer,
+  MemoryInfo,
   ProfileInfo,
   Project,
   ScheduleStatus,
@@ -233,6 +236,42 @@ export async function deleteAgent(name: string, confirmation: string): Promise<A
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmation }),
     }),
+  );
+}
+
+// --- Memory & dreaming ---
+
+export async function getMemory(name: string): Promise<MemoryInfo> {
+  return asJSON(await fetch(`/api/agents/${encodeURIComponent(name)}/memory`));
+}
+
+export async function updateMemory(name: string, memory: string): Promise<MemoryInfo> {
+  return asJSON(
+    await fetch(`/api/agents/${encodeURIComponent(name)}/memory`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memory }),
+    }),
+  );
+}
+
+export async function clearMemory(name: string): Promise<MemoryInfo> {
+  return asJSON(
+    await fetch(`/api/agents/${encodeURIComponent(name)}/memory`, { method: "DELETE" }),
+  );
+}
+
+export async function dreamAgent(name: string): Promise<DreamResult> {
+  return asJSON(
+    await fetch(`/api/agents/${encodeURIComponent(name)}/dream`, { method: "POST" }),
+  );
+}
+
+export async function listDreams(name: string, limit = 30): Promise<Dream[]> {
+  return (
+    (await asJSON<Dream[] | null>(
+      await fetch(`/api/agents/${encodeURIComponent(name)}/dreams?limit=${limit}`),
+    )) ?? []
   );
 }
 

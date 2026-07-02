@@ -380,6 +380,70 @@ func (c *Core) WriteAgentSoul(name, content string) error {
 	return nil
 }
 
+// ReadAgentMemory returns the contents of an agent's MEMORY.md, or empty string
+// if the file does not exist yet. Memory content is sensitive (MEM22): callers
+// must never log it in the clear.
+func (c *Core) ReadAgentMemory(name string) (string, error) {
+	if err := validateAgentName(name); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(c.AgentPaths(name).Memory)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read MEMORY.md for agent %q: %w", name, err)
+	}
+	return string(data), nil
+}
+
+// WriteAgentMemory overwrites an agent's MEMORY.md with the given content. The
+// write is atomic (temp file + rename) because the dream job may write this same
+// file concurrently with a user edit.
+func (c *Core) WriteAgentMemory(name, content string) error {
+	if err := validateAgentName(name); err != nil {
+		return err
+	}
+	paths := c.AgentPaths(name)
+	if err := os.MkdirAll(paths.Root, 0o755); err != nil {
+		return fmt.Errorf("create agent dir: %w", err)
+	}
+	return writeFileAtomic(paths.Memory, []byte(content), 0o644)
+}
+
+// ClearAgentMemory empties an agent's MEMORY.md. The user owns the memory and may
+// wipe it at any time (MEM15/MEM17); the dream treats the resulting empty file as
+// its authoritative starting point.
+func (c *Core) ClearAgentMemory(name string) error {
+	return c.WriteAgentMemory(name, "")
+}
+
+// writeFileAtomic writes data to a temp file in the same directory and renames it
+// into place, so a concurrent reader sees either the old or the new file whole.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp for %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp for %s: %w", path, err)
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return fmt.Errorf("chmod temp for %s: %w", path, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename temp into %s: %w", path, err)
+	}
+	return nil
+}
+
 func (c *Core) applyAgentDefaults(agent *store.Agent) {
 	g := c.GetGlobal()
 	if agent.Provider == "" {
@@ -412,6 +476,13 @@ func scaffoldAgent(paths AgentPaths, name string) error {
 	}
 	template := strings.ReplaceAll(string(config.AgentSoulTemplate()), "{{agent_name}}", name)
 	if _, err := writeIfAbsent(paths.Soul, []byte(template), 0o644); err != nil {
+		return err
+	}
+	// MEMORY.md is created empty beside SOUL.md (MEM2). An empty memory is valid
+	// and contributes nothing to context until the first dream. Because scaffold
+	// also runs on agent update and daemon start, agents created before this
+	// feature are backfilled here.
+	if _, err := writeIfAbsent(paths.Memory, []byte{}, 0o644); err != nil {
 		return err
 	}
 	return nil

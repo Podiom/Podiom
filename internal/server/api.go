@@ -426,11 +426,19 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, "/api/agents/")
-	if name == "" {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/agents/")
+	if rest == "" {
 		http.Error(w, "agent name is required", http.StatusBadRequest)
 		return
 	}
+	// Sub-resources: /api/agents/{name}/memory, /{name}/dreams, /{name}/dream.
+	// Dispatch on the segment after the name — unambiguous even for an agent
+	// literally named "memory", since that only ever appears as the first segment.
+	if name, sub, ok := strings.Cut(rest, "/"); ok {
+		s.handleAgentSubresource(w, r, name, sub)
+		return
+	}
+	name := rest
 
 	switch r.Method {
 	case http.MethodGet:

@@ -104,6 +104,7 @@ func New(opts Options) *Server {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/api/agents", s.handleAgents)
 	mux.HandleFunc("/api/agents/", s.handleAgent)
+	mux.HandleFunc("/api/memory/status", s.handleMemoryStatus)
 	mux.HandleFunc("/api/profiles", s.handleProfiles)
 	mux.HandleFunc("/api/profiles/", s.handleProfile)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
@@ -146,6 +147,12 @@ func New(opts Options) *Server {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s
+}
+
+// HasActiveTurn reports whether a session currently has an in-flight turn. The
+// dream runner uses it to avoid consolidating a session mid-conversation.
+func (s *Server) HasActiveTurn(sessionID string) bool {
+	return s.turns.hasRunning(sessionID)
 }
 
 // Addr returns the bound address (host:port).

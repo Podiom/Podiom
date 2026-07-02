@@ -202,6 +202,35 @@ var migrations = []migration{
 		name:    "agent_mcp_servers",
 		sql:     `ALTER TABLE agents ADD COLUMN mcp_servers_json TEXT NOT NULL DEFAULT '[]';`,
 	},
+	{
+		version: 10,
+		name:    "agent_memory_dreaming",
+		// Per-agent memory consolidation ("dreaming"). sessions.dreamed_at marks a
+		// session as already folded into MEMORY.md (NULL = un-dreamed). The dreams
+		// table is both the audit journal and the source of "last dream time"
+		// (MAX(ran_at) WHERE status='success') and the NEW-item/since-date metadata
+		// the UI renders — MEMORY.md itself stays clean, user-editable markdown.
+		sql: `ALTER TABLE sessions ADD COLUMN dreamed_at TEXT;
+		CREATE INDEX idx_sessions_dreamed ON sessions(agent_name, dreamed_at);
+
+		CREATE TABLE dreams (
+			id             TEXT PRIMARY KEY,
+			agent_name     TEXT NOT NULL REFERENCES agents(name) ON UPDATE CASCADE ON DELETE CASCADE,
+			ran_at         TEXT NOT NULL DEFAULT (datetime('now')),
+			finished_at    TEXT,
+			trigger        TEXT NOT NULL CHECK (trigger IN ('nightly', 'manual')),
+			status         TEXT NOT NULL CHECK (status IN ('running', 'success', 'error')),
+			error          TEXT NOT NULL DEFAULT '',
+			session_count  INTEGER NOT NULL DEFAULT 0,
+			kept           INTEGER NOT NULL DEFAULT 0,
+			merged         INTEGER NOT NULL DEFAULT 0,
+			pruned         INTEGER NOT NULL DEFAULT 0,
+			note           TEXT NOT NULL DEFAULT '',
+			new_items_json TEXT NOT NULL DEFAULT '[]'
+		);
+
+		CREATE INDEX idx_dreams_agent ON dreams(agent_name, ran_at DESC);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

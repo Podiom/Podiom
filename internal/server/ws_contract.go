@@ -42,6 +42,12 @@ type ServerMessage struct {
 	Input       *adapter.UserInputRequest  `json:"input,omitempty"`
 	TurnState   *TurnState                 `json:"turn_state,omitempty"`
 	Error       string                     `json:"error,omitempty"`
+	// Dream fields carry a "dream_state" message: AgentName identifies the agent,
+	// DreamPhase is the current phase (gathering|distilling|integrating|done|
+	// noop|error), and Dream is the finished journal row on the terminal "done".
+	AgentName  string       `json:"agent_name,omitempty"`
+	DreamPhase string       `json:"dream_phase,omitempty"`
+	Dream      *store.Dream `json:"dream,omitempty"`
 }
 
 func decodeClientMessage(data []byte) (ClientMessage, error) {

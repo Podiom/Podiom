@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -233,6 +234,90 @@ func (c *Client) DeleteAgent(ctx context.Context, name, confirmation string) (Ag
 		return result, err
 	}
 	return result, nil
+}
+
+// MemoryInfo is the GET/PUT /api/agents/<name>/memory response: the agent's
+// MEMORY.md plus its dream status.
+type MemoryInfo struct {
+	Agent           string       `json:"agent"`
+	Memory          string       `json:"memory"`
+	Lines           int          `json:"lines"`
+	BudgetLines     int          `json:"budget_lines"`
+	PendingSessions int          `json:"pending_sessions"`
+	LastDream       *store.Dream `json:"last_dream"`
+}
+
+// MemoryStatusRow is one agent's line in GET /api/memory/status.
+type MemoryStatusRow struct {
+	Agent           string       `json:"agent"`
+	PendingSessions int          `json:"pending_sessions"`
+	MemoryLines     int          `json:"memory_lines"`
+	BudgetLines     int          `json:"budget_lines"`
+	LastDream       *store.Dream `json:"last_dream"`
+}
+
+// DreamResult is the POST /api/agents/<name>/dream response.
+type DreamResult struct {
+	NoOp  bool         `json:"noop"`
+	Dream *store.Dream `json:"dream"`
+}
+
+// GetMemory fetches an agent's MEMORY.md and dream status.
+func (c *Client) GetMemory(ctx context.Context, name string) (MemoryInfo, error) {
+	var info MemoryInfo
+	if err := c.getJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/memory", &info); err != nil {
+		return info, err
+	}
+	return info, nil
+}
+
+// PutMemory overwrites an agent's MEMORY.md with the given content.
+func (c *Client) PutMemory(ctx context.Context, name, memory string) (MemoryInfo, error) {
+	var info MemoryInfo
+	if err := c.putJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/memory", map[string]string{"memory": memory}, &info); err != nil {
+		return info, err
+	}
+	return info, nil
+}
+
+// ClearMemory empties an agent's MEMORY.md.
+func (c *Client) ClearMemory(ctx context.Context, name string) (MemoryInfo, error) {
+	var info MemoryInfo
+	if err := c.deleteJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/memory", nil, &info); err != nil {
+		return info, err
+	}
+	return info, nil
+}
+
+// Dream triggers a memory-consolidation dream on demand.
+func (c *Client) Dream(ctx context.Context, name string) (DreamResult, error) {
+	var result DreamResult
+	if err := c.postJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/dream", nil, &result); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// ListDreams fetches an agent's dream journal, newest first.
+func (c *Client) ListDreams(ctx context.Context, name string, limit int) ([]store.Dream, error) {
+	path := "/api/agents/" + urlPathEscape(name) + "/dreams"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var dreams []store.Dream
+	if err := c.getJSON(ctx, path, &dreams); err != nil {
+		return nil, err
+	}
+	return dreams, nil
+}
+
+// MemoryStatus fetches the fleet-wide per-agent memory summary.
+func (c *Client) MemoryStatus(ctx context.Context) ([]MemoryStatusRow, error) {
+	var rows []MemoryStatusRow
+	if err := c.getJSON(ctx, "/api/memory/status", &rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // ListAgents lists agents from the daemon.

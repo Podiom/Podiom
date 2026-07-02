@@ -46,7 +46,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE id = ?`, id)
 	sess, err := scanSession(row)
 	if err != nil {
@@ -62,7 +62,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -85,7 +85,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE agent_name = ? ORDER BY created_at, id`, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for agent %q: %w", agentName, err)
@@ -108,7 +108,7 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE schedule_id = ? ORDER BY created_at DESC, id DESC`, scheduleName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for schedule %q: %w", scheduleName, err)
@@ -130,7 +130,7 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE task_id = ? ORDER BY created_at DESC, id DESC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for task %q: %w", taskID, err)
@@ -375,6 +375,7 @@ func scanSession(row scanner) (Session, error) {
 		&sess.ProjectID,
 		&sess.RollingSummary,
 		&sess.ProviderHandle,
+		&sess.DreamedAt,
 		&sess.CreatedAt,
 		&sess.UpdatedAt,
 	); err != nil {

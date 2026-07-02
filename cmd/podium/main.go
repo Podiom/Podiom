@@ -50,6 +50,7 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(newStatusCmd(&addr))
 	root.AddCommand(newAgentsCmd(&addr))
+	root.AddCommand(newMemoryCmd(&addr))
 	root.AddCommand(newProfilesCmd(&addr))
 	root.AddCommand(newChatCmd(&addr))
 	root.AddCommand(newSessionsCmd(&addr))

@@ -71,6 +71,9 @@ type Session struct {
 	CreatedAt      string
 	UpdatedAt      string
 	ProjectID      string
+	// DreamedAt is set once a session has been consolidated into the agent's
+	// MEMORY.md. Empty means the session is un-dreamed (pending consolidation).
+	DreamedAt string
 }
 
 // Message is one ordered entry in a session's canonical history.
@@ -81,6 +84,57 @@ type Message struct {
 	Role      MessageRole
 	Content   string
 	CreatedAt string
+}
+
+// DreamTrigger records what caused a memory-consolidation dream.
+type DreamTrigger string
+
+const (
+	// DreamNightly marks a dream fired by the built-in nightly runner (including
+	// downtime catch-up runs — the trigger records who asked, not why it was late).
+	DreamNightly DreamTrigger = "nightly"
+	// DreamManual marks a dream started on demand (CLI or UI "Dream now").
+	DreamManual DreamTrigger = "manual"
+)
+
+// DreamStatus is the lifecycle state of a dream.
+type DreamStatus string
+
+const (
+	// DreamRunning marks an in-flight dream.
+	DreamRunning DreamStatus = "running"
+	// DreamSuccess marks a dream that consolidated memory without error.
+	DreamSuccess DreamStatus = "success"
+	// DreamErrored marks a dream that failed; MEMORY.md and the source sessions
+	// are left untouched so the work is retried on the next cycle.
+	DreamErrored DreamStatus = "error"
+)
+
+// DreamNewItem is one memory line the dream added, tagged with the section it
+// belongs to. It powers the UI's NEW badges and "since" dates without polluting
+// MEMORY.md, which stays clean user-editable markdown.
+type DreamNewItem struct {
+	Section string `json:"section"`
+	Text    string `json:"text"`
+}
+
+// Dream is one nightly (or on-demand) memory-consolidation run. It doubles as
+// the "dream journal" entry the UI renders and as the record of when memory last
+// grew for an agent. A no-op dream (no un-dreamed sessions) is never persisted.
+type Dream struct {
+	ID           string
+	AgentName    string
+	RanAt        string
+	FinishedAt   string
+	Trigger      DreamTrigger
+	Status       DreamStatus
+	Error        string
+	SessionCount int
+	Kept         int
+	Merged       int
+	Pruned       int
+	Note         string
+	NewItems     []DreamNewItem
 }
 
 // RunTrigger records what caused a scheduled run.

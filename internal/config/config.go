@@ -33,6 +33,8 @@ const (
 	DefaultGitHubAppSlug     = "podium-llm-orchestrator"
 	DefaultGitHubClientID    = "Iv23liIKvhvRj9FdIaPD"
 	DefaultPermissionTimeout = "3m"
+	// DefaultDreamTime is the local time the nightly memory dream runs by default.
+	DefaultDreamTime = "03:00"
 )
 
 // Config is the parsed config.yaml. It does not define schedules (self-describing
@@ -56,6 +58,9 @@ type Global struct {
 	PermissionMode    PermissionMode `yaml:"permission_mode"`
 	PermissionTimeout string         `yaml:"permission_timeout"`
 	Fallback          []string       `yaml:"fallback"`
+	// DreamTime is the local wall-clock time ("HH:MM") at which the nightly
+	// memory-consolidation ("dreaming") runner fires. Empty means the default.
+	DreamTime string `yaml:"dream_time"`
 }
 
 // GitHub configures the public GitHub App details used for local user
@@ -146,6 +151,9 @@ func (c *Config) applyDefaults() {
 	if c.Global.PermissionTimeout == "" {
 		c.Global.PermissionTimeout = DefaultPermissionTimeout
 	}
+	if c.Global.DreamTime == "" {
+		c.Global.DreamTime = DefaultDreamTime
+	}
 	if c.GitHub.AppSlug == "" {
 		c.GitHub.AppSlug = DefaultGitHubAppSlug
 	}
@@ -215,6 +223,9 @@ func (c *Config) Validate() error {
 	}
 	if err := validatePermissionTimeout(c.Global.PermissionTimeout); err != nil {
 		return fmt.Errorf("global.permission_timeout: %w", err)
+	}
+	if err := ValidateDreamTime(c.Global.DreamTime); err != nil {
+		return fmt.Errorf("global.dream_time: %w", err)
 	}
 
 	profileNames := map[string]Provider{}
@@ -433,6 +444,18 @@ func validatePermissionTimeout(raw string) error {
 	}
 	if d <= 0 {
 		return fmt.Errorf("must be greater than 0")
+	}
+	return nil
+}
+
+// ValidateDreamTime checks that a dream time is empty (meaning default) or a
+// valid 24-hour "HH:MM" wall-clock time.
+func ValidateDreamTime(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if _, err := time.Parse("15:04", raw); err != nil {
+		return fmt.Errorf("must be HH:MM (24-hour): %w", err)
 	}
 	return nil
 }

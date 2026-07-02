@@ -155,6 +155,66 @@ func (c *Core) oneShotCompletionWithOptions(ctx context.Context, agent store.Age
 	return strings.TrimSpace(text.String())
 }
 
+// oneShotCompletionErr is like oneShotCompletionWithOptions but surfaces failures
+// instead of swallowing them: a transport error, a rate-limited turn, or an empty
+// reply all return a non-nil error. The dream relies on this — a rate limit
+// mid-dream must abort so the source sessions are not marked consolidated.
+func (c *Core) oneShotCompletionErr(ctx context.Context, agent store.Agent, prompt string, opts oneShotOptions) (string, error) {
+	var relay adapter.PermissionRelay
+	if opts.Unattended {
+		relay = NewAllowListRelay(opts.AllowedTools, c.log)
+	}
+	events, err := c.adapter.SendTurn(ctx, adapter.TurnRequest{
+		SessionID: "oneshot-" + agent.Name,
+		Handle:    adapter.Handle{Provider: agent.Provider},
+		Message:   prompt,
+		Settings: adapter.TurnSettings{
+			AgentName:          agent.Name,
+			Profile:            agent.Profile,
+			ProfileDir:         c.profileDir(agent.Provider, agent.Profile),
+			Model:              agent.Model,
+			Effort:             "low",
+			PermissionMode:     agent.PermissionMode,
+			WorkspaceDir:       c.AgentPaths(agent.Name).Workspace,
+			ExtraWorkspaceDirs: opts.ExtraWorkspaceDirs,
+			PermissionTurnID:   "oneshot-" + agent.Name,
+			PermissionTimeout:  c.permissionTimeout(),
+			Unattended:         opts.Unattended,
+			AllowedTools:       opts.AllowedTools,
+		},
+		Relay: relay,
+	})
+	if err != nil {
+		return "", err
+	}
+	var (
+		text        strings.Builder
+		rateLimited bool
+	)
+	for event := range events {
+		switch event.Kind {
+		case adapter.EventAssistantDelta:
+			text.WriteString(event.Content)
+		case adapter.EventAssistantMessage:
+			text.Reset()
+			text.WriteString(event.Content)
+		case adapter.EventRateLimited:
+			rateLimited = true
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if rateLimited {
+		return "", fmt.Errorf("provider rate-limited the completion")
+	}
+	out := strings.TrimSpace(text.String())
+	if out == "" {
+		return "", fmt.Errorf("the model returned no output")
+	}
+	return out, nil
+}
+
 func deterministicSummary(history []store.Message) string {
 	var b strings.Builder
 	for _, msg := range history {

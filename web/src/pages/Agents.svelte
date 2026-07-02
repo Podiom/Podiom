@@ -1,8 +1,21 @@
 <script lang="ts">
-  import { createProfile, deleteAgent, getAgent, getMCP, listProfiles, updateAgent } from "../lib/api";
+  import {
+    createProfile,
+    deleteAgent,
+    getAgent,
+    getMCP,
+    getMemory,
+    listDreams,
+    listProfiles,
+    updateAgent,
+  } from "../lib/api";
+  import DreamJournal from "../lib/DreamJournal.svelte";
+  import DreamOverlay from "../lib/DreamOverlay.svelte";
+  import { renderMarkdown } from "../lib/markdown";
+  import MemoryPanel from "../lib/MemoryPanel.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { agentGradient, avatarStyle, initial, modeChip, providerChip } from "../lib/theme";
-  import type { Agent, MCPServer, ProfileInfo } from "../lib/types";
+  import type { Agent, Dream, MCPServer, MemoryInfo, ProfileInfo } from "../lib/types";
 
   // A fallback chain row: a provider plus an optional profile. Encodes to a
   // single token (profile name when set, otherwise the bare provider).
@@ -27,6 +40,44 @@
   } = $props();
 
   let selected = $state<Agent | null>(null);
+
+  // Memory / dreaming state for the detail view.
+  let memoryInfo = $state<MemoryInfo | null>(null);
+  let dreams = $state<Dream[]>([]);
+  let detailSoul = $state("");
+  let dreamOverlayOpen = $state(false);
+
+  async function openAgent(a: Agent) {
+    selected = a;
+    memoryInfo = null;
+    dreams = [];
+    detailSoul = "";
+    void loadMemory(a.Name);
+    try {
+      const detail = await getAgent(a.Name);
+      if (selected?.Name === a.Name) detailSoul = detail.Soul;
+    } catch {
+      // SOUL is optional; leave blank on error.
+    }
+  }
+
+  async function loadMemory(name: string) {
+    try {
+      const [info, journal] = await Promise.all([getMemory(name), listDreams(name)]);
+      if (selected?.Name === name) {
+        memoryInfo = info;
+        dreams = journal;
+      }
+    } catch {
+      // Memory endpoints are optional; the panel simply won't render.
+    }
+  }
+
+  function onDreamOverlayDone() {
+    // Refresh memory + journal once the dream settles so the panel updates.
+    if (selected) void loadMemory(selected.Name);
+    onChanged();
+  }
 
   // Edit modal state.
   let editOpen = $state(false);
@@ -286,7 +337,7 @@
 
     <div class="roster">
       {#each agents as a}
-        <button class="agent-card" onclick={() => (selected = a)}>
+        <button class="agent-card" onclick={() => openAgent(a)}>
           <span style={avatarStyle(agentGradient(a.Name), 56, 17, 23)}>{initial(a.Name)}</span>
           <div class="ac-body">
             <div class="ac-head">
@@ -306,7 +357,7 @@
 {:else}
   {@const a = selected}
   <div class="page">
-    <button class="back-btn" onclick={() => (selected = null)}>← All agents</button>
+    <button class="back-btn" onclick={() => { selected = null; memoryInfo = null; dreams = []; }}>← All agents</button>
     <div class="ad-top">
       <span style={avatarStyle(agentGradient(a.Name), 80, 24, 32)}>{initial(a.Name)}</span>
       <div style="flex:1">
@@ -330,20 +381,59 @@
       </div>
     </div>
 
-    <div class="ad-grid">
-      <div class="ad-panel">
-        <div class="label-mono" style="margin-bottom:14px">defaults</div>
-        <div class="ad-spec"><span>Provider</span><span class="mono">{a.Provider}</span></div>
-        <div class="ad-spec"><span>Model</span><span class="mono">{a.Model || "provider default"}</span></div>
-        <div class="ad-spec"><span>Effort</span><span class="mono">{a.Effort || "medium"}</span></div>
-        <div class="ad-spec"><span>Profile</span><span class="mono">{a.Profile || "default"}</span></div>
-        <div class="ad-spec"><span>Fallback</span><span class="mono">{a.Fallback && a.Fallback.length ? a.Fallback.join(" → ") : "none"}</span></div>
-        <div class="ad-spec"><span>MCP</span><span class="mono">{a.MCPServers && a.MCPServers.length ? a.MCPServers.join(", ") : "none"}</span></div>
-        <div class="ad-spec"><span>Permission</span><span class="mono">{a.PermissionMode}</span></div>
-        <div class="ad-spec"><span>Workspace</span><span class="mono">~/.podium/agents/{a.Name}</span></div>
+    <div class="ad-diptych">
+      <div class="ad-memory">
+        {#if memoryInfo}
+          <MemoryPanel
+            agentName={a.Name}
+            memory={memoryInfo}
+            {dreams}
+            onChanged={() => loadMemory(a.Name)}
+            onDreamNow={() => (dreamOverlayOpen = true)}
+          />
+        {:else}
+          <div class="ad-panel ad-memory-loading">Loading memory…</div>
+        {/if}
+      </div>
+
+      <div class="ad-side">
+        <div class="ad-panel">
+          <div class="ad-soul-head">
+            <span class="ad-soul-title">Soul</span>
+            <span class="ad-soul-chip">yours · static</span>
+          </div>
+          <div class="ad-soul-note">Who {a.Name} is. You author this; it never drifts.</div>
+          {#if detailSoul.trim()}
+            <div class="ad-soul-body">{@html renderMarkdown(detailSoul)}</div>
+          {:else}
+            <div class="ad-soul-empty">No soul written yet.</div>
+          {/if}
+        </div>
+
+        <div class="ad-panel">
+          <div class="label-mono" style="margin-bottom:14px">defaults</div>
+          <div class="ad-spec"><span>Provider</span><span class="mono">{a.Provider}</span></div>
+          <div class="ad-spec"><span>Model</span><span class="mono">{a.Model || "provider default"}</span></div>
+          <div class="ad-spec"><span>Effort</span><span class="mono">{a.Effort || "medium"}</span></div>
+          <div class="ad-spec"><span>Profile</span><span class="mono">{a.Profile || "default"}</span></div>
+          <div class="ad-spec"><span>Fallback</span><span class="mono">{a.Fallback && a.Fallback.length ? a.Fallback.join(" → ") : "none"}</span></div>
+          <div class="ad-spec"><span>MCP</span><span class="mono">{a.MCPServers && a.MCPServers.length ? a.MCPServers.join(", ") : "none"}</span></div>
+          <div class="ad-spec"><span>Permission</span><span class="mono">{a.PermissionMode}</span></div>
+          <div class="ad-spec"><span>Workspace</span><span class="mono">~/.podium/agents/{a.Name}</span></div>
+        </div>
       </div>
     </div>
+
+    <DreamJournal agentName={a.Name} {dreams} />
   </div>
+
+  {#if dreamOverlayOpen}
+    <DreamOverlay
+      agentName={a.Name}
+      onClose={() => (dreamOverlayOpen = false)}
+      onDone={onDreamOverlayDone}
+    />
+  {/if}
 {/if}
 
 <!-- ===== Edit modal ===== -->
@@ -661,12 +751,73 @@
     gap: 6px;
   }
 
-  .ad-grid {
+  .ad-diptych {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1.55fr 1fr;
     gap: 16px;
     margin-top: 26px;
-    max-width: 880px;
+    max-width: 1060px;
+    align-items: start;
+  }
+
+  .ad-side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .ad-memory-loading {
+    color: var(--muted-2);
+    font: 400 13px "Hanken Grotesk";
+  }
+
+  .ad-soul-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+  }
+  .ad-soul-title {
+    font: 800 17px "Hanken Grotesk";
+  }
+  .ad-soul-chip {
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #fbeae0;
+    border: 1px solid #f2d6c5;
+    font: 600 10px "JetBrains Mono", monospace;
+    color: #b14e2a;
+  }
+  .ad-soul-note {
+    font: 400 12.5px/1.5 "Hanken Grotesk";
+    color: var(--muted-2);
+    margin-bottom: 12px;
+  }
+  .ad-soul-body {
+    font: 400 13px/1.6 "Hanken Grotesk";
+    color: #5a5048;
+    word-break: break-word;
+  }
+  .ad-soul-body :global(h1),
+  .ad-soul-body :global(h2),
+  .ad-soul-body :global(h3) {
+    font-size: 14px;
+    margin: 10px 0 4px;
+  }
+  .ad-soul-body :global(ul) {
+    margin: 4px 0;
+    padding-left: 18px;
+  }
+  .ad-soul-empty {
+    font: 400 13px "Hanken Grotesk";
+    color: var(--muted-2);
+  }
+
+  @media (max-width: 860px) {
+    .ad-diptych {
+      grid-template-columns: 1fr;
+    }
   }
 
   .ad-panel {
@@ -928,7 +1079,7 @@
       width: 100%;
     }
 
-    .ad-grid {
+    .ad-diptych {
       grid-template-columns: 1fr;
       margin-top: 20px;
     }

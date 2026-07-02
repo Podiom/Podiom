@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,88 @@ func TestCreateAgentScaffoldsDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.Agents); !os.IsNotExist(err) {
 		t.Fatalf("per-agent AGENTS.md should be left for the user, stat err=%v", err)
+	}
+	// MEMORY.md is scaffolded empty beside SOUL.md (MEM1/MEM2).
+	mem, err := os.ReadFile(paths.Memory)
+	if err != nil {
+		t.Fatalf("MEMORY.md not scaffolded: %v", err)
+	}
+	if len(mem) != 0 {
+		t.Fatalf("MEMORY.md should be created empty, got %q", mem)
+	}
+}
+
+func TestMemoryComposesAsFourthLayerWithinBudget(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+
+	agent, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "keeper", Provider: config.ProviderClaude})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	paths := c.AgentPaths(agent.Name)
+	if err := os.WriteFile(paths.Soul, []byte("soul layer\n"), 0o644); err != nil {
+		t.Fatalf("write SOUL.md: %v", err)
+	}
+
+	// A memory well over the injection budget so truncation is exercised.
+	var sb strings.Builder
+	for i := 0; i < memoryBudgetLines+100; i++ {
+		fmt.Fprintf(&sb, "- memory line %d\n", i)
+	}
+	if err := c.WriteAgentMemory(agent.Name, sb.String()); err != nil {
+		t.Fatalf("write memory: %v", err)
+	}
+
+	// Claude: the payload @-imports a truncated snapshot, not MEMORY.md directly.
+	claudePayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport)
+	if err != nil {
+		t.Fatalf("compose claude: %v", err)
+	}
+	snapPath := filepath.Join(paths.Workspace, ".podium-memory.md")
+	if !strings.Contains(string(claudePayload.Bytes), "@"+snapPath) {
+		t.Fatalf("claude payload should import the memory snapshot:\n%s", claudePayload.Bytes)
+	}
+	if strings.Contains(string(claudePayload.Bytes), "@"+paths.Memory+"\n") {
+		t.Fatalf("claude payload must not import MEMORY.md directly (would bypass budget)")
+	}
+	snap, err := os.ReadFile(snapPath)
+	if err != nil {
+		t.Fatalf("read memory snapshot: %v", err)
+	}
+	if got := strings.Count(string(snap), "memory line "); got != memoryBudgetLines {
+		t.Fatalf("snapshot should carry exactly %d memory lines, got %d", memoryBudgetLines, got)
+	}
+	if !strings.Contains(string(snap), "truncated to fit injection budget") {
+		t.Fatalf("snapshot should note the truncation:\n%s", snap)
+	}
+
+	// Codex: the truncated memory is inlined last, after SOUL.md.
+	agent.Provider = config.ProviderCodex
+	codexPayload, err := c.composer.Compose(ctx, agent, DeliveryCodexBundle)
+	if err != nil {
+		t.Fatalf("compose codex: %v", err)
+	}
+	got := string(codexPayload.Bytes)
+	if soulIdx, memIdx := strings.Index(got, "soul layer"), strings.Index(got, "MEMORY.md"); soulIdx == -1 || memIdx == -1 || soulIdx > memIdx {
+		t.Fatalf("codex bundle should carry memory after SOUL.md:\n%s", got)
+	}
+	if n := strings.Count(got, "memory line "); n != memoryBudgetLines {
+		t.Fatalf("codex bundle should carry exactly %d memory lines, got %d", memoryBudgetLines, n)
+	}
+
+	// An empty memory contributes nothing (MEM2).
+	if err := c.ClearAgentMemory(agent.Name); err != nil {
+		t.Fatalf("clear memory: %v", err)
+	}
+	agent.Provider = config.ProviderClaude
+	emptyPayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport)
+	if err != nil {
+		t.Fatalf("recompose claude: %v", err)
+	}
+	if strings.Contains(string(emptyPayload.Bytes), ".podium-memory.md") {
+		t.Fatalf("empty memory should not be composed in:\n%s", emptyPayload.Bytes)
 	}
 }
 

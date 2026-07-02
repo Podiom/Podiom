@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -54,6 +53,21 @@ type Core struct {
 	// mid-turn (attributed to the session's profile/provider). The usage tracker
 	// wires this to IngestPassive; nil disables passive enrichment.
 	onRateStatus func(profile string, provider config.Provider, rs adapter.RateStatus)
+
+	// dreamMu guards dreaming map below and serializes dreams per agent so a
+	// second concurrent dream for the same agent fails fast (ErrDreamInProgress).
+	dreamMu  sync.Mutex
+	dreaming map[string]bool
+	// activeTurn, when set, reports whether a session currently has an in-flight
+	// turn. The dream excludes such sessions so it never contends with live work.
+	// nil means "assume no active turns" (e.g. tests without a server).
+	activeTurn func(sessionID string) bool
+}
+
+// SetActiveTurnChecker registers a predicate the dream uses to skip sessions that
+// have a live turn. Safe to call once during daemon wiring, before turns run.
+func (c *Core) SetActiveTurnChecker(fn func(sessionID string) bool) {
+	c.activeTurn = fn
 }
 
 // SetRateStatusHandler registers a callback for provider rate-limit updates seen
@@ -98,6 +112,7 @@ func New(opts Options) (*Core, error) {
 		ledger:   projects.New(opts.Paths.ProjectsDir),
 		log:      logger,
 		noBg:     opts.DisableBackgroundWork,
+		dreaming: map[string]bool{},
 	}
 	for _, profile := range opts.Profiles {
 		c.profiles[profile.Name] = profile
@@ -110,13 +125,7 @@ func (c *Core) Store() *store.Store { return c.store }
 
 // AgentPaths returns the well-known filesystem paths for an agent.
 func (c *Core) AgentPaths(name string) AgentPaths {
-	dir := filepath.Join(c.paths.AgentsDir, name)
-	return AgentPaths{
-		Root:      dir,
-		Soul:      filepath.Join(dir, "SOUL.md"),
-		Agents:    filepath.Join(dir, "AGENTS.md"),
-		Workspace: filepath.Join(dir, "workspace"),
-	}
+	return agentPaths(c.paths, name)
 }
 
 // AgentPaths is the on-disk layout for one agent.
@@ -124,6 +133,7 @@ type AgentPaths struct {
 	Root      string
 	Soul      string
 	Agents    string
+	Memory    string
 	Workspace string
 }
 

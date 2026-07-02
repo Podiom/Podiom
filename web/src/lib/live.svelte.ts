@@ -106,6 +106,21 @@ class LiveStore {
     this.ws.send(JSON.stringify(msg));
   }
 
+  // dreamConnected reports whether the live socket can carry a streamed dream.
+  // Callers fall back to the REST dream endpoint (no animation) when offline.
+  dreamConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  // dream asks the daemon to consolidate an agent's memory now, streaming phases
+  // back as "dream_state" messages page components observe via subscribe().
+  // Returns the request_id so a component can match its own dream's events.
+  dream(agentName: string): string {
+    const requestId = crypto.randomUUID();
+    this.send({ type: "dream", request_id: requestId, agent_name: agentName });
+    return requestId;
+  }
+
   // subscribe registers a raw-message handler (Chat.svelte uses it for its own
   // rendering). Returns an unsubscribe function.
   subscribe(fn: (msg: ServerMessage) => void): () => void {

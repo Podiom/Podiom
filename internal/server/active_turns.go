@@ -145,6 +145,15 @@ func (h *activeTurnHub) start(sessionID, turnID, requestID string, writer *wsWri
 	return activeTurnStateLocked(turn), nil
 }
 
+// hasRunning reports whether a session currently has an in-flight turn. The
+// dream runner uses this (via Server.HasActiveTurn) to skip live sessions.
+func (h *activeTurnHub) hasRunning(sessionID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	turn := h.turns[sessionID]
+	return turn != nil && turn.status == turnStatusRunning
+}
+
 func (h *activeTurnHub) attach(sessionID string, writer *wsWriter) (TurnState, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
