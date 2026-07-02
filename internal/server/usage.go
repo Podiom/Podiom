@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 // handleUsage serves per-profile provider usage snapshots.
@@ -27,7 +27,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		snaps := s.usage.Refresh(ctx, true)
 		s.log.Info("usage refresh requested", "event", "usage", "stage", "refresh",
-			"remote_addr", r.RemoteAddr, podiumlog.DurationMS("duration_ms", time.Since(started)))
+			"remote_addr", r.RemoteAddr, podiomlog.DurationMS("duration_ms", time.Since(started)))
 		writeJSON(w, snaps, nil)
 		return
 	}

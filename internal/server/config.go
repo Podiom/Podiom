@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 // globalConfigDTO mirrors config.Global for the Settings page. Field names are
@@ -122,7 +122,7 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	s.core.SetGlobal(g)
 	s.log.Info("global config updated",
 		"event", "config",
-		"changed", podiumlog.ChangedFields(globalLogFields(before), globalLogFields(g)),
+		"changed", podiomlog.ChangedFields(globalLogFields(before), globalLogFields(g)),
 		"provider", string(g.Provider),
 		"profile", g.Profile,
 		"permission", string(g.PermissionMode),

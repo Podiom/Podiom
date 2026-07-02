@@ -1,6 +1,6 @@
-// Command podiumd is the long-running Podium daemon: it owns all session, agent,
+// Command podiomd is the long-running Podiom daemon: it owns all session, agent,
 // and schedule state and serves the web UI + API. In Phase 0 it resolves the
-// storage root, scaffolds ~/.podium/ on first run, opens the database, and serves
+// storage root, scaffolds ~/.podiom/ on first run, opens the database, and serves
 // a health endpoint and the embedded SPA.
 package main
 
@@ -16,18 +16,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/buildinfo"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/core"
-	"github.com/mar-schmidt/Podium/internal/dream"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/notify"
-	"github.com/mar-schmidt/Podium/internal/schedule"
-	"github.com/mar-schmidt/Podium/internal/server"
-	"github.com/mar-schmidt/Podium/internal/skills"
-	"github.com/mar-schmidt/Podium/internal/store"
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/buildinfo"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/dream"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/notify"
+	"github.com/Podiom/Podiom/internal/schedule"
+	"github.com/Podiom/Podiom/internal/server"
+	"github.com/Podiom/Podiom/internal/skills"
+	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -39,11 +39,11 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "podiumd",
-		Short: "The Podium orchestration daemon",
-		Long: "podiumd is the long-running Podium daemon. It owns session, agent, and\n" +
+		Use:   "podiomd",
+		Short: "The Podiom orchestration daemon",
+		Long: "podiomd is the long-running Podiom daemon. It owns session, agent, and\n" +
 			"schedule state, serves the web UI and API, and runs the embedded scheduler.\n" +
-			"All state lives under $PODIUM_HOME (default ~/.podium/).",
+			"All state lives under $PODIOM_HOME (default ~/.podiom/).",
 		Version:       fmt.Sprintf("%s (%s)", buildinfo.Version, buildinfo.Commit),
 		SilenceUsage:  true,
 		SilenceErrors: false,
@@ -73,7 +73,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	fileLog, closer, err := podiumlog.Open(podiumlog.Options{
+	fileLog, closer, err := podiomlog.Open(podiomlog.Options{
 		Dir:           paths.LogsDir,
 		RetentionDays: cfg.Logging.RetentionDays,
 		Level:         cfg.Logging.Level,
@@ -100,7 +100,7 @@ func run() error {
 	)
 
 	// Refresh the skills union on start so the catalogue and provider exposure
-	// stay current without a manual `podium skills relink` (S12). Best-effort:
+	// stay current without a manual `podiom skills relink` (S12). Best-effort:
 	// a failure here must not stop the daemon from serving.
 	if rep, err := skills.Sync(); err != nil {
 		log.Warn("skills union refresh failed", "error", err)
@@ -226,7 +226,7 @@ func run() error {
 	// Serve until a termination signal arrives, then shut down gracefully.
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Start() }()
-	log.Info("podiumd listening", "addr", srv.Addr())
+	log.Info("podiomd listening", "addr", srv.Addr())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PermissionMode is Podium's two-value permission posture (§5.5 / D12).
+// PermissionMode is Podiom's two-value permission posture (§5.5 / D12).
 type PermissionMode string
 
 const (
@@ -30,7 +30,7 @@ const (
 )
 
 const (
-	DefaultGitHubAppSlug     = "podium-llm-orchestrator"
+	DefaultGitHubAppSlug     = "podiom-llm-orchestrator"
 	DefaultGitHubClientID    = "Iv23liIKvhvRj9FdIaPD"
 	DefaultPermissionTimeout = "3m"
 	// DefaultDreamTime is the local time the nightly memory dream runs by default.
@@ -75,7 +75,7 @@ type GitHub struct {
 }
 
 // Profile is an optional named auth context, 1:1 with one underlying account
-// (§8.7). Podium owns only the directory path and name — never credentials.
+// (§8.7). Podiom owns only the directory path and name — never credentials.
 type Profile struct {
 	Name     string   `yaml:"name"`
 	Provider Provider `yaml:"provider"`
@@ -85,7 +85,7 @@ type Profile struct {
 	HomeDir string `yaml:"home_dir,omitempty"`
 }
 
-// Agent is a named colleague maintained by Podium (§5.1). Empty optional fields
+// Agent is a named colleague maintained by Podiom (§5.1). Empty optional fields
 // inherit from Global.
 type Agent struct {
 	Name           string         `yaml:"name"`

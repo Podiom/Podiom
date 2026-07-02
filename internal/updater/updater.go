@@ -1,4 +1,4 @@
-// Package updater checks GitHub releases and installs verified Podium updates.
+// Package updater checks GitHub releases and installs verified Podiom updates.
 package updater
 
 import (
@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	DefaultAPIBase = "https://api.github.com/repos/mar-schmidt/Podium/releases"
-	DefaultWebBase = "https://github.com/mar-schmidt/Podium/releases"
+	DefaultAPIBase = "https://api.github.com/repos/Podiom/Podiom/releases"
+	DefaultWebBase = "https://github.com/Podiom/Podiom/releases"
 )
 
 // Status describes whether an update is available and installable.
@@ -138,7 +138,7 @@ func Apply(ctx context.Context, opts Options) (ApplyResult, error) {
 	}
 	defer unlock()
 
-	stage, err := os.MkdirTemp("", "podium-update-*")
+	stage, err := os.MkdirTemp("", "podiom-update-*")
 	if err != nil {
 		return ApplyResult{Status: status}, err
 	}
@@ -199,17 +199,17 @@ func Apply(ctx context.Context, opts Options) (ApplyResult, error) {
 // ArchiveName returns the versioned release asset name for a platform.
 func ArchiveName(version, goos, goarch string) string {
 	if goos == "windows" {
-		return fmt.Sprintf("podium_%s_windows_%s.zip", version, goarch)
+		return fmt.Sprintf("podiom_%s_windows_%s.zip", version, goarch)
 	}
-	return fmt.Sprintf("podium_%s_%s_%s.tar.gz", version, goos, goarch)
+	return fmt.Sprintf("podiom_%s_%s_%s.tar.gz", version, goos, goarch)
 }
 
 // LatestArchiveName returns the latest-compatible unversioned asset name.
 func LatestArchiveName(goos, goarch string) string {
 	if goos == "windows" {
-		return fmt.Sprintf("podium_windows_%s.zip", goarch)
+		return fmt.Sprintf("podiom_windows_%s.zip", goarch)
 	}
-	return fmt.Sprintf("podium_%s_%s.tar.gz", goos, goarch)
+	return fmt.Sprintf("podiom_%s_%s.tar.gz", goos, goarch)
 }
 
 // IsUnreleasedBuild reports dev and dirty builds that should not update unless forced.
@@ -335,7 +335,7 @@ func VerifyChecksum(assetName, archivePath, sumsPath string) error {
 	return nil
 }
 
-// ExtractArchive extracts a Podium release archive into dest.
+// ExtractArchive extracts a Podiom release archive into dest.
 func ExtractArchive(archivePath, dest string) error {
 	if strings.HasSuffix(archivePath, ".zip") {
 		return extractZip(archivePath, dest)
@@ -450,13 +450,13 @@ func ResolveInstallDir(override string) (string, error) {
 	return filepath.Dir(exe), nil
 }
 
-// InstallExtracted replaces podium and podiumd from an extracted archive.
+// InstallExtracted replaces podiom and podiomd from an extracted archive.
 func InstallExtracted(extractDir, installDir string) error {
 	ext := ""
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
 	}
-	for _, name := range []string{"podium", "podiumd"} {
+	for _, name := range []string{"podiom", "podiomd"} {
 		src := filepath.Join(extractDir, name+ext)
 		dst := filepath.Join(installDir, name+ext)
 		if err := installBinary(src, dst); err != nil {
@@ -553,16 +553,16 @@ func startWindowsHelper(opts Options, extractDir, installDir string) (string, er
 	helperSrc := opts.HelperPath
 	if helperSrc == "" {
 		exe, _ := os.Executable()
-		if strings.EqualFold(filepath.Base(exe), "podium.exe") {
+		if strings.EqualFold(filepath.Base(exe), "podiom.exe") {
 			helperSrc = exe
 		} else {
-			helperSrc = filepath.Join(filepath.Dir(exe), "podium.exe")
+			helperSrc = filepath.Join(filepath.Dir(exe), "podiom.exe")
 		}
 	}
 	if _, err := os.Stat(helperSrc); err != nil {
 		return "", fmt.Errorf("find update helper %s: %w", helperSrc, err)
 	}
-	helper := filepath.Join(os.TempDir(), fmt.Sprintf("podium-update-helper-%d.exe", time.Now().UnixNano()))
+	helper := filepath.Join(os.TempDir(), fmt.Sprintf("podiom-update-helper-%d.exe", time.Now().UnixNano()))
 	if err := copyFile(helperSrc, helper, 0o755); err != nil {
 		return "", err
 	}
@@ -598,9 +598,9 @@ func RunHelper(stageDir, installDir string, parentPID int, restartDaemon bool) e
 	return nil
 }
 
-// StartDaemon starts podiumd from installDir.
+// StartDaemon starts podiomd from installDir.
 func StartDaemon(installDir string) (*exec.Cmd, error) {
-	name := "podiumd"
+	name := "podiomd"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -612,9 +612,9 @@ func StartDaemon(installDir string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// ScheduleUnixDaemonRestart starts a detached shell that launches podiumd after a delay.
+// ScheduleUnixDaemonRestart starts a detached shell that launches podiomd after a delay.
 func ScheduleUnixDaemonRestart(installDir string) error {
-	path := filepath.Join(installDir, "podiumd")
-	cmd := exec.Command("sh", "-c", "sleep 1; exec \"$1\"", "podium-restart", path)
+	path := filepath.Join(installDir, "podiomd")
+	cmd := exec.Command("sh", "-c", "sleep 1; exec \"$1\"", "podiom-restart", path)
 	return cmd.Start()
 }

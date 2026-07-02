@@ -1,14 +1,14 @@
 # Shared project ledger (system-level, §5.3 / D22).
 #
 # Agents maintain this file as they create and work on projects. Each project is
-# a subdirectory under ~/.podium/projects/ plus an entry below. Any agent may
+# a subdirectory under ~/.podiom/projects/ plus an entry below. Any agent may
 # read and work on any project.
 #
 # Entry shape:
 #   - id: mission-control
 #     name: Mission Control
 #     description: Next.js dashboard UI.
-#     path: mission-control          # relative to ~/.podium/projects/
+#     path: mission-control          # relative to ~/.podiom/projects/
 #     status: active                 # active | paused | done
 #     stack: [Next.js, TypeScript]
 #     repo: null                    # or a GitHub snapshot object from the UI

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 const soulGenerationPermissionMessage = "SOUL.md generation does not need tools"
@@ -109,10 +109,10 @@ func validateSoulMarkdown(soul string) error {
 // SoulPrompt builds the provider prompt for drafting a complete SOUL.md.
 func SoulPrompt(name, current string, req SoulGenerateRequest) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are helping a user create or regenerate a Podium agent's SOUL.md.\n\n")
+	fmt.Fprintf(&b, "You are helping a user create or regenerate a Podiom agent's SOUL.md.\n\n")
 	fmt.Fprintf(&b, "Write ONLY the contents of a markdown file named SOUL.md. Do not wrap it in code fences.\n")
 	fmt.Fprintf(&b, "The agent name is %q.\n\n", name)
-	b.WriteString("A Podium SOUL.md defines who the agent is: identity, purpose, worldview, working relationship, voice, strengths, boundaries, and calibration. It is not a tool list, security policy, changelog, or memory log.\n")
+	b.WriteString("A Podiom SOUL.md defines who the agent is: identity, purpose, worldview, working relationship, voice, strengths, boundaries, and calibration. It is not a tool list, security policy, changelog, or memory log.\n")
 	b.WriteString("Write it as a real person's identity, addressed to them in the second person (\"you\"). This agent is a colleague — someone with their own thoughts, ideas, judgment, and a soul — not a mere tool or an assistant. Never describe them as an AI, a bot, a model, a program, a language model, or a generated artifact, and never break character to mention how this document was produced.\n")
 	b.WriteString("SOUL.md is static identity. MEMORY.md is later lived experience. Do not invent memories or put session history in SOUL.md.\n\n")
 	writePromptField(&b, "Role", req.Role)

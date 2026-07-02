@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // startedTask creates an agent, a task assigned to it, and starts it so a

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // newTestCoreAdapter mirrors newTestCore but exposes the fake adapter so tests
@@ -97,7 +97,7 @@ func TestSessionStartSendsAllContextLayers(t *testing.T) {
 		"base AGENTS.md":  c.paths.BaseAgents,
 		"agent AGENTS.md": paths.Agents,
 		"SOUL.md":         paths.Soul,
-		"MEMORY.md":       ".podium-memory.md",
+		"MEMORY.md":       ".podiom-memory.md",
 	}
 	for label, ref := range wantRefs {
 		if !strings.Contains(instructions, ref) {
@@ -147,7 +147,7 @@ func TestSessionStartOmitsAbsentOptionalLayers(t *testing.T) {
 	if strings.Contains(instructions, paths.Agents) {
 		t.Fatalf("absent per-agent AGENTS.md should not be referenced:\n%s", instructions)
 	}
-	if strings.Contains(instructions, ".podium-memory.md") {
+	if strings.Contains(instructions, ".podiom-memory.md") {
 		t.Fatalf("empty MEMORY.md should not be referenced:\n%s", instructions)
 	}
 }

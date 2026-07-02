@@ -1,13 +1,13 @@
 # Security & logging
 
-This page documents Podium's security posture and the structured run logging it
+This page documents Podiom's security posture and the structured run logging it
 emits. It reflects the implementation as shipped in v1 (requirements §8.6, §10,
 R11.5) and is the reference checked during the Phase 9 security review pass.
 
 ## Threat model in one line
 
-Podium is a **single-user, localhost daemon** that orchestrates agent CLIs which
-already have access to the user's machine and accounts. Podium does not add a
+Podiom is a **single-user, localhost daemon** that orchestrates agent CLIs which
+already have access to the user's machine and accounts. Podiom does not add a
 sandbox; it adds a **deliberate approval boundary** and keeps sensitive
 configuration out of logs and client payloads.
 
@@ -20,12 +20,12 @@ Every session and scheduled run carries a permission mode (R5.18–R5.21, §8.4)
 | `approve` *(default)* | Each tool call is relayed to a human who allows or denies it. | Claude: an MCP permission server (`--permission-prompt-tool`) → daemon broker → UI/CLI. Codex: `approvalPolicy: on-request` + `sandbox: read-only`, relayed through the same broker. |
 | `yolo` *(opt-in)* | Every tool call is auto-approved. | Claude: `--permission-mode bypassPermissions`. Codex: `approvalPolicy: never` + `sandbox: danger-full-access`. |
 
-**`yolo` is whole-machine access by design (R8.31).** Podium does *not* pretend
+**`yolo` is whole-machine access by design (R8.31).** Podiom does *not* pretend
 the workspace is a sandbox in `yolo` — the only guard is the explicit opt-in and
-the `approve` default. Because of this, Podium surfaces an explicit warning every
+the `approve` default. Because of this, Podiom surfaces an explicit warning every
 time `yolo` is selected:
 
-- CLI `podium agents create … --permission yolo` prints a whole-machine warning.
+- CLI `podiom agents create … --permission yolo` prints a whole-machine warning.
 - The `/permission yolo` slash command returns a notice spelling out that the
   workspace is not a sandbox and how to switch back.
 - The web "Hire agent" modal labels the option `yolo · full access`.
@@ -49,13 +49,13 @@ Scheduled fires and server-side task pickups have no human to answer a prompt
 ### MCP configuration & credentials (R8.29)
 
 A generated MCP config may embed server commands, local URLs, tokens, or
-credentials. Podium treats `Agent.MCPConfig` as sensitive:
+credentials. Podiom treats `Agent.MCPConfig` as sensitive:
 
 - It is tagged `json:"-"` on the store model, so it is **redacted at every JSON
   boundary** — both the REST API and the WebSocket `state` message — in one place.
   (`internal/store/redaction_test.go` locks this contract.)
 - It is never written to a log line. The per-turn Claude MCP config file written
-  into `workspace/.podium/` is created `0600` and removed after the turn.
+  into `workspace/.podiom/` is created `0600` and removed after the turn.
 
 ### System prompts / developer instructions (R8.30)
 
@@ -66,24 +66,24 @@ client DTO (`store.Agent`, `store.Session`, `store.Message`) and are never logge
 
 ### Profile / auth isolation (R8.32, R8.34–R8.37)
 
-A profile is *just a directory name*. Podium maps it to the backing CLI's own
+A profile is *just a directory name*. Podiom maps it to the backing CLI's own
 config dir via an environment variable and **never handles credentials**:
 
 - Claude: `CLAUDE_CONFIG_DIR=<profile.config_dir>`
 - Codex: `CODEX_HOME=<profile.home_dir>`
 
-When no profile is set, Podium **unsets** that variable so the CLI uses its normal
+When no profile is set, Podiom **unsets** that variable so the CLI uses its normal
 global login — it never leaks one profile's variable into another profile's
 process. (Agent *workspaces* are intentionally shared across agents, §5.8; it is
 only the auth state that stays isolated.)
 
 ### GitHub project repo tokens
 
-Podium's GitHub project integration is local-first and does not ship a GitHub App
+Podiom's GitHub project integration is local-first and does not ship a GitHub App
 private key or client secret. The distributed app contains only public GitHub App
 details (`app_slug`, `client_id`). Users authorize the app with GitHub's device
-flow, and Podium stores the returned local token under
-`$PODIUM_HOME/github/token.json` with `0600` permissions.
+flow, and Podiom stores the returned local token under
+`$PODIOM_HOME/github/token.json` with `0600` permissions.
 
 GitHub tokens, temporary archive redirect URLs, and downloaded archive URLs are
 treated as sensitive and must not be logged or returned from API responses.
@@ -92,10 +92,10 @@ subdirectories; v1 does not create Git remotes, commits, pushes, or PRs.
 
 ## Structured run logging (R11.5)
 
-`podiumd` logs structured records (Go `slog`, text handler) for both
+`podiomd` logs structured records (Go `slog`, text handler) for both
 **interactive** and **scheduled** runs, so every agent run is auditable. Logs are
-written to stderr and `$PODIUM_HOME/logs/podiumd.log` (default
-`~/.podium/logs/podiumd.log`), rotate daily, and keep `logging.retention_days`
+written to stderr and `$PODIOM_HOME/logs/podiomd.log` (default
+`~/.podiom/logs/podiomd.log`), rotate daily, and keep `logging.retention_days`
 calendar days (default 7).
 
 Interactive turns (`internal/core`, tagged `event=run`):
@@ -116,7 +116,7 @@ Log records intentionally carry **identifiers and outcomes, not payloads** — n
 message bodies, instructions, or MCP config — consistent with the redaction rules
 above.
 
-The CLI can inspect logs with `podium logs path` and `podium logs follow`. The
+The CLI can inspect logs with `podiom logs path` and `podiom logs follow`. The
 web UI reads the same log through loopback-only `/api/logs` endpoints; these are
 not available to non-loopback clients because provider diagnostics may include
 sensitive local troubleshooting details even after redaction.
@@ -129,7 +129,7 @@ sensitive local troubleshooting details even after redaction.
 - **Hung-agent cancellation** uses context cancellation plus a process-**group**
   kill so the CLI *and* its children (npm shim → node → workers) die together:
   a negative-PID `SIGKILL` on Unix, `taskkill /T /F` on Windows.
-- **Paths** use `path/filepath` and `~` expansion throughout; `PODIUM_HOME` is
+- **Paths** use `path/filepath` and `~` expansion throughout; `PODIOM_HOME` is
   resolved to an absolute path at startup so a relative override or a daemon
   `chdir` cannot relocate the storage root.
 

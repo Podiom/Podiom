@@ -4,8 +4,8 @@ package buildinfo
 
 // These are overridden at build time, e.g.:
 //
-//	go build -ldflags "-X github.com/mar-schmidt/Podium/internal/buildinfo.Version=1.0.0 \
-//	  -X github.com/mar-schmidt/Podium/internal/buildinfo.Commit=$(git rev-parse --short HEAD)"
+//	go build -ldflags "-X github.com/Podiom/Podiom/internal/buildinfo.Version=1.0.0 \
+//	  -X github.com/Podiom/Podiom/internal/buildinfo.Commit=$(git rev-parse --short HEAD)"
 var (
 	Version = "dev"
 	Commit  = "none"

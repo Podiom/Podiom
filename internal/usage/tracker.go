@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 const (
@@ -371,18 +371,18 @@ func (t *Tracker) logFetch(tg target, snap Snapshot, force bool, dur time.Durati
 			"stage", "fetch", "status", string(snap.Status), "source", snap.Source,
 			"plan", snap.Plan, "windows", len(snap.Windows),
 			"max_used_percent", snap.MaxUsedPercent(), "forced", force,
-			podiumlog.DurationMS("duration_ms", dur))...)
+			podiomlog.DurationMS("duration_ms", dur))...)
 	case StatusNoCredentials, StatusStaleCredentials, StatusUnsupported:
 		t.log.Warn("usage credentials unavailable", append(base,
-			"stage", "fetch", "status", string(snap.Status), "reason", podiumlog.Redact(snap.Error))...)
+			"stage", "fetch", "status", string(snap.Status), "reason", podiomlog.Redact(snap.Error))...)
 	case StatusRateLimited:
 		t.log.Warn("usage endpoint rate limited", append(base,
 			"stage", "fetch", "status", string(snap.Status), "next_retry_at", snap.NextRetryAt,
-			podiumlog.DurationMS("duration_ms", dur))...)
+			podiomlog.DurationMS("duration_ms", dur))...)
 	default:
 		t.log.Warn("usage fetch failed", append(base,
-			"stage", "fetch", "status", string(snap.Status), "error", podiumlog.Redact(snap.Error),
-			podiumlog.DurationMS("duration_ms", dur))...)
+			"stage", "fetch", "status", string(snap.Status), "error", podiomlog.Redact(snap.Error),
+			podiomlog.DurationMS("duration_ms", dur))...)
 	}
 }
 

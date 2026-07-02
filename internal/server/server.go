@@ -1,5 +1,5 @@
-// Package server is podiumd's HTTP/WebSocket front door. In Phase 0 it serves a
-// health endpoint (used by the `podium` CLI to confirm the daemon is live) and
+// Package server is podiomd's HTTP/WebSocket front door. In Phase 0 it serves a
+// health endpoint (used by the `podiom` CLI to confirm the daemon is live) and
 // the embedded SPA. Later phases add the typed WebSocket contract and REST API.
 package server
 
@@ -12,12 +12,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/core"
-	podiumgithub "github.com/mar-schmidt/Podium/internal/github"
-	"github.com/mar-schmidt/Podium/internal/notify"
-	"github.com/mar-schmidt/Podium/internal/schedule"
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/core"
+	podiomgithub "github.com/Podiom/Podiom/internal/github"
+	"github.com/Podiom/Podiom/internal/notify"
+	"github.com/Podiom/Podiom/internal/schedule"
+	"github.com/Podiom/Podiom/internal/usage"
 )
 
 // BuildInfo is surfaced on /healthz so clients can see what they're talking to.
@@ -35,7 +35,7 @@ type Server struct {
 	core      *core.Core
 	scheduler *schedule.Scheduler
 	usage     *usage.Tracker
-	github    *podiumgithub.Service
+	github    *podiomgithub.Service
 	broker    *permissionBroker
 	input     *userInputBroker
 	turns     *activeTurnHub
@@ -80,7 +80,7 @@ func New(opts Options) *Server {
 		core:        opts.Core,
 		scheduler:   opts.Scheduler,
 		usage:       opts.Usage,
-		github:      podiumgithub.New(podiumgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
+		github:      podiomgithub.New(podiomgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
 		broker:      newPermissionBroker(log),
 		input:       newUserInputBroker(log),
 		turns:       newActiveTurnHub(),
@@ -177,7 +177,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)
 }
 
-// Health is the /healthz response shape. The CLI's `podium status` parses this.
+// Health is the /healthz response shape. The CLI's `podiom status` parses this.
 type Health struct {
 	Status   string    `json:"status"`
 	Version  string    `json:"version"`

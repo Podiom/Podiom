@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 func TestCodexParamsUseNativePermissionModes(t *testing.T) {
@@ -102,7 +102,7 @@ func TestCodexReplayMessageIncludesHistoryAndLiveTurn(t *testing.T) {
 		{Role: store.RoleUser, Content: "remember alpha"},
 		{Role: store.RoleAssistant, Content: "alpha remembered"},
 	}, "continue")
-	for _, want := range []string{"<podium_history>", "user: remember alpha", "assistant: alpha remembered", "Live user turn:\ncontinue"} {
+	for _, want := range []string{"<podiom_history>", "user: remember alpha", "assistant: alpha remembered", "Live user turn:\ncontinue"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("replay message missing %q:\n%s", want, got)
 		}
@@ -135,7 +135,7 @@ func TestCodexRateStatusAndLimitParsing(t *testing.T) {
 }
 
 func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
-	t.Setenv("PODIUM_CODEX_FAKE_MODE", "approval")
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "approval")
 	codex := newTestCodex(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -161,7 +161,7 @@ func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
 		Settings: TurnSettings{
 			PermissionMode:    config.PermissionApprove,
 			WorkspaceDir:      workspace,
-			PermissionTurnID:  "podium-turn-1",
+			PermissionTurnID:  "podiom-turn-1",
 			PermissionTimeout: 5 * time.Minute,
 		},
 		Relay: relay,
@@ -175,7 +175,7 @@ func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
 		t.Fatalf("unexpected assistant text %q", text)
 	}
 	req := <-relay.requests
-	if req.TurnID != "podium-turn-1" || req.ToolName != "codex.command" || req.ToolUseID != "item-1" {
+	if req.TurnID != "podiom-turn-1" || req.ToolName != "codex.command" || req.ToolUseID != "item-1" {
 		t.Fatalf("bad permission request: %+v", req)
 	}
 	if req.Description != "Run echo ok" {
@@ -187,7 +187,7 @@ func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
 }
 
 func TestCodexStreamsTurnAndRelaysUserInput(t *testing.T) {
-	t.Setenv("PODIUM_CODEX_FAKE_MODE", "user_input")
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "user_input")
 	codex := newTestCodex(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -216,7 +216,7 @@ func TestCodexStreamsTurnAndRelaysUserInput(t *testing.T) {
 		Settings: TurnSettings{
 			PermissionMode:   config.PermissionApprove,
 			WorkspaceDir:     workspace,
-			PermissionTurnID: "podium-turn-1",
+			PermissionTurnID: "podiom-turn-1",
 		},
 		Input: input,
 	})
@@ -229,7 +229,7 @@ func TestCodexStreamsTurnAndRelaysUserInput(t *testing.T) {
 		t.Fatalf("unexpected assistant text %q", text)
 	}
 	req := <-input.requests
-	if req.TurnID != "podium-turn-1" || req.Provider != config.ProviderCodex || req.ItemID != "item-question" {
+	if req.TurnID != "podiom-turn-1" || req.Provider != config.ProviderCodex || req.ItemID != "item-question" {
 		t.Fatalf("bad input request: %+v", req)
 	}
 	if len(req.Questions) != 1 || req.Questions[0].ID != "intent" || req.Questions[0].MultiSelect {
@@ -238,7 +238,7 @@ func TestCodexStreamsTurnAndRelaysUserInput(t *testing.T) {
 }
 
 func TestCodexResumesThreadAfterAppServerRestart(t *testing.T) {
-	t.Setenv("PODIUM_CODEX_FAKE_MODE", "normal")
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "normal")
 	codex := newTestCodex(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -276,9 +276,9 @@ func TestCodexResumesThreadAfterAppServerRestart(t *testing.T) {
 }
 
 func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
-	t.Setenv("PODIUM_CODEX_FAKE_MODE", "normal")
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "normal")
 	argvFile := filepath.Join(t.TempDir(), "argv.txt")
-	t.Setenv("PODIUM_CODEX_ARGV_FILE", argvFile)
+	t.Setenv("PODIOM_CODEX_ARGV_FILE", argvFile)
 	codex := newTestCodex(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -294,15 +294,15 @@ func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
 		ProfileDir:     profileDir,
 		PermissionMode: config.PermissionApprove,
 		WorkspaceDir:   workspace,
-		MCPServers: []podiummcp.Server{{
+		MCPServers: []podiommcp.Server{{
 			Name:      "filesystem",
-			Transport: podiummcp.TransportStdio,
+			Transport: podiommcp.TransportStdio,
 			Command:   "npx",
 			Args:      []string{"-y", "@modelcontextprotocol/server-filesystem"},
 		}},
-		MCPAllServers: []podiummcp.Server{{
+		MCPAllServers: []podiommcp.Server{{
 			Name:      "filesystem",
-			Transport: podiummcp.TransportStdio,
+			Transport: podiommcp.TransportStdio,
 			Command:   "npx",
 		}},
 	}); err != nil {
@@ -313,7 +313,7 @@ func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
 		t.Fatalf("read argv: %v", err)
 	}
 	text := string(got)
-	for _, want := range []string{"--profile", "podium-atlas", "app-server", "--listen", "stdio://"} {
+	for _, want := range []string{"--profile", "podiom-atlas", "app-server", "--listen", "stdio://"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("argv missing %q: %s", want, text)
 		}
@@ -321,10 +321,10 @@ func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
 }
 
 func TestCodexHelperProcess(t *testing.T) {
-	if os.Getenv("PODIUM_CODEX_HELPER") != "1" {
+	if os.Getenv("PODIOM_CODEX_HELPER") != "1" {
 		return
 	}
-	if path := os.Getenv("PODIUM_CODEX_ARGV_FILE"); path != "" {
+	if path := os.Getenv("PODIOM_CODEX_ARGV_FILE"); path != "" {
 		_ = os.WriteFile(path, []byte(strings.Join(os.Args, "\n")), 0o600)
 	}
 	runFakeCodexAppServer()
@@ -369,7 +369,7 @@ func (r *recordingInputRelay) RequestUserInput(ctx context.Context, req UserInpu
 func newTestCodex(t *testing.T) *Codex {
 	t.Helper()
 	wrapper := filepath.Join(t.TempDir(), "codex")
-	script := "#!/bin/sh\nexec env PODIUM_CODEX_HELPER=1 " + strconv.Quote(os.Args[0]) + " -test.run=TestCodexHelperProcess -- \"$@\"\n"
+	script := "#!/bin/sh\nexec env PODIOM_CODEX_HELPER=1 " + strconv.Quote(os.Args[0]) + " -test.run=TestCodexHelperProcess -- \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
 		t.Fatalf("write codex wrapper: %v", err)
 	}
@@ -491,7 +491,7 @@ func runFakeCodexAppServer() {
 			nextTurn++
 			turnID := fmt.Sprintf("turn-%d", nextTurn)
 			writeFakeResponse(enc, msg.ID, map[string]any{"turn": map[string]any{"id": turnID}})
-			if os.Getenv("PODIUM_CODEX_FAKE_MODE") == "approval" {
+			if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "approval" {
 				pendingApproval = struct {
 					threadID string
 					turnID   string
@@ -506,7 +506,7 @@ func runFakeCodexAppServer() {
 					"command":     "echo ok",
 					"cwd":         "/tmp",
 				})
-			} else if os.Getenv("PODIUM_CODEX_FAKE_MODE") == "user_input" {
+			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "user_input" {
 				pendingInput = struct {
 					threadID string
 					turnID   string

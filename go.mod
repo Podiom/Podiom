@@ -1,4 +1,4 @@
-module github.com/mar-schmidt/Podium
+module github.com/Podiom/Podiom
 
 go 1.26
 

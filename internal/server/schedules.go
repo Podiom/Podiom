@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mar-schmidt/Podium/internal/schedule"
+	"github.com/Podiom/Podiom/internal/schedule"
 )
 
 type scheduleCreateRequest struct {
@@ -21,7 +21,7 @@ type scheduleCreateRequest struct {
 }
 
 // handleSchedules lists all schedules (GET) and creates a new schedule file
-// (POST) under ~/.podium/schedules (R7.5 / R7.2).
+// (POST) under ~/.podiom/schedules (R7.5 / R7.2).
 func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 	if s.scheduler == nil {
 		http.Error(w, "scheduler unavailable", http.StatusServiceUnavailable)

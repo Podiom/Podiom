@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	"github.com/Podiom/Podiom/internal/adapter"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 var errUserInputTimeout = errors.New("user input request timed out")
@@ -84,7 +84,7 @@ func (b *userInputBroker) RequestUserInput(ctx context.Context, req adapter.User
 				"turn", req.TurnID,
 				"request", req.ID,
 				"provider", string(req.Provider),
-				podiumlog.ErrorAttr(ctx.Err()),
+				podiomlog.ErrorAttr(ctx.Err()),
 			)
 			return adapter.UserInputDecision{}, ctx.Err()
 		case turnCh <- req:
@@ -115,7 +115,7 @@ func (b *userInputBroker) RequestUserInput(ctx context.Context, req adapter.User
 			"turn", req.TurnID,
 			"request", req.ID,
 			"provider", string(req.Provider),
-			podiumlog.ErrorAttr(ctx.Err()),
+			podiomlog.ErrorAttr(ctx.Err()),
 		)
 		return adapter.UserInputDecision{}, ctx.Err()
 	case decision := <-decisionCh:

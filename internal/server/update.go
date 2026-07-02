@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"time"
 
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/updater"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/updater"
 )
 
 type updateApplyRequest struct {
@@ -34,9 +34,9 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		Home:           s.paths.Home,
 	})
 	if err != nil {
-		s.log.Warn("update check failed", "event", "config", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("update check failed", "event", "config", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 	} else {
-		s.log.Info("update check finished", "event", "config", "update_available", status.UpdateAvailable, "latest_version", status.LatestVersion, podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Info("update check finished", "event", "config", "update_available", status.UpdateAvailable, "latest_version", status.LatestVersion, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	}
 	writeJSON(w, status, err)
 }
@@ -66,11 +66,11 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		RestartDaemon:  true,
 	})
 	if err != nil {
-		s.log.Warn("update apply failed", "event", "config", "requested_version", req.Version, "force", req.Force, podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("update apply failed", "event", "config", "requested_version", req.Version, "force", req.Force, podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		writeJSON(w, result, err)
 		return
 	}
-	s.log.Info("update apply finished", "event", "config", "requested_version", req.Version, "force", req.Force, "restart_required", result.RestartRequired, "helper_started", result.HelperStarted, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("update apply finished", "event", "config", "requested_version", req.Version, "force", req.Force, "restart_required", result.RestartRequired, "helper_started", result.HelperStarted, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	writeJSON(w, result, nil)
 	if result.RestartRequired || result.HelperStarted {
 		go s.exitAfterUpdate()

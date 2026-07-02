@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // DeliveryMode selects how composed instructions are delivered to a provider.
@@ -48,13 +48,13 @@ type InstructionPayload struct {
 	Sources []InstructionSource
 }
 
-// InstructionComposer composes Podium's base instructions, optional per-agent
+// InstructionComposer composes Podiom's base instructions, optional per-agent
 // instructions, and SOUL.md in the fixed order required by the spec.
 type InstructionComposer interface {
 	Compose(context.Context, store.Agent, DeliveryMode) (InstructionPayload, error)
 }
 
-// FileComposer composes instruction payloads from the Podium home directory.
+// FileComposer composes instruction payloads from the Podiom home directory.
 type FileComposer struct {
 	paths config.Paths
 }
@@ -140,7 +140,7 @@ func truncateLines(b []byte, n int) []byte {
 
 func (c *FileComposer) composeClaude(agent store.Agent, paths AgentPaths, sources []InstructionSource) (InstructionPayload, error) {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "# Podium generated Claude context for %s\n\n", agent.Name)
+	fmt.Fprintf(&buf, "# Podiom generated Claude context for %s\n\n", agent.Name)
 	for _, src := range sources {
 		// A budget-capped source (MEMORY.md) can't be @-imported directly — Claude
 		// would pull in the whole file. Write a truncated snapshot beside the
@@ -176,7 +176,7 @@ func (c *FileComposer) writeMemorySnapshot(paths AgentPaths, src InstructionSour
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return "", nil
 	}
-	snapPath := filepath.Join(paths.Workspace, ".podium-memory.md")
+	snapPath := filepath.Join(paths.Workspace, ".podiom-memory.md")
 	if err := os.MkdirAll(paths.Workspace, 0o755); err != nil {
 		return "", fmt.Errorf("create workspace for memory snapshot: %w", err)
 	}
@@ -188,7 +188,7 @@ func (c *FileComposer) writeMemorySnapshot(paths AgentPaths, src InstructionSour
 
 func (c *FileComposer) composeCodex(agent store.Agent, paths AgentPaths, sources []InstructionSource) (InstructionPayload, error) {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "# Podium generated Codex instructions for %s\n\n", agent.Name)
+	fmt.Fprintf(&buf, "# Podiom generated Codex instructions for %s\n\n", agent.Name)
 	for i, src := range sources {
 		raw, err := os.ReadFile(src.Path)
 		if err != nil {

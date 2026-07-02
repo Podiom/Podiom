@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/core"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/core"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/store"
 	cron "github.com/robfig/cron/v3"
 )
 
@@ -32,8 +32,8 @@ type Options struct {
 	Logger *slog.Logger
 }
 
-// Scheduler scans schedule files, registers cron jobs inside podiumd, and runs
-// each fired job as a normal Podium session (R7.1 / R7.3a).
+// Scheduler scans schedule files, registers cron jobs inside podiomd, and runs
+// each fired job as a normal Podiom session (R7.1 / R7.3a).
 type Scheduler struct {
 	dir   string
 	core  *core.Core
@@ -113,7 +113,7 @@ func (s *Scheduler) pickupDueTasks(ctx context.Context) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	due, err := s.store.ListDueTasks(ctx, now)
 	if err != nil {
-		s.log.Warn("due task check failed", "event", "schedule", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("due task check failed", "event", "schedule", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return
 	}
 	for _, task := range due {
@@ -121,12 +121,12 @@ func (s *Scheduler) pickupDueTasks(ctx context.Context) {
 		s.log.Info("task pickup started", "event", "schedule", "task", task.ID, "project", task.ProjectID, "agent", task.AssignedAgent, "unattended", true)
 		sess, err := s.core.StartTask(ctx, core.StartTaskRequest{TaskID: task.ID, Unattended: true})
 		if err != nil {
-			s.log.Warn("task pickup failed", "event", "schedule", "task", task.ID, "project", task.ProjectID, "agent", task.AssignedAgent, podiumlog.ErrorAttr(err))
+			s.log.Warn("task pickup failed", "event", "schedule", "task", task.ID, "project", task.ProjectID, "agent", task.AssignedAgent, podiomlog.ErrorAttr(err))
 			continue
 		}
 		s.log.Info("task picked up", "event", "schedule", "task", task.ID, "project", task.ProjectID, "agent", task.AssignedAgent, "session", sess.ID, "unattended", true)
 	}
-	s.log.Info("due task check finished", "event", "schedule", "due_tasks", len(due), podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("due task check finished", "event", "schedule", "due_tasks", len(due), podiomlog.DurationMS("duration_ms", time.Since(started)))
 }
 
 // Sync reconciles registered cron jobs with the current contents of the
@@ -137,7 +137,7 @@ func (s *Scheduler) Sync() {
 	s.log.Info("schedule scan started", "event", "schedule", "dir", s.dir)
 	schedules, parseErrs, err := ScanDir(s.dir)
 	if err != nil {
-		s.log.Warn("schedule scan failed", "event", "schedule", "dir", s.dir, podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("schedule scan failed", "event", "schedule", "dir", s.dir, podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return
 	}
 
@@ -176,7 +176,7 @@ func (s *Scheduler) Sync() {
 		entryID, err := s.cron.AddFunc(spec, func() { s.fire(jobName) })
 		if err != nil {
 			s.parseErrs[name] = fmt.Errorf("invalid schedule timing %q: %w", spec, err)
-			s.log.Warn("schedule job registration failed", "event", "schedule", "schedule", name, "spec", spec, podiumlog.ErrorAttr(err))
+			s.log.Warn("schedule job registration failed", "event", "schedule", "schedule", name, "spec", spec, podiomlog.ErrorAttr(err))
 			continue
 		}
 		s.jobs[name] = &job{spec: spec, entryID: entryID}
@@ -184,7 +184,7 @@ func (s *Scheduler) Sync() {
 		s.log.Info("schedule job registered", "event", "schedule", "schedule", name, "spec", spec, "agent", sc.Agent)
 	}
 	for name, perr := range parseErrs {
-		s.log.Warn("schedule parse failed", "event", "schedule", "schedule", name, podiumlog.ErrorAttr(perr))
+		s.log.Warn("schedule parse failed", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(perr))
 	}
 	s.log.Info("schedule scan finished",
 		"event", "schedule",
@@ -195,7 +195,7 @@ func (s *Scheduler) Sync() {
 		"removed", removed,
 		"unchanged", unchanged,
 		"jobs", len(s.jobs),
-		podiumlog.DurationMS("duration_ms", time.Since(started)),
+		podiomlog.DurationMS("duration_ms", time.Since(started)),
 	)
 }
 
@@ -278,7 +278,7 @@ func (s *Scheduler) RunNow(ctx context.Context, name string) (store.ScheduleRun,
 	s.log.Info("schedule manual run requested", "event", "schedule", "schedule", name, "trigger", store.TriggerManual)
 	s.Sync()
 	if _, err := os.Stat(s.pathFor(name)); err != nil {
-		s.log.Warn("schedule manual run failed", "event", "schedule", "schedule", name, "trigger", store.TriggerManual, podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule manual run failed", "event", "schedule", "schedule", name, "trigger", store.TriggerManual, podiomlog.ErrorAttr(err))
 		return store.ScheduleRun{}, fmt.Errorf("schedule %q not found", name)
 	}
 	return s.run(ctx, name, store.TriggerManual)
@@ -289,18 +289,18 @@ func (s *Scheduler) RunNow(ctx context.Context, name string) (store.ScheduleRun,
 func (s *Scheduler) fire(name string) {
 	s.log.Info("schedule cron triggered", "event", "schedule", "schedule", name, "trigger", store.TriggerCron)
 	if _, err := s.run(s.ctx, name, store.TriggerCron); err != nil {
-		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", store.TriggerCron, podiumlog.ErrorAttr(err))
+		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", store.TriggerCron, podiomlog.ErrorAttr(err))
 	}
 }
 
 // run executes one scheduled run end to end: re-parse the file (honoring the
 // latest edits and the enabled switch), record a run, execute it as a normal
-// Podium session, and persist the terminal status.
+// Podiom session, and persist the terminal status.
 func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigger) (store.ScheduleRun, error) {
 	started := time.Now()
 	sched, err := Parse(s.pathFor(name))
 	if err != nil {
-		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", trigger, "stage", "parse", podiumlog.ErrorAttr(err))
+		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", trigger, "stage", "parse", podiomlog.ErrorAttr(err))
 		return store.ScheduleRun{}, err
 	}
 	// Defensive: a disabled file must never fire automatically even if a cron
@@ -316,7 +316,7 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		Status:       store.RunRunning,
 	})
 	if err != nil {
-		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", trigger, "stage", "create_run", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", trigger, "stage", "create_run", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return store.ScheduleRun{}, err
 	}
 	permission := "preapproved"
@@ -352,11 +352,11 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 	}
 	finished, ferr := s.store.FinishScheduleRun(ctx, run.ID, sess.ID, status, errMsg)
 	if ferr != nil {
-		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "stage", "finish_run", "session", sess.ID, podiumlog.ErrorAttr(ferr), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "stage", "finish_run", "session", sess.ID, podiomlog.ErrorAttr(ferr), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return run, ferr
 	}
 	s.log.Info("scheduled run finished",
-		"event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "status", status, "session", sess.ID, podiumlog.DurationMS("duration_ms", time.Since(started)))
+		"event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "status", status, "session", sess.ID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return finished, runErr
 }
 
@@ -369,22 +369,22 @@ func (s *Scheduler) Delete(ctx context.Context, name string) error {
 	path := s.pathFor(name)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, podiumlog.ErrorAttr(err))
+			s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(err))
 			return fmt.Errorf("schedule %q not found", name)
 		}
-		s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(err))
 		return err
 	}
 	if err := os.Remove(path); err != nil {
-		s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(err))
 		return fmt.Errorf("delete schedule %q: %w", name, err)
 	}
 	s.Sync()
 	if err := s.store.DeleteScheduleRuns(ctx, name); err != nil {
-		s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, "stage", "delete_runs", podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule delete failed", "event", "schedule", "schedule", name, "stage", "delete_runs", podiomlog.ErrorAttr(err))
 		return err
 	}
-	s.log.Info("schedule deleted", "event", "schedule", "schedule", name, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("schedule deleted", "event", "schedule", "schedule", name, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return nil
 }
 
@@ -416,7 +416,7 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 	}
 	s.log.Info("schedule create requested", "event", "schedule", "schedule", name, "agent", p.Agent, "permission", p.RunPermission, "allowed_tools", len(p.AllowedTools))
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "create_dir", podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "create_dir", podiomlog.ErrorAttr(err))
 		return Status{}, fmt.Errorf("create schedules dir: %w", err)
 	}
 	path := s.pathFor(name)
@@ -432,11 +432,11 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 	// Validate before committing the file to disk so we never leave an invalid
 	// schedule lying around.
 	if _, err := parseBytes(path, []byte(content)); err != nil {
-		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "parse", podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "parse", podiomlog.ErrorAttr(err))
 		return Status{}, err
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "write", podiumlog.ErrorAttr(err))
+		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "write", podiomlog.ErrorAttr(err))
 		return Status{}, fmt.Errorf("write schedule %q: %w", name, err)
 	}
 
@@ -447,11 +447,11 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 	}
 	for _, st := range statuses {
 		if st.Name == name {
-			s.log.Info("schedule created", "event", "schedule", "schedule", name, "agent", st.Agent, "enabled", st.Enabled, "permission", st.RunPermission, "allowed_tools", len(st.AllowedTools), podiumlog.DurationMS("duration_ms", time.Since(started)))
+			s.log.Info("schedule created", "event", "schedule", "schedule", name, "agent", st.Agent, "enabled", st.Enabled, "permission", st.RunPermission, "allowed_tools", len(st.AllowedTools), podiomlog.DurationMS("duration_ms", time.Since(started)))
 			return st, nil
 		}
 	}
-	s.log.Info("schedule created", "event", "schedule", "schedule", name, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("schedule created", "event", "schedule", "schedule", name, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return Status{Name: name, Path: path}, nil
 }
 

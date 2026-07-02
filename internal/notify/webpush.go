@@ -8,7 +8,7 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // webPushKind is the store `kind` value for browser Web Push subscriptions.
@@ -48,7 +48,7 @@ func NewWebPushChannel(st WebPushStore, keys VAPIDKeys, subject string, log *slo
 		log = slog.Default()
 	}
 	if subject == "" {
-		subject = "mailto:podium@localhost"
+		subject = "mailto:podiom@localhost"
 	}
 	return &WebPushChannel{store: st, keys: keys, subject: subject, log: log}
 }

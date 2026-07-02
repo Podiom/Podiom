@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // CreateSessionRequest creates a durable session bound to an agent. Empty
@@ -252,7 +252,7 @@ func (c *Core) UpdateSessionSettings(ctx context.Context, id, model, effort stri
 		"agent", updated.AgentName,
 		"provider", string(updated.Provider),
 		"profile", updated.Profile,
-		"changed", podiumlog.ChangedFields(
+		"changed", podiomlog.ChangedFields(
 			map[string]string{"model": sess.Model, "effort": sess.Effort, "permission": string(sess.PermissionMode)},
 			map[string]string{"model": updated.Model, "effort": updated.Effort, "permission": string(updated.PermissionMode)},
 		),
@@ -397,7 +397,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}
 			duration := time.Since(startedAt)
 			if assistant.Len() == 0 {
-				runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", 0, "fallbacks", fallbacks, podiumlog.DurationMS("duration_ms", duration))
+				runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", 0, "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
 				return
 			}
 			assistantMessages, err := c.appendFinalMessages(ctx, sessionID, []store.Message{{
@@ -413,7 +413,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				go c.autoNameSessionBackground(sessionID)
 				go c.refreshRollingSummaryBackground(sessionID)
 			}
-			runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", assistant.Len(), "fallbacks", fallbacks, podiumlog.DurationMS("duration_ms", duration))
+			runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", assistant.Len(), "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
 			for _, msg := range assistantMessages {
 				msg := msg
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "message_stored", Message: &msg}) {
@@ -435,14 +435,14 @@ func (c *Core) appendFinalMessages(ctx context.Context, sessionID string, messag
 
 // sessionExtraWorkspaceDirs returns the directories exposed to a session's
 // provider process beyond its own workspace. The shared project ledger under
-// ~/.podium/projects/ is always included so agents can honor the base operating
+// ~/.podiom/projects/ is always included so agents can honor the base operating
 // rule to consult projects.yaml; a roadmap session additionally gets its bound
 // project's downloaded source snapshot repo directory (projectCtx.Root).
 func (c *Core) sessionExtraWorkspaceDirs(projectCtx projectExecutionContext) []string {
 	return nonEmptyStrings(c.paths.ProjectsDir, projectCtx.Root)
 }
 
-func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, extraWorkspaceDirs []string, mcpServers, mcpAll []podiummcp.Server) adapter.TurnRequest {
+func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, extraWorkspaceDirs []string, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
 	return adapter.TurnRequest{
 		SessionID: sess.ID,
 		Handle: adapter.Handle{
@@ -484,7 +484,7 @@ func (c *Core) permissionTimeout() time.Duration {
 	return d
 }
 
-func (c *Core) sessionMCPServers(ctx context.Context, sess store.Session) ([]podiummcp.Server, []podiummcp.Server, error) {
+func (c *Core) sessionMCPServers(ctx context.Context, sess store.Session) ([]podiommcp.Server, []podiommcp.Server, error) {
 	agent, err := c.store.GetAgent(ctx, sess.AgentName)
 	if err != nil {
 		return nil, nil, err
@@ -492,12 +492,12 @@ func (c *Core) sessionMCPServers(ctx context.Context, sess store.Session) ([]pod
 	return c.agentMCPServers(agent)
 }
 
-func (c *Core) agentMCPServers(agent store.Agent) ([]podiummcp.Server, []podiummcp.Server, error) {
-	cat, err := podiummcp.LoadCatalogue(c.paths.MCPYAML)
+func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiommcp.Server, error) {
+	cat, err := podiommcp.LoadCatalogue(c.paths.MCPYAML)
 	if err != nil {
 		return nil, nil, err
 	}
-	assigned, err := podiummcp.Assigned(cat, agent.MCPServers)
+	assigned, err := podiommcp.Assigned(cat, agent.MCPServers)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -574,7 +574,7 @@ func (c *Core) ComposeInstructions(ctx context.Context, agent store.Agent) (Inst
 
 // ComposeInstructionsForProvider composes the same agent identity for a
 // specific provider target. It is used when a session switches provider while
-// staying bound to the same Podium agent.
+// staying bound to the same Podiom agent.
 func (c *Core) ComposeInstructionsForProvider(ctx context.Context, agent store.Agent, provider config.Provider) (InstructionPayload, error) {
 	switch provider {
 	case "claude":

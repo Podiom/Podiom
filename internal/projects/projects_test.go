@@ -65,7 +65,7 @@ func TestLedgerReadsLegacyRepoValues(t *testing.T) {
     path: legacy
     status: active
     stack: []
-    repo: https://github.com/mar-schmidt/Podium.git
+    repo: https://github.com/Podiom/Podiom.git
     roadmap: []
     notes: ""
   - id: object
@@ -96,7 +96,7 @@ func TestLedgerReadsLegacyRepoValues(t *testing.T) {
 	if list[0].Repo != nil {
 		t.Fatalf("empty repo should decode as nil: %+v", list[0].Repo)
 	}
-	if list[1].Repo == nil || list[1].Repo.FullName != "mar-schmidt/Podium" || list[1].Repo.SourceKind != "archive" {
+	if list[1].Repo == nil || list[1].Repo.FullName != "Podiom/Podiom" || list[1].Repo.SourceKind != "archive" {
 		t.Fatalf("legacy repo not normalized: %+v", list[1].Repo)
 	}
 	if list[2].Repo == nil || list[2].Repo.FullName != "openai/codex" {

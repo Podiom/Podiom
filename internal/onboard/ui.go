@@ -33,7 +33,7 @@ type ui struct {
 }
 
 func newUI(tty *os.File, out io.Writer, sane *term.State) *ui {
-	return &ui{tty: tty, out: out, sane: sane, theme: podiumTheme()}
+	return &ui{tty: tty, out: out, sane: sane, theme: podiomTheme()}
 }
 
 // interactive reports whether there's a usable terminal to render forms into.

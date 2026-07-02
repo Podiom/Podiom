@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumexec "github.com/mar-schmidt/Podium/internal/exec"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomexec "github.com/Podiom/Podiom/internal/exec"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 const defaultPermissionTimeout = 3 * time.Minute
@@ -27,7 +27,7 @@ const claudeStderrTailLimit = 16 * 1024
 
 // ClaudeOptions configures the Claude Code adapter.
 type ClaudeOptions struct {
-	Discovery         podiumexec.Discovery
+	Discovery         podiomexec.Discovery
 	DaemonAddr        string
 	PermissionTimeout time.Duration
 	MCPCommand        string
@@ -95,7 +95,7 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 		c.providerLog(req).Warn("provider turn setup failed", "stage", "args", "error", err)
 		return nil, err
 	}
-	cmd := podiumexec.Command(ctx, c.bin, args...)
+	cmd := podiomexec.Command(ctx, c.bin, args...)
 	cmd.Dir = req.Settings.WorkspaceDir
 	cmd.Env = c.env(req.Settings.ProfileDir)
 
@@ -126,7 +126,7 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 	}
 
 	if err := writeClaudeInput(stdin, req.Message, req.History, req.Handle.ID != ""); err != nil {
-		_ = podiumexec.Kill(cmd)
+		_ = podiomexec.Kill(cmd)
 		cleanup()
 		c.providerLog(req).Warn("provider stdin write failed", "stage", "write_input", "error", err)
 		return nil, err
@@ -152,34 +152,34 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 		track := <-trackc
 		stderrResult := <-stderrc
 		if ctx.Err() != nil {
-			c.providerLog(req).Info("provider process canceled", "event", "provider", "stage", "wait", podiumlog.DurationMS("duration_ms", time.Since(startedAt)))
+			c.providerLog(req).Info("provider process canceled", "event", "provider", "stage", "wait", podiomlog.DurationMS("duration_ms", time.Since(startedAt)))
 			return
 		}
 		if parseErr != nil {
-			c.providerLog(req).Warn("provider stream parse failed", "stage", "parse_stdout", "error", podiumlog.Redact(parseErr.Error()))
+			c.providerLog(req).Warn("provider stream parse failed", "stage", "parse_stdout", "error", podiomlog.Redact(parseErr.Error()))
 			sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude stream error: %v", parseErr)})
 			return
 		}
 		if stderrResult.err != nil {
-			c.providerLog(req).Warn("provider stderr read failed", "stage", "read_stderr", "error", stderrResult.err, "stderr_tail", podiumlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+			c.providerLog(req).Warn("provider stderr read failed", "stage", "read_stderr", "error", stderrResult.err, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
 			sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude stderr error: %v", stderrResult.err)})
 			return
 		}
 		if waitErr != nil {
 			if event, send := claudeWaitEvent(waitErr, stderrResult.text, track); send && event.Kind == EventRateLimited {
-				c.providerLog(req).Warn("provider rate limited", "stage", "wait", "rate_limited", true, "stderr_tail", podiumlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+				c.providerLog(req).Warn("provider rate limited", "stage", "wait", "rate_limited", true, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
 				sendAdapterEvent(ctx, out, event)
 				return
 			} else if !send {
-				c.providerLog(req).Warn("provider process exited after provider message", "event", "provider", "stage", "wait", "exit_error", waitErr, "provider_message", podiumlog.RedactTail(track.lastMessage, 4096), "stderr_tail", podiumlog.RedactTail(stderrResult.text, claudeStderrTailLimit), podiumlog.DurationMS("duration_ms", time.Since(startedAt)))
+				c.providerLog(req).Warn("provider process exited after provider message", "event", "provider", "stage", "wait", "exit_error", waitErr, "provider_message", podiomlog.RedactTail(track.lastMessage, 4096), "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit), podiomlog.DurationMS("duration_ms", time.Since(startedAt)))
 				return
 			} else {
-				c.providerLog(req).Warn("provider process exited with error", "stage", "wait", "exit_error", waitErr, "stderr_tail", podiumlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+				c.providerLog(req).Warn("provider process exited with error", "stage", "wait", "exit_error", waitErr, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
 				sendAdapterEvent(ctx, out, event)
 				return
 			}
 		}
-		c.providerLog(req).Info("provider process finished", "event", "provider", "stage", "wait", "status", "success", podiumlog.DurationMS("duration_ms", time.Since(startedAt)))
+		c.providerLog(req).Info("provider process finished", "event", "provider", "stage", "wait", "status", "success", podiomlog.DurationMS("duration_ms", time.Since(startedAt)))
 		sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 	}()
 	return out, nil
@@ -237,13 +237,13 @@ func (c *Claude) Teardown(ctx context.Context, handle Handle) error {
 }
 
 // Capabilities returns Claude Code's current effort values when the CLI exposes
-// them in help output, plus Podium's bundled model-alias fallback registry.
+// them in help output, plus Podiom's bundled model-alias fallback registry.
 func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
 	caps := capabilities.Fallback(config.ProviderClaude, req.Profile)
 	caps.Source = "claude-help+fallback"
 	helpCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := podiumexec.Command(helpCtx, c.bin, "--help")
+	cmd := podiomexec.Command(helpCtx, c.bin, "--help")
 	cmd.Env = c.env(req.ProfileDir)
 	raw, err := cmd.CombinedOutput()
 	if helpCtx.Err() != nil {
@@ -316,13 +316,13 @@ func (c *Claude) args(req TurnRequest) ([]string, func(), error) {
 	cleanup = func() { _ = os.Remove(configPath) }
 	args = append(args, "--mcp-config", configPath, "--strict-mcp-config")
 	if needsPermissionMCP {
-		args = append(args, "--permission-prompt-tool", "mcp__podium_permission__prompt")
+		args = append(args, "--permission-prompt-tool", "mcp__podiom_permission__prompt")
 	}
 	return args, cleanup, nil
 }
 
 func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
-	if err := os.MkdirAll(filepath.Join(req.Settings.WorkspaceDir, ".podium"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(req.Settings.WorkspaceDir, ".podiom"), 0o755); err != nil {
 		return "", fmt.Errorf("create claude mcp dir: %w", err)
 	}
 	turnID := req.Settings.PermissionTurnID
@@ -348,12 +348,12 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 			},
 		}
 	}
-	payload := podiummcp.ClaudeConfig(req.Settings.MCPServers, permission)
+	payload := podiommcp.ClaudeConfig(req.Settings.MCPServers, permission)
 	raw, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(req.Settings.WorkspaceDir, ".podium", fmt.Sprintf("claude-mcp-%s.json", sanitizeFilename(turnID)))
+	path := filepath.Join(req.Settings.WorkspaceDir, ".podiom", fmt.Sprintf("claude-mcp-%s.json", sanitizeFilename(turnID)))
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		return "", fmt.Errorf("write claude mcp config: %w", err)
 	}

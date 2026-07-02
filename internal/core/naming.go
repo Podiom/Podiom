@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 const namingTimeout = 45 * time.Second
@@ -53,7 +53,7 @@ func (c *Core) generateNameWithModel(ctx context.Context, sess store.Session, hi
 	events, err := c.adapter.SendTurn(ctx, adapter.TurnRequest{
 		SessionID: sess.ID + "-naming",
 		Handle:    adapter.Handle{Provider: sess.Provider},
-		Message: "Generate only compact JSON for the Podium session transcript below: " +
+		Message: "Generate only compact JSON for the Podiom session transcript below: " +
 			`{"name":"short title","description":"one sentence"}. ` +
 			"Use six words or fewer for name and 140 characters or fewer for description.\n\n" +
 			transcript(history),

@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/core"
-	"github.com/mar-schmidt/Podium/internal/store"
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/usage"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

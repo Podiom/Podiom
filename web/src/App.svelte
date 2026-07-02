@@ -174,8 +174,8 @@
   async function runUpdate() {
     if (!update) return;
     const warning = update.blocking_reason
-      ? `${update.blocking_reason}\n\nForce update anyway? This restarts podiumd and may interrupt active turns.`
-      : `Install ${update.latest_version}? This restarts podiumd and may interrupt active turns.`;
+      ? `${update.blocking_reason}\n\nForce update anyway? This restarts podiomd and may interrupt active turns.`
+      : `Install ${update.latest_version}? This restarts podiomd and may interrupt active turns.`;
     if (!window.confirm(warning)) return;
     updateState = "updating";
     updateError = null;
@@ -290,7 +290,7 @@
 
   const hireProfileOptions = $derived(profiles.filter((p) => p.Provider === hireProvider));
 
-  const daemonLabel = $derived(daemonStatus === "live" ? "podiumd live" : `podiumd ${daemonStatus}`);
+  const daemonLabel = $derived(daemonStatus === "live" ? "podiomd live" : `podiomd ${daemonStatus}`);
   const daemonAddr = $derived(health ? `${health.version} · ${health.commit}` : "127.0.0.1:8787");
   // Only surface the update box when there's actually something to act on.
   const showUpdateBox = $derived(
@@ -332,7 +332,7 @@
         </svg>
       </div>
       <div>
-        <div class="brand-name">Podium</div>
+        <div class="brand-name">Podiom</div>
         <div class="brand-tag mono">conductor</div>
       </div>
     </div>

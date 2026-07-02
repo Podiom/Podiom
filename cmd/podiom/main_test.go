@@ -61,14 +61,14 @@ func TestAgentsUpdateRejectsYesWithoutGenerateSoul(t *testing.T) {
 	}
 }
 
-func TestActiveLogPathUsesPodiumHome(t *testing.T) {
+func TestActiveLogPathUsesPodiomHome(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("PODIUM_HOME", home)
+	t.Setenv("PODIOM_HOME", home)
 	got, err := activeLogPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(home, "logs", "podiumd.log")
+	want := filepath.Join(home, "logs", "podiomd.log")
 	if got != want {
 		t.Fatalf("activeLogPath() = %q, want %q", got, want)
 	}

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/usage"
 )
 
 func TestFormatUsageTableOK(t *testing.T) {

@@ -1,6 +1,6 @@
 package store
 
-import "github.com/mar-schmidt/Podium/internal/config"
+import "github.com/Podiom/Podiom/internal/config"
 
 // SessionOrigin records where a session was created. It is provenance and is
 // immutable after creation.
@@ -30,7 +30,7 @@ const (
 	RoleAssistant MessageRole = "assistant"
 )
 
-// Agent is Podium's durable definition of a named colleague.
+// Agent is Podiom's durable definition of a named colleague.
 //
 // MCPConfig is treated as sensitive (it may embed server commands, local URLs,
 // tokens, or credentials) and is never serialized to clients or logs — the
@@ -50,7 +50,7 @@ type Agent struct {
 	UpdatedAt      string
 }
 
-// Session is Podium's durable conversation unit and current provider settings.
+// Session is Podiom's durable conversation unit and current provider settings.
 type Session struct {
 	ID             string
 	AgentName      string

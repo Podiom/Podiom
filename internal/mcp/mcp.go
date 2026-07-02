@@ -1,4 +1,4 @@
-// Package mcp owns Podium's canonical MCP catalogue and provider projections.
+// Package mcp owns Podiom's canonical MCP catalogue and provider projections.
 package mcp
 
 import (
@@ -22,7 +22,7 @@ import (
 type Source string
 
 const (
-	SourcePodium Source = "podium"
+	SourcePodiom Source = "podiom"
 	SourceClaude Source = "claude"
 	SourceCodex  Source = "codex"
 )
@@ -77,8 +77,8 @@ type rawYAMLServer struct {
 	AuthEnv   any       `yaml:"auth_env"`
 }
 
-// LoadCatalogue reads Podium's user catalogue and imports native definitions.
-// Native configs are read-only inputs; Podium never writes them.
+// LoadCatalogue reads Podiom's user catalogue and imports native definitions.
+// Native configs are read-only inputs; Podiom never writes them.
 func LoadCatalogue(path string) (Catalogue, error) {
 	var servers []Server
 	user, err := LoadUserFile(path)
@@ -120,7 +120,7 @@ func LoadUserFile(path string) ([]Server, error) {
 			Command:   strings.TrimSpace(r.Command),
 			Args:      cleanStrings(r.Args),
 			EnvVars:   cleanStrings(append(r.EnvVars, envVarsFromLegacy(r.AuthEnv)...)),
-			Sources:   []Source{SourcePodium},
+			Sources:   []Source{SourcePodiom},
 		}
 		if err := ValidateServer(s); err != nil {
 			return nil, err
@@ -133,7 +133,7 @@ func LoadUserFile(path string) ([]Server, error) {
 func SaveUserFile(path string, servers []Server) error {
 	var out []Server
 	for _, s := range servers {
-		if hasSource(s, SourcePodium) || len(s.Sources) == 0 {
+		if hasSource(s, SourcePodiom) || len(s.Sources) == 0 {
 			s.Sources = nil
 			s.EnvStatus = nil
 			s.CodexTablePath = ""
@@ -156,7 +156,7 @@ func SaveUserFile(path string, servers []Server) error {
 }
 
 func UpsertUserServer(path string, server Server) error {
-	server.Sources = []Source{SourcePodium}
+	server.Sources = []Source{SourcePodiom}
 	existing, err := LoadUserFile(path)
 	if err != nil {
 		return err
@@ -187,7 +187,7 @@ func RemoveUserServer(path, name string) error {
 		}
 	}
 	if len(kept) == len(existing) {
-		return fmt.Errorf("mcp server %q not found in podium catalogue", name)
+		return fmt.Errorf("mcp server %q not found in podiom catalogue", name)
 	}
 	return SaveUserFile(path, kept)
 }
@@ -324,7 +324,7 @@ func ClaudeConfig(servers []Server, permission map[string]any) map[string]any {
 		mcpServers[s.Name] = claudeServerConfig(s)
 	}
 	if permission != nil {
-		mcpServers["podium_permission"] = permission
+		mcpServers["podiom_permission"] = permission
 	}
 	return map[string]any{"mcpServers": mcpServers}
 }
@@ -360,7 +360,7 @@ func CodexProfile(assigned []Server, all []Server) (string, []string) {
 }
 
 func ProfileName(agent string) string {
-	return "podium-" + sanitizeName(agent)
+	return "podiom-" + sanitizeName(agent)
 }
 
 func ProfileHash(content string) string {
@@ -444,7 +444,7 @@ func dedupe(in []Server) []Server {
 			continue
 		}
 		if len(s.Sources) == 0 {
-			s.Sources = []Source{SourcePodium}
+			s.Sources = []Source{SourcePodiom}
 		}
 		byName[s.Name] = s
 		names = append(names, s.Name)
@@ -774,7 +774,7 @@ func mergeSources(a, b []Source) []Source {
 	for _, s := range b {
 		seen[s] = true
 	}
-	order := []Source{SourcePodium, SourceClaude, SourceCodex}
+	order := []Source{SourcePodiom, SourceClaude, SourceCodex}
 	var out []Source
 	for _, s := range order {
 		if seen[s] {

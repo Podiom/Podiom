@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" font-family="'Hanken Grotesk','Helvetica Neue',Arial,sans-serif" role="img" aria-label="Podium — Your AI agents, in concert.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" font-family="'Hanken Grotesk','Helvetica Neue',Arial,sans-serif" role="img" aria-label="Podiom — Your AI agents, in concert.">
   <defs>
     <linearGradient id="logo" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#46A08C"/>
@@ -44,7 +44,7 @@
     </svg>
 
     <!-- wordmark + taglines -->
-    <text x="600" y="262" text-anchor="middle" font-size="68" font-weight="800" letter-spacing="-2.7" fill="#241F1A">Podium</text>
+    <text x="600" y="262" text-anchor="middle" font-size="68" font-weight="800" letter-spacing="-2.7" fill="#241F1A">Podiom</text>
     <text x="600" y="300" text-anchor="middle" font-size="22" font-weight="600" fill="#2F6E60">Your AI agents, in concert.</text>
     <text x="600" y="330" text-anchor="middle" font-size="15" font-weight="500" letter-spacing="0.6" fill="#A8967F" font-family="'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace">local-first · open source · conduct, don't micromanage</text>
   </g>

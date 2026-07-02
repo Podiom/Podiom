@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // Fake is a deterministic in-memory adapter for tests and local core

@@ -66,7 +66,7 @@
 
   function handleEvent(event: LogStreamEvent) {
     if (event.type === "reopen") {
-      pushLine("[podium logs reopened]");
+      pushLine("[podiom logs reopened]");
       return;
     }
     if (event.line !== undefined) pushLine(event.line);
@@ -93,7 +93,7 @@
       {#if !embedded}
         <div class="logs-title">Logs</div>
       {/if}
-      <div class="logs-path mono">{path || "$PODIUM_HOME/logs/podiumd.log"}</div>
+      <div class="logs-path mono">{path || "$PODIOM_HOME/logs/podiomd.log"}</div>
     </div>
     <div class="logs-actions">
       <button class="log-btn" onclick={clear} disabled={lines.length === 0}>Clear</button>

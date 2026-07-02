@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // AllowListRelay resolves permission requests for unattended runs without a
@@ -65,7 +65,7 @@ type ScheduledRunRequest struct {
 }
 
 // RunScheduled creates a durable schedule-origin session (R7.9), runs the task
-// as one normal Podium turn with the unattended permission policy, and returns
+// as one normal Podiom turn with the unattended permission policy, and returns
 // the created session. A non-nil error means the turn itself failed.
 func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store.Session, error) {
 	permission := config.PermissionApprove

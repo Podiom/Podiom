@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mar-schmidt/Podium/internal/projects"
+	"github.com/Podiom/Podiom/internal/projects"
 )
 
 type projectAnalysisPayload struct {

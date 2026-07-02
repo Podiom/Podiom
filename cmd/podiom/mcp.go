@@ -6,8 +6,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/mar-schmidt/Podium/internal/client"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
+	"github.com/Podiom/Podiom/internal/client"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/spf13/cobra"
 )
 
@@ -64,7 +64,7 @@ func newMCPShowCmd(addr *string) *cobra.Command {
 				return err
 			}
 			name := args[0]
-			var server *podiummcp.Server
+			var server *podiommcp.Server
 			for i := range snapshot.Servers {
 				if snapshot.Servers[i].Name == name {
 					server = &snapshot.Servers[i]
@@ -74,7 +74,7 @@ func newMCPShowCmd(addr *string) *cobra.Command {
 			if server == nil {
 				return fmt.Errorf("no mcp server named %q", name)
 			}
-			fmt.Printf("%s\n", podiummcp.PrettyYAML(*server))
+			fmt.Printf("%s\n", podiommcp.PrettyYAML(*server))
 			fmt.Printf("\nsources: %s\n", sourceList(server.Sources))
 			fmt.Printf("env:     %s\n", envList(server.EnvStatus))
 			var assigned []string
@@ -98,12 +98,12 @@ func newMCPAddCmd(addr *string) *cobra.Command {
 	var args, envs []string
 	cmd := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Add or replace a Podium-owned MCP server",
+		Short: "Add or replace a Podiom-owned MCP server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, pos []string) error {
-			server := podiummcp.Server{
+			server := podiommcp.Server{
 				Name:      pos[0],
-				Transport: podiummcp.Transport(transport),
+				Transport: podiommcp.Transport(transport),
 				URL:       url,
 				Command:   command,
 				Args:      args,
@@ -132,7 +132,7 @@ func newMCPAddCmd(addr *string) *cobra.Command {
 func newMCPRemoveCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <name>",
-		Short: "Remove a Podium-owned MCP server",
+		Short: "Remove a Podiom-owned MCP server",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := mcpClient(addr)
@@ -200,7 +200,7 @@ func newMCPCheckCmd(addr *string) *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unknown agent %q", args[0])
 			}
-			checks := podiummcp.Checks(podiummcp.Catalogue{Servers: snapshot.Servers}, assigned)
+			checks := podiommcp.Checks(podiommcp.Catalogue{Servers: snapshot.Servers}, assigned)
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "SERVER\tCLAUDE\tCODEX\tNOTE")
 			for _, ch := range checks {
@@ -222,7 +222,7 @@ func mcpClient(addr *string) (*client.Client, error) {
 	return client.New(resolved), nil
 }
 
-func sourceList(sources []podiummcp.Source) string {
+func sourceList(sources []podiommcp.Source) string {
 	parts := make([]string, 0, len(sources))
 	for _, s := range sources {
 		parts = append(parts, string(s))
@@ -230,7 +230,7 @@ func sourceList(sources []podiummcp.Source) string {
 	return strings.Join(parts, ",")
 }
 
-func envList(envs []podiummcp.EnvStatus) string {
+func envList(envs []podiommcp.EnvStatus) string {
 	if len(envs) == 0 {
 		return "-"
 	}

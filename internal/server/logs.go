@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 const (
@@ -22,13 +22,13 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "logs are only available from loopback clients", http.StatusForbidden)
 		return
 	}
-	path := podiumlog.Path(s.paths.LogsDir)
-	lines, err := podiumlog.Tail(path, logLines(r, defaultLogLines, false))
+	path := podiomlog.Path(s.paths.LogsDir)
+	lines, err := podiomlog.Tail(path, logLines(r, defaultLogLines, false))
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
-	writeJSON(w, podiumlog.Snapshot{Path: path, Lines: lines}, nil)
+	writeJSON(w, podiomlog.Snapshot{Path: path, Lines: lines}, nil)
 }
 
 func (s *Server) handleLogsFollow(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,7 @@ func (s *Server) handleLogsFollow(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
-	for event := range podiumlog.Follow(r.Context(), podiumlog.Path(s.paths.LogsDir), logLines(r, 100, true), 0) {
+	for event := range podiomlog.Follow(r.Context(), podiomlog.Path(s.paths.LogsDir), logLines(r, 100, true), 0) {
 		if err := enc.Encode(event); err != nil {
 			return
 		}

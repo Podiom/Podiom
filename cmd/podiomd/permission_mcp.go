@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mar-schmidt/Podium/internal/adapter"
+	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +28,7 @@ func newPermissionMCPCmd() *cobra.Command {
 			return runPermissionMCP(cmd.Context(), addr, turnID, timeout, os.Stdin, os.Stdout)
 		},
 	}
-	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8787", "podiumd API address")
+	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8787", "podiomd API address")
 	cmd.Flags().StringVar(&turnID, "turn", "", "permission relay turn ID")
 	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Minute, "permission request timeout")
 	return cmd
@@ -85,7 +85,7 @@ func handleMCPRequest(ctx context.Context, addr, turnID string, timeout time.Dur
 				"capabilities": map[string]any{
 					"tools": map[string]any{},
 				},
-				"serverInfo": map[string]string{"name": "podium-permission", "version": "0"},
+				"serverInfo": map[string]string{"name": "podiom-permission", "version": "0"},
 			},
 		}
 	case "tools/list":
@@ -95,7 +95,7 @@ func handleMCPRequest(ctx context.Context, addr, turnID string, timeout time.Dur
 			Result: map[string]any{
 				"tools": []map[string]any{{
 					"name":        "prompt",
-					"description": "Ask Podium whether Claude may run a requested tool action.",
+					"description": "Ask Podiom whether Claude may run a requested tool action.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -172,7 +172,7 @@ func forwardPermission(ctx context.Context, addr, turnID string, timeout time.Du
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return adapter.PermissionDecision{Behavior: "deny"}, fmt.Errorf("podium permission API status %d", resp.StatusCode)
+		return adapter.PermissionDecision{Behavior: "deny"}, fmt.Errorf("podiom permission API status %d", resp.StatusCode)
 	}
 	var decision adapter.PermissionDecision
 	if err := json.NewDecoder(resp.Body).Decode(&decision); err != nil {

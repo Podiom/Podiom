@@ -1,4 +1,4 @@
-// Typed REST helpers for the Podium daemon. The chat stream uses the WebSocket
+// Typed REST helpers for the Podiom daemon. The chat stream uses the WebSocket
 // (see Chat.svelte); everything else is plain JSON over these helpers.
 
 import type {

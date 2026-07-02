@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/notify"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/notify"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 var errActiveTurnExists = errors.New("session already has an active turn")

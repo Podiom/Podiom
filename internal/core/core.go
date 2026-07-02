@@ -1,4 +1,4 @@
-// Package core owns Podium's provider-independent domain behavior: durable
+// Package core owns Podiom's provider-independent domain behavior: durable
 // agents, sessions, history append, and instruction composition.
 package core
 
@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 var safeAgentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)

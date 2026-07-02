@@ -1,6 +1,6 @@
-// Package github provides Podium's local GitHub App user-auth flow and archive
+// Package github provides Podiom's local GitHub App user-auth flow and archive
 // snapshot download support. It intentionally does not use app private keys or
-// client secrets because Podium is distributed as a local app.
+// client secrets because Podiom is distributed as a local app.
 package github
 
 import (
@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/projects"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/projects"
 )
 
 var ErrConfirmationRequired = errors.New("project directory has existing files; confirmation required")
@@ -81,23 +81,23 @@ func (s *Service) Status(ctx context.Context) Status {
 	}
 	if !st.Configured {
 		st.Message = "GitHub is not configured. Add github.app_slug and github.client_id to config.yaml."
-		s.log.Info("github status checked", "event", "github", "configured", false, "authed", false, podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Info("github status checked", "event", "github", "configured", false, "authed", false, podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return st
 	}
 	token, err := s.loadToken()
 	if err != nil || token.AccessToken == "" {
 		st.Message = "GitHub is not connected."
-		s.log.Info("github status checked", "event", "github", "configured", true, "authed", false, "reason", "missing_token", podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Info("github status checked", "event", "github", "configured", true, "authed", false, "reason", "missing_token", podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return st
 	}
 	if err := s.checkToken(ctx, token.AccessToken); err != nil {
 		st.Message = "GitHub token is unavailable or expired. Reconnect GitHub."
-		s.log.Warn("github status checked", "event", "github", "configured", true, "authed", false, "reason", "token_check_failed", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("github status checked", "event", "github", "configured", true, "authed", false, "reason", "token_check_failed", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return st
 	}
 	st.Authed = true
 	st.Message = "GitHub is connected."
-	s.log.Info("github status checked", "event", "github", "configured", true, "authed", true, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("github status checked", "event", "github", "configured", true, "authed", true, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return st
 }
 
@@ -118,10 +118,10 @@ func (s *Service) StartDevice(ctx context.Context) (DeviceStart, error) {
 	form := url.Values{"client_id": {s.cfg.ClientID}}
 	var out DeviceStart
 	if err := s.postForm(ctx, s.cfg.LoginBase+"/device/code", form, "", &out); err != nil {
-		s.log.Warn("github device flow failed", "event", "github", "stage", "start_device", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("github device flow failed", "event", "github", "stage", "start_device", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return DeviceStart{}, err
 	}
-	s.log.Info("github device flow started", "event", "github", "expires_in", out.ExpiresIn, "interval", out.Interval, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("github device flow started", "event", "github", "expires_in", out.ExpiresIn, "interval", out.Interval, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return out, nil
 }
 
@@ -152,15 +152,15 @@ func (s *Service) PollDevice(ctx context.Context, deviceCode string) (DevicePoll
 		ExpiresIn    int    `json:"expires_in"`
 	}
 	if err := s.postForm(ctx, s.cfg.LoginBase+"/oauth/access_token", form, "", &raw); err != nil {
-		s.log.Warn("github device poll failed", "event", "github", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("github device poll failed", "event", "github", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return DevicePollResult{}, err
 	}
 	if raw.Error != "" {
-		s.log.Info("github device poll result", "event", "github", "status", raw.Error, podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Info("github device poll result", "event", "github", "status", raw.Error, podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return DevicePollResult{Status: raw.Error, Error: raw.ErrorDesc}, nil
 	}
 	if raw.AccessToken == "" {
-		s.log.Info("github device poll result", "event", "github", "status", "authorization_pending", podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Info("github device poll result", "event", "github", "status", "authorization_pending", podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return DevicePollResult{Status: "authorization_pending"}, nil
 	}
 	if err := s.saveToken(tokenFile{
@@ -171,10 +171,10 @@ func (s *Service) PollDevice(ctx context.Context, deviceCode string) (DevicePoll
 		ExpiresAt:    expiresAt(raw.ExpiresIn),
 		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
-		s.log.Warn("github device poll failed", "event", "github", "stage", "save_token", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("github device poll failed", "event", "github", "stage", "save_token", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return DevicePollResult{}, err
 	}
-	s.log.Info("github device poll result", "event", "github", "status", "authorized", podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("github device poll result", "event", "github", "status", "authorized", podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return DevicePollResult{Status: "authorized", AccessToken: raw.AccessToken}, nil
 }
 
@@ -194,7 +194,7 @@ func (s *Service) ListRepos(ctx context.Context) ([]Repo, error) {
 	s.log.Info("github repos listing started", "event", "github")
 	token, err := s.requireToken()
 	if err != nil {
-		s.log.Warn("github repos listing failed", "event", "github", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("github repos listing failed", "event", "github", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return nil, err
 	}
 	var installations struct {
@@ -203,7 +203,7 @@ func (s *Service) ListRepos(ctx context.Context) ([]Repo, error) {
 		} `json:"installations"`
 	}
 	if err := s.getJSON(ctx, s.cfg.APIBase+"/user/installations", token.AccessToken, &installations); err != nil {
-		s.log.Warn("github repos listing failed", "event", "github", "stage", "installations", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		s.log.Warn("github repos listing failed", "event", "github", "stage", "installations", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return nil, err
 	}
 	var repos []Repo
@@ -224,7 +224,7 @@ func (s *Service) ListRepos(ctx context.Context) ([]Repo, error) {
 		}
 		u := fmt.Sprintf("%s/user/installations/%d/repositories?per_page=100", s.cfg.APIBase, inst.ID)
 		if err := s.getJSON(ctx, u, token.AccessToken, &page); err != nil {
-			s.log.Warn("github repos listing failed", "event", "github", "stage", "installation_repos", "installation", inst.ID, podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+			s.log.Warn("github repos listing failed", "event", "github", "stage", "installation_repos", "installation", inst.ID, podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 			return nil, err
 		}
 		for _, r := range page.Repositories {
@@ -240,7 +240,7 @@ func (s *Service) ListRepos(ctx context.Context) ([]Repo, error) {
 			})
 		}
 	}
-	s.log.Info("github repos listing finished", "event", "github", "installations", len(installations.Installations), "repos", len(repos), podiumlog.DurationMS("duration_ms", time.Since(started)))
+	s.log.Info("github repos listing finished", "event", "github", "installations", len(installations.Installations), "repos", len(repos), podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return repos, nil
 }
 
@@ -269,7 +269,7 @@ func (s *Service) SyncProject(ctx context.Context, req SyncRequest) (SyncResult,
 	log.Info("github project sync requested")
 	token, err := s.requireToken()
 	if err != nil {
-		log.Warn("github project sync failed", "stage", "require_token", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "require_token", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	repo := req.Repo
@@ -277,53 +277,53 @@ func (s *Service) SyncProject(ctx context.Context, req SyncRequest) (SyncResult,
 	projectRoot := filepath.Join(s.home, "projects", req.Project.Path)
 	repoRoot := projectRepoRoot(projectRoot)
 	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
-		log.Warn("github project sync failed", "stage", "create_project_dir", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "create_project_dir", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, fmt.Errorf("create project dir: %w", err)
 	}
 	if err := migrateLegacyRootSnapshot(projectRoot); err != nil {
-		log.Warn("github project sync failed", "stage", "migrate_legacy_snapshot", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "migrate_legacy_snapshot", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
-		log.Warn("github project sync failed", "stage", "create_repo_dir", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "create_repo_dir", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, fmt.Errorf("create repo dir: %w", err)
 	}
 	if !req.Force && needsConfirmation(projectRoot, repoRoot) {
-		log.Info("github project sync confirmation required", podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Info("github project sync confirmation required", podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, ErrConfirmationRequired
 	}
 	sha, err := s.commitSHA(ctx, token.AccessToken, repo.Owner, repo.Name, ref)
 	if err != nil {
-		log.Warn("github commit sha lookup failed", "stage", "commit_sha", podiumlog.ErrorAttr(err))
+		log.Warn("github commit sha lookup failed", "stage", "commit_sha", podiomlog.ErrorAttr(err))
 	} else {
 		log.Info("github commit sha lookup finished", "stage", "commit_sha", "sha_set", sha != "")
 	}
 	log.Info("github archive download started", "stage", "download_archive")
 	archive, err := s.downloadArchive(ctx, token.AccessToken, repo.Owner, repo.Name, ref)
 	if err != nil {
-		log.Warn("github project sync failed", "stage", "download_archive", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "download_archive", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	log.Info("github archive download finished", "stage", "download_archive", "bytes", len(archive))
-	tmp, err := os.MkdirTemp(projectRoot, ".podium-snapshot-*")
+	tmp, err := os.MkdirTemp(projectRoot, ".podiom-snapshot-*")
 	if err != nil {
-		log.Warn("github project sync failed", "stage", "create_staging", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "create_staging", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, fmt.Errorf("create snapshot staging: %w", err)
 	}
 	defer os.RemoveAll(tmp)
 	stage := filepath.Join(tmp, "contents")
 	if err := os.MkdirAll(stage, 0o755); err != nil {
-		log.Warn("github project sync failed", "stage", "create_stage_contents", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "create_stage_contents", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	log.Info("github archive extraction started", "stage", "extract_archive")
 	if err := extractZipSnapshot(bytes.NewReader(archive), int64(len(archive)), stage); err != nil {
-		log.Warn("github project sync failed", "stage", "extract_archive", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "extract_archive", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	log.Info("github archive extraction finished", "stage", "extract_archive")
-	if err := replaceProjectContents(repoRoot, stage, filepath.Join(projectRoot, ".podium-backups")); err != nil {
-		log.Warn("github project sync failed", "stage", "replace_project_contents", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+	if err := replaceProjectContents(repoRoot, stage, filepath.Join(projectRoot, ".podiom-backups")); err != nil {
+		log.Warn("github project sync failed", "stage", "replace_project_contents", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	log.Info("github project contents replaced", "stage", "replace_project_contents")
@@ -335,11 +335,11 @@ func (s *Service) SyncProject(ctx context.Context, req SyncRequest) (SyncResult,
 		repo.Ref = ref
 	}
 	if err := writeManifest(projectRoot, repo, sha); err != nil {
-		log.Warn("github project sync failed", "stage", "write_manifest", podiumlog.ErrorAttr(err), podiumlog.DurationMS("duration_ms", time.Since(started)))
+		log.Warn("github project sync failed", "stage", "write_manifest", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return SyncResult{}, err
 	}
 	log.Info("github project manifest written", "stage", "write_manifest", "sha_set", sha != "")
-	log.Info("github project sync finished", "status", "success", podiumlog.DurationMS("duration_ms", time.Since(started)))
+	log.Info("github project sync finished", "status", "success", podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return SyncResult{Repo: repo, Path: repoRoot}, nil
 }
 
@@ -555,7 +555,7 @@ func projectRepoRoot(projectRoot string) string {
 }
 
 func needsConfirmation(projectRoot, repoRoot string) bool {
-	if _, err := os.Stat(filepath.Join(projectRoot, ".podium-source.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(projectRoot, ".podiom-source.json")); err == nil {
 		return false
 	}
 	entries, err := os.ReadDir(repoRoot)
@@ -569,7 +569,7 @@ func needsConfirmation(projectRoot, repoRoot string) bool {
 }
 
 func migrateLegacyRootSnapshot(projectRoot string) error {
-	if _, err := os.Stat(filepath.Join(projectRoot, ".podium-source.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(projectRoot, ".podiom-source.json")); err != nil {
 		return nil
 	}
 	repoRoot := projectRepoRoot(projectRoot)
@@ -583,10 +583,10 @@ func migrateLegacyRootSnapshot(projectRoot string) error {
 	var legacy []os.DirEntry
 	for _, entry := range entries {
 		switch entry.Name() {
-		case ".podium-source.json", ".podium-backups", "repo":
+		case ".podiom-source.json", ".podiom-backups", "repo":
 			continue
 		}
-		if strings.HasPrefix(entry.Name(), ".podium-snapshot-") {
+		if strings.HasPrefix(entry.Name(), ".podiom-snapshot-") {
 			continue
 		}
 		legacy = append(legacy, entry)
@@ -594,7 +594,7 @@ func migrateLegacyRootSnapshot(projectRoot string) error {
 	if len(legacy) == 0 {
 		return nil
 	}
-	backup := filepath.Join(projectRoot, ".podium-backups", time.Now().UTC().Format("20060102T150405Z"), "legacy-root")
+	backup := filepath.Join(projectRoot, ".podiom-backups", time.Now().UTC().Format("20060102T150405Z"), "legacy-root")
 	if err := os.MkdirAll(backup, 0o755); err != nil {
 		return err
 	}
@@ -615,7 +615,7 @@ func replaceProjectContents(root, stage, backupRoot string) error {
 		stamp := time.Now().UTC().Format("20060102T150405Z")
 		backup := filepath.Join(backupRoot, stamp)
 		for _, entry := range entries {
-			if entry.Name() == ".podium-backups" {
+			if entry.Name() == ".podiom-backups" {
 				continue
 			}
 			if err := os.MkdirAll(backup, 0o755); err != nil {
@@ -653,7 +653,7 @@ func writeManifest(root string, repo projects.Repo, sha string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, ".podium-source.json"), raw, 0o644)
+	return os.WriteFile(filepath.Join(root, ".podiom-source.json"), raw, 0o644)
 }
 
 func firstNonEmpty(values ...string) string {

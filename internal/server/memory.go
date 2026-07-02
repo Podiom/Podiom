@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/mar-schmidt/Podium/internal/core"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // memoryInfo is the view of an agent's memory returned to the UI/CLI. The memory

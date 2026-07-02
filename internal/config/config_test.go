@@ -223,10 +223,10 @@ func TestResolveHomeUsesEnvOverride(t *testing.T) {
 	}
 }
 
-// A relative PODIUM_HOME must be anchored to an absolute path at resolution
+// A relative PODIOM_HOME must be anchored to an absolute path at resolution
 // time so a daemon launched from any cwd resolves the same root (R10.2).
 func TestResolveHomeMakesRelativeOverrideAbsolute(t *testing.T) {
-	t.Setenv(EnvHome, "podium-data")
+	t.Setenv(EnvHome, "podiom-data")
 	got, err := ResolveHome()
 	if err != nil {
 		t.Fatal(err)

@@ -221,7 +221,7 @@
   <header class="page-head" style="max-width:820px">
     <div>
       <h1>Schedules</h1>
-      <p>Each job is a markdown file under <span class="mono" style="color:#8A7560">~/.podium/schedules</span> — frontmatter sets the engine, the body is the prompt. Every run spawns a durable session.</p>
+      <p>Each job is a markdown file under <span class="mono" style="color:#8A7560">~/.podiom/schedules</span> — frontmatter sets the engine, the body is the prompt. Every run spawns a durable session.</p>
     </div>
     <span class="spacer"></span>
     <button class="head-cta" onclick={openNew}>+ New schedule</button>
@@ -287,7 +287,7 @@
       </article>
     {/each}
     {#if schedules.length === 0}
-      <p class="empty-note">No schedules. Drop a <span class="mono">*.md</span> file in <span class="mono">~/.podium/schedules/</span>.</p>
+      <p class="empty-note">No schedules. Drop a <span class="mono">*.md</span> file in <span class="mono">~/.podiom/schedules/</span>.</p>
     {/if}
   </div>
 </div>
@@ -297,7 +297,7 @@
     <div class="modal-card ns-modal" role="dialog" aria-modal="true" aria-label="New schedule" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <div class="modal-head">
         <div class="modal-title">New schedule</div>
-        <div class="modal-sub">Creates a markdown file under <span class="mono">~/.podium/schedules</span>. The frontmatter sets the engine; the body is the prompt the agent runs on each tick.</div>
+        <div class="modal-sub">Creates a markdown file under <span class="mono">~/.podiom/schedules</span>. The frontmatter sets the engine; the body is the prompt the agent runs on each tick.</div>
       </div>
       <div class="modal-body" style="max-height:76vh;overflow-y:auto">
         {#if error}<div class="error-banner" style="margin-bottom:14px">{error}</div>{/if}
@@ -344,7 +344,7 @@
 
         <div style="display:flex;align-items:center;gap:8px;margin:18px 0 7px">
           <span class="label-mono" style="flex:1">file preview</span>
-          <span class="mono" style="font-size:11px;color:#8A7560">~/.podium/schedules/{nsSlug}.md</span>
+          <span class="mono" style="font-size:11px;color:#8A7560">~/.podiom/schedules/{nsSlug}.md</span>
         </div>
         <pre class="ns-preview mono">{nsPreview}</pre>
 

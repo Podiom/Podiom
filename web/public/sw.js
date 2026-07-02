@@ -1,4 +1,4 @@
-// Podium service worker: renders OS-level Web Push notifications for
+// Podiom service worker: renders OS-level Web Push notifications for
 // attention-required agent events, and routes taps back to the right session.
 //
 // De-dup rule: if a dashboard window is currently visible, the in-app toast
@@ -38,9 +38,9 @@ async function handlePush(event) {
     ? [{ action: "approve", title: "Approve" }]
     : [];
 
-  await self.registration.showNotification(data.title || "Podium", {
+  await self.registration.showNotification(data.title || "Podiom", {
     body: data.body || "",
-    tag: data.session_id || "podium",
+    tag: data.session_id || "podiom",
     renotify: true,
     icon: "/favicon.svg",
     badge: "/favicon.svg",

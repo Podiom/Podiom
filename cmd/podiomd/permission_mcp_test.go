@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
+	"github.com/Podiom/Podiom/internal/adapter"
 )
 
 func TestForwardPermissionExtractsDescription(t *testing.T) {

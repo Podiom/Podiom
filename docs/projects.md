@@ -7,9 +7,9 @@ modelling how a real team collaborates on the same codebase, book, or initiative
 They are not owned by any one agent: every agent can read and work on every
 project.
 
-- Each project is a subdirectory under `~/.podium/projects/` plus an entry in the
-  single shared ledger `~/.podium/projects/projects.yaml` (R5.10).
-- Agents are instructed (via the Podium-owned base `AGENTS.md`) to work **with and
+- Each project is a subdirectory under `~/.podiom/projects/` plus an entry in the
+  single shared ledger `~/.podiom/projects/projects.yaml` (R5.10).
+- Agents are instructed (via the Podiom-owned base `AGENTS.md`) to work **with and
   against** the ledger — create a project dir and record/update its entry whenever
   they create or maintain something durable (R5.11).
 - Because agents maintain the file directly, the ledger is the source of truth and
@@ -22,7 +22,7 @@ projects:
   - id: mission-control
     name: Mission Control
     description: Next.js dashboard UI.
-    path: mission-control        # relative to ~/.podium/projects/
+    path: mission-control        # relative to ~/.podiom/projects/
     status: active               # active | paused | done
     stack: [Next.js, TypeScript]
     repo: null
@@ -31,17 +31,17 @@ projects:
       Anything the next agent needs to know.
 ```
 
-`repo` is optional. When connected through the Projects page, Podium stores a
+`repo` is optional. When connected through the Projects page, Podiom stores a
 GitHub snapshot link instead of requiring `git`:
 
 ```yaml
 repo:
   provider: github
   mode: snapshot
-  owner: mar-schmidt
-  name: Podium
-  full_name: mar-schmidt/Podium
-  html_url: https://github.com/mar-schmidt/Podium
+  owner: Podiom
+  name: Podiom
+  full_name: Podiom/Podiom
+  html_url: https://github.com/Podiom/Podiom
   default_branch: main
   ref: main
   synced_at: "2026-07-01T12:00:00Z"
@@ -49,39 +49,39 @@ repo:
 ```
 
 Connecting a repo downloads a GitHub archive snapshot into the project's
-`repo/` directory (`~/.podium/projects/<project>/repo/`) and writes
-`.podium-source.json` in the project directory (`~/.podium/projects/<project>/`).
+`repo/` directory (`~/.podiom/projects/<project>/repo/`) and writes
+`.podiom-source.json` in the project directory (`~/.podiom/projects/<project>/`).
 This is source context for agents, not a Git checkout: there is no `.git`, no
 remote, and no push/write-back path in v1.
 
 ### Connecting GitHub
 
-Podium uses the official public GitHub App and GitHub's device authorization
+Podiom uses the official public GitHub App and GitHub's device authorization
 flow. The app is already configured by default; users do not create their own
 GitHub App.
 
 The web flow is:
 
-1. Authorize Podium with your GitHub account.
-2. Choose which repositories the Podium GitHub App may read.
+1. Authorize Podiom with your GitHub account.
+2. Choose which repositories the Podiom GitHub App may read.
 3. Pick one repository for the project.
 
-Podium downloads the selected ref as a source snapshot. Re-syncing replaces the
+Podiom downloads the selected ref as a source snapshot. Re-syncing replaces the
 snapshot contents after staging and path validation, preserving previous contents
-under `.podium-backups/` when a backup is needed.
+under `.podiom-backups/` when a backup is needed.
 
 Create and browse projects from the **Projects** page in the web UI, or list them
-with `podium projects list`.
+with `podiom projects list`.
 
 ## Roadmap (tasks)
 
 The **Roadmap** is a kanban board of **tasks** — units of work on a project,
-assignable to an agent and startable on demand. Tasks are a Podium-managed entity
+assignable to an agent and startable on demand. Tasks are a Podiom-managed entity
 (persisted in SQLite) and are **independent** in v1: there are no inter-task
 dependencies (within the §2 out-of-scope line).
 
 Each project's `roadmap` array in `projects.yaml` is a derived list of task IDs
-for that project. Task details live in SQLite and are expanded by Podium when
+for that project. Task details live in SQLite and are expanded by Podiom when
 drafting roadmap prompts.
 
 A task has: a project, a title and optional body, an assigned agent, a status
@@ -106,7 +106,7 @@ pickup time.
   twice. Pickup times are interpreted as UTC.
 
 Drag cards between columns to change status, assign an agent from the card, and
-add tasks with **+ New task**. Observe tasks with `podium tasks list`.
+add tasks with **+ New task**. Observe tasks with `podiom tasks list`.
 
 ## HTTP API
 

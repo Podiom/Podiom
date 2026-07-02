@@ -1,5 +1,5 @@
-// Package schedule is Podium's embedded scheduler. A schedule is a single
-// self-describing markdown file under ~/.podium/schedules/<name>.md: YAML
+// Package schedule is Podiom's embedded scheduler. A schedule is a single
+// self-describing markdown file under ~/.podiom/schedules/<name>.md: YAML
 // frontmatter declares the job, the markdown body is the task the named agent is
 // prompted with (R7.2 / D23). The files are the source of truth — there is no
 // schedules block in config.yaml.

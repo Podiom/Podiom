@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/store"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 	"gopkg.in/yaml.v3"
 )
 
@@ -103,7 +103,7 @@ func (c *Core) UpdateProject(ctx context.Context, id string, patch projects.Proj
 	c.log.Info("project updated",
 		"event", "project",
 		"project", project.ID,
-		"changed", podiumlog.ChangedFields(projectLogFields(before), projectLogFields(project)),
+		"changed", podiomlog.ChangedFields(projectLogFields(before), projectLogFields(project)),
 		"repo_set", project.Repo != nil,
 		"stack_count", len(project.Stack),
 	)
@@ -134,7 +134,7 @@ func (c *Core) DescribeProject(ctx context.Context, id, agentName string) (strin
 	if strings.TrimSpace(proj.Description) != "" {
 		draft = "Current draft to improve: \"" + proj.Description + "\"."
 	}
-	prompt := "You are helping write a short description for a project tracked in Podium, an AI-agent orchestration tool. " +
+	prompt := "You are helping write a short description for a project tracked in Podiom, an AI-agent orchestration tool. " +
 		"The project can be software, writing, planning, research, physical work, or any other user effort. " +
 		"The project is titled \"" + title + "\". " + draft + " " +
 		"Write a single polished sentence (max 18 words), concrete and free of marketing fluff. " +
@@ -195,8 +195,8 @@ func (c *Core) DescribeTask(ctx context.Context, req DescribeTaskRequest) (strin
 	if strings.TrimSpace(task.Body) != "" {
 		draft = "Current draft to improve:\n\"\"\"\n" + task.Body + "\n\"\"\""
 	}
-	prompt := "You are helping write runnable instructions for a roadmap task in Podium, an AI-agent orchestration tool.\n\n" +
-		"Podium project details are tracked in the configured project ledger, projects.yaml under the Podium data directory. " +
+	prompt := "You are helping write runnable instructions for a roadmap task in Podiom, an AI-agent orchestration tool.\n\n" +
+		"Podiom project details are tracked in the configured project ledger, projects.yaml under the Podiom data directory. " +
 		"The relevant project context is embedded below; use it as source-of-truth context and do not invent project facts. " +
 		"Do not ask the user or agent to inspect local files to discover this context.\n\n" +
 		"Project context:\n" + projectContext + "\n\n" +
@@ -283,7 +283,7 @@ func (c *Core) UpdateTask(ctx context.Context, task store.Task) (store.Task, err
 		"project", updated.ProjectID,
 		"agent", updated.AssignedAgent,
 		"status", string(updated.Status),
-		"changed", podiumlog.ChangedFields(taskLogFields(existing), taskLogFields(updated)),
+		"changed", podiomlog.ChangedFields(taskLogFields(existing), taskLogFields(updated)),
 	)
 	return updated, nil
 }
@@ -793,7 +793,7 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 	if err != nil {
 		return projectExecutionContext{}, err
 	}
-	prompt := "Podium project context for this session:\n" +
+	prompt := "Podiom project context for this session:\n" +
 		strings.TrimSpace(string(raw)) + "\n\n" +
 		"The connected GitHub repository has been downloaded as a local source snapshot at " + root + ". " +
 		"You may inspect files there for project facts. It is not a Git checkout: do not assume .git, branches, commits, pushes, or PR operations are available."

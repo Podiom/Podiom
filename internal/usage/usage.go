@@ -1,6 +1,6 @@
 // Package usage measures provider plan-limit utilization (Claude & Codex) per
 // auth profile. It reads provider credential files read-only and fetches the
-// provider's OAuth usage API; Podium never writes or logs tokens. Snapshots are
+// provider's OAuth usage API; Podiom never writes or logs tokens. Snapshots are
 // provider-owned, cheap to re-fetch, and go stale server-side immediately, so
 // they live in an in-memory cache (see tracker.go) rather than any store.
 package usage
@@ -8,7 +8,7 @@ package usage
 import (
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // Status is the coarse outcome of a usage fetch for one profile. It drives what
@@ -21,7 +21,7 @@ const (
 	// StatusNoCredentials means the profile's credential file is absent.
 	StatusNoCredentials Status = "no_credentials"
 	// StatusStaleCredentials means the token expired; the next provider run
-	// (which Podium performs constantly) refreshes it. Podium never refreshes.
+	// (which Podiom performs constantly) refreshes it. Podiom never refreshes.
 	StatusStaleCredentials Status = "stale_credentials"
 	// StatusUnauthorized means the provider returned 401 — re-auth needed.
 	StatusUnauthorized Status = "unauthorized"

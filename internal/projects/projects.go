@@ -1,6 +1,6 @@
-// Package projects manages Podium's shared, system-level project ledger
+// Package projects manages Podiom's shared, system-level project ledger
 // (§5.3 / D22): a single `projects.yaml` plus one subdirectory per project under
-// ~/.podium/projects/. Projects are agent-independent — any agent can read and
+// ~/.podiom/projects/. Projects are agent-independent — any agent can read and
 // work on any project. Agents also maintain this file directly, so the ledger is
 // the source of truth and v1 accepts last-write-wins (R5.12).
 package projects
@@ -34,7 +34,7 @@ type Project struct {
 	Notes       string   `yaml:"notes" json:"notes"`
 }
 
-// Repo describes an optional external source linked to a Podium project. v1
+// Repo describes an optional external source linked to a Podiom project. v1
 // supports GitHub archive snapshots extracted into the project's repo directory.
 type Repo struct {
 	Provider      string `yaml:"provider" json:"provider"`
@@ -68,7 +68,7 @@ type ledgerFile struct {
 	Projects []Project `yaml:"projects"`
 }
 
-// Ledger reads and writes the shared projects.yaml. It serializes Podium's own
+// Ledger reads and writes the shared projects.yaml. It serializes Podiom's own
 // writes with a mutex; cross-process writes by agents remain last-write-wins.
 type Ledger struct {
 	dir  string // the projects directory (holds projects.yaml + project dirs)

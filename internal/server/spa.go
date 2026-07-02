@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mar-schmidt/Podium/web"
+	"github.com/Podiom/Podiom/web"
 )
 
 // spaHandler serves the embedded single-page app. Real asset requests are served

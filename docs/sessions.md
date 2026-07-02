@@ -1,6 +1,6 @@
 # Sessions
 
-A Podium session is the durable conversation unit. It stores the bound agent,
+A Podiom session is the durable conversation unit. It stores the bound agent,
 current settings, immutable origin, provider resume handle, rolling summary area,
 and the full ordered message history in SQLite.
 
@@ -28,19 +28,19 @@ implemented in a later phase.
 
 Message history is stored as strictly ordered `user` and `assistant` messages.
 The provider's own session or thread is treated as a resumable backing resource;
-Podium's SQLite history is the canonical truth that survives daemon restarts.
+Podiom's SQLite history is the canonical truth that survives daemon restarts.
 
-When a profile switch or fallback changes the provider target, Podium clears the
+When a profile switch or fallback changes the provider target, Podiom clears the
 provider handle, starts a fresh backing session/thread on the next live turn, and
 replays canonical history. If a rolling summary is available, replay sends the
 summary plus the most recent turns verbatim instead of the full transcript.
 
 ## Naming
 
-After the first user/assistant exchange, Podium starts a non-blocking naming job.
+After the first user/assistant exchange, Podiom starts a non-blocking naming job.
 It asks the session's own provider/model at low effort for a concise name and
 description, then stores them on the session. If the provider output cannot be
-parsed, Podium falls back to a short deterministic title from the first user
+parsed, Podiom falls back to a short deterministic title from the first user
 message.
 
 Manual `/name <text>` and `/describe <text>` commands override auto-generated

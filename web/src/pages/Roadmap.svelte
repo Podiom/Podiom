@@ -509,7 +509,7 @@
 {#if archiveOpen}
   <ConfirmModal
     title="Archive done tasks"
-    message="Archive {tasksFor('done').length} done task(s)? Each task, its session, and full message history are saved to disk (~/.podium/archive/tasks), then removed from the board and the sessions list."
+    message="Archive {tasksFor('done').length} done task(s)? Each task, its session, and full message history are saved to disk (~/.podiom/archive/tasks), then removed from the board and the sessions list."
     confirmLabel="Archive"
     busy={archiveBusy}
     error={archiveError}

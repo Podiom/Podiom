@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Podium brand palette, mirrored from the web frontend so the wizard matches
+// Podiom brand palette, mirrored from the web frontend so the wizard matches
 // the rest of the product.
 const (
 	colTeal     = lipgloss.Color("#3f8f7e")
@@ -32,10 +32,10 @@ var (
 	goldStyle    = lipgloss.NewStyle().Foreground(colGold)
 )
 
-// podiumTheme paints huh's forms in the brand palette. It builds on ThemeBase
+// podiomTheme paints huh's forms in the brand palette. It builds on ThemeBase
 // (which has no full-screen background) so the wizard blends into the user's
 // terminal instead of painting it cream.
-func podiumTheme() *huh.Theme {
+func podiomTheme() *huh.Theme {
 	t := huh.ThemeBase()
 
 	t.Focused.Title = t.Focused.Title.Foreground(colTeal).Bold(true)
@@ -63,7 +63,7 @@ func banner(out io.Writer, clear bool) {
 	if clear {
 		fmt.Fprint(out, "\x1b[2J\x1b[H")
 	}
-	fmt.Fprintln(out, bannerStyle.Render(" PODIUM "))
+	fmt.Fprintln(out, bannerStyle.Render(" PODIOM "))
 	fmt.Fprintln(out, taglineStyle.Render("Let's check your agent CLIs and shape your first agent together."))
 }
 

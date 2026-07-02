@@ -1,8 +1,8 @@
-# Podium Agent Memory ("Dreaming") — Requirements
+# Podiom Agent Memory ("Dreaming") — Requirements
 
-*Standalone implementation spec for per-agent persistent memory in Podium.
+*Standalone implementation spec for per-agent persistent memory in Podiom.
 Self-contained: a developer can implement from this document without reading the
-full Podium requirements. Cross-references to the main doc (e.g. §5.2, §5.4, §7,
+full Podiom requirements. Cross-references to the main doc (e.g. §5.2, §5.4, §7,
 D6) are for context only.*
 
 Status: v1.0 — ready for implementation.
@@ -11,7 +11,7 @@ Status: v1.0 — ready for implementation.
 
 ## 1. Purpose & philosophy
 
-Podium agents should **feel like they live through time** — accumulating an
+Podiom agents should **feel like they live through time** — accumulating an
 understanding of the user and of how the two work together, rather than
 resurrecting with amnesia each session. This feature gives every agent a
 **persistent, self-curated memory** (`MEMORY.md`) that grows from actual
@@ -25,12 +25,12 @@ Guiding principles:
    growing record of what it has *learned* (about the user, preferences, working
    patterns). The user owns the soul; the agent owns the memory — under the
    user's full visibility and veto.
-2. **Podium owns the memory, provider-neutrally.** Memory lives in the agent's
-   Podium directory and is delivered to whichever backend runs a turn. It is
+2. **Podiom owns the memory, provider-neutrally.** Memory lives in the agent's
+   Podiom directory and is delivered to whichever backend runs a turn. It is
    **not** stored in Claude's or Codex's native memory systems, because those are
    per-CLI, machine-local, region-restricted (Codex native Memories are
    unavailable in the EEA/UK/CH), and would split an agent's learning across
-   providers — breaking the guarantee that a Podium agent is the *same agent*
+   providers — breaking the guarantee that a Podiom agent is the *same agent*
    regardless of which provider backs a turn.
 3. **Memory grows only from real interaction.** No sessions on a given day →
    nothing to dream about → memory unchanged. An agent you don't talk to does not
@@ -49,7 +49,7 @@ Guiding principles:
 - **MEM1** Each agent has a `MEMORY.md` at its agent root, beside `SOUL.md`:
 
   ```
-  ~/.podium/agents/<name>/
+  ~/.podiom/agents/<name>/
     SOUL.md          # who the agent IS       (user-authored, static identity)
     MEMORY.md        # what the agent LEARNED  (agent-authored, growing)
     AGENTS.md        # per-agent instructions  (optional, user-authored)
@@ -63,7 +63,7 @@ Guiding principles:
 ## 3. Delivery — the fourth composition layer
 
 - **MEM3** `MEMORY.md` becomes the **fourth layer** in the instruction
-  composition Podium already builds (see main §5.4). Effective standing context =
+  composition Podiom already builds (see main §5.4). Effective standing context =
   base `AGENTS.md` + per-agent `AGENTS.md` + `SOUL.md` + **`MEMORY.md`**, in that
   order (memory last, so the agent's learned context sits closest to the live
   turn).
@@ -77,19 +77,19 @@ Guiding principles:
 
 ## 4. Dreaming — nightly consolidation (built-in, Alternative A)
 
-- **MEM6** Dreaming is a **Podium built-in maintenance routine** (not a
+- **MEM6** Dreaming is a **Podiom built-in maintenance routine** (not a
   user-authored schedule file). It runs on a daily cadence.
 - **MEM7 — No sessions, no dream.** A dream runs for an agent only if there are
-  **un-dreamed sessions** for it in Podium's session store (SQLite, main D6)
+  **un-dreamed sessions** for it in Podiom's session store (SQLite, main D6)
   since the last dream. If none exist, the agent does not dream and `MEMORY.md`
   is untouched.
 - **MEM8 — Robust to downtime.** A dream processes **all un-dreamed sessions
-  since the last successful dream**, not strictly "today's". If `podiumd` was
+  since the last successful dream**, not strictly "today's". If `podiomd` was
   down at the nominal dream time, the next run catches up the missed sessions.
   (Consistent with the daemon-uptime limitation, main §7.6; memory must not
   silently lose a day's learning to a missed cycle.)
 - **MEM9 — Source material.** The dream reads the day's session transcripts from
-  the session store (the same durable history Podium keeps for replay, main §8.5)
+  the session store (the same durable history Podiom keeps for replay, main §8.5)
   as its raw material. This is a second payoff on already-stored data.
 - **MEM10 — What the dream does.** For the agent, over its un-dreamed sessions,
   the dream:
@@ -123,14 +123,14 @@ Guiding principles:
   design (a "Memory" view/tab on the agent page) is handled in Claude Design.
 
 ### 5.2 CLI
-- **MEM15** `podium memory show <agent>` — print the agent's `MEMORY.md`.
-- **MEM16** `podium memory edit <agent>` — open `MEMORY.md` in `$EDITOR`.
-- **MEM17** `podium memory clear <agent>` — empty the agent's memory (with
+- **MEM15** `podiom memory show <agent>` — print the agent's `MEMORY.md`.
+- **MEM16** `podiom memory edit <agent>` — open `MEMORY.md` in `$EDITOR`.
+- **MEM17** `podiom memory clear <agent>` — empty the agent's memory (with
   confirmation).
-- **MEM18** `podium memory dream <agent>` — trigger a dream on demand (respecting
+- **MEM18** `podiom memory dream <agent>` — trigger a dream on demand (respecting
   MEM7: no-op if no un-dreamed sessions). Useful for testing and for users who
   want to consolidate immediately.
-- **MEM19** `podium memory status [<agent>]` — show last-dream time and whether a
+- **MEM19** `podiom memory status [<agent>]` — show last-dream time and whether a
   dream is pending (un-dreamed sessions present).
 
 ## 6. What is remembered — unfiltered in topic (chosen posture)
@@ -177,7 +177,7 @@ Guiding principles:
   — future option, mirroring the naming-model question (main D3).
 - **Automatic topic filtering / redaction** of sensitive content at capture time
   (v1 is unfiltered-with-manual-removal, §6).
-- **Boot-persistent dreaming** (dreams only fire while `podiumd` runs; catch-up
+- **Boot-persistent dreaming** (dreams only fire while `podiomd` runs; catch-up
   via MEM8 mitigates but does not remove this).
 
 ## 8. Acceptance checks
@@ -193,11 +193,11 @@ A correct implementation satisfies all of:
    learnings and marks those sessions dreamed (MEM7/MEM10).
 5. On a day with **no** sessions, no dream runs and `MEMORY.md` is unchanged
    (MEM7).
-6. If `podiumd` was down at dream time, the next dream processes the missed,
+6. If `podiomd` was down at dream time, the next dream processes the missed,
    un-dreamed sessions (MEM8).
 7. A user edit to `MEMORY.md` (removing an item) survives the next dream — the
    item is not re-added (MEM12).
-8. `podium memory show/edit/clear/dream/status` behave per §5.2; `dream` is a
+8. `podiom memory show/edit/clear/dream/status` behave per §5.2; `dream` is a
    no-op when no un-dreamed sessions exist (MEM18).
 9. The dream runs against the agent's own model/profile at reduced effort
    (MEM11).

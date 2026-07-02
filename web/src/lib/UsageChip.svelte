@@ -101,8 +101,8 @@
 
   const footerNote = $derived(
     provider === "codex"
-      ? "Counts usage across ChatGPT, Codex & Podium for this profile."
-      : "Counts usage across claude.ai, Claude Code & Podium for this profile.",
+      ? "Counts usage across ChatGPT, Codex & Podiom for this profile."
+      : "Counts usage across claude.ai, Claude Code & Podiom for this profile.",
   );
 
   function refresh(event: MouseEvent) {

@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -16,13 +16,13 @@ func newMemoryCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "memory",
 		Short: "View, edit, and consolidate an agent's memory",
-		Long: "Podium agents keep a self-curated MEMORY.md that grows through nightly\n" +
+		Long: "Podiom agents keep a self-curated MEMORY.md that grows through nightly\n" +
 			"\"dreaming\" — consolidating the day's sessions into durable memory. These\n" +
 			"commands let you read, edit, clear, and trigger that memory.",
-		Example: "  podium memory show jared\n" +
-			"  podium memory edit jared\n" +
-			"  podium memory dream jared\n" +
-			"  podium memory status",
+		Example: "  podiom memory show jared\n" +
+			"  podiom memory edit jared\n" +
+			"  podiom memory dream jared\n" +
+			"  podiom memory status",
 	}
 	cmd.AddCommand(newMemoryShowCmd(addr))
 	cmd.AddCommand(newMemoryEditCmd(addr))
@@ -36,7 +36,7 @@ func newMemoryShowCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "show <agent>",
 		Short:   "Print an agent's MEMORY.md",
-		Example: "  podium memory show jared",
+		Example: "  podiom memory show jared",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -65,7 +65,7 @@ func newMemoryEditCmd(addr *string) *cobra.Command {
 		Use:     "edit <agent>",
 		Short:   "Edit an agent's MEMORY.md in $EDITOR",
 		Long:    "Opens the agent's MEMORY.md in $EDITOR (falling back to vi). Your edits are\nauthoritative: anything you remove will not be re-added by the next dream.",
-		Example: "  podium memory edit jared",
+		Example: "  podiom memory edit jared",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -99,7 +99,7 @@ func newMemoryClearCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "clear <agent>",
 		Short:   "Empty an agent's MEMORY.md",
-		Example: "  podium memory clear jared --yes",
+		Example: "  podiom memory clear jared --yes",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -126,7 +126,7 @@ func newMemoryDreamCmd(addr *string) *cobra.Command {
 		Use:     "dream <agent>",
 		Short:   "Consolidate un-dreamed sessions into memory now",
 		Long:    "Triggers a dream on demand. If there are no un-dreamed sessions it is a no-op.",
-		Example: "  podium memory dream jared",
+		Example: "  podiom memory dream jared",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -156,7 +156,7 @@ func newMemoryStatusCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "status [<agent>]",
 		Short:   "Show last-dream time and pending sessions",
-		Example: "  podium memory status\n  podium memory status jared",
+		Example: "  podiom memory status\n  podiom memory status jared",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -216,7 +216,7 @@ func lastDreamLabel(d *store.Dream) string {
 // editInEditor writes content to a temp file, opens it in $EDITOR (or vi), and
 // returns the edited content and whether it changed.
 func editInEditor(content string) (string, bool, error) {
-	f, err := os.CreateTemp("", "podium-memory-*.md")
+	f, err := os.CreateTemp("", "podiom-memory-*.md")
 	if err != nil {
 		return "", false, err
 	}

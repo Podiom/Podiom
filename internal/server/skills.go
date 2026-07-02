@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/mar-schmidt/Podium/internal/skills"
+	"github.com/Podiom/Podiom/internal/skills"
 )
 
 // handleSkills serves the deduplicated skill catalogue the dashboard reads. The

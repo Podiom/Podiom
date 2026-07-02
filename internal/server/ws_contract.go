@@ -3,10 +3,10 @@ package server
 import (
 	"encoding/json"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/store"
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/usage"
 )
 
 // ClientMessage is the browser-to-daemon WebSocket contract.

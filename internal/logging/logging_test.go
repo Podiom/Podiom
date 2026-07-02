@@ -12,7 +12,7 @@ import (
 func TestRotatingWriterRotatesDailyAndCleansRetention(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.Local)
-	old := filepath.Join(dir, "podiumd-2026-06-20.log")
+	old := filepath.Join(dir, "podiomd-2026-06-20.log")
 	if err := os.WriteFile(old, []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestRotatingWriterRotatesDailyAndCleansRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rotated, err := os.ReadFile(filepath.Join(dir, "podiumd-2026-07-01.log"))
+	rotated, err := os.ReadFile(filepath.Join(dir, "podiomd-2026-07-01.log"))
 	if err != nil {
 		t.Fatalf("read rotated: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestTailAndFollowReopensAfterRotation(t *testing.T) {
 		t.Fatalf("append event = %+v", got)
 	}
 
-	if err := os.Rename(path, filepath.Join(dir, "podiumd-2026-07-01.log")); err != nil {
+	if err := os.Rename(path, filepath.Join(dir, "podiomd-2026-07-01.log")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("c\n"), 0o644); err != nil {

@@ -17,7 +17,7 @@ func Sync() (Report, error) {
 }
 
 // EnsureClaudeWorkspaceLink makes the skills union discoverable to a
-// Podium-launched Claude turn by placing <workspaceDir>/.claude/skills as a
+// Podiom-launched Claude turn by placing <workspaceDir>/.claude/skills as a
 // symlink to ~/.agents/skills (S6/S10). Claude is then launched with
 // `--add-dir <workspaceDir>` so it scans that .claude/skills scope.
 //

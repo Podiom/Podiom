@@ -1,11 +1,11 @@
 # Scheduling
 
-Podium runs recurring agent routines from an embedded scheduler inside `podiumd`
+Podiom runs recurring agent routines from an embedded scheduler inside `podiomd`
 (R7.1). A **schedule is a single self-describing markdown file** under
-`~/.podium/schedules/<name>.md`: YAML frontmatter declares the job, the markdown
+`~/.podiom/schedules/<name>.md`: YAML frontmatter declares the job, the markdown
 body is the task the agent is prompted with. The files are the source of truth —
 there is no `schedules:` block in `config.yaml`. Drop a file in the folder and it
-registers within ~15 seconds (or immediately on the next `podium schedules`
+registers within ~15 seconds (or immediately on the next `podiom schedules`
 command / daemon restart).
 
 ## File format
@@ -33,7 +33,7 @@ Keep it to three lines.
 
 ## Each run is a normal session
 
-A fired schedule executes as an ordinary Podium session against the named agent
+A fired schedule executes as an ordinary Podiom session against the named agent
 in its `workspace/`, with the full composed identity (base `AGENTS.md` +
 per-agent `AGENTS.md` + `SOUL.md`) delivered exactly as in interactive chat
 (R7.3a). The run is recorded with:
@@ -63,8 +63,8 @@ declares how it handles permission requests via `run_permission`:
 From the CLI (see [cli.md](cli.md)):
 
 ```sh
-podium schedules list             # timing, agent, policy, next run, run count
-podium schedules run <name>       # trigger now; prints the run + session id
+podiom schedules list             # timing, agent, policy, next run, run count
+podiom schedules run <name>       # trigger now; prints the run + session id
 ```
 
 Over HTTP (also used by the web UI):
@@ -74,7 +74,7 @@ Over HTTP (also used by the web UI):
 
 ## Limitations (v1)
 
-- Routines only fire while the machine is on and `podiumd` is running; boot
+- Routines only fire while the machine is on and `podiomd` is running; boot
   persistence is deferred (R7.6).
 - Routines are independent — no inter-routine dependencies (R7.4).
 - Overlapping runs of the same schedule are allowed (no concurrency cap, R11.3).

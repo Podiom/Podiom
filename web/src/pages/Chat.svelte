@@ -113,7 +113,7 @@
   // stick = auto-follow the transcript to the bottom. Turns off when the user
   // scrolls up to read history, back on when they return near the bottom.
   let stick = true;
-  const LAST_SESSION_KEY = "podium:last-chat-session";
+  const LAST_SESSION_KEY = "podiom:last-chat-session";
 
   // Layout / UI state.
   let sessOpen = $state(true);

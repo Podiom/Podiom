@@ -1,4 +1,4 @@
-// Package adapter defines the provider seam between Podium core and local LLM
+// Package adapter defines the provider seam between Podiom core and local LLM
 // CLIs. Phase 1 ships only a deterministic fake implementation; real Claude and
 // Codex process handling lands in later phases.
 package adapter
@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // Handle is a provider-owned resume token such as a Claude session ID or Codex
@@ -36,8 +36,8 @@ type StartRequest struct {
 	WorkspaceDir       string
 	ExtraWorkspaceDirs []string
 	Instructions       []byte
-	MCPServers         []podiummcp.Server
-	MCPAllServers      []podiummcp.Server
+	MCPServers         []podiommcp.Server
+	MCPAllServers      []podiommcp.Server
 }
 
 // ResumeRequest asks an adapter to bind to an existing provider handle.
@@ -78,8 +78,8 @@ type TurnSettings struct {
 	// AllowedTools is the preapproved allow-list for an unattended run. Tools not
 	// listed are auto-denied. Empty means deny all side-effecting actions.
 	AllowedTools  []string
-	MCPServers    []podiummcp.Server
-	MCPAllServers []podiummcp.Server
+	MCPServers    []podiommcp.Server
+	MCPAllServers []podiommcp.Server
 }
 
 // RateStatus reports provider-exposed rate-limit utilization when available.

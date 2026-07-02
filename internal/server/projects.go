@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/core"
-	podiumgithub "github.com/mar-schmidt/Podium/internal/github"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/core"
+	podiomgithub "github.com/Podiom/Podiom/internal/github"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 type projectCreateRequest struct {
@@ -192,7 +192,7 @@ func (s *Server) handleProjectFromGitHub(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	repo := projects.SnapshotRepo(owner, name, req.HTMLURL, req.DefaultBranch, req.Ref)
-	result, err := s.github.SyncProject(r.Context(), podiumgithub.SyncRequest{Project: project, Repo: repo, Force: req.Force})
+	result, err := s.github.SyncProject(r.Context(), podiomgithub.SyncRequest{Project: project, Repo: repo, Force: req.Force})
 	if writeGitHubProjectError(w, err) {
 		return
 	}
@@ -254,7 +254,7 @@ func (s *Server) handleProjectRepo(w http.ResponseWriter, r *http.Request, id st
 			"ref", project.Repo.Ref,
 			"force", req.Force,
 		)
-		result, err := s.github.SyncProject(r.Context(), podiumgithub.SyncRequest{Project: project, Repo: *project.Repo, Force: req.Force})
+		result, err := s.github.SyncProject(r.Context(), podiomgithub.SyncRequest{Project: project, Repo: *project.Repo, Force: req.Force})
 		if writeGitHubProjectError(w, err) {
 			return
 		}
@@ -290,7 +290,7 @@ func (s *Server) handleProjectRepo(w http.ResponseWriter, r *http.Request, id st
 			"force", req.Force,
 		)
 		repo := projects.SnapshotRepo(owner, name, req.HTMLURL, req.DefaultBranch, req.Ref)
-		result, err := s.github.SyncProject(r.Context(), podiumgithub.SyncRequest{Project: project, Repo: repo, Force: req.Force})
+		result, err := s.github.SyncProject(r.Context(), podiomgithub.SyncRequest{Project: project, Repo: repo, Force: req.Force})
 		if writeGitHubProjectError(w, err) {
 			return
 		}

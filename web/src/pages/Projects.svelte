@@ -244,7 +244,7 @@
     error = null;
     try {
       ghDevice = await githubDeviceStart();
-      ghAuthWindow = window.open(ghDevice.verification_uri, "podium-github-auth", "popup,width=760,height=860");
+      ghAuthWindow = window.open(ghDevice.verification_uri, "podiom-github-auth", "popup,width=760,height=860");
       scheduleGitHubPoll(1200);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -523,7 +523,7 @@
     <div class="modal-card np-modal" role="dialog" aria-modal="true" aria-label="New project" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <div class="modal-head">
         <div class="modal-title">New project</div>
-        <div class="modal-sub">Tracked in <span class="mono">~/.podium/projects/projects.yaml</span>. Any agent can pick it up.</div>
+        <div class="modal-sub">Tracked in <span class="mono">~/.podiom/projects/projects.yaml</span>. Any agent can pick it up.</div>
       </div>
       <div class="modal-body">
         <div class="label-mono" style="margin-bottom:8px">name</div>
@@ -556,9 +556,9 @@
         <div class="modal-title">{ghMode === "create" ? "New project from GitHub" : "Connect GitHub"}</div>
         <div class="modal-sub">
           {#if ghMode === "create"}
-            Pick a repository. Podium will create the project, sync the snapshot, then fill in the details.
+            Pick a repository. Podiom will create the project, sync the snapshot, then fill in the details.
           {:else if ghOpen}
-            Project source will be downloaded into <span class="mono">~/.podium/projects/{ghOpen.path}/repo/</span>.
+            Project source will be downloaded into <span class="mono">~/.podiom/projects/{ghOpen.path}/repo/</span>.
           {/if}
         </div>
       </div>
@@ -566,11 +566,11 @@
         <div class="connect-steps">
           <div class="step-row" class:done={ghStatus?.authed}>
             <span class="step-dot">{ghStatus?.authed ? "✓" : "1"}</span>
-            <span>Authorize Podium with your GitHub account</span>
+            <span>Authorize Podiom with your GitHub account</span>
           </div>
           <div class="step-row" class:done={ghRepos.length > 0}>
             <span class="step-dot">{ghRepos.length > 0 ? "✓" : "2"}</span>
-            <span>Choose which repositories Podium may read</span>
+            <span>Choose which repositories Podiom may read</span>
           </div>
           <div class="step-row" class:done={ghMode === "create" ? !!ghCreated : !!ghOpen?.repo}>
             <span class="step-dot">{(ghMode === "create" ? !!ghCreated : !!ghOpen?.repo) ? "✓" : "3"}</span>
@@ -582,10 +582,10 @@
           <div class="error-banner">{ghStatus.message}</div>
         {:else if ghStatus && !ghStatus.authed}
           <div class="label-mono" style="margin-bottom:8px">authorize account</div>
-          <p class="repo-help">GitHub will ask you to authorize the Podium app. Repository access is chosen in the next step.</p>
+          <p class="repo-help">GitHub will ask you to authorize the Podiom app. Repository access is chosen in the next step.</p>
           {#if ghDevice}
             <div class="device-code mono">{ghDevice.user_code}</div>
-            <p class="repo-help">Enter this code on GitHub. Podium will bring you back here when authorization completes.</p>
+            <p class="repo-help">Enter this code on GitHub. Podiom will bring you back here when authorization completes.</p>
             <button class="modal-cta" disabled={ghBusy === "poll"} onclick={() => pollGitHubDevice(true)}>{ghBusy === "poll" ? "Checking…" : "Check now"}</button>
           {:else}
             <button class="modal-cta" disabled={ghBusy === "device"} onclick={startGitHubDevice}>{ghBusy === "device" ? "Opening…" : "Authorize GitHub"}</button>
@@ -633,7 +633,7 @@
               <div class="success-mark">✓</div>
               <div class="success-title">Repository connected</div>
               <p class="repo-help">
-                {ghOpen?.repo?.full_name} is synced into <span class="mono">~/.podium/projects/{ghOpen?.path}/repo/</span>.
+                {ghOpen?.repo?.full_name} is synced into <span class="mono">~/.podiom/projects/{ghOpen?.path}/repo/</span>.
               </p>
               <button class="modal-cta" onclick={closeGitHubModal}>Done</button>
             </div>
@@ -653,7 +653,7 @@
               <button class="link-btn" disabled={ghBusy === "status"} onclick={refreshGitHub}>Refresh list</button>
             </div>
             {#if ghReplacePending}
-              <div class="error-banner" style="margin-top:12px">This project repo folder already has files. Podium will back them up before syncing the snapshot.</div>
+              <div class="error-banner" style="margin-top:12px">This project repo folder already has files. Podiom will back them up before syncing the snapshot.</div>
               <button class="modal-cta" disabled={ghBusy === "connect"} onclick={() => (ghMode === "create" ? createFromSelectedRepo(true) : connectSelectedRepo(true))}>
                 {ghBusy === "connect" ? (ghMode === "create" ? "Creating…" : "Connecting…") : ghMode === "create" ? "Back up and create" : "Back up and connect"}
               </button>

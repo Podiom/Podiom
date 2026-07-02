@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 func (s *Server) handleProviderCapabilities(w http.ResponseWriter, r *http.Request) {

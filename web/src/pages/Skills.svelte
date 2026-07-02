@@ -36,7 +36,7 @@
     codex: { label: "codex", fg: "#4B5560", bg: "#EAEEF1", bd: "#D6DCE2", glyph: "diamond", path: "~/.codex/skills/" },
   };
   const MCP_SRC: Record<MCPSource, { label: string; fg: string; bg: string; bd: string; glyph: string }> = {
-    podium: { label: "podium", fg: "#2F6E60", bg: "#E7F0EC", bd: "#C7DBD2", glyph: "circle" },
+    podiom: { label: "podiom", fg: "#2F6E60", bg: "#E7F0EC", bd: "#C7DBD2", glyph: "circle" },
     claude: { label: "claude", fg: "#B0572F", bg: "#F8EBE2", bd: "#ECD3C2", glyph: "square" },
     codex: { label: "codex", fg: "#4B5560", bg: "#EAEEF1", bd: "#D6DCE2", glyph: "diamond" },
   };
@@ -188,7 +188,7 @@
             {/each}
           </div>
           <div class="pool">
-            <div class="pool-head"><b>Podium pool</b><span>{skills.length} skills</span></div>
+            <div class="pool-head"><b>Podiom pool</b><span>{skills.length} skills</span></div>
             <div class="pool-list">
               {#each skills as s (s.name)}
                 <span>{s.name}</span>

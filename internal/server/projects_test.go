@@ -8,10 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/core"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 func TestTaskDescribeEndpointsReturnBody(t *testing.T) {

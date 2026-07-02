@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/core"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/core"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 const defaultHTTPPermissionTimeout = 3 * time.Minute
@@ -238,7 +238,7 @@ func (s *Server) saveProfile(w http.ResponseWriter, r *http.Request, currentName
 	changed := []string{"name", "provider", "path_set"}
 	if currentName != "" {
 		action = "profile updated"
-		changed = podiumlog.ChangedFields(profileLogFields(beforeProfile), profileLogFields(saved))
+		changed = podiomlog.ChangedFields(profileLogFields(beforeProfile), profileLogFields(saved))
 	}
 	s.log.Info(action,
 		"event", "config",

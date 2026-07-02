@@ -1,7 +1,7 @@
 // Package exec isolates every cross-platform subprocess concern: locating the
 // claude/codex binaries (including Windows npm .cmd/.exe shims), and starting and
 // killing child processes via process groups with context cancellation. All OS
-// differences in Podium live here (Principle 4 / §10 / R10.3 / R10.4).
+// differences in Podiom live here (Principle 4 / §10 / R10.3 / R10.4).
 package exec
 
 import (

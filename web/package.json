@@ -1,9 +1,9 @@
 {
-  "name": "podium-web",
+  "name": "podiom-web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Podium web UI — Svelte + Vite + TypeScript + Tailwind SPA, embedded into podiumd.",
+  "description": "Podiom web UI — Svelte + Vite + TypeScript + Tailwind SPA, embedded into podiomd.",
   "scripts": {
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",

@@ -1,7 +1,7 @@
 # Integration contracts
 
 This directory holds the **per-provider integration contract** — exactly how
-Podium drives each backing CLI. It is the source of truth the `internal/adapter`
+Podiom drives each backing CLI. It is the source of truth the `internal/adapter`
 layer implements against (requirements §8).
 
 | Provider | Contract | Status |
@@ -16,8 +16,8 @@ isolation, MCP-config and credential redaction, run logging) is documented in
 [`../security.md`](../security.md).
 
 The grounding reference (process model, CLI parameters, app-server protocol, and
-the OpenClaw policy values Podium deliberately inverts) is captured in
-[`../requirements.md`](../requirements.md) Appendix A. Podium adopts the
+the OpenClaw policy values Podiom deliberately inverts) is captured in
+[`../requirements.md`](../requirements.md) Appendix A. Podiom adopts the
 *mechanisms* but inverts the *defaults* (`approve` over `bypassPermissions`,
 inherit native MCP over strict host-only) per Principle 6 / §8.4b.
 

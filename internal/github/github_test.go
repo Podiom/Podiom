@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/projects"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
 )
 
 func TestExtractZipSnapshotStripsGitHubTopLevel(t *testing.T) {
@@ -105,10 +105,10 @@ func TestSyncProjectStoresSourceInRepoDirAndManifestInProjectDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoRoot, "app", "main.go")); err != nil {
 		t.Fatalf("repo source missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(projectRoot, ".podium-source.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(projectRoot, ".podiom-source.json")); err != nil {
 		t.Fatalf("project manifest missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, ".podium-source.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(repoRoot, ".podiom-source.json")); !os.IsNotExist(err) {
 		t.Fatalf("repo manifest should not exist, stat err = %v", err)
 	}
 	gotLogs := logs.String()
@@ -132,7 +132,7 @@ func TestSyncProjectStoresSourceInRepoDirAndManifestInProjectDir(t *testing.T) {
 
 func TestMigrateLegacyRootSnapshotBacksUpOldRootContents(t *testing.T) {
 	projectRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(projectRoot, ".podium-source.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectRoot, ".podiom-source.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(projectRoot, "main.go"), []byte("package main\n"), 0o644); err != nil {
@@ -145,7 +145,7 @@ func TestMigrateLegacyRootSnapshotBacksUpOldRootContents(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectRoot, "main.go")); !os.IsNotExist(err) {
 		t.Fatalf("legacy source should be moved out of project root, stat err = %v", err)
 	}
-	matches, err := filepath.Glob(filepath.Join(projectRoot, ".podium-backups", "*", "legacy-root", "main.go"))
+	matches, err := filepath.Glob(filepath.Join(projectRoot, ".podiom-backups", "*", "legacy-root", "main.go"))
 	if err != nil {
 		t.Fatal(err)
 	}

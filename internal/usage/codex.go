@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // codexUsagePath is appended to the resolved base URL. Split out so tests can

@@ -10,10 +10,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/skills"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/skills"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 // CreateAgentRequest describes a new agent and its defaults. Empty provider,
@@ -118,7 +118,7 @@ func (c *Core) UpdateAgent(ctx context.Context, agent store.Agent) (store.Agent,
 		"agent", updated.Name,
 		"provider", string(updated.Provider),
 		"profile", updated.Profile,
-		"changed", podiumlog.ChangedFields(agentLogFields(before), agentLogFields(updated)),
+		"changed", podiomlog.ChangedFields(agentLogFields(before), agentLogFields(updated)),
 		"fallback_count", len(updated.Fallback),
 		"mcp_servers", len(updated.MCPServers),
 	)

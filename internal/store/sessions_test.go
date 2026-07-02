@@ -8,7 +8,7 @@ import (
 
 func TestCreateSessionStoresProjectID(t *testing.T) {
 	ctx := context.Background()
-	db, err := Open(filepath.Join(t.TempDir(), "podium.db"))
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/mar-schmidt/Podium/internal/skills"
+	"github.com/Podiom/Podiom/internal/skills"
 	"github.com/spf13/cobra"
 )
 
@@ -15,14 +15,14 @@ func newSkillsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skills",
 		Short: "Browse the skills available to your agents",
-		Long: "Skills are reusable SKILL.md capability folders. Podium discovers them under\n" +
+		Long: "Skills are reusable SKILL.md capability folders. Podiom discovers them under\n" +
 			"~/.agents/skills (the shared union), ~/.claude/skills, and ~/.codex/skills, and\n" +
-			"shows one deduplicated catalogue. Podium reads skills; it never installs them.",
-		Example: "  podium skills list\n" +
-			"  podium skills list --source claude\n" +
-			"  podium skills show hello-podium\n" +
-			"  podium skills paths\n" +
-			"  podium skills relink",
+			"shows one deduplicated catalogue. Podiom reads skills; it never installs them.",
+		Example: "  podiom skills list\n" +
+			"  podiom skills list --source claude\n" +
+			"  podiom skills show hello-podiom\n" +
+			"  podiom skills paths\n" +
+			"  podiom skills relink",
 	}
 	cmd.AddCommand(newSkillsListCmd())
 	cmd.AddCommand(newSkillsShowCmd())
@@ -38,7 +38,7 @@ func newSkillsListCmd() *cobra.Command {
 		Use:     "list",
 		Short:   "List every skill, deduplicated, with its source badge(s)",
 		Long:    "Prints one row per skill name with its one-line description and source badges (agents, claude, codex). Use --source to filter.",
-		Example: "  podium skills list\n  podium skills list --source codex",
+		Example: "  podiom skills list\n  podiom skills list --source codex",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validSource(source); err != nil {
 				return err
@@ -77,7 +77,7 @@ func newSkillsShowCmd() *cobra.Command {
 		Use:     "show <name>",
 		Short:   "Print a skill's SKILL.md and where it lives",
 		Long:    "Prints the SKILL.md body and the source path(s) for a skill. Flags a conflict if same-named skills differ across sources.",
-		Example: "  podium skills show hello-podium",
+		Example: "  podiom skills show hello-podiom",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -93,7 +93,7 @@ func newSkillsShowCmd() *cobra.Command {
 				}
 			}
 			if sk == nil {
-				return fmt.Errorf("no skill named %q (try `podium skills list`)", name)
+				return fmt.Errorf("no skill named %q (try `podiom skills list`)", name)
 			}
 			fmt.Printf("%s — %s\n", sk.Name, sk.Description)
 			fmt.Printf("sources: %s\n", badges(sk.Sources))
@@ -124,7 +124,7 @@ func newSkillsPathsCmd() *cobra.Command {
 		Use:     "paths",
 		Short:   "Print the canonical dir and the resolved union topology",
 		Long:    "Shows the three skill roots and, for each entry in the union, what it resolves to (a debugging aid for the symlink topology).",
-		Example: "  podium skills paths",
+		Example: "  podiom skills paths",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			roots, err := skills.DefaultRoots()
 			if err != nil {
@@ -137,7 +137,7 @@ func newSkillsPathsCmd() *cobra.Command {
 			entries, err := os.ReadDir(roots.Agents)
 			if err != nil {
 				if os.IsNotExist(err) {
-					fmt.Println("  (union dir does not exist yet — run `podium skills relink`)")
+					fmt.Println("  (union dir does not exist yet — run `podiom skills relink`)")
 					return nil
 				}
 				return err
@@ -163,7 +163,7 @@ func newSkillsRelinkCmd(use string) *cobra.Command {
 		Use:     use,
 		Short:   "Rebuild the ~/.agents/skills union links",
 		Long:    "Rebuilds the per-skill symlinks under ~/.agents/skills from whatever exists in ~/.claude/skills and ~/.codex/skills. Idempotent and never overwrites a real folder.",
-		Example: "  podium skills " + use,
+		Example: "  podiom skills " + use,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rep, err := skills.Sync()
 			if err != nil {

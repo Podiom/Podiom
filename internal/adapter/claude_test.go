@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
+	"github.com/Podiom/Podiom/internal/config"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 )
 
 func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
@@ -18,7 +18,7 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 	c := &Claude{
 		daemonAddr:        "127.0.0.1:8787",
 		permissionTimeout: time.Minute,
-		mcpCommand:        "/tmp/podiumd",
+		mcpCommand:        "/tmp/podiomd",
 	}
 
 	args, cleanup, err := c.args(TurnRequest{
@@ -45,7 +45,7 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 		"--effort medium",
 		"--mcp-config",
 		"--strict-mcp-config",
-		"--permission-prompt-tool mcp__podium_permission__prompt",
+		"--permission-prompt-tool mcp__podiom_permission__prompt",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("args %q missing %q", got, want)
@@ -72,9 +72,9 @@ func TestClaudeArgsIncludesAssignedMCPServersStrictly(t *testing.T) {
 		Settings: TurnSettings{
 			PermissionMode: config.PermissionYolo,
 			WorkspaceDir:   workspace,
-			MCPServers: []podiummcp.Server{{
+			MCPServers: []podiommcp.Server{{
 				Name:      "filesystem",
-				Transport: podiummcp.TransportStdio,
+				Transport: podiommcp.TransportStdio,
 				Command:   "npx",
 				Args:      []string{"-y", "@modelcontextprotocol/server-filesystem"},
 			}},
@@ -105,7 +105,7 @@ func TestClaudeArgsIncludesAssignedMCPServersStrictly(t *testing.T) {
 	if _, ok := parsed.MCPServers["filesystem"]; !ok {
 		t.Fatalf("assigned server missing from config: %s", raw)
 	}
-	if _, ok := parsed.MCPServers["podium_permission"]; ok {
+	if _, ok := parsed.MCPServers["podiom_permission"]; ok {
 		t.Fatalf("yolo config should not include permission relay: %s", raw)
 	}
 }

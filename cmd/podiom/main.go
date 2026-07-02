@@ -1,5 +1,5 @@
-// Command podium is the thin Podium CLI client. It always connects to a running
-// podiumd (it does not run sessions in-process) so there is a single source of
+// Command podiom is the thin Podiom CLI client. It always connects to a running
+// podiomd (it does not run sessions in-process) so there is a single source of
 // runtime truth (R11.1 / D2). In Phase 0 it can report daemon status.
 package main
 
@@ -15,14 +15,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/buildinfo"
-	"github.com/mar-schmidt/Podium/internal/client"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	"github.com/mar-schmidt/Podium/internal/onboard"
-	"github.com/mar-schmidt/Podium/internal/providercheck"
-	"github.com/mar-schmidt/Podium/internal/updater"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/buildinfo"
+	"github.com/Podiom/Podiom/internal/client"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/onboard"
+	"github.com/Podiom/Podiom/internal/providercheck"
+	"github.com/Podiom/Podiom/internal/updater"
 	"github.com/spf13/cobra"
 )
 
@@ -36,17 +36,17 @@ func newRootCmd() *cobra.Command {
 	var addr string
 
 	root := &cobra.Command{
-		Use:   "podium",
-		Short: "Podium CLI — a thin client for the podiumd daemon",
-		Long: "podium is the command-line client for Podium. It connects to a running\n" +
-			"podiumd daemon, which owns all session, agent, and schedule state. Start the\n" +
-			"daemon with `podiumd`.",
+		Use:   "podiom",
+		Short: "Podiom CLI — a thin client for the podiomd daemon",
+		Long: "podiom is the command-line client for Podiom. It connects to a running\n" +
+			"podiomd daemon, which owns all session, agent, and schedule state. Start the\n" +
+			"daemon with `podiomd`.",
 		Version:       fmt.Sprintf("%s (%s)", buildinfo.Version, buildinfo.Commit),
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
 	root.PersistentFlags().StringVar(&addr, "addr", "",
-		"daemon address host:port (default: from config.yaml, or PODIUM_ADDR)")
+		"daemon address host:port (default: from config.yaml, or PODIOM_ADDR)")
 
 	root.AddCommand(newStatusCmd(&addr))
 	root.AddCommand(newAgentsCmd(&addr))
@@ -70,8 +70,8 @@ func newRootCmd() *cobra.Command {
 func newUpdateCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Check for and apply Podium releases",
-		Long:  "Check GitHub Releases for a newer Podium build and apply verified updates.",
+		Short: "Check for and apply Podiom releases",
+		Long:  "Check GitHub Releases for a newer Podiom build and apply verified updates.",
 	}
 	cmd.AddCommand(newUpdateCheckCmd())
 	cmd.AddCommand(newUpdateApplyCmd(addr))
@@ -85,7 +85,7 @@ func newUpdateCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "check",
 		Short:   "Check GitHub Releases for an update",
-		Example: "  podium update check\n  podium update check --json",
+		Example: "  podiom update check\n  podiom update check --json",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			status, err := updater.Check(cmd.Context(), updater.Options{
 				CurrentVersion: buildinfo.Version,
@@ -125,11 +125,11 @@ func newUpdateApplyCmd(addr *string) *cobra.Command {
 	var yes, force bool
 	cmd := &cobra.Command{
 		Use:     "apply",
-		Short:   "Download and apply a verified Podium update",
-		Example: "  podium update apply --yes\n  podium update apply --version v0.1.123 --yes",
+		Short:   "Download and apply a verified Podiom update",
+		Example: "  podiom update apply --yes\n  podiom update apply --version v0.1.123 --yes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !yes {
-				fmt.Println("Updating may restart podiumd and interrupt active turns.")
+				fmt.Println("Updating may restart podiomd and interrupt active turns.")
 				fmt.Print("Continue? [y/N] ")
 				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				line = strings.TrimSpace(strings.ToLower(line))
@@ -146,7 +146,7 @@ func newUpdateApplyCmd(addr *string) *cobra.Command {
 						if err == nil {
 							fmt.Println(result.Message)
 							if result.RestartRequired || result.HelperStarted {
-								fmt.Println("podiumd is restarting; reconnect in a moment.")
+								fmt.Println("podiomd is restarting; reconnect in a moment.")
 							}
 							return nil
 						}
@@ -191,7 +191,7 @@ func newUpdateHelperCmd() *cobra.Command {
 	cmd.Flags().StringVar(&stageDir, "stage-dir", "", "extracted update directory")
 	cmd.Flags().StringVar(&installDir, "install-dir", "", "install directory")
 	cmd.Flags().IntVar(&parentPID, "parent-pid", 0, "parent process id to wait for")
-	cmd.Flags().BoolVar(&restartDaemon, "restart-daemon", false, "restart podiumd after replacement")
+	cmd.Flags().BoolVar(&restartDaemon, "restart-daemon", false, "restart podiomd after replacement")
 	_ = cmd.MarkFlagRequired("stage-dir")
 	_ = cmd.MarkFlagRequired("install-dir")
 	return cmd
@@ -208,8 +208,8 @@ func updateHome() string {
 func newDoctorCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "doctor",
-		Short:   "Check Podium, Claude, and Codex readiness",
-		Example: "  podium doctor",
+		Short:   "Check Podiom, Claude, and Codex readiness",
+		Example: "  podiom doctor",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolved, err := resolveAddr(*addr)
 			if err != nil {
@@ -217,9 +217,9 @@ func newDoctorCmd(addr *string) *cobra.Command {
 			}
 			c := client.New(resolved)
 			if h, err := c.Health(cmd.Context()); err == nil {
-				fmt.Printf("podiumd: ready at %s (%s %s)\n", resolved, h.Version, h.Commit)
+				fmt.Printf("podiomd: ready at %s (%s %s)\n", resolved, h.Version, h.Commit)
 			} else {
-				fmt.Printf("podiumd: not reachable at %s (%v)\n", resolved, err)
+				fmt.Printf("podiomd: not reachable at %s (%v)\n", resolved, err)
 			}
 			for _, status := range providercheck.CheckAll(cmd.Context(), providercheck.Options{}) {
 				state := "missing"
@@ -255,7 +255,7 @@ func newOnboardCmd(addr *string) *cobra.Command {
 		Use:     "onboard",
 		Aliases: []string{"setup"},
 		Short:   "Run first-run setup and create your first agent",
-		Example: "  podium onboard",
+		Example: "  podiom onboard",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolved, err := resolveAddr(*addr)
 			if err != nil {
@@ -270,7 +270,7 @@ func newOnboardCmd(addr *string) *cobra.Command {
 			// A deliberate Ctrl-C/Esc is a clean cancel, not a failure: the wizard
 			// already printed its own message, so exit 0 without cobra noise.
 			if errors.Is(err, onboard.ErrAborted) {
-				fmt.Fprintln(os.Stderr, "Onboarding cancelled. Run `podium onboard` to resume.")
+				fmt.Fprintln(os.Stderr, "Onboarding cancelled. Run `podiom onboard` to resume.")
 				return nil
 			}
 			// No-tty already printed guidance; silence cobra's duplicate Error line.
@@ -287,13 +287,13 @@ func newProjectsCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "projects",
 		Short:   "Inspect the shared project ledger",
-		Long:    "Projects are shared, agent-independent resources tracked in ~/.podium/projects/projects.yaml.",
-		Example: "  podium projects list",
+		Long:    "Projects are shared, agent-independent resources tracked in ~/.podiom/projects/projects.yaml.",
+		Example: "  podiom projects list",
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:     "list",
 		Short:   "List projects",
-		Example: "  podium projects list",
+		Example: "  podiom projects list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {
@@ -321,12 +321,12 @@ func newTasksCmd(addr *string) *cobra.Command {
 		Use:     "tasks",
 		Short:   "Inspect roadmap tasks",
 		Long:    "Roadmap tasks are units of work on shared projects, assignable to agents and startable on demand.",
-		Example: "  podium tasks list",
+		Example: "  podiom tasks list",
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:     "list",
 		Short:   "List roadmap tasks",
-		Example: "  podium tasks list",
+		Example: "  podiom tasks list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {
@@ -361,7 +361,7 @@ func newTasksDeleteCmd(addr *string) *cobra.Command {
 		Use:     "delete <id>",
 		Short:   "Delete a roadmap task",
 		Long:    "Removes a roadmap task. Any session started from the task is preserved. A task that is in progress must be moved out of in_progress first.",
-		Example: "  podium tasks delete <id>",
+		Example: "  podiom tasks delete <id>",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
@@ -386,9 +386,9 @@ func newTasksDeleteCmd(addr *string) *cobra.Command {
 func newStatusCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "status",
-		Short:   "Report whether podiumd is running and its version",
+		Short:   "Report whether podiomd is running and its version",
 		Long:    "Connects to the daemon's health endpoint and prints its status, version, and uptime.",
-		Example: "  podium status\n  podium --addr 127.0.0.1:8787 status",
+		Example: "  podiom status\n  podiom --addr 127.0.0.1:8787 status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolved, err := resolveAddr(*addr)
 			if err != nil {
@@ -398,12 +398,12 @@ func newStatusCmd(addr *string) *cobra.Command {
 			h, err := c.Health(context.Background())
 			if err != nil {
 				if errors.Is(err, client.ErrDaemonUnreachable) {
-					fmt.Fprintf(os.Stderr, "podiumd is not running (tried %s).\nStart it with: podiumd\n", resolved)
+					fmt.Fprintf(os.Stderr, "podiomd is not running (tried %s).\nStart it with: podiomd\n", resolved)
 					return err
 				}
 				return err
 			}
-			fmt.Printf("podiumd is live at %s\n", resolved)
+			fmt.Printf("podiomd is live at %s\n", resolved)
 			fmt.Printf("  status:  %s\n", h.Status)
 			fmt.Printf("  version: %s (%s)\n", h.Version, h.Commit)
 			fmt.Printf("  uptime:  %dms\n", h.UptimeMS)
@@ -415,13 +415,13 @@ func newStatusCmd(addr *string) *cobra.Command {
 func newLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Inspect podiumd logs",
-		Long:  "Inspect daemon-owned logs under $PODIUM_HOME/logs (default ~/.podium/logs).",
+		Short: "Inspect podiomd logs",
+		Long:  "Inspect daemon-owned logs under $PODIOM_HOME/logs (default ~/.podiom/logs).",
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:     "path",
 		Short:   "Print the active daemon log path",
-		Example: "  podium logs path",
+		Example: "  podiom logs path",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := activeLogPath()
 			if err != nil {
@@ -442,14 +442,14 @@ func newLogsFollowCmd() *cobra.Command {
 		Use:     "follow",
 		Aliases: []string{"tail"},
 		Short:   "Print and follow the active daemon log",
-		Example: "  podium logs follow\n  podium logs follow -n 200\n  podium logs follow --no-follow",
+		Example: "  podiom logs follow\n  podiom logs follow -n 200\n  podiom logs follow --no-follow",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := activeLogPath()
 			if err != nil {
 				return err
 			}
 			if noFollow {
-				tail, err := podiumlog.Tail(path, lines)
+				tail, err := podiomlog.Tail(path, lines)
 				if err != nil {
 					return err
 				}
@@ -458,12 +458,12 @@ func newLogsFollowCmd() *cobra.Command {
 				}
 				return nil
 			}
-			for event := range podiumlog.Follow(cmd.Context(), path, lines, 0) {
+			for event := range podiomlog.Follow(cmd.Context(), path, lines, 0) {
 				switch event.Type {
 				case "line":
 					fmt.Println(event.Line)
 				case "reopen":
-					fmt.Fprintln(os.Stderr, "[podium logs reopened]")
+					fmt.Fprintln(os.Stderr, "[podiom logs reopened]")
 				}
 			}
 			return nil
@@ -479,18 +479,18 @@ func activeLogPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return podiumlog.Path(config.NewPaths(home).LogsDir), nil
+	return podiomlog.Path(config.NewPaths(home).LogsDir), nil
 }
 
 func newAgentsCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agents",
-		Short: "Manage Podium agents",
-		Long:  "List, create, update, and delete durable Podium agents through the running podiumd daemon.",
-		Example: "  podium agents list\n" +
-			"  podium agents create jared --provider claude --permission approve\n" +
-			"  podium agents update jared --generate-soul\n" +
-			"  podium agents delete jared",
+		Short: "Manage Podiom agents",
+		Long:  "List, create, update, and delete durable Podiom agents through the running podiomd daemon.",
+		Example: "  podiom agents list\n" +
+			"  podiom agents create jared --provider claude --permission approve\n" +
+			"  podiom agents update jared --generate-soul\n" +
+			"  podiom agents delete jared",
 	}
 	cmd.AddCommand(newAgentsListCmd(addr))
 	cmd.AddCommand(newAgentsCreateCmd(addr))
@@ -503,11 +503,11 @@ func newProfilesCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "profiles",
 		Short: "Manage Claude and Codex auth profiles",
-		Long:  "List, create, update, and delete named auth profiles through the running podiumd daemon.",
-		Example: "  podium profiles list\n" +
-			"  podium profiles create work --provider claude\n" +
-			"  podium profiles update work --config-dir ~/.podium/profiles/claude-work\n" +
-			"  podium profiles delete work --yes",
+		Long:  "List, create, update, and delete named auth profiles through the running podiomd daemon.",
+		Example: "  podiom profiles list\n" +
+			"  podiom profiles create work --provider claude\n" +
+			"  podiom profiles update work --config-dir ~/.podiom/profiles/claude-work\n" +
+			"  podiom profiles delete work --yes",
 	}
 	cmd.AddCommand(newProfilesListCmd(addr))
 	cmd.AddCommand(newProfilesCreateCmd(addr))
@@ -520,7 +520,7 @@ func newProfilesListCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List auth profiles",
-		Example: "  podium profiles list",
+		Example: "  podiom profiles list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {
@@ -547,7 +547,7 @@ func newProfilesCreateCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "create <name>",
 		Short:   "Create an auth profile",
-		Example: "  podium profiles create work --provider claude\n  podium profiles create codex-main --provider codex --home-dir ~/.podium/profiles/codex-main",
+		Example: "  podiom profiles create work --provider claude\n  podiom profiles create codex-main --provider codex --home-dir ~/.podiom/profiles/codex-main",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -569,8 +569,8 @@ func newProfilesCreateCmd(addr *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&provider, "provider", "claude", "provider: claude or codex")
-	cmd.Flags().StringVar(&configDir, "config-dir", "", "Claude config directory (default: ~/.podium/profiles/claude-<name>)")
-	cmd.Flags().StringVar(&homeDir, "home-dir", "", "Codex home directory (default: ~/.podium/profiles/codex-<name>)")
+	cmd.Flags().StringVar(&configDir, "config-dir", "", "Claude config directory (default: ~/.podiom/profiles/claude-<name>)")
+	cmd.Flags().StringVar(&homeDir, "home-dir", "", "Codex home directory (default: ~/.podiom/profiles/codex-<name>)")
 	return cmd
 }
 
@@ -579,7 +579,7 @@ func newProfilesUpdateCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "update <name>",
 		Short:   "Update an auth profile",
-		Example: "  podium profiles update work --config-dir ~/.podium/profiles/claude-work\n  podium profiles update codex-main --provider codex --home-dir ~/.podium/profiles/codex-main",
+		Example: "  podiom profiles update work --config-dir ~/.podiom/profiles/claude-work\n  podiom profiles update codex-main --provider codex --home-dir ~/.podiom/profiles/codex-main",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -610,7 +610,7 @@ func newProfilesDeleteCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "delete <name>",
 		Short:   "Delete an auth profile",
-		Example: "  podium profiles delete work --yes",
+		Example: "  podiom profiles delete work --yes",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -643,8 +643,8 @@ func newAgentsListCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List agents",
-		Long:    "Fetches durable agents from podiumd and prints their provider and defaults.",
-		Example: "  podium agents list",
+		Long:    "Fetches durable agents from podiomd and prints their provider and defaults.",
+		Example: "  podiom agents list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {
@@ -671,13 +671,13 @@ func newAgentsCreateCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an agent",
-		Long: "Creates a durable agent through podiumd and scaffolds its SOUL.md and workspace/.\n" +
+		Long: "Creates a durable agent through podiomd and scaffolds its SOUL.md and workspace/.\n" +
 			"The optional per-agent AGENTS.md is left for you to create manually.\n\n" +
 			"Each --fallback entry is tried in order when the provider rate-limits: a\n" +
 			"profile name, a bare provider (claude|codex, no profile), or \"default\".",
-		Example: "  podium agents create jared\n" +
-			"  podium agents create builder --provider claude --model sonnet --effort medium --permission approve\n" +
-			"  podium agents create builder --provider claude --profile work --fallback work --fallback codex",
+		Example: "  podiom agents create jared\n" +
+			"  podiom agents create builder --provider claude --model sonnet --effort medium --permission approve\n" +
+			"  podiom agents create builder --provider claude --profile work --fallback work --fallback codex",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -728,10 +728,10 @@ func newAgentsUpdateCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <name>",
 		Short: "Update an agent",
-		Long: "Updates a durable agent through podiumd. Use --generate-soul to draft a new SOUL.md\n" +
+		Long: "Updates a durable agent through podiomd. Use --generate-soul to draft a new SOUL.md\n" +
 			"through the shared generation endpoint, preview it, then save after confirmation.",
-		Example: "  podium agents update jared --model sonnet\n" +
-			"  podium agents update jared --generate-soul --notes \"make them more direct\"",
+		Example: "  podiom agents update jared --model sonnet\n" +
+			"  podiom agents update jared --generate-soul --notes \"make them more direct\"",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if yes && !generateSoul {
@@ -823,8 +823,8 @@ func newAgentsDeleteCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <name>",
 		Short:   "Delete an agent",
-		Long:    "Archives the agent's sessions into its workspace, deletes the durable agent through podiumd, and removes its config.yaml entry. Agent files under $PODIUM_HOME/agents/<name>/ are preserved.",
-		Example: "  podium agents delete jared",
+		Long:    "Archives the agent's sessions into its workspace, deletes the durable agent through podiomd, and removes its config.yaml entry. Agent files under $PODIOM_HOME/agents/<name>/ are preserved.",
+		Example: "  podiom agents delete jared",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -850,7 +850,7 @@ func newAgentsDeleteCmd(addr *string) *cobra.Command {
 }
 
 func confirmAgentDeletion(in io.Reader, out io.Writer, name string) (string, bool) {
-	fmt.Fprintf(out, "This archives sessions for %q into its workspace, removes them from active history, and deletes the agent from Podium and config.yaml. Agent files are preserved.\n", name)
+	fmt.Fprintf(out, "This archives sessions for %q into its workspace, removes them from active history, and deletes the agent from Podiom and config.yaml. Agent files are preserved.\n", name)
 	fmt.Fprintf(out, "Type %s to delete: ", name)
 	line, _ := bufio.NewReader(in).ReadString('\n')
 	confirmation := strings.TrimSpace(line)
@@ -892,11 +892,11 @@ func newChatCmd(addr *string) *cobra.Command {
 	var agentName, sessionID string
 	cmd := &cobra.Command{
 		Use:   "chat <message>",
-		Short: "Send one chat turn through podiumd",
-		Long: "Sends one message to a Podium session through the daemon. Provide --agent to start\n" +
+		Short: "Send one chat turn through podiomd",
+		Long: "Sends one message to a Podiom session through the daemon. Provide --agent to start\n" +
 			"a new CLI-origin session, or --session to continue an existing one.",
-		Example: "  podium chat --agent jared \"Summarise this workspace\"\n" +
-			"  podium chat --session <session-id> \"Continue\"",
+		Example: "  podiom chat --agent jared \"Summarise this workspace\"\n" +
+			"  podiom chat --session <session-id> \"Continue\"",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if (agentName == "") == (sessionID == "") {
@@ -981,8 +981,8 @@ func newSessionsCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "sessions",
 		Short:   "Inspect and delete chat sessions",
-		Long:    "Durable sessions are the chat threads Podium keeps for each agent, whether started from the web UI, the CLI, a schedule, or a roadmap task.",
-		Example: "  podium sessions list\n  podium sessions delete <id>",
+		Long:    "Durable sessions are the chat threads Podiom keeps for each agent, whether started from the web UI, the CLI, a schedule, or a roadmap task.",
+		Example: "  podiom sessions list\n  podiom sessions delete <id>",
 	}
 	cmd.AddCommand(newSessionsListCmd(addr))
 	cmd.AddCommand(newSessionsDeleteCmd(addr))
@@ -993,7 +993,7 @@ func newSessionsListCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List durable sessions",
-		Example: "  podium sessions list",
+		Example: "  podiom sessions list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {
@@ -1025,7 +1025,7 @@ func newSessionsDeleteCmd(addr *string) *cobra.Command {
 		Use:     "delete <id>",
 		Short:   "Delete a session and its chat history",
 		Long:    "Permanently removes a session and its message history. This cannot be undone.",
-		Example: "  podium sessions delete <id>",
+		Example: "  podiom sessions delete <id>",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
@@ -1051,9 +1051,9 @@ func newSchedulesCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedules",
 		Short: "Inspect and trigger scheduled routines",
-		Long: "Schedules are self-describing markdown files under ~/.podium/schedules/.\n" +
+		Long: "Schedules are self-describing markdown files under ~/.podiom/schedules/.\n" +
 			"List their next-run times and run history, or trigger a run on demand.",
-		Example: "  podium schedules list\n  podium schedules run morning-calendar",
+		Example: "  podiom schedules list\n  podiom schedules run morning-calendar",
 	}
 	cmd.AddCommand(newSchedulesListCmd(addr))
 	cmd.AddCommand(newSchedulesRunCmd(addr))
@@ -1066,8 +1066,8 @@ func newSchedulesDeleteCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "delete <name>",
 		Short:   "Delete a schedule",
-		Long:    "Deletes a schedule's markdown file and its run history through podiumd. Sessions produced by past runs are preserved.",
-		Example: "  podium schedules delete morning-calendar",
+		Long:    "Deletes a schedule's markdown file and its run history through podiomd. Sessions produced by past runs are preserved.",
+		Example: "  podiom schedules delete morning-calendar",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -1093,8 +1093,8 @@ func newSchedulesListCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List schedules with next-run time and recent runs",
-		Long:    "Fetches every schedule file's state from podiumd: timing, agent, permission policy, next run, and recent run history.",
-		Example: "  podium schedules list",
+		Long:    "Fetches every schedule file's state from podiomd: timing, agent, permission policy, next run, and recent run history.",
+		Example: "  podiom schedules list",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {
@@ -1105,7 +1105,7 @@ func newSchedulesListCmd(addr *string) *cobra.Command {
 				return err
 			}
 			if len(statuses) == 0 {
-				fmt.Println("no schedules (drop a *.md file in ~/.podium/schedules/)")
+				fmt.Println("no schedules (drop a *.md file in ~/.podiom/schedules/)")
 				return nil
 			}
 			for _, s := range statuses {
@@ -1137,8 +1137,8 @@ func newSchedulesRunCmd(addr *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "run <name>",
 		Short:   "Trigger a schedule immediately",
-		Long:    "Runs a schedule on demand through podiumd. The run creates a durable schedule-origin session you can revisit and continue manually.",
-		Example: "  podium schedules run morning-calendar",
+		Long:    "Runs a schedule on demand through podiomd. The run creates a durable schedule-origin session you can revisit and continue manually.",
+		Example: "  podiom schedules run morning-calendar",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
@@ -1264,14 +1264,14 @@ func daemonClient(flagAddr string) (*client.Client, error) {
 
 // resolveAddr determines the daemon address with precedence:
 //  1. explicit --addr flag,
-//  2. PODIUM_ADDR environment variable,
-//  3. config.yaml server.bind:server.port under $PODIUM_HOME,
+//  2. PODIOM_ADDR environment variable,
+//  3. config.yaml server.bind:server.port under $PODIOM_HOME,
 //  4. the built-in default 127.0.0.1:8787.
 func resolveAddr(flagAddr string) (string, error) {
 	if flagAddr != "" {
 		return flagAddr, nil
 	}
-	if env := os.Getenv("PODIUM_ADDR"); env != "" {
+	if env := os.Getenv("PODIOM_ADDR"); env != "" {
 		return env, nil
 	}
 	home, err := config.ResolveHome()

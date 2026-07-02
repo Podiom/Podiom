@@ -452,7 +452,7 @@
           <div class="ad-spec"><span>Fallback</span><span class="mono">{a.Fallback && a.Fallback.length ? a.Fallback.join(" → ") : "none"}</span></div>
           <div class="ad-spec"><span>MCP</span><span class="mono">{a.MCPServers && a.MCPServers.length ? a.MCPServers.join(", ") : "none"}</span></div>
           <div class="ad-spec"><span>Permission</span><span class="mono">{a.PermissionMode}</span></div>
-          <div class="ad-spec"><span>Workspace</span><span class="mono">~/.podium/agents/{a.Name}</span></div>
+          <div class="ad-spec"><span>Workspace</span><span class="mono">~/.podiom/agents/{a.Name}</span></div>
         </div>
       </div>
     </div>
@@ -601,7 +601,7 @@
     <div class="modal-card delete-modal" role="dialog" aria-modal="true" aria-label="Delete agent" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <div class="modal-head">
         <div class="modal-title">Delete {selected.Name}</div>
-        <div class="modal-sub">This archives sessions into <span class="mono">~/.podium/agents/{selected.Name}/workspace/session-archive</span>, removes them from active history, and deletes the agent from Podium and config.yaml. Agent files are preserved.</div>
+        <div class="modal-sub">This archives sessions into <span class="mono">~/.podiom/agents/{selected.Name}/workspace/session-archive</span>, removes them from active history, and deletes the agent from Podiom and config.yaml. Agent files are preserved.</div>
       </div>
       <div class="modal-body">
         {#if deleteError}<div class="error-banner" style="margin-bottom:14px">{deleteError}</div>{/if}

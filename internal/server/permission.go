@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	"github.com/Podiom/Podiom/internal/adapter"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 var errPermissionTimeout = errors.New("permission request timed out")
@@ -83,7 +83,7 @@ func (b *permissionBroker) RequestPermission(ctx context.Context, req adapter.Pe
 				"request", req.ID,
 				"tool_name", req.ToolName,
 				"reason", "context_canceled",
-				podiumlog.ErrorAttr(ctx.Err()),
+				podiomlog.ErrorAttr(ctx.Err()),
 			)
 			return adapter.PermissionDecision{Behavior: "deny"}, ctx.Err()
 		case turnCh <- req:
@@ -114,7 +114,7 @@ func (b *permissionBroker) RequestPermission(ctx context.Context, req adapter.Pe
 			"request", req.ID,
 			"tool_name", req.ToolName,
 			"reason", "context_canceled",
-			podiumlog.ErrorAttr(ctx.Err()),
+			podiomlog.ErrorAttr(ctx.Err()),
 		)
 		return adapter.PermissionDecision{Behavior: "deny"}, ctx.Err()
 	case decision := <-decisionCh:

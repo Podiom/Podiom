@@ -1,5 +1,5 @@
-// Package client is the thin transport the `podium` CLI uses to talk to a
-// running podiumd over HTTP. The CLI never runs sessions in-process — it is
+// Package client is the thin transport the `podiom` CLI uses to talk to a
+// running podiomd over HTTP. The CLI never runs sessions in-process — it is
 // always a client of the daemon (R11.1 / D2).
 package client
 
@@ -18,22 +18,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/schedule"
-	"github.com/mar-schmidt/Podium/internal/server"
-	"github.com/mar-schmidt/Podium/internal/store"
-	"github.com/mar-schmidt/Podium/internal/updater"
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/schedule"
+	"github.com/Podiom/Podiom/internal/server"
+	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/updater"
+	"github.com/Podiom/Podiom/internal/usage"
 )
 
-// ErrDaemonUnreachable indicates podiumd is not accepting connections at the
+// ErrDaemonUnreachable indicates podiomd is not accepting connections at the
 // configured address (most commonly: it isn't running).
-var ErrDaemonUnreachable = errors.New("podiumd is not reachable")
+var ErrDaemonUnreachable = errors.New("podiomd is not reachable")
 
-// Client talks to podiumd at a base URL like http://127.0.0.1:8787.
+// Client talks to podiomd at a base URL like http://127.0.0.1:8787.
 type Client struct {
 	baseURL string
 	http    *http.Client
@@ -185,7 +185,7 @@ type AgentGenerateResult struct {
 }
 
 type MCPSnapshot struct {
-	Servers     []podiummcp.Server  `json:"servers"`
+	Servers     []podiommcp.Server  `json:"servers"`
 	Agents      []MCPAgent          `json:"agents"`
 	Assignments map[string][]string `json:"assignments"`
 }
@@ -210,7 +210,7 @@ func (c *Client) MCPSnapshot(ctx context.Context) (MCPSnapshot, error) {
 	return snapshot, nil
 }
 
-func (c *Client) UpsertMCPServer(ctx context.Context, server podiummcp.Server) (MCPSnapshot, error) {
+func (c *Client) UpsertMCPServer(ctx context.Context, server podiommcp.Server) (MCPSnapshot, error) {
 	var snapshot MCPSnapshot
 	if err := c.postJSON(ctx, "/api/mcp/servers", server, &snapshot); err != nil {
 		return snapshot, err

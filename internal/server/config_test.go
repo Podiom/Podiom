@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 func TestPatchConfigUpdatesPermissionTimeout(t *testing.T) {

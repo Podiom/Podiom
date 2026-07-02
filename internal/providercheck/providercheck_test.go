@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumexec "github.com/mar-schmidt/Podium/internal/exec"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomexec "github.com/Podiom/Podiom/internal/exec"
 )
 
 func TestCheckFindsFakeClaude(t *testing.T) {
@@ -24,7 +24,7 @@ func TestCheckFindsFakeClaude(t *testing.T) {
 	t.Setenv("CLAUDE_BIN", bin)
 
 	status := Check(context.Background(), config.ProviderClaude, Options{
-		Discovery: podiumexec.Discovery{ExtraDirs: []string{dir}},
+		Discovery: podiomexec.Discovery{ExtraDirs: []string{dir}},
 	})
 	if !status.Ready || !status.Found {
 		t.Fatalf("status = %+v, want found and ready", status)
@@ -37,7 +37,7 @@ func TestCheckFindsFakeClaude(t *testing.T) {
 func TestCheckMissingProviderIncludesInstallHint(t *testing.T) {
 	t.Setenv("CODEX_BIN", filepath.Join(t.TempDir(), "missing-codex"))
 	status := Check(context.Background(), config.ProviderCodex, Options{
-		Discovery: podiumexec.Discovery{ExtraDirs: []string{t.TempDir()}},
+		Discovery: podiomexec.Discovery{ExtraDirs: []string{t.TempDir()}},
 	})
 	if status.Found {
 		t.Fatalf("status = %+v, want missing", status)

@@ -253,7 +253,7 @@ export interface AgentDetail extends Agent {
   Soul: string;
 }
 
-export type MCPSource = "podium" | "claude" | "codex";
+export type MCPSource = "podiom" | "claude" | "codex";
 export type MCPTransport = "http" | "stdio";
 
 export interface MCPEnvStatus {

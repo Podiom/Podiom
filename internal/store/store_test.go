@@ -6,7 +6,7 @@ import (
 )
 
 func TestOpenRunsMigrationsAndIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "podium.db")
+	path := filepath.Join(t.TempDir(), "podiom.db")
 
 	s, err := Open(path)
 	if err != nil {

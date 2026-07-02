@@ -1,7 +1,7 @@
 param(
   [string]$Version = "latest",
-  [string]$InstallDir = "$env:LOCALAPPDATA\Podium\bin",
-  [string]$PodiumHome = "",
+  [string]$InstallDir = "$env:LOCALAPPDATA\Podiom\bin",
+  [string]$PodiomHome = "",
   [ValidateSet("ask", "yes", "no")]
   [string]$Autostart = "ask",
   [switch]$NoOnboard,
@@ -10,8 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ReleaseBase = if ($env:PODIUM_RELEASE_BASE) { $env:PODIUM_RELEASE_BASE } else { "https://github.com/mar-schmidt/Podium/releases" }
-$RepoUrl = if ($env:PODIUM_REPO_URL) { $env:PODIUM_REPO_URL } else { "https://github.com/mar-schmidt/Podium.git" }
+$ReleaseBase = if ($env:PODIOM_RELEASE_BASE) { $env:PODIOM_RELEASE_BASE } else { "https://github.com/Podiom/Podiom/releases" }
+$RepoUrl = if ($env:PODIOM_REPO_URL) { $env:PODIOM_REPO_URL } else { "https://github.com/Podiom/Podiom.git" }
 
 function Say($Message) { Write-Host $Message }
 function Invoke-Step([scriptblock]$Block, [string]$Description) {
@@ -29,12 +29,12 @@ $arch = switch ((Get-CimInstance Win32_OperatingSystem).OSArchitecture) {
 
 if ($Version -eq "latest") {
   $releaseUrl = "$ReleaseBase/latest/download"
-  $archive = "podium_windows_$arch.zip"
+  $archive = "podiom_windows_$arch.zip"
 } else {
   $releaseUrl = "$ReleaseBase/download/$Version"
-  $archive = "podium_${Version}_windows_$arch.zip"
+  $archive = "podiom_${Version}_windows_$arch.zip"
 }
-$tmp = Join-Path ([IO.Path]::GetTempPath()) ("podium-install-" + [guid]::NewGuid())
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ("podiom-install-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 try {
@@ -51,7 +51,7 @@ try {
       Say "[dry-run] Invoke-WebRequest $sumUrl -OutFile $sumPath"
       Invoke-Step { New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null } "create $InstallDir"
       Say "[dry-run] verify checksum and unpack $archive"
-      Say "[dry-run] install podium.exe and podiumd.exe into $InstallDir"
+      Say "[dry-run] install podiom.exe and podiomd.exe into $InstallDir"
     } else {
       Invoke-WebRequest -Uri $url -OutFile $archivePath
       Invoke-WebRequest -Uri $sumUrl -OutFile $sumPath
@@ -63,8 +63,8 @@ try {
       $unpack = Join-Path $tmp "unpack"
       Expand-Archive -Path $archivePath -DestinationPath $unpack -Force
       Invoke-Step { New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null } "create $InstallDir"
-      Invoke-Step { Copy-Item (Join-Path $unpack "podium.exe") (Join-Path $InstallDir "podium.exe") -Force } "install podium.exe"
-      Invoke-Step { Copy-Item (Join-Path $unpack "podiumd.exe") (Join-Path $InstallDir "podiumd.exe") -Force } "install podiumd.exe"
+      Invoke-Step { Copy-Item (Join-Path $unpack "podiom.exe") (Join-Path $InstallDir "podiom.exe") -Force } "install podiom.exe"
+      Invoke-Step { Copy-Item (Join-Path $unpack "podiomd.exe") (Join-Path $InstallDir "podiomd.exe") -Force } "install podiomd.exe"
     }
     $downloadOk = $true
   } catch {
@@ -74,9 +74,9 @@ try {
   }
 
   if (-not $downloadOk) {
-    Say "Building Podium from source fallback."
+    Say "Building Podiom from source fallback."
     $work = Join-Path $tmp "src"
-    if ((Test-Path "go.mod") -and (Test-Path "cmd\podium")) {
+    if ((Test-Path "go.mod") -and (Test-Path "cmd\podiom")) {
       $work = (Get-Location).Path
     } else {
       git clone --depth 1 $RepoUrl $work
@@ -84,42 +84,42 @@ try {
     Push-Location $work
     try { make build } finally { Pop-Location }
     Invoke-Step { New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null } "create $InstallDir"
-    Invoke-Step { Copy-Item (Join-Path $work "bin\podium.exe") (Join-Path $InstallDir "podium.exe") -Force } "install podium.exe"
-    Invoke-Step { Copy-Item (Join-Path $work "bin\podiumd.exe") (Join-Path $InstallDir "podiumd.exe") -Force } "install podiumd.exe"
+    Invoke-Step { Copy-Item (Join-Path $work "bin\podiom.exe") (Join-Path $InstallDir "podiom.exe") -Force } "install podiom.exe"
+    Invoke-Step { Copy-Item (Join-Path $work "bin\podiomd.exe") (Join-Path $InstallDir "podiomd.exe") -Force } "install podiomd.exe"
   }
 
-  if ($PodiumHome) {
-    $env:PODIUM_HOME = $PodiumHome
+  if ($PodiomHome) {
+    $env:PODIOM_HOME = $PodiomHome
   }
 
   if ($Autostart -eq "ask") {
-    $reply = Read-Host "Start Podium automatically when your system starts? [Y/n]"
+    $reply = Read-Host "Start Podiom automatically when your system starts? [Y/n]"
     if ($reply -and $reply.ToLowerInvariant().StartsWith("n")) { $Autostart = "no" } else { $Autostart = "yes" }
   }
 
   if ($Autostart -eq "yes") {
-    $podiumd = Join-Path $InstallDir "podiumd.exe"
+    $podiomd = Join-Path $InstallDir "podiomd.exe"
     Invoke-Step {
-      if ($PodiumHome) {
-        $quotedHome = $PodiumHome.Replace("'", "''")
-        $quotedExe = $podiumd.Replace("'", "''")
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -Command `$env:PODIUM_HOME='$quotedHome'; & '$quotedExe'"
+      if ($PodiomHome) {
+        $quotedHome = $PodiomHome.Replace("'", "''")
+        $quotedExe = $podiomd.Replace("'", "''")
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -Command `$env:PODIOM_HOME='$quotedHome'; & '$quotedExe'"
       } else {
-        $action = New-ScheduledTaskAction -Execute $podiumd
+        $action = New-ScheduledTaskAction -Execute $podiomd
       }
       $trigger = New-ScheduledTaskTrigger -AtLogOn
       $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-      Register-ScheduledTask -TaskName "Podium" -Action $action -Trigger $trigger -Principal $principal -Description "Start Podium daemon at logon" -Force | Out-Null
-    } "register current-user Scheduled Task: Podium"
+      Register-ScheduledTask -TaskName "Podiom" -Action $action -Trigger $trigger -Principal $principal -Description "Start Podiom daemon at logon" -Force | Out-Null
+    } "register current-user Scheduled Task: Podiom"
   }
 
-  Say "Podium installed to $InstallDir."
+  Say "Podiom installed to $InstallDir."
   if (-not ($env:Path.Split(';') -contains $InstallDir)) {
-    Say "Add $InstallDir to PATH if PowerShell cannot find podium."
+    Say "Add $InstallDir to PATH if PowerShell cannot find podiom."
   }
   if (-not $NoOnboard) {
-    $podium = Join-Path $InstallDir "podium.exe"
-    Invoke-Step { & $podium onboard } "run podium onboard"
+    $podiom = Join-Path $InstallDir "podiom.exe"
+    Invoke-Step { & $podiom onboard } "run podiom onboard"
   }
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

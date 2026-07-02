@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/usage"
+	"github.com/Podiom/Podiom/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +17,8 @@ func newUsageCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "usage",
 		Short:   "Show provider plan-limit usage per profile",
-		Long:    "Reports Claude and Codex plan-limit utilization (5-hour and weekly windows) for each configured auth profile. Data is fetched read-only from provider usage APIs; Podium never writes provider credentials.",
-		Example: "  podium usage\n  podium usage --json\n  podium usage --refresh",
+		Long:    "Reports Claude and Codex plan-limit utilization (5-hour and weekly windows) for each configured auth profile. Data is fetched read-only from provider usage APIs; Podiom never writes provider credentials.",
+		Example: "  podiom usage\n  podiom usage --json\n  podiom usage --refresh",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonClient(*addr)
 			if err != nil {

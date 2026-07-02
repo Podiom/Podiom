@@ -390,11 +390,11 @@
   function pushCopyFor(state: PushState): { title: string; body: string } {
     switch (state) {
       case "enabled":
-        return { title: "Notifications are on", body: "Podium will keep this browser registered while notification permission remains approved." };
+        return { title: "Notifications are on", body: "Podiom will keep this browser registered while notification permission remains approved." };
       case "enabling":
         return { title: "Enabling notifications", body: "Waiting for the browser and daemon to finish registration." };
       case "denied":
-        return { title: "Notifications are blocked", body: "Your browser has blocked notification permission for Podium. Change the site permission in the browser to use them." };
+        return { title: "Notifications are blocked", body: "Your browser has blocked notification permission for Podiom. Change the site permission in the browser to use them." };
       case "unsupported":
         return { title: "Notifications are unavailable", body: "This browser or daemon is missing Web Push support." };
       default:
@@ -408,7 +408,7 @@
     <header class="settings-head">
       <h1>Settings</h1>
       <p>
-        The engine every new agent, task and session inherits unless overridden — and where Podium turns when a provider
+        The engine every new agent, task and session inherits unless overridden — and where Podiom turns when a provider
         can't take the work.
       </p>
     </header>
@@ -485,7 +485,7 @@
                 </button>
               </div>
               <div class="hint">
-                Connect multiple Claude or Codex accounts. Each profile has its own login and rate limit, so Podium can
+                Connect multiple Claude or Codex accounts. Each profile has its own login and rate limit, so Podiom can
                 switch accounts when one runs out. No profile means your normal login is used.
               </div>
               {#if npOpen}
@@ -636,7 +636,7 @@
         </div>
         <div class="grow">
           <div class="card-title">Version &amp; updates</div>
-          <div class="card-sub">Releases from github.com/podium/podium.</div>
+          <div class="card-sub">Releases from github.com/podiom/podiom.</div>
         </div>
         <span class="badge {updateBadge.tone}">{updateBadge.label}</span>
       </div>

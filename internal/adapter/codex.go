@@ -16,24 +16,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumexec "github.com/mar-schmidt/Podium/internal/exec"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomexec "github.com/Podiom/Podiom/internal/exec"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 var errCodexTransport = errors.New("codex app-server transport failed")
 
 // CodexOptions configures the OpenAI Codex adapter.
 type CodexOptions struct {
-	Discovery         podiumexec.Discovery
+	Discovery         podiomexec.Discovery
 	PermissionTimeout time.Duration
 	Logger            *slog.Logger
 }
 
-// Codex drives a long-lived `codex --profile <podium-agent> app-server
+// Codex drives a long-lived `codex --profile <podiom-agent> app-server
 // --listen stdio://` process. A separate app-server is maintained for each
 // CODEX_HOME plus generated MCP profile hash.
 type Codex struct {
@@ -77,7 +77,7 @@ func (c *Codex) Start(ctx context.Context, req StartRequest) (Handle, error) {
 	client := c.client(req.ProfileDir, profileName, profileHash)
 	result, err := client.call(ctx, "thread/start", codexThreadStartParams(req))
 	if err != nil {
-		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider rpc failed", "stage", "thread_start", "method", "thread/start", "error", podiumlog.Redact(err.Error()))
+		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider rpc failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
 		return Handle{}, err
 	}
 	if err := codexDoubleLoadGuard(result, req.WorkspaceDir); err != nil {
@@ -86,11 +86,11 @@ func (c *Codex) Start(ctx context.Context, req StartRequest) (Handle, error) {
 	}
 	threadID, err := codexThreadID(result)
 	if err != nil {
-		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider response parse failed", "stage", "thread_start", "method", "thread/start", "error", podiumlog.Redact(err.Error()))
+		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider response parse failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
 		return Handle{}, err
 	}
 	client.markLoaded(threadID)
-	c.providerLog(req.SessionID, req.AgentName, req.Profile).Info("provider thread started", "event", "provider", "stage", "thread_start", "thread", threadID, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	c.providerLog(req.SessionID, req.AgentName, req.Profile).Info("provider thread started", "event", "provider", "stage", "thread_start", "thread", threadID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return Handle{Provider: config.ProviderCodex, ID: threadID}, nil
 }
 
@@ -139,13 +139,13 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 			MCPAllServers:      req.Settings.MCPAllServers,
 		})
 		if err != nil {
-			c.turnLog(req).Warn("provider thread start failed", "stage", "thread_start", "method", "thread/start", "error", podiumlog.Redact(err.Error()))
+			c.turnLog(req).Warn("provider thread start failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
 			return nil, err
 		}
 		threadID = handle.ID
 		firstEvents = append(firstEvents, Event{Kind: EventHandleUpdated, Handle: &handle})
 	} else if err := client.ensureThread(ctx, threadID, req.Settings); err != nil {
-		c.turnLog(req).Warn("provider thread resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiumlog.Redact(err.Error()))
+		c.turnLog(req).Warn("provider thread resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiomlog.Redact(err.Error()))
 		return nil, err
 	} else {
 		c.turnLog(req).Info("provider thread resumed", "event", "provider", "stage", "thread_resume", "thread", threadID)
@@ -158,26 +158,26 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 
 	result, err := client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Settings))
 	if err != nil && threadID != "" {
-		c.turnLog(req).Warn("provider turn start failed; retrying after resume", "stage", "turn_start", "method", "turn/start", "error", podiumlog.Redact(err.Error()))
+		c.turnLog(req).Warn("provider turn start failed; retrying after resume", "stage", "turn_start", "method", "turn/start", "error", podiomlog.Redact(err.Error()))
 		client.markUnloaded(threadID)
 		if resumeErr := client.ensureThread(ctx, threadID, req.Settings); resumeErr == nil {
 			result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Settings))
 		} else {
-			c.turnLog(req).Warn("provider retry resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiumlog.Redact(resumeErr.Error()))
+			c.turnLog(req).Warn("provider retry resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiomlog.Redact(resumeErr.Error()))
 		}
 	}
 	if err != nil {
-		c.turnLog(req).Warn("provider turn start failed", "stage", "turn_start", "method", "turn/start", "error", podiumlog.Redact(err.Error()))
+		c.turnLog(req).Warn("provider turn start failed", "stage", "turn_start", "method", "turn/start", "error", podiomlog.Redact(err.Error()))
 		return nil, err
 	}
 	turnID, err := codexTurnID(result)
 	if err != nil {
-		c.turnLog(req).Warn("provider response parse failed", "stage", "turn_start", "method", "turn/start", "error", podiumlog.Redact(err.Error()))
+		c.turnLog(req).Warn("provider response parse failed", "stage", "turn_start", "method", "turn/start", "error", podiomlog.Redact(err.Error()))
 		return nil, err
 	}
 
 	key := codexTurnKey{threadID: threadID, turnID: turnID}
-	c.turnLog(req).Info("provider turn started", "event", "provider", "stage", "turn_start", "thread", threadID, "turn", turnID, podiumlog.DurationMS("duration_ms", time.Since(started)))
+	c.turnLog(req).Info("provider turn started", "event", "provider", "stage", "turn_start", "thread", threadID, "turn", turnID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	timeout := req.Settings.PermissionTimeout
 	if timeout <= 0 {
 		timeout = c.permissionTimeout
@@ -187,7 +187,7 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 	}
 	turnEvents := client.registerTurn(key, codexActiveTurn{
 		ctx:          ctx,
-		podiumTurnID: firstNonEmptyString(req.Settings.PermissionTurnID, req.SessionID),
+		podiomTurnID: firstNonEmptyString(req.Settings.PermissionTurnID, req.SessionID),
 		relay:        req.Relay,
 		input:        req.Input,
 		timeout:      timeout,
@@ -211,7 +211,7 @@ func (c *Codex) providerLog(sessionID, agentName, profile string) *slog.Logger {
 	)
 }
 
-// Teardown leaves the long-lived app-server running. Podium currently does not
+// Teardown leaves the long-lived app-server running. Podiom currently does not
 // carry profile context through this interface, so unsubscribe is deferred until
 // a future lifecycle pass can target the correct CODEX_HOME process.
 func (c *Codex) Teardown(ctx context.Context, handle Handle) error {
@@ -219,7 +219,7 @@ func (c *Codex) Teardown(ctx context.Context, handle Handle) error {
 }
 
 // Capabilities asks Codex app-server for the model catalogue. The app-server
-// response includes model-aware reasoning-effort options, so Podium can keep
+// response includes model-aware reasoning-effort options, so Podiom can keep
 // the picker aligned with the installed Codex CLI/account.
 func (c *Codex) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
 	client := c.client(req.ProfileDir, "", "")
@@ -248,19 +248,19 @@ func (c *Codex) client(profileDir, profileName, profileHash string) *codexClient
 	return client
 }
 
-func (c *Codex) ensureMCPProfile(profileDir, agentName string, assigned, all []podiummcp.Server) (string, string, error) {
+func (c *Codex) ensureMCPProfile(profileDir, agentName string, assigned, all []podiommcp.Server) (string, string, error) {
 	if len(assigned) == 0 && len(all) == 0 {
 		return "", "", nil
 	}
-	content, unavailable := podiummcp.CodexProfile(assigned, all)
+	content, unavailable := podiommcp.CodexProfile(assigned, all)
 	if len(unavailable) > 0 {
 		return "", "", fmt.Errorf("mcp server(s) unavailable on codex: %s", strings.Join(unavailable, ", "))
 	}
-	name, _, err := podiummcp.WriteCodexProfile(profileDir, agentName, content)
+	name, _, err := podiommcp.WriteCodexProfile(profileDir, agentName, content)
 	if err != nil {
 		return "", "", fmt.Errorf("write codex mcp profile: %w", err)
 	}
-	return name, podiummcp.ProfileHash(content), nil
+	return name, podiommcp.ProfileHash(content), nil
 }
 
 type codexClient struct {
@@ -323,7 +323,7 @@ type codexTurnKey struct {
 
 type codexActiveTurn struct {
 	ctx          context.Context
-	podiumTurnID string
+	podiomTurnID string
 	relay        PermissionRelay
 	input        UserInputRelay
 	timeout      time.Duration
@@ -360,20 +360,20 @@ func (c *codexClient) call(ctx context.Context, method string, params any) (json
 	for attempt := 0; attempt < 2; attempt++ {
 		started := time.Now()
 		if err := c.ensureProcess(ctx); err != nil {
-			c.log.Warn("provider app-server unavailable", "stage", "ensure_process", "method", method, "error", podiumlog.Redact(err.Error()))
+			c.log.Warn("provider app-server unavailable", "stage", "ensure_process", "method", method, "error", podiomlog.Redact(err.Error()))
 			return nil, err
 		}
 		result, err := c.callStarted(ctx, method, params)
 		if err == nil {
-			c.log.Debug("provider rpc succeeded", "event", "provider", "stage", "rpc", "method", method, podiumlog.DurationMS("duration_ms", time.Since(started)))
+			c.log.Debug("provider rpc succeeded", "event", "provider", "stage", "rpc", "method", method, podiomlog.DurationMS("duration_ms", time.Since(started)))
 			return result, nil
 		}
 		last = err
 		if !errors.Is(err, errCodexTransport) {
-			c.log.Warn("provider rpc failed", "stage", "rpc", "method", method, "error", podiumlog.Redact(err.Error()))
+			c.log.Warn("provider rpc failed", "stage", "rpc", "method", method, "error", podiomlog.Redact(err.Error()))
 			return nil, err
 		}
-		c.log.Warn("provider transport failed; resetting", "stage", "transport", "method", method, "attempt", attempt+1, "error", podiumlog.Redact(err.Error()))
+		c.log.Warn("provider transport failed; resetting", "stage", "transport", "method", method, "attempt", attempt+1, "error", podiomlog.Redact(err.Error()))
 		c.reset()
 	}
 	return nil, last
@@ -398,8 +398,8 @@ func (c *codexClient) ensureProcess(ctx context.Context) error {
 
 	if _, err := c.callStarted(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]any{
-			"name":    "podium",
-			"title":   "Podium",
+			"name":    "podiom",
+			"title":   "Podiom",
 			"version": "dev",
 		},
 		"capabilities": map[string]any{
@@ -408,7 +408,7 @@ func (c *codexClient) ensureProcess(ctx context.Context) error {
 			"mcpServerOpenaiFormElicitation": false,
 		},
 	}); err != nil {
-		c.log.Warn("provider initialize failed", "stage", "initialize", "method", "initialize", "error", podiumlog.Redact(err.Error()))
+		c.log.Warn("provider initialize failed", "stage", "initialize", "method", "initialize", "error", podiomlog.Redact(err.Error()))
 		c.reset()
 		return err
 	}
@@ -419,7 +419,7 @@ func (c *codexClient) ensureProcess(ctx context.Context) error {
 		return fmt.Errorf("%w: app-server exited during initialize", errCodexTransport)
 	}
 	if err := c.writeJSONLocked(map[string]any{"method": "initialized"}); err != nil {
-		c.log.Warn("provider initialized notification failed", "stage", "initialize", "method", "initialized", "error", podiumlog.Redact(err.Error()))
+		c.log.Warn("provider initialized notification failed", "stage", "initialize", "method", "initialized", "error", podiomlog.Redact(err.Error()))
 		return fmt.Errorf("%w: write initialized: %v", errCodexTransport, err)
 	}
 	c.initialized = true
@@ -432,7 +432,7 @@ func (c *codexClient) startLocked() error {
 	if c.profileName != "" {
 		args = append([]string{"--profile", c.profileName}, args...)
 	}
-	cmd := podiumexec.Command(context.Background(), c.bin, args...)
+	cmd := podiomexec.Command(context.Background(), c.bin, args...)
 	cmd.Env = codexEnv(c.profileDir)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -454,7 +454,7 @@ func (c *codexClient) startLocked() error {
 
 	proc := &osProcess{
 		cmdWait: cmd.Wait,
-		kill:    func() error { return podiumexec.Kill(cmd) },
+		kill:    func() error { return podiomexec.Kill(cmd) },
 	}
 	c.cmd = proc
 	c.stdin = stdin
@@ -518,7 +518,7 @@ func (c *codexClient) readLoop(proc *osProcess, stdout io.Reader) {
 		}
 		var msg codexRPCMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			c.log.Warn("provider stdout parse failed", "stage", "read_stdout", "error", err, "line_tail", podiumlog.RedactTail(string(line), 4096))
+			c.log.Warn("provider stdout parse failed", "stage", "read_stdout", "error", err, "line_tail", podiomlog.RedactTail(string(line), 4096))
 			continue
 		}
 		c.dispatch(msg)
@@ -531,7 +531,7 @@ func (c *codexClient) readLoop(proc *osProcess, stdout io.Reader) {
 	if err == nil {
 		err = io.EOF
 	}
-	c.log.Warn("provider app-server stream ended", "event", "provider", "stage", "read_stdout", "error", podiumlog.Redact(err.Error()))
+	c.log.Warn("provider app-server stream ended", "event", "provider", "stage", "read_stdout", "error", podiomlog.Redact(err.Error()))
 	c.mu.Lock()
 	if c.cmd == proc {
 		c.failLocked(fmt.Errorf("%w: %v", errCodexTransport, err))
@@ -545,7 +545,7 @@ func (c *codexClient) readStderr(stderr io.Reader) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
-			c.log.Debug("provider stderr", "stage", "read_stderr", "stderr_tail", podiumlog.RedactTail(line, 4096))
+			c.log.Debug("provider stderr", "stage", "read_stderr", "stderr_tail", podiomlog.RedactTail(line, 4096))
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -578,7 +578,7 @@ func (c *codexClient) dispatchResponse(msg codexRPCMessage) {
 		return
 	}
 	if msg.Error != nil {
-		c.log.Warn("provider rpc error response", "stage", "rpc_response", "code", msg.Error.Code, "error", podiumlog.Redact(msg.Error.Message))
+		c.log.Warn("provider rpc error response", "stage", "rpc_response", "code", msg.Error.Code, "error", podiomlog.Redact(msg.Error.Message))
 		ch <- codexCallResponse{err: *msg.Error}
 		return
 	}
@@ -818,7 +818,7 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 			return
 		case event := <-events:
 			if event.err != nil {
-				c.log.Warn("provider turn stream failed", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "error", podiumlog.Redact(event.err.Error()))
+				c.log.Warn("provider turn stream failed", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "error", podiomlog.Redact(event.err.Error()))
 				sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: event.err.Error()})
 				return
 			}
@@ -835,17 +835,17 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 						return
 					}
 				}
-				c.log.Info("provider turn stream completed", "event", "provider", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, podiumlog.DurationMS("duration_ms", time.Since(started)))
+				c.log.Info("provider turn stream completed", "event", "provider", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 				return
 			case "error":
 				if codexRateLimited(event.params) {
-					c.log.Warn("provider rate limited", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "rate_limited", true, "error", podiumlog.RedactTail(codexErrorMessage(event.params), 4096))
+					c.log.Warn("provider rate limited", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "rate_limited", true, "error", podiomlog.RedactTail(codexErrorMessage(event.params), 4096))
 					sendAdapterEvent(ctx, out, Event{Kind: EventRateLimited, Content: codexErrorMessage(event.params)})
 					sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 					return
 				}
-				c.log.Warn("provider error notification", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "error", podiumlog.RedactTail(codexErrorMessage(event.params), 4096))
+				c.log.Warn("provider error notification", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "error", podiomlog.RedactTail(codexErrorMessage(event.params), 4096))
 				sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: codexErrorMessage(event.params)})
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 				return
@@ -960,8 +960,8 @@ func codexThreadStartParams(req StartRequest) map[string]any {
 		"runtimeWorkspaceRoots": workspaceRoots(req.WorkspaceDir, req.ExtraWorkspaceDirs),
 		"approvalPolicy":        codexApprovalPolicy(req.PermissionMode),
 		"sandbox":               codexSandboxMode(req.PermissionMode),
-		"threadSource":          "podium",
-		"serviceName":           "podium",
+		"threadSource":          "podiom",
+		"serviceName":           "podiom",
 	}
 	if req.Model != "" {
 		params["model"] = req.Model
@@ -1172,16 +1172,16 @@ func codexErrorMessage(params json.RawMessage) string {
 
 func codexReplayMessage(history []store.Message, liveMessage string) string {
 	var b strings.Builder
-	b.WriteString("Podium is continuing a durable session in a fresh Codex thread. ")
+	b.WriteString("Podiom is continuing a durable session in a fresh Codex thread. ")
 	b.WriteString("Use this canonical transcript as prior context, then answer the live user turn.\n\n")
-	b.WriteString("<podium_history>\n")
+	b.WriteString("<podiom_history>\n")
 	for _, msg := range history {
 		if strings.TrimSpace(msg.Content) == "" {
 			continue
 		}
 		fmt.Fprintf(&b, "%s: %s\n", msg.Role, msg.Content)
 	}
-	b.WriteString("</podium_history>\n\n")
+	b.WriteString("</podiom_history>\n\n")
 	b.WriteString("Live user turn:\n")
 	b.WriteString(liveMessage)
 	return b.String()
@@ -1341,7 +1341,7 @@ func codexPermissionRequest(method string, id, params json.RawMessage, active co
 	if toolUseID == "" {
 		toolUseID = codexIDKey(id)
 	}
-	turnID := active.podiumTurnID
+	turnID := active.podiomTurnID
 	if turnID == "" {
 		turnID = codexTurnID
 	}
@@ -1376,7 +1376,7 @@ func codexUserInputRequest(id, params json.RawMessage, active codexActiveTurn) U
 	if p.AutoResolutionMS != nil {
 		autoMS = int64(*p.AutoResolutionMS)
 	}
-	turnID := active.podiumTurnID
+	turnID := active.podiomTurnID
 	if turnID == "" {
 		turnID = p.TurnID
 	}

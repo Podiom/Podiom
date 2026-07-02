@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // claudeUsageURL is a package var so tests can point it at an httptest server.
@@ -25,7 +25,7 @@ var claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
 // claudeUserAgent mimics the Claude Code CLI. The provider gates the OAuth usage
 // endpoint on a claude-code User-Agent; we send a stable one.
 const (
-	claudeUserAgent = "claude-code/1.0.0 (podium)"
+	claudeUserAgent = "claude-code/1.0.0 (podiom)"
 	claudeOAuthBeta = "oauth-2025-04-20"
 	claudeScope     = "user:profile"
 )

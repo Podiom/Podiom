@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 func (c *Core) ensureSessionInstructions(ctx context.Context, sess store.Session) error {

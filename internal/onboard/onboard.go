@@ -1,4 +1,4 @@
-// Package onboard implements Podium's first-run CLI wizard.
+// Package onboard implements Podiom's first-run CLI wizard.
 package onboard
 
 import (
@@ -16,10 +16,10 @@ import (
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
 
-	"github.com/mar-schmidt/Podium/internal/autostart"
-	"github.com/mar-schmidt/Podium/internal/client"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/providercheck"
+	"github.com/Podiom/Podiom/internal/autostart"
+	"github.com/Podiom/Podiom/internal/client"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/providercheck"
 )
 
 // Options configures the interactive onboarding wizard.
@@ -84,9 +84,9 @@ func Run(ctx context.Context, opts Options) error {
 
 	// huh needs a real terminal to drive the wizard. install.sh already gates the
 	// launch on /dev/tty; if we still landed here without one (e.g. CI piping into
-	// `podium onboard`), guide the user rather than invent answers or hang.
+	// `podiom onboard`), guide the user rather than invent answers or hang.
 	if !u.interactive() {
-		fmt.Fprintln(out, warnStyle.Render("Onboarding needs an interactive terminal. Run 'podium onboard' directly in a terminal."))
+		fmt.Fprintln(out, warnStyle.Render("Onboarding needs an interactive terminal. Run 'podiom onboard' directly in a terminal."))
 		return ErrNoTTY
 	}
 
@@ -106,7 +106,7 @@ func Run(ctx context.Context, opts Options) error {
 	printDoctor(out, statuses)
 	ready := readyProviders(statuses)
 	for len(ready) == 0 {
-		fmt.Fprintln(out, warnStyle.Render("Podium needs Claude or Codex before it can generate a SOUL.md."))
+		fmt.Fprintln(out, warnStyle.Render("Podiom needs Claude or Codex before it can generate a SOUL.md."))
 		for _, s := range statuses {
 			if !s.Found {
 				fmt.Fprintf(out, "\n%s not found.\n  %s\n", titleProvider(s.Provider), s.InstallHint)
@@ -129,7 +129,7 @@ func Run(ctx context.Context, opts Options) error {
 				return err
 			}
 			if !again {
-				return errors.New("no working provider available; run `podium doctor` after installing or logging in")
+				return errors.New("no working provider available; run `podiom doctor` after installing or logging in")
 			}
 		}
 	}
@@ -149,7 +149,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("Podium daemon is live at %s.", addr)))
+	fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("Podiom daemon is live at %s.", addr)))
 
 	section(out, "Shaping your agent")
 	ans, err := collectAnswers(u)
@@ -206,7 +206,7 @@ func Run(ctx context.Context, opts Options) error {
 				return err
 			}
 			fmt.Fprintln(out)
-			fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("%s is ready. Try: podium chat --agent %s \"hello\"", name, name)))
+			fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("%s is ready. Try: podiom chat --agent %s \"hello\"", name, name)))
 			return nil
 		case "regenerate":
 			if err := u.spinnerWhile(fmt.Sprintf("Asking %s to redraft SOUL.md…", titleProvider(provider)), draft); err != nil {
@@ -229,27 +229,27 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
-// offerAutostart asks, as the final wizard step, whether to launch Podium on
+// offerAutostart asks, as the final wizard step, whether to launch Podiom on
 // login and configures it if so. Suppressed when the installer already handled
-// autostart (PODIUM_OFFER_AUTOSTART=0). Failures warn but never fail onboarding.
+// autostart (PODIOM_OFFER_AUTOSTART=0). Failures warn but never fail onboarding.
 func offerAutostart(u *ui) error {
-	if os.Getenv("PODIUM_OFFER_AUTOSTART") == "0" {
+	if os.Getenv("PODIOM_OFFER_AUTOSTART") == "0" {
 		return nil
 	}
 	section(u.out, "Autostart")
-	ok, err := u.confirm("Start Podium automatically when your computer starts?", true)
+	ok, err := u.confirm("Start Podiom automatically when your computer starts?", true)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil
 	}
-	podiumd, err := findPodiumd()
+	podiomd, err := findPodiomd()
 	if err != nil {
-		fmt.Fprintln(u.out, warnStyle.Render("Could not locate podiumd for autostart: "+err.Error()))
+		fmt.Fprintln(u.out, warnStyle.Render("Could not locate podiomd for autostart: "+err.Error()))
 		return nil
 	}
-	if err := autostart.Install(autostart.Options{PodiumdPath: podiumd, PodiumHome: os.Getenv(config.EnvHome)}); err != nil {
+	if err := autostart.Install(autostart.Options{PodiomdPath: podiomd, PodiomHome: os.Getenv(config.EnvHome)}); err != nil {
 		fmt.Fprintln(u.out, warnStyle.Render("Could not configure autostart: "+err.Error()))
 		return nil
 	}
@@ -286,16 +286,16 @@ func ensureDaemon(ctx context.Context, addr string, out, errOut io.Writer) (*cli
 	if _, err := c.Health(ctx); err == nil {
 		return c, addr, nil
 	}
-	fmt.Fprintln(out, "Starting podiumd for onboarding...")
-	podiumd, err := findPodiumd()
+	fmt.Fprintln(out, "Starting podiomd for onboarding...")
+	podiomd, err := findPodiomd()
 	if err != nil {
 		return nil, addr, err
 	}
-	cmd := exec.CommandContext(ctx, podiumd)
+	cmd := exec.CommandContext(ctx, podiomd)
 	cmd.Stdout = errOut
 	cmd.Stderr = errOut
 	if err := cmd.Start(); err != nil {
-		return nil, addr, fmt.Errorf("start podiumd: %w", err)
+		return nil, addr, fmt.Errorf("start podiomd: %w", err)
 	}
 	for i := 0; i < 30; i++ {
 		time.Sleep(300 * time.Millisecond)
@@ -303,18 +303,18 @@ func ensureDaemon(ctx context.Context, addr string, out, errOut io.Writer) (*cli
 			return c, addr, nil
 		}
 	}
-	return nil, addr, errors.New("podiumd did not become ready")
+	return nil, addr, errors.New("podiomd did not become ready")
 }
 
-func findPodiumd() (string, error) {
-	if p, err := exec.LookPath("podiumd"); err == nil {
+func findPodiomd() (string, error) {
+	if p, err := exec.LookPath("podiomd"); err == nil {
 		return p, nil
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	name := "podiumd"
+	name := "podiomd"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -322,7 +322,7 @@ func findPodiumd() (string, error) {
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate, nil
 	}
-	return "", fmt.Errorf("podiumd not found on PATH or next to %s", exe)
+	return "", fmt.Errorf("podiomd not found on PATH or next to %s", exe)
 }
 
 func printDoctor(out io.Writer, statuses []providercheck.Status) {
@@ -582,7 +582,7 @@ func editText(initial string) (string, error) {
 	if editor == "" {
 		return "", errors.New("EDITOR is not set")
 	}
-	tmp, err := os.CreateTemp("", "podium-soul-*.md")
+	tmp, err := os.CreateTemp("", "podiom-soul-*.md")
 	if err != nil {
 		return "", err
 	}

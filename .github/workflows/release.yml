@@ -63,15 +63,15 @@ jobs:
           version="${{ steps.version.outputs.version }}"
           for os in linux darwin; do
             for arch in amd64 arm64; do
-              cp "dist/podium_${version}_${os}_${arch}.tar.gz" "dist/podium_${os}_${arch}.tar.gz"
+              cp "dist/podiom_${version}_${os}_${arch}.tar.gz" "dist/podiom_${os}_${arch}.tar.gz"
             done
           done
           for arch in amd64 arm64; do
-            cp "dist/podium_${version}_windows_${arch}.zip" "dist/podium_windows_${arch}.zip"
+            cp "dist/podiom_${version}_windows_${arch}.zip" "dist/podiom_windows_${arch}.zip"
           done
           cp scripts/install.sh dist/install.sh
           cp scripts/install.ps1 dist/install.ps1
-          (cd dist && sha256sum podium_* install.sh install.ps1 > SHA256SUMS)
+          (cd dist && sha256sum podiom_* install.sh install.ps1 > SHA256SUMS)
 
       - name: Generate release notes
         env:
@@ -82,7 +82,7 @@ jobs:
           notes_file="${RUNNER_TEMP}/release-notes.md"
           previous_tag="$(git tag --merged "$GITHUB_SHA" --list 'v0.1.*' --sort=-version:refname | grep -v "^${VERSION}$" | head -n 1 || true)"
           {
-            echo "# Podium ${VERSION}"
+            echo "# Podiom ${VERSION}"
             echo
             echo "Target commit: \`${GITHUB_SHA}\` (${COMMIT})"
             echo

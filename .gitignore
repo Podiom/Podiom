@@ -1,6 +1,6 @@
 # Go
-/podium
-/podiumd
+/podiom
+/podiomd
 /bin/
 *.exe
 *.test
@@ -32,8 +32,8 @@ pnpm-debug.log*
 .idea/
 .vscode/
 
-# Local runtime data (should live under ~/.podium, never in-repo)
-/.podium/
+# Local runtime data (should live under ~/.podiom, never in-repo)
+/.podiom/
 /.claude/settings.local.json
 
 # Scratch / coverage output
@@ -42,4 +42,4 @@ pnpm-debug.log*
 /coverage.html
 
 # Design source export (large binary; kept local, not in git history)
-/Podium frontend design.zip
+/Podiom frontend design.zip

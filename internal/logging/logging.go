@@ -1,4 +1,4 @@
-// Package logging owns Podium's daemon log files and shared tail/follow helpers.
+// Package logging owns Podiom's daemon log files and shared tail/follow helpers.
 package logging
 
 import (
@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	activeLogName    = "podiumd.log"
-	rotatedLogGlob   = "podiumd-*.log"
+	activeLogName    = "podiomd.log"
+	rotatedLogGlob   = "podiomd-*.log"
 	rotatedDateForm  = "2006-01-02"
 	defaultPollEvery = 250 * time.Millisecond
 )
@@ -71,7 +71,7 @@ func Path(dir string) string {
 	return filepath.Join(dir, activeLogName)
 }
 
-// RotatingWriter appends to podiumd.log, rotating it once per local day.
+// RotatingWriter appends to podiomd.log, rotating it once per local day.
 type RotatingWriter struct {
 	mu            sync.Mutex
 	dir           string
@@ -178,7 +178,7 @@ func (w *RotatingWriter) rotateActiveLocked(date string) error {
 	} else if err != nil {
 		return fmt.Errorf("stat active log: %w", err)
 	}
-	dest := filepath.Join(w.dir, "podiumd-"+date+".log")
+	dest := filepath.Join(w.dir, "podiomd-"+date+".log")
 	if _, err := os.Stat(dest); os.IsNotExist(err) {
 		if err := os.Rename(active, dest); err != nil {
 			return fmt.Errorf("rotate log: %w", err)
@@ -214,7 +214,7 @@ func (w *RotatingWriter) cleanupLocked() error {
 	}
 	for _, path := range matches {
 		base := filepath.Base(path)
-		raw := strings.TrimSuffix(strings.TrimPrefix(base, "podiumd-"), ".log")
+		raw := strings.TrimSuffix(strings.TrimPrefix(base, "podiomd-"), ".log")
 		day, err := time.ParseInLocation(rotatedDateForm, raw, w.now().Location())
 		if err != nil {
 			continue
@@ -392,7 +392,7 @@ var sensitivePatterns = []redactionPattern{
 }
 
 // Redact removes common token/secret shapes before provider diagnostics are
-// written to Podium logs.
+// written to Podiom logs.
 func Redact(text string) string {
 	redacted := text
 	for _, pattern := range sensitivePatterns {

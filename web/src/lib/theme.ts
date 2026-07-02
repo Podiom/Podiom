@@ -1,4 +1,4 @@
-// Visual helpers ported from the Podium design comp. The backend agent model
+// Visual helpers ported from the Podiom design comp. The backend agent model
 // has no avatar/gradient/soul fields, so we derive a stable gradient and
 // initial from the agent name — same name always maps to the same look.
 

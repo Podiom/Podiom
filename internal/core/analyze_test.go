@@ -7,25 +7,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/projects"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
 )
 
 func TestAnalyzeProjectRepoSendsReadOnlySnapshotContextAndPatchesLedger(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newScheduledTestCore(t)
 	defer cleanup()
-	fake.Responses = []string{`{"name":"Gleaming Nest","description":"A cozy Svelte and Go project planner.","stack":["Go","Svelte","TypeScript","SQLite"],"notes":"Podium coordinates agent work across projects. The repo has Go backend packages and a Svelte frontend. Build with go test and npm run build."}`}
+	fake.Responses = []string{`{"name":"Gleaming Nest","description":"A cozy Svelte and Go project planner.","stack":["Go","Svelte","TypeScript","SQLite"],"notes":"Podiom coordinates agent work across projects. The repo has Go backend packages and a Svelte frontend. Build with go test and npm run build."}`}
 
 	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "analyst", Provider: config.ProviderClaude}); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	repo := projects.SnapshotRepo("mar-schmidt", "Podium", "https://github.com/mar-schmidt/Podium", "main", "main")
-	if _, err := c.CreateProject(ctx, projects.Project{ID: "podium", Name: "Podium", Description: "GitHub fallback.", Repo: &repo}); err != nil {
+	repo := projects.SnapshotRepo("Podiom", "Podiom", "https://github.com/Podiom/Podiom", "main", "main")
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "podiom", Name: "Podiom", Description: "GitHub fallback.", Repo: &repo}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
 
-	updated, err := c.AnalyzeProjectRepo(ctx, "podium", "")
+	updated, err := c.AnalyzeProjectRepo(ctx, "podiom", "")
 	if err != nil {
 		t.Fatalf("analyze project: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestAnalyzeProjectRepoSendsReadOnlySnapshotContextAndPatchesLedger(t *testi
 		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
 	}
 	req := fake.Requests[0]
-	repoRoot := filepath.Join(c.paths.ProjectsDir, "podium", "repo")
+	repoRoot := filepath.Join(c.paths.ProjectsDir, "podiom", "repo")
 	if !strings.Contains(req.Message, repoRoot) || !strings.Contains(req.Message, "Do not read the whole repository") {
 		t.Fatalf("prompt missing analysis constraints:\n%s", req.Message)
 	}
@@ -127,10 +127,10 @@ func TestUniqueProjectIDSluggingAndCollision(t *testing.T) {
 	if got := c.UniqueProjectID("My Repo!"); got != "my-repo" {
 		t.Fatalf("slug = %q, want my-repo", got)
 	}
-	if _, err := c.CreateProject(ctx, projects.Project{ID: "podium", Name: "Podium"}); err != nil {
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "podiom", Name: "Podiom"}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if got := c.UniqueProjectID("Podium"); got != "podium-2" {
-		t.Fatalf("collision slug = %q, want podium-2", got)
+	if got := c.UniqueProjectID("Podiom"); got != "podiom-2" {
+		t.Fatalf("collision slug = %q, want podiom-2", got)
 	}
 }

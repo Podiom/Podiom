@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/capabilities"
 )
 
 func TestProviderCapabilitiesEndpoint(t *testing.T) {

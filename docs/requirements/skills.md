@@ -1,7 +1,7 @@
-# Podium Skills — Requirements
+# Podiom Skills — Requirements
 
-*Standalone implementation spec for the Skills feature of Podium. Self-contained:
-a developer can implement from this document without reading the full Podium
+*Standalone implementation spec for the Skills feature of Podiom. Self-contained:
+a developer can implement from this document without reading the full Podiom
 requirements. Cross-references to the main doc (e.g. §5.2, §8.7) are for context
 only and are not required to build this feature.*
 
@@ -13,19 +13,19 @@ Status: v1.0 — ready for implementation.
 
 Skills are reusable `SKILL.md` capability folders (the open cross-agent skill
 format used by Claude Code and Codex CLI). This feature lets a user **see every
-skill available on their machine in one place** and ensures that **a Podium agent
+skill available on their machine in one place** and ensures that **a Podiom agent
 sees the same skill set regardless of which provider (Claude or Codex) backs a
 given turn**.
 
 Guiding principles:
 
-1. **Podium owns no skills.** Podium never authors, installs, or stores skills of
+1. **Podiom owns no skills.** Podiom never authors, installs, or stores skills of
    its own. It discovers what already exists and exposes a unified view.
 2. **Standalone CLIs keep working untouched.** Running `claude` or `codex`
-   directly (outside Podium) must still see exactly its own skills — Podium must
+   directly (outside Podiom) must still see exactly its own skills — Podiom must
    not permanently fuse the two providers' skill sets on disk.
-3. **Unification happens through Podium, not on the filesystem globally.** The
-   cross-provider "same skills everywhere" guarantee applies to turns Podium
+3. **Unification happens through Podiom, not on the filesystem globally.** The
+   cross-provider "same skills everywhere" guarantee applies to turns Podiom
    launches, not to standalone CLI use. (This is "Stance 2".)
 4. **Observational, not controlling (v1).** No per-agent skill mapping, no
    enable/disable. Every agent sees every skill. The UI is a catalogue to browse,
@@ -39,14 +39,14 @@ Guiding principles:
 
 | Path | Role | Owner |
 | --- | --- | --- |
-| `~/.agents/skills/` | **Canonical unified source** — the single view Podium reads/displays | Podium-managed union |
+| `~/.agents/skills/` | **Canonical unified source** — the single view Podiom reads/displays | Podiom-managed union |
 | `~/.claude/skills/` | Claude's native personal skills | Claude CLI (real dir) |
 | `~/.codex/skills/` | Codex's native personal skills | Codex CLI (real dir) |
 
 - **S1** `~/.agents/skills/` is the **single source of truth** for "what skills
-  exist". Podium reads and displays only this directory.
+  exist". Podiom reads and displays only this directory.
 - **S2** `~/.claude/skills/` and `~/.codex/skills/` **remain real, independent
-  directories**. Podium MUST NOT replace them with directory-level symlinks.
+  directories**. Podiom MUST NOT replace them with directory-level symlinks.
   Standalone `claude`/`codex` continue to see only their own skills.
 - **S3** `~/.agents/skills/` is a **union view built from per-skill symlinks** —
   one symlink per skill, each pointing to wherever that skill actually lives:
@@ -76,15 +76,15 @@ Guiding principles:
 
 ## 3. Cross-provider exposure (Stance 2)
 
-The union is made available to each backend **only for turns Podium launches**.
+The union is made available to each backend **only for turns Podiom launches**.
 Standalone CLI use is unaffected.
 
-- **S5 — Codex (native).** Podium points Codex's skill scanning at
-  `~/.agents/skills/` via `CODEX_HOME` / the Codex scan root, so a Podium-launched
+- **S5 — Codex (native).** Podiom points Codex's skill scanning at
+  `~/.agents/skills/` via `CODEX_HOME` / the Codex scan root, so a Podiom-launched
   Codex process sees the union natively. (Codex natively scans its skills roots;
   pointing it at the union folder is sufficient.)
 - **S6 — Claude (`--add-dir`, verified).** Claude does **not** auto-load
-  `~/.agents/skills/`. Podium therefore:
+  `~/.agents/skills/`. Podiom therefore:
   1. Places a `.claude/skills/` directory **inside the agent's `workspace/`**,
      populated with per-skill symlinks to the union (or a single link to the union
      root — see S7), and
@@ -99,12 +99,12 @@ Standalone CLI use is unaffected.
 - **S7 — Independence from auth.** The Claude exposure mechanism (S6) MUST NOT use
   or depend on `CLAUDE_CONFIG_DIR`. Auth/profiles and skill exposure are
   **independent levers**: skill exposure works identically whether or not the agent
-  has a profile. (In Podium, most agents have no profile; tying skills to
+  has a profile. (In Podiom, most agents have no profile; tying skills to
   `CLAUDE_CONFIG_DIR` would break the common case and is explicitly disallowed.)
-- **S8 — Standalone guarantee.** Because S5/S6 only affect Podium-launched
+- **S8 — Standalone guarantee.** Because S5/S6 only affect Podiom-launched
   processes (a scoped `CODEX_HOME`/scan root for Codex; a workspace `--add-dir` for
-  Claude), a standalone `claude` or `codex` invocation outside Podium sees only its
-  own native skills. A `.claude`-origin skill is available to a Codex **Podium**
+  Claude), a standalone `claude` or `codex` invocation outside Podiom sees only its
+  own native skills. A `.claude`-origin skill is available to a Codex **Podiom**
   turn, but **not** to a standalone `codex` run. This is intended.
 
 ---
@@ -116,18 +116,18 @@ Two distinct symlink operations exist; implementers must keep them separate.
 - **S9 — Union links (skill lifecycle, NOT agent-bound).** The per-skill symlinks
   that populate `~/.agents/skills/` are created/refreshed by:
   - the **install script** (§6), and
-  - any Podium **re-scan** of skills (`podium skills scan`/`relink`, §5).
+  - any Podiom **re-scan** of skills (`podiom skills scan`/`relink`, §5).
 
   They have nothing to do with agents and exist once per machine.
 - **S10 — Workspace skill link (agent-bound).** The `.claude/skills/` link inside
   an agent's `workspace/` (S6) is created **when the agent is created**, as part
   of workspace scaffolding. It is per-agent and lives for the life of the agent.
-- **S11 — Deduplication.** When building the union, Podium dedupes on **skill
+- **S11 — Deduplication.** When building the union, Podiom dedupes on **skill
   name** (the directory name / frontmatter `name`). It records which source
   location(s) a given skill name appears in and flags when same-named skills have
   **differing content**. No automatic merging — the union surfaces one entry per
   name and the UI/CLI exposes the conflict honestly (§5).
-- **S12 — Re-scan triggers.** Podium rebuilds/refreshes union links on demand
+- **S12 — Re-scan triggers.** Podiom rebuilds/refreshes union links on demand
   (CLI/dashboard action) and SHOULD refresh on daemon start. (Live filesystem
   watching is optional, not required for v1.)
 
@@ -140,14 +140,14 @@ per-agent assignment, no enable/disable in v1.
 
 ### 5.1 CLI
 
-- **S13** `podium skills list` — deduplicated list, one row per skill name, each
+- **S13** `podiom skills list` — deduplicated list, one row per skill name, each
   with its one-line `description` and **source badge(s)** (`agents`, `claude`,
   `codex`). Supports `--source claude|codex|agents` to filter.
-- **S14** `podium skills show <name>` — prints the skill's `SKILL.md` and its
+- **S14** `podiom skills show <name>` — prints the skill's `SKILL.md` and its
   source path(s); flags a conflict if same-named skills differ across sources.
-- **S15** `podium skills paths` — prints the canonical dir and the resolved
+- **S15** `podiom skills paths` — prints the canonical dir and the resolved
   symlink topology (debugging aid for the union).
-- **S16** `podium skills scan` / `podium skills relink` — rebuild the union links
+- **S16** `podiom skills scan` / `podiom skills relink` — rebuild the union links
   (S9), e.g. after the user has added a skill to `~/.agents/skills/`.
 - **S17** No `enable` / `disable` / `assign` verbs in v1 (consistent with the
   no-mapping model).
@@ -167,7 +167,7 @@ Layout and behaviour (this is the brief for Claude Design):
 - **S20** **Search/filter** by name/description, plus a filter by source badge.
 - **S21** A persistent, quiet **helper line**: *"Skills live in
   `~/.agents/skills/`. Add a SKILL.md folder there to make it available to all
-  agents."* — teaches the add path (S22) without implying Podium installs skills.
+  agents."* — teaches the add path (S22) without implying Podiom installs skills.
 - **S22** **Read-only in v1.** No toggles and no per-agent assignment UI. A row
   may **expand to show the full `SKILL.md`** (read-only) for inspection.
 - **S23** Optional but recommended: a small **"available to all agents"** note,
@@ -208,7 +208,7 @@ install order.
 - **S27 — Windows symlinks.** Symlinks may require developer mode or elevation on
   Windows. The script falls back to a **junction** (`mklink /J`) where directory
   symlinks are unavailable, or **warns clearly** rather than failing silently.
-  (Cross-platform support matters because Podium targets Windows/Linux/macOS.)
+  (Cross-platform support matters because Podiom targets Windows/Linux/macOS.)
 
 ---
 
@@ -216,8 +216,8 @@ install order.
 
 - **Per-agent skill mapping** (assigning different skill sets to different agents).
   The architecture leaves room for it, but v1 is "all agents see all skills".
-- **Enable/disable** of individual skills from Podium.
-- **Skill installation/authoring** from within Podium (users add `SKILL.md`
+- **Enable/disable** of individual skills from Podiom.
+- **Skill installation/authoring** from within Podiom (users add `SKILL.md`
   folders to `~/.agents/skills/` manually in v1).
 - **Project-scoped skills** (e.g. `.claude/skills/` inside a project). v1 concerns
   the global/personal level only.
@@ -230,10 +230,10 @@ install order.
   additional roots. Linking the union into the real `~/.codex/skills` would leak
   `.claude`-origin skills to standalone Codex (violating S8), and repointing
   `CODEX_HOME` wholesale would orphan Codex's auth/session/cache state. The clean
-  fix is a Podium-managed "overlay" `CODEX_HOME` (mirror every entry as a symlink
+  fix is a Podiom-managed "overlay" `CODEX_HOME` (mirror every entry as a symlink
   except `skills`, which composes the union + `.system` built-ins). This is left as
   a follow-up. Acceptance checks #1/#2 are therefore met for the **Claude** side
-  (a Codex/agents-origin skill is usable by a Podium Claude turn) but not yet for
+  (a Codex/agents-origin skill is usable by a Podiom Claude turn) but not yet for
   the **Codex** side. Skill discovery, the catalogue (CLI + dashboard), and Claude
   exposure all ship in v1.
 
@@ -243,16 +243,16 @@ install order.
 
 A correct implementation satisfies all of:
 
-1. A skill folder placed in `~/.claude/skills/` appears in `podium skills list`
-   with a `claude` badge, and is usable by a Podium **Codex** turn.
+1. A skill folder placed in `~/.claude/skills/` appears in `podiom skills list`
+   with a `claude` badge, and is usable by a Podiom **Codex** turn.
 2. A skill folder placed in `~/.codex/skills/` appears with a `codex` badge, and
-   is usable by a Podium **Claude** turn.
+   is usable by a Podiom **Claude** turn.
 3. A skill in `~/.agents/skills/` (real folder) appears with an `agents` badge and
-   is usable by both providers through Podium.
-4. Running `codex` **standalone** (outside Podium) does **not** see a
+   is usable by both providers through Podiom.
+4. Running `codex` **standalone** (outside Podiom) does **not** see a
    `.claude`-origin skill (Stance 2 / S8).
 5. Creating a new agent produces a `workspace/.claude/skills/` link, and a
-   Podium-launched Claude turn for that agent discovers the union via `--add-dir`.
+   Podiom-launched Claude turn for that agent discovers the union via `--add-dir`.
 6. Skill exposure works for an agent **with no profile** (no `CLAUDE_CONFIG_DIR`
    dependency — S7).
 7. The installer run on a machine **without** Claude/Codex still creates

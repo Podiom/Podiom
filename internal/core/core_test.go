@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 func TestCreateAgentScaffoldsDirectory(t *testing.T) {
@@ -77,7 +77,7 @@ func TestMemoryComposesAsFourthLayerWithinBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose claude: %v", err)
 	}
-	snapPath := filepath.Join(paths.Workspace, ".podium-memory.md")
+	snapPath := filepath.Join(paths.Workspace, ".podiom-memory.md")
 	if !strings.Contains(string(claudePayload.Bytes), "@"+snapPath) {
 		t.Fatalf("claude payload should import the memory snapshot:\n%s", claudePayload.Bytes)
 	}
@@ -118,7 +118,7 @@ func TestMemoryComposesAsFourthLayerWithinBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recompose claude: %v", err)
 	}
-	if strings.Contains(string(emptyPayload.Bytes), ".podium-memory.md") {
+	if strings.Contains(string(emptyPayload.Bytes), ".podiom-memory.md") {
 		t.Fatalf("empty memory should not be composed in:\n%s", emptyPayload.Bytes)
 	}
 }
@@ -144,7 +144,7 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compose claude: %v", err)
 	}
-	wantClaude := "# Podium generated Claude context for builder\n\n" +
+	wantClaude := "# Podiom generated Claude context for builder\n\n" +
 		"@" + c.paths.BaseAgents + "\n" +
 		"@" + paths.Agents + "\n" +
 		"@" + paths.Soul + "\n"
@@ -705,7 +705,7 @@ func TestDescribeProjectPromptTreatsProjectAsGeneralWork(t *testing.T) {
 		t.Fatalf("prompt still frames the user project as a developer tool:\n%s", prompt)
 	}
 	for _, want := range []string{
-		"project tracked in Podium",
+		"project tracked in Podiom",
 		"software, writing, planning, research, physical work",
 		`The project is titled "Kitchen Renovation".`,
 		`Current draft to improve: "Renovate the kitchen."`,

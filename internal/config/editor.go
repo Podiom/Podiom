@@ -34,7 +34,7 @@ func RemoveProfile(path, name string) error {
 
 // SetGlobal upserts the daemon-wide defaults under the top-level `global:`
 // mapping in config.yaml. It edits the YAML syntax tree so user comments and
-// unrelated settings survive. Only the fields Podium's Settings page owns are
+// unrelated settings survive. Only the fields Podiom's Settings page owns are
 // touched: provider, profile, model, effort, permission_mode,
 // permission_timeout, and fallback. Empty model/effort keys are removed so the
 // file falls back to applyDefaults; an empty fallback drops the key entirely.

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 var errEmptyEndpoint = errors.New("subscription endpoint is required")

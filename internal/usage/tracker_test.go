@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // isolateHome points the implicit-default credential lookups at empty temp dirs

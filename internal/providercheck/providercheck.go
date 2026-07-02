@@ -1,5 +1,5 @@
 // Package providercheck performs lightweight, credential-safe checks for the
-// native CLIs Podium orchestrates.
+// native CLIs Podiom orchestrates.
 package providercheck
 
 import (
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumexec "github.com/mar-schmidt/Podium/internal/exec"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomexec "github.com/Podiom/Podiom/internal/exec"
 )
 
 const defaultTimeout = 8 * time.Second
@@ -34,7 +34,7 @@ type Status struct {
 
 // Options configures provider checks.
 type Options struct {
-	Discovery podiumexec.Discovery
+	Discovery podiomexec.Discovery
 	Timeout   time.Duration
 }
 

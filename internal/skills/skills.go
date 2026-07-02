@@ -1,11 +1,11 @@
 // Package skills discovers SKILL.md capability folders on the machine and
-// presents them as a single deduplicated catalogue. Podium owns no skills: it
+// presents them as a single deduplicated catalogue. Podiom owns no skills: it
 // reads what already exists under three fixed, home-relative roots and unifies
 // them under ~/.agents/skills via per-skill symlinks (the "union").
 //
-// The roots are deliberately independent of PODIUM_HOME — they are the same
+// The roots are deliberately independent of PODIOM_HOME — they are the same
 // directories the standalone claude/codex CLIs use, so skill exposure stays
-// decoupled from Podium's storage root and from provider auth/profiles (S1/S7).
+// decoupled from Podiom's storage root and from provider auth/profiles (S1/S7).
 package skills
 
 import (
@@ -32,8 +32,8 @@ var order = []Source{SourceAgents, SourceClaude, SourceCodex}
 
 // EnvHome overrides the home directory the three skill roots are derived from.
 // It exists so tests can point discovery at a scratch directory; production
-// resolves the real user home. It is intentionally NOT PODIUM_HOME.
-const EnvHome = "PODIUM_SKILLS_HOME"
+// resolves the real user home. It is intentionally NOT PODIOM_HOME.
+const EnvHome = "PODIOM_SKILLS_HOME"
 
 // Roots holds the three skill directories discovery reads.
 type Roots struct {

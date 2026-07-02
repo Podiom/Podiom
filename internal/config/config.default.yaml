@@ -1,12 +1,12 @@
-# Podium system configuration.
+# Podiom system configuration.
 #
-# This file was generated on first run. It is yours to edit — Podium reads it on
+# This file was generated on first run. It is yours to edit — Podiom reads it on
 # start. Schedules and projects are NOT configured here: schedules are
-# self-describing markdown files under ~/.podium/schedules/, and projects live in
-# the shared ledger at ~/.podium/projects/projects.yaml.
+# self-describing markdown files under ~/.podiom/schedules/, and projects live in
+# the shared ledger at ~/.podiom/projects/projects.yaml.
 #
-# All Podium state lives under a single root (default ~/.podium/, override with
-# the PODIUM_HOME environment variable).
+# All Podiom state lives under a single root (default ~/.podiom/, override with
+# the PODIOM_HOME environment variable).
 
 # ---------------------------------------------------------------------------
 # global: defaults applied across all agents unless an agent overrides them.
@@ -20,7 +20,7 @@ global:
   # Optional global fallback chain used when an agent declares none of its own.
   # Each entry is a profile name, a bare provider ("claude"/"codex", no profile),
   # or "default" (the agent's own provider with the CLI's global login).
-  # On rate limit, Podium steps to the next target and replays history. A chain
+  # On rate limit, Podiom steps to the next target and replays history. A chain
   # may mix providers (Claude -> Codex). See docs for details.
   fallback: []                # e.g. [work, personal, codex-main, codex]
 
@@ -29,12 +29,12 @@ global:
 # These values are safe to ship. Do NOT put private keys or client secrets here.
 # ---------------------------------------------------------------------------
 github:
-  app_slug: podium-llm-orchestrator  # official Podium GitHub App slug
+  app_slug: podiom-llm-orchestrator  # official Podiom GitHub App slug
   client_id: Iv23liIKvhvRj9FdIaPD  # public GitHub App client ID
 
 # ---------------------------------------------------------------------------
 # profiles: OPTIONAL named auth contexts, each 1:1 with one underlying account.
-# A profile is just a directory + a name that Podium owns — Podium never handles
+# A profile is just a directory + a name that Podiom owns — Podiom never handles
 # credentials. You log in yourself against the profile dir using the CLI's own
 # auth flow (e.g. CLAUDE_CONFIG_DIR=<dir> claude login).
 # Omit a profile on an agent to use the CLI's normal global login (no env set).
@@ -42,17 +42,17 @@ github:
 profiles: []
   # - name: work
   #   provider: claude
-  #   config_dir: ~/.podium/profiles/claude-work     # exported as CLAUDE_CONFIG_DIR
+  #   config_dir: ~/.podiom/profiles/claude-work     # exported as CLAUDE_CONFIG_DIR
   # - name: personal
   #   provider: claude
-  #   config_dir: ~/.podium/profiles/claude-personal
+  #   config_dir: ~/.podiom/profiles/claude-personal
   # - name: codex-main
   #   provider: codex
-  #   home_dir: ~/.podium/profiles/codex-main         # exported as CODEX_HOME
+  #   home_dir: ~/.podiom/profiles/codex-main         # exported as CODEX_HOME
 
 # ---------------------------------------------------------------------------
-# agents: named colleagues maintained by Podium. Each gets a directory under
-# ~/.podium/agents/<name>/ (SOUL.md identity, optional AGENTS.md instructions,
+# agents: named colleagues maintained by Podiom. Each gets a directory under
+# ~/.podiom/agents/<name>/ (SOUL.md identity, optional AGENTS.md instructions,
 # and a workspace/ used as the agent's working directory). Defaults below are
 # inherited from `global` unless set here.
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ server:
 
 # ---------------------------------------------------------------------------
 # logging: daemon-owned structured logs. Logs are written under
-# ~/.podium/logs/ by default, or $PODIUM_HOME/logs when PODIUM_HOME is set.
+# ~/.podiom/logs/ by default, or $PODIOM_HOME/logs when PODIOM_HOME is set.
 # ---------------------------------------------------------------------------
 logging:
   level: info                 # debug | info | warn | error

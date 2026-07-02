@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // Router dispatches adapter calls to the implementation for the owning

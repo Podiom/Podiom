@@ -1,4 +1,4 @@
-// Package store is Podium's durable persistence layer: an embedded SQLite
+// Package store is Podiom's durable persistence layer: an embedded SQLite
 // database (pure-Go modernc.org/sqlite, no cgo) holding the canonical message
 // history, rolling summaries, provider handles, and session/agent metadata
 // (R11.2 / D6). Phase 0 establishes the connection and a forward-only migration
@@ -19,11 +19,11 @@ type Store struct {
 }
 
 // Open opens (creating if needed) the SQLite database at path, applies the
-// pragmas Podium relies on, and runs any pending migrations. The pure-Go driver
+// pragmas Podiom relies on, and runs any pending migrations. The pure-Go driver
 // registers under the name "sqlite".
 func Open(path string) (*Store, error) {
 	// Busy timeout avoids spurious "database is locked" errors under the parallel
-	// runs Podium allows (no concurrency cap, R11.3); foreign_keys + WAL give us
+	// runs Podiom allows (no concurrency cap, R11.3); foreign_keys + WAL give us
 	// referential integrity and better read/write concurrency.
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path)
 	db, err := sql.Open("sqlite", dsn)

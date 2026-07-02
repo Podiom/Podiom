@@ -1,4 +1,4 @@
-// Package capabilities defines Podium's provider model/effort catalogue.
+// Package capabilities defines Podiom's provider model/effort catalogue.
 package capabilities
 
 import (
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 const (

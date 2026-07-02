@@ -1,4 +1,4 @@
-// Package dream runs Podium's built-in nightly memory-consolidation loop. It is a
+// Package dream runs Podiom's built-in nightly memory-consolidation loop. It is a
 // thin lifecycle wrapper: the "who is due and what to do" logic lives in core
 // (Core.RunDueDreams), so the runner just ticks and delegates.
 package dream
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/core"
+	"github.com/Podiom/Podiom/internal/core"
 )
 
 // tickInterval controls how often the runner asks core whether any agent is due

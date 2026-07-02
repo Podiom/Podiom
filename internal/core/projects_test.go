@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	"github.com/mar-schmidt/Podium/internal/projects"
-	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
@@ -95,7 +95,7 @@ func TestConnectedRepoContextIsSentToRoadmapSession(t *testing.T) {
 	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderCodex}); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	repo := projects.SnapshotRepo("mar-schmidt", "Podium", "https://github.com/mar-schmidt/Podium", "main", "main")
+	repo := projects.SnapshotRepo("Podiom", "Podiom", "https://github.com/Podiom/Podiom", "main", "main")
 	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control", Repo: &repo}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestConnectedRepoContextIsSentToManualProjectSession(t *testing.T) {
 	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderCodex}); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	repo := projects.SnapshotRepo("mar-schmidt", "Podium", "https://github.com/mar-schmidt/Podium", "main", "main")
+	repo := projects.SnapshotRepo("Podiom", "Podiom", "https://github.com/Podiom/Podiom", "main", "main")
 	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control", Repo: &repo}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestConnectedRepoContextIsSentToManualProjectSession(t *testing.T) {
 	}
 	root := filepath.Join(c.paths.ProjectsDir, "mission-control", "repo")
 	req := fake.Requests[0]
-	if !strings.Contains(req.Message, "Podium project context for this session") || !strings.Contains(req.Message, root) {
+	if !strings.Contains(req.Message, "Podiom project context for this session") || !strings.Contains(req.Message, root) {
 		t.Fatalf("request missing project context:\n%s", req.Message)
 	}
 	wantDirs := []string{c.paths.ProjectsDir, root}
@@ -276,7 +276,7 @@ func TestDescribeTaskPromptEmbedsExpandedProjectContext(t *testing.T) {
 	}
 	prompt := fake.Requests[0].Message
 	for _, want := range []string{
-		"projects.yaml under the Podium data directory",
+		"projects.yaml under the Podiom data directory",
 		"Project context:",
 		"id: mission-control",
 		"Operations dashboard for coordinating work.",
@@ -290,7 +290,7 @@ func TestDescribeTaskPromptEmbedsExpandedProjectContext(t *testing.T) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	if strings.Contains(prompt, "~/.podium") {
+	if strings.Contains(prompt, "~/.podiom") {
 		t.Fatalf("prompt should not hardcode a Unix home path:\n%s", prompt)
 	}
 }

@@ -25,7 +25,7 @@ var (
 )
 
 // ScaffoldResult reports what first-run scaffolding actually created, so the
-// daemon can log a useful "initialized fresh ~/.podium" message.
+// daemon can log a useful "initialized fresh ~/.podiom" message.
 type ScaffoldResult struct {
 	CreatedHome       bool
 	CreatedConfig     bool
@@ -34,7 +34,7 @@ type ScaffoldResult struct {
 }
 
 // Scaffold ensures the storage root and its directory tree exist and writes the
-// Podium-owned seed files (config.yaml, base AGENTS.md, empty projects.yaml) when
+// Podiom-owned seed files (config.yaml, base AGENTS.md, empty projects.yaml) when
 // absent. It is idempotent and never overwrites existing user files — a fresh
 // install always ends up with a real, self-documenting config to edit (R9.1).
 func Scaffold(p Paths) (ScaffoldResult, error) {

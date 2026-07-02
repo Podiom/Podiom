@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/capabilities"
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/capabilities"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 const providerCapabilitiesTTL = 5 * time.Minute

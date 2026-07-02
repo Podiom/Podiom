@@ -7,12 +7,12 @@ import (
 	"net/url"
 	"strings"
 
-	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
-	"github.com/mar-schmidt/Podium/internal/store"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/store"
 )
 
 type mcpSnapshot struct {
-	Servers     []podiummcp.Server  `json:"servers"`
+	Servers     []podiommcp.Server  `json:"servers"`
 	Agents      []mcpAgent          `json:"agents"`
 	Assignments map[string][]string `json:"assignments"`
 }
@@ -47,12 +47,12 @@ func (s *Server) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mcp servers are only editable from loopback clients", http.StatusForbidden)
 		return
 	}
-	var req podiummcp.Server
+	var req podiommcp.Server
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := podiummcp.UpsertUserServer(s.paths.MCPYAML, req); err != nil {
+	if err := podiommcp.UpsertUserServer(s.paths.MCPYAML, req); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
@@ -81,7 +81,7 @@ func (s *Server) handleMCPServer(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "mcp servers are only editable from loopback clients", http.StatusForbidden)
 			return
 		}
-		if err := podiummcp.RemoveUserServer(s.paths.MCPYAML, name); err != nil {
+		if err := podiommcp.RemoveUserServer(s.paths.MCPYAML, name); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
@@ -112,13 +112,13 @@ func (s *Server) handleMCPAssignments(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	cat, err := podiummcp.LoadCatalogue(s.paths.MCPYAML)
+	cat, err := podiommcp.LoadCatalogue(s.paths.MCPYAML)
 	if err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 	if req.Assigned {
-		if _, err := podiummcp.Assigned(cat, []string{req.ServerName}); err != nil {
+		if _, err := podiommcp.Assigned(cat, []string{req.ServerName}); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
@@ -142,7 +142,7 @@ func (s *Server) handleMCPAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mcpSnapshot(ctx context.Context) (mcpSnapshot, error) {
-	cat, err := podiummcp.LoadCatalogue(s.paths.MCPYAML)
+	cat, err := podiommcp.LoadCatalogue(s.paths.MCPYAML)
 	if err != nil {
 		return mcpSnapshot{}, err
 	}

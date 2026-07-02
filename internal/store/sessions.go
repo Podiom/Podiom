@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/mar-schmidt/Podium/internal/config"
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 // CreateSession inserts a durable session. If ID is empty, a UUID is assigned.
@@ -167,7 +167,7 @@ func (s *Store) UpdateSessionSettings(ctx context.Context, id, model, effort str
 }
 
 // UpdateSessionRuntime stores the current backing target and mutable runtime
-// settings. Clearing providerHandle forces the next turn to replay Podium's
+// settings. Clearing providerHandle forces the next turn to replay Podiom's
 // canonical history into a fresh provider session/thread.
 func (s *Store) UpdateSessionRuntime(ctx context.Context, id string, provider config.Provider, profile, model, effort string, permissionMode config.PermissionMode, providerHandle string) (Session, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE sessions

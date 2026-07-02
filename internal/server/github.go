@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	podiumgithub "github.com/mar-schmidt/Podium/internal/github"
+	podiomgithub "github.com/Podiom/Podiom/internal/github"
 )
 
 type githubDevicePollRequest struct {
@@ -64,7 +64,7 @@ func writeGitHubProjectError(w http.ResponseWriter, err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, podiumgithub.ErrConfirmationRequired) {
+	if errors.Is(err, podiomgithub.ErrConfirmationRequired) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return true
 	}

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mar-schmidt/Podium/internal/config"
-	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
+	"github.com/Podiom/Podiom/internal/config"
+	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
 func TestHandleLogsReturnsTailForLoopback(t *testing.T) {
@@ -19,7 +19,7 @@ func TestHandleLogsReturnsTailForLoopback(t *testing.T) {
 	if err := os.MkdirAll(paths.LogsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(podiumlog.Path(paths.LogsDir), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+	if err := os.WriteFile(podiomlog.Path(paths.LogsDir), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s := New(Options{Paths: paths})
@@ -56,7 +56,7 @@ func TestHandleLogsFollowStreamsNDJSON(t *testing.T) {
 	if err := os.MkdirAll(paths.LogsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(podiumlog.Path(paths.LogsDir), []byte("hello\n"), 0o644); err != nil {
+	if err := os.WriteFile(podiomlog.Path(paths.LogsDir), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s := New(Options{Paths: paths})

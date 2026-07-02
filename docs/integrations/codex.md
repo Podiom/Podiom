@@ -1,7 +1,7 @@
 # Codex Integration
 
-Podium drives OpenAI Codex through the experimental app-server transport. The
-daemon owns durable Podium sessions and maps each Codex-backed session to a
+Podiom drives OpenAI Codex through the experimental app-server transport. The
+daemon owns durable Podiom sessions and maps each Codex-backed session to a
 persisted Codex `threadId`.
 
 ## Launch
@@ -12,21 +12,21 @@ Base command:
 codex app-server --listen stdio://
 ```
 
-The transport is newline-delimited JSON-RPC over stdin/stdout. Podium sends:
+The transport is newline-delimited JSON-RPC over stdin/stdout. Podiom sends:
 
 ```json
-{"id":1,"method":"initialize","params":{"clientInfo":{"name":"podium","title":"Podium","version":"dev"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"mcpServerOpenaiFormElicitation":false}}}
+{"id":1,"method":"initialize","params":{"clientInfo":{"name":"podiom","title":"Podiom","version":"dev"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"mcpServerOpenaiFormElicitation":false}}}
 {"method":"initialized"}
 ```
 
-Podium keeps the process alive and restarts it on transport failure. Because
+Podiom keeps the process alive and restarts it on transport failure. Because
 `CODEX_HOME` is process-scoped, the adapter keeps one app-server per Codex
 profile directory. When no profile is set, `CODEX_HOME` is unset and Codex uses
 its normal global login.
 
 ## Lifecycle
 
-| Podium action | Codex method |
+| Podiom action | Codex method |
 | --- | --- |
 | Create session backing resource | `thread/start` |
 | Rejoin persisted backing resource | `thread/resume` |
@@ -38,33 +38,33 @@ its normal global login.
 when set, and effort when set.
 
 The returned `thread.id` is stored as `sessions.provider_handle`. If the
-app-server restarts, Podium clears its in-memory loaded-thread set, calls
+app-server restarts, Podiom clears its in-memory loaded-thread set, calls
 `thread/resume`, and then retries `turn/start` for the persisted `threadId`.
 
 ## Instructions
 
 Before a session starts, core composes the agent instructions and writes
-`agents/<name>/workspace/AGENTS.md`. The file is Podium-managed and concatenates
+`agents/<name>/workspace/AGENTS.md`. The file is Podiom-managed and concatenates
 the instruction layers in this order:
 
-1. `$PODIUM_HOME/AGENTS.md`
-2. `$PODIUM_HOME/agents/<name>/AGENTS.md` when present
-3. `$PODIUM_HOME/agents/<name>/SOUL.md`
+1. `$PODIOM_HOME/AGENTS.md`
+2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
+3. `$PODIOM_HOME/agents/<name>/SOUL.md`
 
 Current Codex app-server behavior was checked against `codex-cli 0.142.4` by
 starting a thread with both a parent `agents/<name>/AGENTS.md` and a workspace
 `AGENTS.md`. The `thread/start` response reported only
 `workspace/AGENTS.md` in `instructionSources`, so the parent per-agent file is
-not double-loaded in that version. Podium also has a runtime guard: if a future
+not double-loaded in that version. Podiom also has a runtime guard: if a future
 Codex response reports both the generated workspace file and the parent
 per-agent file, session startup fails instead of delivering duplicated
 instructions.
 
 ## Streaming
 
-Podium correlates server notifications by `threadId` and `turnId`.
+Podiom correlates server notifications by `threadId` and `turnId`.
 
-| Codex event | Podium behavior |
+| Codex event | Podiom behavior |
 | --- | --- |
 | `item/agentMessage/delta` | Stream as assistant delta. |
 | `turn/completed` | Use the final `agentMessage` item as durable assistant text and finish the turn. |
@@ -72,20 +72,20 @@ Podium correlates server notifications by `threadId` and `turnId`.
 
 ## Permissions
 
-Podium keeps Codex sandbox and approval settings separate.
+Podiom keeps Codex sandbox and approval settings separate.
 
-| Podium mode | Codex settings |
+| Podiom mode | Codex settings |
 | --- | --- |
 | `approve` | `approvalPolicy: "on-request"` and `sandbox: "read-only"` on thread start; per-turn `sandboxPolicy.type: "readOnly"`. |
 | `yolo` | `approvalPolicy: "never"` and `sandbox: "danger-full-access"` on thread start; per-turn `sandboxPolicy.type: "dangerFullAccess"`. |
 
-Podium intentionally does not use Codex's lower-friction `workspace-write` Auto
+Podiom intentionally does not use Codex's lower-friction `workspace-write` Auto
 preset for `approve`, because Claude prompts before workspace writes. Keeping
 Codex in `read-only` makes the user-facing `approve` promise aligned across
 providers: reads may proceed, writes ask.
 
 When Codex sends `item/commandExecution/requestApproval`,
-`item/fileChange/requestApproval`, or `item/permissions/requestApproval`, Podium
+`item/fileChange/requestApproval`, or `item/permissions/requestApproval`, Podiom
 relays the request through the daemon permission broker. User `allow` maps to
 Codex `accept`; user `deny` maps to Codex `decline`. Permission expansion
 requests grant the requested profile only when the user allows the prompt; a
