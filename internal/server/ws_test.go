@@ -373,7 +373,8 @@ func TestWebSocketRejectsSecondTurnInSameSession(t *testing.T) {
 	ctx := context.Background()
 	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)
 	defer cleanup()
-	fake.ResponseDelay = time.Second
+	fake.PermissionTool = "Bash"
+	fake.Responses = []string{"first completed"}
 
 	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "webber", Provider: config.ProviderClaude}); err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -387,8 +388,8 @@ func TestWebSocketRejectsSecondTurnInSameSession(t *testing.T) {
 	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "send_turn", RequestID: "req-1", SessionID: sess.ID, Message: "first"}); err != nil {
 		t.Fatalf("write first turn: %v", err)
 	}
-	readWSTestUntil(t, conn, "turn state", func(msg ServerMessage) bool {
-		return msg.Type == "turn_state" && msg.SessionID == sess.ID
+	permission := readWSTestUntil(t, conn, "permission request", func(msg ServerMessage) bool {
+		return msg.Type == "permission_request" && msg.SessionID == sess.ID && msg.Request != nil
 	})
 	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "send_turn", RequestID: "req-2", SessionID: sess.ID, Message: "second"}); err != nil {
 		t.Fatalf("write second turn: %v", err)
@@ -399,6 +400,16 @@ func TestWebSocketRejectsSecondTurnInSameSession(t *testing.T) {
 	if !strings.Contains(got.Error, "active turn") {
 		t.Fatalf("unexpected second-turn error: %q", got.Error)
 	}
+	if err := wsjson.Write(ctx, conn, ClientMessage{
+		Type:      "permission_decision",
+		RequestID: permission.Request.ID,
+		Decision:  &adapter.PermissionDecision{Behavior: "allow"},
+	}); err != nil {
+		t.Fatalf("write permission decision: %v", err)
+	}
+	readWSTestUntil(t, conn, "first turn done", func(msg ServerMessage) bool {
+		return msg.Type == "done" && msg.SessionID == sess.ID
+	})
 }
 
 func newWSTestHarness(t *testing.T) (*core.Core, *adapter.Fake, string, func()) {
