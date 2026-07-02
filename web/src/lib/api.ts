@@ -20,6 +20,8 @@ import type {
   MemoryInfo,
   ProfileInfo,
   Project,
+  Provider,
+  ProviderCapabilities,
   ScheduleStatus,
   Session,
   SessionDetail,
@@ -102,6 +104,17 @@ export async function setMCPAssignment(agentName: string, serverName: string, as
 
 export async function listProfiles(): Promise<ProfileInfo[]> {
   return (await asJSON<ProfileInfo[] | null>(await fetch("/api/profiles"))) ?? [];
+}
+
+export async function getProviderCapabilities(
+  provider: Provider,
+  profile = "",
+  refresh = false,
+): Promise<ProviderCapabilities> {
+  const params = new URLSearchParams({ provider });
+  if (profile) params.set("profile", profile);
+  if (refresh) params.set("refresh", "1");
+  return asJSON(await fetch(`/api/provider-capabilities?${params.toString()}`));
 }
 
 export interface ProfileRequest {

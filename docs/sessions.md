@@ -59,7 +59,7 @@ roadmap sessions.
 | Command | Effect |
 | --- | --- |
 | `/model <name>` | Set the model for subsequent turns. |
-| `/effort low|medium|high|xhigh|max` | Set reasoning effort for subsequent turns. |
+| `/effort <level>` | Set a provider-supported reasoning effort for subsequent turns. |
 | `/profile <name|default>` | Switch auth profile; `default` clears the profile and uses the provider's normal login. The next turn replays history into a fresh backing session/thread. |
 | `/permission approve|yolo` | Override permission mode for subsequent turns. |
 | `/name <text>` | Set the session display name. |

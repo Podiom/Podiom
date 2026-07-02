@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mar-schmidt/Podium/internal/capabilities"
 	"github.com/mar-schmidt/Podium/internal/config"
 )
 
@@ -57,6 +58,14 @@ func (r *Router) Teardown(ctx context.Context, handle Handle) error {
 	return ad.Teardown(ctx, handle)
 }
 
+func (r *Router) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
+	ad, err := r.adapter(req.Provider)
+	if err != nil {
+		return capabilities.WithError(capabilities.Fallback(req.Provider, req.Profile), err), nil
+	}
+	return ad.Capabilities(ctx, req)
+}
+
 func (r *Router) adapter(provider config.Provider) (Adapter, error) {
 	if provider == "" {
 		return nil, fmt.Errorf("provider is required")
@@ -92,6 +101,10 @@ func (u Unavailable) SendTurn(context.Context, TurnRequest) (<-chan Event, error
 
 func (u Unavailable) Teardown(context.Context, Handle) error {
 	return u.err()
+}
+
+func (u Unavailable) Capabilities(_ context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
+	return capabilities.WithError(capabilities.Fallback(req.Provider, req.Profile), u.err()), nil
 }
 
 func (u Unavailable) err() error {

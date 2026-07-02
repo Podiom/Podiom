@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mar-schmidt/Podium/internal/capabilities"
 	"github.com/mar-schmidt/Podium/internal/config"
 	podiumexec "github.com/mar-schmidt/Podium/internal/exec"
 	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
@@ -233,6 +234,29 @@ func (c *Claude) providerLog(req TurnRequest) *slog.Logger {
 // Teardown has no persistent Claude process to stop.
 func (c *Claude) Teardown(ctx context.Context, handle Handle) error {
 	return ctx.Err()
+}
+
+// Capabilities returns Claude Code's current effort values when the CLI exposes
+// them in help output, plus Podium's bundled model-alias fallback registry.
+func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
+	caps := capabilities.Fallback(config.ProviderClaude, req.Profile)
+	caps.Source = "claude-help+fallback"
+	helpCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := podiumexec.Command(helpCtx, c.bin, "--help")
+	cmd.Env = c.env(req.ProfileDir)
+	raw, err := cmd.CombinedOutput()
+	if helpCtx.Err() != nil {
+		err = helpCtx.Err()
+	}
+	if err != nil {
+		return capabilities.WithError(caps, fmt.Errorf("read claude help: %w", err)), nil
+	}
+	if efforts := capabilities.ParseEffortsFromHelp(string(raw)); len(efforts) > 0 {
+		caps = capabilities.MergeEfforts(caps, efforts)
+	}
+	caps.Stale = false
+	return caps, nil
 }
 
 func (c *Claude) args(req TurnRequest) ([]string, func(), error) {

@@ -14,7 +14,7 @@
 global:
   provider: claude            # default backend for new agents: claude | codex
   model: ""                   # default model name (empty = provider/CLI default)
-  effort: medium              # default reasoning effort: low | medium | high | xhigh | max
+  effort: medium              # default provider-supported reasoning effort
   permission_mode: approve    # approve (relay each side-effect to you) | yolo (auto-approve, whole-machine)
   permission_timeout: 3m       # approve-mode prompt timeout before auto-deny (Go duration, e.g. 30s, 3m)
   # Optional global fallback chain used when an agent declares none of its own.

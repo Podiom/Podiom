@@ -999,7 +999,7 @@ app-server protocol, and policy values), captured 2026-06-28. Key facts adopted:
 
 - **Claude** runs **per-turn** as `claude -p` with stream-json stdin/stdout;
   resume via persisted session ID + `--resume`. Model via `--model`, effort via
-  `--effort` (`low|medium|high|xhigh|max`). Profile isolation via
+  `--effort <level>` using provider-supported values. Profile isolation via
   `CLAUDE_CONFIG_DIR`.
 - **Codex** runs as a **long-lived** `codex app-server --listen stdio://`;
   lifecycle via `thread/start`, `thread/resume`, `turn/start`. Model/effort sent

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mar-schmidt/Podium/internal/capabilities"
 	"github.com/mar-schmidt/Podium/internal/config"
 	"github.com/mar-schmidt/Podium/internal/store"
 )
@@ -41,7 +42,7 @@ func (c *Core) HandleSlashCommand(ctx context.Context, sessionID, input string) 
 		return SlashResult{Handled: true, Session: updated, Notice: fmt.Sprintf("Model set to %s", arg)}, err
 	case "effort":
 		if !validEffort(arg) {
-			return SlashResult{Handled: true, Session: sess, Notice: "Usage: /effort low|medium|high|xhigh|max"}, nil
+			return SlashResult{Handled: true, Session: sess, Notice: "Usage: /effort <provider-supported level>"}, nil
 		}
 		updated, err := c.store.UpdateSessionSettings(ctx, sess.ID, sess.Model, arg, sess.PermissionMode)
 		return SlashResult{Handled: true, Session: updated, Notice: fmt.Sprintf("Effort set to %s", arg)}, err
@@ -107,10 +108,5 @@ func profileNotice(profile string) string {
 }
 
 func validEffort(effort string) bool {
-	switch effort {
-	case "low", "medium", "high", "xhigh", "max":
-		return true
-	default:
-		return false
-	}
+	return capabilities.HasEffort(capabilities.DefaultEfforts, effort)
 }

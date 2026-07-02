@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { deleteSession, getSession, listProfiles, listProjects } from "../lib/api";
+  import {
+    capabilityKey,
+    effortOptions as capabilityEffortOptions,
+    loadProviderCapabilities,
+    modelOptions as capabilityModelOptions,
+  } from "../lib/capabilities";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
@@ -23,6 +29,7 @@
     Provider,
     ProfileInfo,
     Project,
+    ProviderCapabilities,
     ServerMessage,
     Session,
     SessionOrigin,
@@ -114,6 +121,7 @@
   let isPhone = $state(false);
   let openDropdown = $state<string | null>(null);
   let newSessionOpen = $state(false);
+  let customModelDraft = $state("");
 
   const SLASH_CMDS = [
     { cmd: "/model", desc: "set the model for this session" },
@@ -123,8 +131,6 @@
     { cmd: "/name", desc: "rename the session" },
     { cmd: "/help", desc: "list every command" },
   ];
-
-  const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
   const APPROVAL_TONES: Record<
     ApprovalRisk,
@@ -186,13 +192,21 @@
     activeSession?.Profile ?? (draftProvider ? draftProfile : activeAgent?.Profile ?? ""),
   );
   const inheritedModel = $derived(selectedProvider === activeAgent?.Provider ? activeAgent?.Model || "" : "");
-  const modelOptions = $derived(modelsFor(selectedProvider));
+  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
+  let loadingCapabilities = new Set<string>();
+  const selectedCapabilityKey = $derived(capabilityKey(selectedProvider, selectedProfile));
+  const selectedCapabilities = $derived(capabilitiesByKey[selectedCapabilityKey] ?? null);
+  const selectedModelValue = $derived(
+    activeSession ? activeSession.Model || inheritedModel : draftModel || inheritedModel,
+  );
+  const modelOptions = $derived(capabilityModelOptions(selectedCapabilities, selectedModelValue));
   const curModel = $derived(
-    activeSession ? activeSession.Model || inheritedModel || "—" : draftModel || inheritedModel || "—",
+    selectedModelValue || "—",
   );
   const curEffort = $derived(
     activeSession ? activeSession.Effort || activeAgent?.Effort || "medium" : draftEffort || activeAgent?.Effort || "medium",
   );
+  const effortOptions = $derived(capabilityEffortOptions(selectedCapabilities, selectedModelValue, curEffort));
   const curMode = $derived(
     activeSession
       ? activeSession.PermissionMode || activeAgent?.PermissionMode || "approve"
@@ -225,10 +239,6 @@
     return `${s.AgentName} · ${s.Provider}${s.Model ? " " + s.Model : ""}`;
   }
 
-  function modelsFor(provider: Provider): string[] {
-    return provider === "codex" ? ["gpt-5.1", "gpt-5.1-mini", "o4"] : ["sonnet", "opus", "haiku"];
-  }
-
   onMount(() => {
     const mq = window.matchMedia("(max-width: 768px)");
     const syncPhone = () => {
@@ -252,6 +262,25 @@
       unsubscribe?.();
     };
   });
+
+  $effect(() => {
+    void ensureCapabilities(selectedProvider, selectedProfile);
+  });
+
+  async function ensureCapabilities(provider: Provider, profile = "") {
+    const key = capabilityKey(provider, profile);
+    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
+    loadingCapabilities.add(key);
+    try {
+      const caps = await loadProviderCapabilities(provider, profile);
+      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
+    } catch {
+      // The daemon endpoint itself falls back on provider discovery failures.
+      // If the HTTP request fails, leave the menu empty and preserve current text.
+    } finally {
+      loadingCapabilities.delete(key);
+    }
+  }
 
   // When the shared socket (re)connects, re-attach to the open session and flush
   // any pending seed so a freshly opened chat still starts its turn.
@@ -628,14 +657,14 @@
   function setDraftProvider(provider: Provider) {
     draftProvider = provider;
     draftProfile = "";
-    if (!modelsFor(provider).includes(draftModel)) draftModel = "";
+    void ensureCapabilities(provider);
     openDropdown = null;
   }
 
   function setDraftProfile(profile: ProfileInfo) {
     draftProvider = profile.Provider;
     draftProfile = profile.Name;
-    if (!modelsFor(profile.Provider).includes(draftModel)) draftModel = "";
+    void ensureCapabilities(profile.Provider, profile.Name);
     openDropdown = null;
   }
 
@@ -646,6 +675,11 @@
     }
     draftModel = model;
     openDropdown = null;
+  }
+
+  function applyCustomModel() {
+    const value = customModelDraft.trim();
+    if (value) setModel(value);
   }
 
   function setEffort(effort: string) {
@@ -883,6 +917,7 @@
   }
 
   function toggleDropdown(key: string) {
+    if (openDropdown !== key && key === "model") customModelDraft = selectedModelValue;
     openDropdown = openDropdown === key ? null : key;
   }
 
@@ -1431,6 +1466,10 @@
               {#each modelOptions as o}
                 <button class="dd-opt mono" class:sel={o === curModel} onclick={() => setModel(o)}>{o}</button>
               {/each}
+              <div style="padding:8px;border-top:1px solid #f0e5d8;display:flex;gap:6px">
+                <input class="field-input mono" style="padding:8px 10px;font-size:12px" bind:value={customModelDraft} placeholder="custom model" onkeydown={(e) => { if (e.key === "Enter") applyCustomModel(); }} />
+                <button class="dd-opt mono" style="width:auto" disabled={!customModelDraft.trim()} onclick={applyCustomModel}>Set</button>
+              </div>
             </div>
           {/if}
         </div>
@@ -1440,7 +1479,7 @@
           <button class="chip-btn mono" onclick={() => toggleDropdown("effort")}>{curEffort} <span class="chip-chev">▾</span></button>
           {#if openDropdown === "effort"}
             <div class="dd-menu up">
-              {#each EFFORTS as o}
+              {#each effortOptions as o}
                 <button class="dd-opt mono" class:sel={o === curEffort} onclick={() => setEffort(o)}>{o}</button>
               {/each}
             </div>

@@ -9,13 +9,19 @@
     listProfiles,
     updateAgent,
   } from "../lib/api";
+  import {
+    capabilityKey,
+    effortOptions as capabilityEffortOptions,
+    loadProviderCapabilities,
+    modelOptions as capabilityModelOptions,
+  } from "../lib/capabilities";
   import DreamJournal from "../lib/DreamJournal.svelte";
   import DreamOverlay from "../lib/DreamOverlay.svelte";
   import { renderMarkdown } from "../lib/markdown";
   import MemoryPanel from "../lib/MemoryPanel.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { agentGradient, avatarStyle, initial, modeChip, providerChip } from "../lib/theme";
-  import type { Agent, Dream, MCPServer, MemoryInfo, ProfileInfo } from "../lib/types";
+  import type { Agent, Dream, MCPServer, MemoryInfo, ProfileInfo, ProviderCapabilities } from "../lib/types";
 
   // A fallback chain row: a provider plus an optional profile. Encodes to a
   // single token (profile name when set, otherwise the bare provider).
@@ -105,11 +111,34 @@
   let deleting = $state(false);
   let deleteError = $state<string | null>(null);
 
-  const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-  const modelOptions = $derived(
-    edProvider === "codex" ? ["gpt-5.1", "gpt-5.1-mini", "o4"] : ["sonnet", "opus", "haiku"],
-  );
+  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
+  let loadingCapabilities = new Set<string>();
+  const editCapabilityKey = $derived(capabilityKey(edProvider, edProfile));
+  const editCapabilities = $derived(capabilitiesByKey[editCapabilityKey] ?? null);
+  const modelOptions = $derived(capabilityModelOptions(editCapabilities, edModel));
+  const effortOptions = $derived(capabilityEffortOptions(editCapabilities, edModel, edEffort));
   const edProfileOptions = $derived(profiles.filter((p) => p.Provider === edProvider));
+
+  $effect(() => {
+    if (editOpen && (edProvider === "claude" || edProvider === "codex")) {
+      void ensureCapabilities(edProvider, edProfile);
+    }
+  });
+
+  async function ensureCapabilities(provider: string, profile = "") {
+    if (provider !== "claude" && provider !== "codex") return;
+    const key = capabilityKey(provider, profile);
+    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
+    loadingCapabilities.add(key);
+    try {
+      const caps = await loadProviderCapabilities(provider, profile);
+      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
+    } catch {
+      // Preserve any custom current values if capability fetch is unavailable.
+    } finally {
+      loadingCapabilities.delete(key);
+    }
+  }
 
   function specs(a: Agent): string {
     return `${a.Model || a.Provider} · ${a.Effort || "medium"} · profile: ${a.Profile || "default"}`;
@@ -154,6 +183,7 @@
       const valid = profiles.some((p) => p.Name === row.profile && p.Provider === row.provider);
       return { provider: row.provider, profile: valid ? row.profile : "" };
     });
+    void ensureCapabilities(provider, edProfile);
   }
 
   function addRow() {
@@ -188,10 +218,12 @@
     inlineProfileName = "";
     inlineProfilePath = "";
     editOpen = true;
+    void ensureCapabilities(edProvider, edProfile);
     try {
       profiles = await listProfiles();
       // Re-decode now that provider info is available for profile tokens.
       edFallback = decodeFallback(a.Fallback, a.Provider);
+      void ensureCapabilities(edProvider, edProfile);
     } catch {
       // Profiles are optional; dropdowns just stay empty.
     }
@@ -257,6 +289,7 @@
       });
       profiles = [created, ...profiles.filter((p) => p.Name !== created.Name)];
       edProfile = created.Name;
+      void ensureCapabilities(edProvider, edProfile);
       inlineProfileOpen = false;
       inlineProfileName = "";
       inlineProfilePath = "";
@@ -463,12 +496,13 @@
             {#each modelOptions as m}
               <button style={chip(m === edModel)} onclick={() => (edModel = m)}>{m}</button>
             {/each}
+            <input class="field-input mono" style="max-width:220px;padding:8px 10px;font-size:12px" bind:value={edModel} placeholder="custom model" />
           </div>
         </div>
         <div class="ed-row">
           <span class="ed-key">effort</span>
           <div class="ed-chips">
-            {#each EFFORTS as e}
+            {#each effortOptions as e}
               <button style={chip(e === edEffort)} onclick={() => (edEffort = e)}>{e}</button>
             {/each}
           </div>

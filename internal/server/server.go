@@ -135,6 +135,7 @@ func New(opts Options) *Server {
 	mux.HandleFunc("/api/update", s.handleUpdate)
 	mux.HandleFunc("/api/update/apply", s.handleUpdateApply)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/provider-capabilities", s.handleProviderCapabilities)
 	mux.HandleFunc("/api/usage", s.handleUsage)
 	mux.HandleFunc("/api/push/vapid", s.handlePushVAPID)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)

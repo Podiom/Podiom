@@ -1,8 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createSchedule, deleteSchedule, listSchedules, runSchedule } from "../lib/api";
+  import {
+    capabilityKey,
+    effortOptions as capabilityEffortOptions,
+    loadProviderCapabilities,
+  } from "../lib/capabilities";
   import { agentGradient, avatarStyle, initial, modeChip } from "../lib/theme";
-  import type { Agent, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
+  import type { Agent, ProviderCapabilities, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -43,7 +48,34 @@
     { label: "Hourly", v: "0 * * * *" },
     { label: "Weekdays 09:00", v: "0 9 * * 1-5" },
   ];
-  const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
+  let loadingCapabilities = new Set<string>();
+  const selectedScheduleAgent = $derived(agents.find((a) => a.Name === nsAgent) ?? null);
+  const scheduleCapabilityKey = $derived(
+    selectedScheduleAgent ? capabilityKey(selectedScheduleAgent.Provider, selectedScheduleAgent.Profile) : "",
+  );
+  const scheduleCapabilities = $derived(scheduleCapabilityKey ? capabilitiesByKey[scheduleCapabilityKey] ?? null : null);
+  const effortOptions = $derived(capabilityEffortOptions(scheduleCapabilities, nsModel || selectedScheduleAgent?.Model || "", nsEffort));
+
+  $effect(() => {
+    if (creating && selectedScheduleAgent) {
+      void ensureCapabilities(selectedScheduleAgent.Provider, selectedScheduleAgent.Profile);
+    }
+  });
+
+  async function ensureCapabilities(provider: Agent["Provider"], profile = "") {
+    const key = capabilityKey(provider, profile);
+    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
+    loadingCapabilities.add(key);
+    try {
+      const caps = await loadProviderCapabilities(provider, profile);
+      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
+    } catch {
+      // Keep the free-form schedule model/effort inputs usable if offline.
+    } finally {
+      loadingCapabilities.delete(key);
+    }
+  }
 
   const nsSlug = $derived(
     (nsName.trim() || "untitled-job").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
@@ -297,7 +329,7 @@
         <div class="ns-row">
           <span class="ns-key">effort</span>
           <div class="ns-chips">
-            {#each EFFORTS as e}<button style={chip(e === nsEffort)} onclick={() => (nsEffort = e)}>{e}</button>{/each}
+            {#each effortOptions as e}<button style={chip(e === nsEffort)} onclick={() => (nsEffort = e)}>{e}</button>{/each}
           </div>
         </div>
         <div class="ns-row">

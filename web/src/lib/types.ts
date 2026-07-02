@@ -44,6 +44,33 @@ export interface LogStreamEvent {
 export type Provider = "claude" | "codex";
 export type PermissionMode = "approve" | "yolo";
 
+export interface EffortOption {
+  effort: string;
+  description?: string;
+}
+
+export interface ModelOption {
+  id?: string;
+  model: string;
+  display_name?: string;
+  description?: string;
+  hidden?: boolean;
+  is_default?: boolean;
+  default_reasoning_effort?: string;
+  supported_efforts?: EffortOption[];
+}
+
+export interface ProviderCapabilities {
+  provider: Provider;
+  profile?: string;
+  source: string;
+  fetched_at: string;
+  stale: boolean;
+  error?: string;
+  models: ModelOption[];
+  efforts: EffortOption[];
+}
+
 // GlobalConfig mirrors GET /api/config: the daemon-wide defaults every new
 // agent and ad-hoc run inherits unless overridden. `fallback` is the ordered
 // re-route chain (profile names, bare providers, or "default").

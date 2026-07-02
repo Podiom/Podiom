@@ -65,6 +65,38 @@ func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	}
 }
 
+func TestParseCodexModelList(t *testing.T) {
+	page, err := parseCodexModelList(json.RawMessage(`{
+		"data": [{
+			"id": "model-1",
+			"model": "gpt-5.1",
+			"displayName": "GPT-5.1",
+			"description": "Full model",
+			"hidden": false,
+			"isDefault": true,
+			"defaultReasoningEffort": "medium",
+			"supportedReasoningEfforts": [
+				{"reasoningEffort": "low", "description": "Fast"},
+				{"reasoningEffort": "medium", "description": "Balanced"}
+			]
+		}],
+		"nextCursor": "next"
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if page.nextCursor != "next" || len(page.models) != 1 {
+		t.Fatalf("bad page: %+v", page)
+	}
+	model := page.models[0]
+	if model.Model != "gpt-5.1" || model.DisplayName != "GPT-5.1" || !model.IsDefault {
+		t.Fatalf("bad model: %+v", model)
+	}
+	if len(model.SupportedEfforts) != 2 || model.SupportedEfforts[1].Effort != "medium" {
+		t.Fatalf("bad efforts: %+v", model.SupportedEfforts)
+	}
+}
+
 func TestCodexReplayMessageIncludesHistoryAndLiveTurn(t *testing.T) {
 	got := codexReplayMessage([]store.Message{
 		{Role: store.RoleUser, Content: "remember alpha"},

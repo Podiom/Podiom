@@ -14,7 +14,7 @@ command / daemon restart).
 ---
 agent: jared              # required — the agent that runs the task
 model: ""                 # optional — overrides the agent default
-effort: low               # optional — low | medium | high | xhigh | max
+effort: low               # optional — provider-supported reasoning effort
 cron: "0 7 * * *"         # 5-field cron OR `every: 6h` (exactly one)
 run_permission: preapproved   # preapproved (default) | yolo
 allowed_tools: []         # preapproved allow-list (empty = deny all side effects)

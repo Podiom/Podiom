@@ -704,7 +704,7 @@ func newAgentsCreateCmd(addr *string) *cobra.Command {
 	cmd.Flags().StringVar(&provider, "provider", "", "provider: claude or codex (default from config)")
 	cmd.Flags().StringVar(&profile, "profile", "", "auth profile name (must exist and match provider)")
 	cmd.Flags().StringVar(&model, "model", "", "default model")
-	cmd.Flags().StringVar(&effort, "effort", "", "default effort: low, medium, high, xhigh, max")
+	cmd.Flags().StringVar(&effort, "effort", "", "default reasoning effort (provider-supported level)")
 	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve or yolo")
 	cmd.Flags().StringArrayVar(&fallback, "fallback", nil, "ordered fallback target (repeatable): profile name, claude|codex, or default")
 	return cmd

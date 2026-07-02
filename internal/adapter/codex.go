@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mar-schmidt/Podium/internal/capabilities"
 	"github.com/mar-schmidt/Podium/internal/config"
 	podiumexec "github.com/mar-schmidt/Podium/internal/exec"
 	podiumlog "github.com/mar-schmidt/Podium/internal/logging"
@@ -215,6 +216,21 @@ func (c *Codex) providerLog(sessionID, agentName, profile string) *slog.Logger {
 // a future lifecycle pass can target the correct CODEX_HOME process.
 func (c *Codex) Teardown(ctx context.Context, handle Handle) error {
 	return ctx.Err()
+}
+
+// Capabilities asks Codex app-server for the model catalogue. The app-server
+// response includes model-aware reasoning-effort options, so Podium can keep
+// the picker aligned with the installed Codex CLI/account.
+func (c *Codex) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
+	client := c.client(req.ProfileDir, "", "")
+	caps, err := client.modelList(ctx, req.Profile)
+	if err != nil {
+		return capabilities.WithError(capabilities.Fallback(config.ProviderCodex, req.Profile), err), nil
+	}
+	if len(caps.Models) == 0 {
+		return capabilities.WithError(capabilities.Fallback(config.ProviderCodex, req.Profile), errors.New("codex model/list returned no models")), nil
+	}
+	return caps, nil
 }
 
 func (c *Codex) client(profileDir, profileName, profileHash string) *codexClient {
@@ -638,6 +654,112 @@ func (c *codexClient) ensureThread(ctx context.Context, threadID string, setting
 	}
 	c.markLoaded(threadID)
 	return nil
+}
+
+func (c *codexClient) modelList(ctx context.Context, profile string) (capabilities.ProviderCapabilities, error) {
+	var all []capabilities.ModelOption
+	cursor := ""
+	for {
+		params := map[string]any{"includeHidden": false}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		raw, err := c.call(ctx, "model/list", params)
+		if err != nil {
+			return capabilities.ProviderCapabilities{}, err
+		}
+		page, err := parseCodexModelList(raw)
+		if err != nil {
+			return capabilities.ProviderCapabilities{}, err
+		}
+		all = append(all, page.models...)
+		if page.nextCursor == "" {
+			break
+		}
+		cursor = page.nextCursor
+	}
+	caps := capabilities.ProviderCapabilities{
+		Provider:  config.ProviderCodex,
+		Profile:   profile,
+		Source:    "codex-app-server:model/list",
+		FetchedAt: time.Now().UTC(),
+		Stale:     false,
+		Models:    all,
+		Efforts:   unionModelEfforts(all),
+	}
+	if len(caps.Efforts) == 0 {
+		caps.Efforts = capabilities.CloneEfforts(capabilities.DefaultEfforts)
+	}
+	return caps, nil
+}
+
+type codexModelListPage struct {
+	models     []capabilities.ModelOption
+	nextCursor string
+}
+
+func parseCodexModelList(raw json.RawMessage) (codexModelListPage, error) {
+	var resp struct {
+		Data []struct {
+			ID                     string `json:"id"`
+			Model                  string `json:"model"`
+			DisplayName            string `json:"displayName"`
+			Description            string `json:"description"`
+			Hidden                 bool   `json:"hidden"`
+			IsDefault              bool   `json:"isDefault"`
+			DefaultReasoningEffort string `json:"defaultReasoningEffort"`
+			SupportedEfforts       []struct {
+				ReasoningEffort string `json:"reasoningEffort"`
+				Description     string `json:"description"`
+			} `json:"supportedReasoningEfforts"`
+		} `json:"data"`
+		NextCursor string `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return codexModelListPage{}, err
+	}
+	out := make([]capabilities.ModelOption, 0, len(resp.Data))
+	for _, item := range resp.Data {
+		if strings.TrimSpace(item.Model) == "" {
+			continue
+		}
+		efforts := make([]capabilities.EffortOption, 0, len(item.SupportedEfforts))
+		for _, effort := range item.SupportedEfforts {
+			if strings.TrimSpace(effort.ReasoningEffort) == "" {
+				continue
+			}
+			efforts = append(efforts, capabilities.EffortOption{
+				Effort:      effort.ReasoningEffort,
+				Description: effort.Description,
+			})
+		}
+		out = append(out, capabilities.ModelOption{
+			ID:                     item.ID,
+			Model:                  item.Model,
+			DisplayName:            item.DisplayName,
+			Description:            item.Description,
+			Hidden:                 item.Hidden,
+			IsDefault:              item.IsDefault,
+			DefaultReasoningEffort: item.DefaultReasoningEffort,
+			SupportedEfforts:       efforts,
+		})
+	}
+	return codexModelListPage{models: out, nextCursor: resp.NextCursor}, nil
+}
+
+func unionModelEfforts(models []capabilities.ModelOption) []capabilities.EffortOption {
+	seen := map[string]bool{}
+	var out []capabilities.EffortOption
+	for _, model := range models {
+		for _, effort := range model.SupportedEfforts {
+			if effort.Effort == "" || seen[effort.Effort] {
+				continue
+			}
+			seen[effort.Effort] = true
+			out = append(out, effort)
+		}
+	}
+	return out
 }
 
 func (c *codexClient) isLoaded(threadID string) bool {

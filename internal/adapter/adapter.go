@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/mar-schmidt/Podium/internal/capabilities"
 	"github.com/mar-schmidt/Podium/internal/config"
 	podiummcp "github.com/mar-schmidt/Podium/internal/mcp"
 	"github.com/mar-schmidt/Podium/internal/store"
@@ -137,6 +138,7 @@ type Adapter interface {
 	Resume(context.Context, ResumeRequest) (Handle, error)
 	SendTurn(context.Context, TurnRequest) (<-chan Event, error)
 	Teardown(context.Context, Handle) error
+	Capabilities(context.Context, capabilities.Request) (capabilities.ProviderCapabilities, error)
 }
 
 // PermissionRequest is the provider-neutral approval payload surfaced to a user.

@@ -194,7 +194,7 @@ podium agents create builder --provider claude --model sonnet --effort medium --
 | --- | --- |
 | `--provider claude|codex` | Provider for the agent. Empty inherits `global.provider`. |
 | `--model name` | Default model. Empty means provider default. |
-| `--effort level` | Default effort (`low`, `medium`, `high`, `xhigh`, `max`). |
+| `--effort level` | Default provider-supported reasoning effort. |
 | `--permission approve|yolo` | Agent permission default. |
 
 Choosing `--permission yolo` prints a whole-machine-access warning: in `yolo`
@@ -235,7 +235,7 @@ Slash commands can be sent as the message body:
 | Command | Effect |
 | --- | --- |
 | `/model <name>` | Set the session model for subsequent turns. |
-| `/effort low|medium|high|xhigh|max` | Set reasoning effort. |
+| `/effort <level>` | Set a provider-supported reasoning effort. |
 | `/profile <name|default>` | Switch auth profile. `default` clears the profile; the next turn replays history into a fresh backing session/thread. |
 | `/permission approve|yolo` | Set permission mode. |
 | `/name <text>` | Rename the session. |

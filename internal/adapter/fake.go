@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/mar-schmidt/Podium/internal/capabilities"
+	"github.com/mar-schmidt/Podium/internal/config"
 )
 
 // Fake is a deterministic in-memory adapter for tests and local core
@@ -121,6 +124,20 @@ func (f *Fake) Teardown(ctx context.Context, handle Handle) error {
 		}
 	}
 	return nil
+}
+
+func (f *Fake) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
+	if err := ctx.Err(); err != nil {
+		return capabilities.ProviderCapabilities{}, err
+	}
+	provider := req.Provider
+	if provider == "" {
+		provider = config.ProviderClaude
+	}
+	caps := capabilities.Fallback(provider, req.Profile)
+	caps.Source = "fake"
+	caps.Stale = false
+	return caps, nil
 }
 
 // requestPermission asks the turn's relay to approve PermissionTool. A missing

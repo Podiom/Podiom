@@ -10,8 +10,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mar-schmidt/Podium/internal/adapter"
+	"github.com/mar-schmidt/Podium/internal/capabilities"
 	"github.com/mar-schmidt/Podium/internal/config"
 	"github.com/mar-schmidt/Podium/internal/projects"
 	"github.com/mar-schmidt/Podium/internal/store"
@@ -62,6 +64,14 @@ type Core struct {
 	// turn. The dream excludes such sessions so it never contends with live work.
 	// nil means "assume no active turns" (e.g. tests without a server).
 	activeTurn func(sessionID string) bool
+
+	capMu    sync.Mutex
+	capCache map[string]capabilityCacheEntry
+}
+
+type capabilityCacheEntry struct {
+	caps      capabilities.ProviderCapabilities
+	expiresAt time.Time
 }
 
 // SetActiveTurnChecker registers a predicate the dream uses to skip sessions that
@@ -113,6 +123,7 @@ func New(opts Options) (*Core, error) {
 		log:      logger,
 		noBg:     opts.DisableBackgroundWork,
 		dreaming: map[string]bool{},
+		capCache: map[string]capabilityCacheEntry{},
 	}
 	for _, profile := range opts.Profiles {
 		c.profiles[profile.Name] = profile

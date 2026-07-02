@@ -23,7 +23,7 @@ Optional flags:
 | --- | --- |
 | Session provider handle | `--resume <claude-session-id>` |
 | Model | `--model <name>` |
-| Effort | `--effort <low|medium|high|xhigh|max>` |
+| Effort | `--effort <level>` |
 | `yolo` permission mode | `--permission-mode bypassPermissions` |
 
 When a profile is set, Podium exports `CLAUDE_CONFIG_DIR=<profile.config_dir>`.

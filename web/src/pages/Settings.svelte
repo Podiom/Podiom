@@ -1,9 +1,15 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { createProfile, deleteProfile, getConfig, listProfiles, updateConfig, updateProfile } from "../lib/api";
+  import {
+    capabilityKey,
+    effortOptions as capabilityEffortOptions,
+    loadProviderCapabilities,
+    modelOptions as capabilityModelOptions,
+  } from "../lib/capabilities";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import type { PushState } from "../lib/live.svelte";
-  import type { GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, UpdateStatus } from "../lib/types";
+  import type { GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
   import Logs from "./Logs.svelte";
 
   type UpdateState = "idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed";
@@ -35,12 +41,8 @@
     onEnablePush: () => void;
   } = $props();
 
-  const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
   const PERMISSIONS: PermissionMode[] = ["approve", "yolo"];
   const TIMEOUT_PRESETS = ["30s", "1m", "3m", "5m", "10m"];
-  function modelsFor(p: Provider): string[] {
-    return p === "codex" ? ["gpt-5.1", "gpt-5.1-mini", "o4"] : ["sonnet", "opus", "haiku"];
-  }
 
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -69,8 +71,28 @@
   let baseline = $state("");
   let releaseNotesEl = $state<HTMLElement | null>(null);
   let tab = $state<SettingsTab>("global");
+  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
+  let loadingCapabilities = new Set<string>();
 
   onMount(load);
+
+  $effect(() => {
+    void ensureCapabilities(provider, profile);
+  });
+
+  async function ensureCapabilities(p: Provider, prof = "") {
+    const key = capabilityKey(p, prof);
+    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
+    loadingCapabilities.add(key);
+    try {
+      const caps = await loadProviderCapabilities(p, prof);
+      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
+    } catch {
+      // Preserve current custom settings if the endpoint cannot be reached.
+    } finally {
+      loadingCapabilities.delete(key);
+    }
+  }
 
   $effect(() => {
     if (settingsFocusToken > 0) {
@@ -112,6 +134,7 @@
   function setProfile(name: string) {
     profile = name;
     saved = false;
+    void ensureCapabilities(provider, profile);
   }
 
   function toggleNewProfile() {
@@ -156,6 +179,7 @@
       }
       profiles = await listProfiles();
       if (!npEditing) setProfile(name); // "Create & select"
+      void ensureCapabilities(provider, name);
       npOpen = false;
       npEditing = null;
       npName = "";
@@ -212,7 +236,10 @@
     saved = false;
   }
 
-  const modelChips = $derived(modelsFor(provider));
+  const settingsCapabilityKey = $derived(capabilityKey(provider, profile));
+  const settingsCapabilities = $derived(capabilitiesByKey[settingsCapabilityKey] ?? null);
+  const modelChips = $derived(capabilityModelOptions(settingsCapabilities, model));
+  const effortChips = $derived(capabilityEffortOptions(settingsCapabilities, model, effort));
   const fbProfileOptions = $derived(
     fbTarget === "none" ? [] : profiles.filter((p) => p.Provider === fbTarget).map((p) => p.Name),
   );
@@ -235,9 +262,9 @@
     if (p === provider) return;
     provider = p;
     saved = false;
-    if (!modelsFor(p).includes(model)) model = ""; // fall back to provider default
     // The default profile is tied to the provider; drop it if it no longer fits.
     if (profile && !profiles.some((x) => x.Name === profile && x.Provider === p)) profile = "";
+    void ensureCapabilities(p, profile);
     npOpen = false;
     npEditing = null;
   }
@@ -486,12 +513,13 @@
               {#each modelChips as m}
                 <button class="chip" class:on={model === m} onclick={() => setModel(m)}>{m}</button>
               {/each}
+              <input class="field-input mono" style="max-width:220px;padding:8px 10px;font-size:12px" bind:value={model} placeholder="custom model" oninput={() => (saved = false)} />
             </div>
           </div>
           <div class="row top">
             <span class="row-key">effort</span>
             <div class="chips">
-              {#each EFFORTS as e}
+              {#each effortChips as e}
                 <button class="chip" class:on={effort === e} onclick={() => setEffort(e)}>{e}</button>
               {/each}
             </div>
