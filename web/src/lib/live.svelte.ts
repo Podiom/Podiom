@@ -8,7 +8,7 @@
 // notifications (Web Push, future native) are handled by the daemon; this module
 // only registers the browser for push and routes taps back to a session.
 
-import { getVapidKey, subscribePush } from "./api";
+import { getUsage, getVapidKey, subscribePush } from "./api";
 import type {
   ActiveTurnSummary,
   ClientMessage,
@@ -37,6 +37,8 @@ class LiveStore {
   sessions = $state<Session[]>([]);
   activeTurns = $state<Record<string, ActiveTurnSummary>>({});
   usage = $state<UsageSnapshot[]>([]);
+  usageRefreshing = $state(false);
+  usageRefreshError = $state<string | null>(null);
   toasts = $state<Toast[]>([]);
 
   // Per-profile usage snapshots keyed by profile key ("claude"/"codex" for the
@@ -63,6 +65,7 @@ class LiveStore {
   private lastPending: Record<string, Pending> = {};
   private subscribers = new Set<(msg: ServerMessage) => void>();
   private navigator: ((sessionId: string) => void) | null = null;
+  private usageRefreshPromise: Promise<void> | null = null;
 
   // connect is idempotent: the first caller (App.svelte on mount) opens the
   // socket; later callers are no-ops so multiple components can call it safely.
@@ -104,6 +107,27 @@ class LiveStore {
   send(msg: ClientMessage) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(msg));
+  }
+
+  refreshUsage(): Promise<void> {
+    if (this.usageRefreshPromise) return this.usageRefreshPromise;
+
+    this.usageRefreshing = true;
+    this.usageRefreshError = null;
+    this.usageRefreshPromise = getUsage(true)
+      .then((usage) => {
+        this.usage = usage;
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message.trim() : "";
+        this.usageRefreshError = message || "Couldn't refresh usage.";
+      })
+      .finally(() => {
+        this.usageRefreshing = false;
+        this.usageRefreshPromise = null;
+      });
+
+    return this.usageRefreshPromise;
   }
 
   // dreamConnected reports whether the live socket can carry a streamed dream.

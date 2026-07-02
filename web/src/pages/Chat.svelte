@@ -1453,7 +1453,10 @@
           provider={usageProvider}
           profileLabel={accountLabel}
           open={openDropdown === "usage"}
+          refreshing={live.usageRefreshing}
+          refreshError={live.usageRefreshError}
           onToggle={() => toggleDropdown("usage")}
+          onRefresh={() => live.refreshUsage()}
         />
       </div>
     </div>

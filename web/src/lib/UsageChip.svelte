@@ -7,13 +7,19 @@
     provider,
     profileLabel,
     open = false,
+    refreshing = false,
+    refreshError = null,
     onToggle,
+    onRefresh = () => {},
   }: {
     snapshot?: UsageSnapshot;
     provider: Provider;
     profileLabel: string;
     open?: boolean;
+    refreshing?: boolean;
+    refreshError?: string | null;
     onToggle: () => void;
+    onRefresh?: () => void | Promise<void>;
   } = $props();
 
   // Live 1s ticker so the "resets in …" countdowns advance without a refetch.
@@ -98,6 +104,11 @@
       ? "Counts usage across ChatGPT, Codex & Podium for this profile."
       : "Counts usage across claude.ai, Claude Code & Podium for this profile.",
   );
+
+  function refresh(event: MouseEvent) {
+    event.stopPropagation();
+    void onRefresh();
+  }
 </script>
 
 <div class="usage-wrap">
@@ -116,8 +127,34 @@
     <div class="usage-pop">
       <div class="usage-pop-head">
         <span class="usage-pop-title">SESSION LIMITS</span>
-        <span class="usage-acct" style={`color:${pc.ink};background:${pc.bg};border:1px solid ${pc.bd}`}>{profileLabel}</span>
+        <div class="usage-pop-actions">
+          <span class="usage-acct" style={`color:${pc.ink};background:${pc.bg};border:1px solid ${pc.bd}`}>{profileLabel}</span>
+          <button
+            class="usage-refresh"
+            type="button"
+            aria-label="Refresh usage"
+            aria-busy={refreshing}
+            title={refreshing ? "Refreshing usage" : "Refresh usage"}
+            disabled={refreshing}
+            onclick={refresh}
+          >
+            {#if refreshing}
+              <span class="usage-spinner" aria-hidden="true"></span>
+            {:else}
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M20 6v5h-5"></path>
+                <path d="M4 18v-5h5"></path>
+                <path d="M18.6 9A7 7 0 0 0 6.2 6.2L4 8.3"></path>
+                <path d="M5.4 15A7 7 0 0 0 17.8 17.8L20 15.7"></path>
+              </svg>
+            {/if}
+          </button>
+        </div>
       </div>
+
+      {#if refreshError}
+        <div class="usage-refresh-error">{refreshError}</div>
+      {/if}
 
       {#if isOK}
         {#if sessionWin}
@@ -235,6 +272,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     margin-bottom: 12px;
   }
   .usage-pop-title {
@@ -243,11 +281,71 @@
     color: #A2937C;
     font-weight: 600;
   }
+  .usage-pop-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
   .usage-acct {
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 999px;
     font-weight: 600;
+    max-width: 176px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .usage-refresh {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #E8DCCB;
+    border-radius: 8px;
+    background: #FFFDFB;
+    color: #7C6D5A;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  }
+  .usage-refresh:hover:not(:disabled) {
+    border-color: #D9C9B4;
+    background: #FBF6EF;
+    color: #4A4032;
+  }
+  .usage-refresh:disabled {
+    cursor: default;
+    opacity: 0.85;
+  }
+  .usage-refresh svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .usage-spinner {
+    width: 13px;
+    height: 13px;
+    border: 2px solid #D9C9B4;
+    border-top-color: #4F9E78;
+    border-radius: 50%;
+    animation: usage-spin 0.75s linear infinite;
+  }
+  .usage-refresh-error {
+    margin: -3px 0 10px;
+    padding: 7px 9px;
+    border: 1px solid #F0D4CB;
+    border-radius: 8px;
+    background: #FFF6F2;
+    color: #A23E22;
+    font-size: 12px;
+    line-height: 1.35;
   }
   .usage-row {
     margin-bottom: 14px;
@@ -296,5 +394,10 @@
   }
   .mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @keyframes usage-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>
