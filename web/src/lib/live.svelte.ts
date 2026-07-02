@@ -9,7 +9,13 @@
 // only registers the browser for push and routes taps back to a session.
 
 import { getVapidKey, subscribePush } from "./api";
-import type { ActiveTurnSummary, ClientMessage, ServerMessage, Session } from "./types";
+import type {
+  ActiveTurnSummary,
+  ClientMessage,
+  ServerMessage,
+  Session,
+  UsageSnapshot,
+} from "./types";
 
 export type ConnStatus = "connecting" | "live" | "offline";
 export type PushState = "idle" | "enabling" | "enabled" | "denied" | "unsupported";
@@ -30,7 +36,14 @@ class LiveStore {
   status = $state<ConnStatus>("connecting");
   sessions = $state<Session[]>([]);
   activeTurns = $state<Record<string, ActiveTurnSummary>>({});
+  usage = $state<UsageSnapshot[]>([]);
   toasts = $state<Toast[]>([]);
+
+  // Per-profile usage snapshots keyed by profile key ("claude"/"codex" for the
+  // implicit defaults, else the profile name). Drives the composer usage chip.
+  usageByProfile = $derived(
+    new Map(this.usage.map((snap) => [snap.profile, snap])),
+  );
 
   // Session IDs currently blocked on the user (permission or question). Drives
   // the session-row red dot and the Chat nav badge.
@@ -120,6 +133,7 @@ class LiveStore {
       case "state":
         this.sessions = msg.sessions ?? [];
         this.applyTurnSummaries(msg.active_turns ?? []);
+        if (msg.usage) this.usage = msg.usage;
         break;
       case "session":
         if (msg.session) {

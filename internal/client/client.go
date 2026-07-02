@@ -25,6 +25,7 @@ import (
 	"github.com/mar-schmidt/Podium/internal/server"
 	"github.com/mar-schmidt/Podium/internal/store"
 	"github.com/mar-schmidt/Podium/internal/updater"
+	"github.com/mar-schmidt/Podium/internal/usage"
 )
 
 // ErrDaemonUnreachable indicates podiumd is not accepting connections at the
@@ -397,6 +398,40 @@ func (c *Client) ListProjects(ctx context.Context) ([]projects.Project, error) {
 		return nil, err
 	}
 	return list, nil
+}
+
+// Usage fetches per-profile provider usage snapshots. When refresh is true it
+// asks the daemon to force a live re-fetch; because that can take longer than
+// the client's default 5s timeout, the refresh path uses its own request client.
+func (c *Client) Usage(ctx context.Context, refresh bool) ([]usage.Snapshot, error) {
+	path := "/api/usage"
+	if !refresh {
+		var snaps []usage.Snapshot
+		if err := c.getJSON(ctx, path, &snaps); err != nil {
+			return nil, err
+		}
+		return snaps, nil
+	}
+	path += "?refresh=1"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	hc := &http.Client{Timeout: 20 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET %s status %d: %s", path, resp.StatusCode, bytes.TrimSpace(body))
+	}
+	var snaps []usage.Snapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snaps); err != nil {
+		return nil, err
+	}
+	return snaps, nil
 }
 
 // ListTasks fetches all roadmap tasks from the daemon.

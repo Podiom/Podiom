@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { deleteSession, getSession, listProjects } from "../lib/api";
+  import { deleteSession, getSession, listProfiles, listProjects } from "../lib/api";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import UsageChip from "../lib/UsageChip.svelte";
   import {
     agentGradient,
     avatarStyle,
@@ -19,6 +20,7 @@
     Message,
     PermissionMode,
     PermissionRequest,
+    ProfileInfo,
     Project,
     ServerMessage,
     Session,
@@ -86,6 +88,7 @@
   let agentFilter = $state("all");
   let projectFilter = $state("all");
   let projects = $state<Project[]>([]);
+  let profiles = $state<ProfileInfo[]>([]);
   let draftModel = $state("");
   let draftEffort = $state("");
   let draftPermissionMode = $state<PermissionMode | "">("");
@@ -190,6 +193,16 @@
   );
   const curProjectID = $derived(activeSession ? activeSession.ProjectID : draftProjectID);
   const linkedProjectName = $derived(curProjectID ? projectName || projectLabel(curProjectID) : "");
+
+  // Account / usage context follows the active session (or, pre-session, the
+  // selected agent). The usage snapshot key is the profile name, falling back to
+  // the provider name for implicit-default profiles — matching the tracker keys.
+  const usageProvider = $derived(activeSession?.Provider ?? activeAgent?.Provider ?? "claude");
+  const usageProfile = $derived(activeSession?.Profile ?? activeAgent?.Profile ?? "");
+  const usageKey = $derived(usageProfile || usageProvider);
+  const usageSnapshot = $derived(live.usageByProfile.get(usageKey));
+  const accountLabel = $derived(usageProfile ? `${usageProvider} · ${usageProfile}` : usageProvider);
+  const providerProfiles = $derived(profiles.filter((p) => p.Provider === usageProvider));
   const showSlash = $derived(messageText.startsWith("/"));
   const activeTurn = $derived(activeSession ? activeTurns[activeSession.ID] : undefined);
   const approvalHistory = $derived(activeSession ? approvalHistoryBySession[activeSession.ID] ?? [] : []);
@@ -219,6 +232,7 @@
     live.connect();
     unsubscribe = live.subscribe(handleServerMessage);
     listProjects().then((p) => (projects = p)).catch(() => {});
+    listProfiles().then((p) => (profiles = p)).catch(() => {});
     restoreLastSession();
     countdown = window.setInterval(updatePermissionRemaining, 1000);
     return () => {
@@ -1310,50 +1324,97 @@
         {/if}
       </div>
       <div class="composer-meta">
+        {#if !activeSession}
+          <!-- Pre-session group: project, permission, account. The whole group and
+               its trailing divider drop away once a session is running — project,
+               approval mode, and the agent/account are all fixed for a live chat. -->
+          <div class="dd-wrap">
+            <button class="chip-btn" onclick={() => toggleDropdown("project")} title="Project for this new session">
+              <span class="chip-ico">📁</span> {curProjectID ? projectLabel(curProjectID) : "no project"} <span class="chip-chev">▾</span>
+            </button>
+            {#if openDropdown === "project"}
+              <div class="dd-menu up">
+                <button class="dd-opt" class:sel={!draftProjectID} onclick={() => setDraftProject("")}>no project</button>
+                {#each projects as p}
+                  <button class="dd-opt mono" class:sel={draftProjectID === p.id} onclick={() => setDraftProject(p.id)}>{p.name}</button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <div class="dd-wrap">
+            <button class="chip-btn" onclick={() => toggleDropdown("perm")}>
+              <span class="perm-dot" style={`background:${curMode === "yolo" ? "#C0392B" : "#2F6E60"}`}></span>
+              {curMode} <span class="chip-chev">▾</span>
+            </button>
+            {#if openDropdown === "perm"}
+              <div class="dd-menu up wide">
+                <button class="dd-opt2" class:sel={curMode === "approve"} onclick={() => setPermissionMode("approve")}>
+                  <span class="dd-opt2-label">approve</span>
+                  <span class="dd-opt2-desc">Confirm each action</span>
+                </button>
+                <button class="dd-opt2" class:sel={curMode === "yolo"} onclick={() => setPermissionMode("yolo")}>
+                  <span class="dd-opt2-label">yolo</span>
+                  <span class="dd-opt2-desc">Auto-run everything</span>
+                </button>
+              </div>
+            {/if}
+          </div>
+          <!-- Account chip: provider glyph + provider · profile. Informational —
+               the account follows the chosen agent and can't change mid-chat. -->
+          <div class="dd-wrap">
+            <button class="chip-btn" onclick={() => toggleDropdown("account")} title="Provider & profile for this session">
+              <span class="prov-glyph" class:diamond={usageProvider === "codex"}
+                style={`background:${usageProvider === "codex" ? "#4B5560" : "#B0572F"}`}></span>
+              {accountLabel} <span class="chip-chev">▾</span>
+            </button>
+            {#if openDropdown === "account"}
+              <div class="dd-menu up wide">
+                <div class="dd-section">PROVIDER</div>
+                <div class="dd-note">{usageProvider} · follows the selected agent</div>
+                {#if providerProfiles.length}
+                  <div class="dd-section">PROFILE · {providerProfiles.length} account{providerProfiles.length === 1 ? "" : "s"}</div>
+                  {#each providerProfiles as p}
+                    <div class="dd-opt mono" class:sel={p.Name === usageProfile}>{p.Name}</div>
+                  {/each}
+                {/if}
+              </div>
+            {/if}
+          </div>
+          <span class="chip-divider"></span>
+        {/if}
+
+        <!-- Model chip -->
         <div class="dd-wrap">
-          <button class="chip-btn mono" onclick={() => toggleDropdown("model")}>/model {curModel} <span style="opacity:.55">▾</span></button>
+          <button class="chip-btn mono" onclick={() => toggleDropdown("model")}>{curModel} <span class="chip-chev">▾</span></button>
           {#if openDropdown === "model"}
             <div class="dd-menu up">
               {#each modelOptions as o}
-                <button class="dd-opt" class:sel={o === curModel} onclick={() => setModel(o)}>{o}</button>
+                <button class="dd-opt mono" class:sel={o === curModel} onclick={() => setModel(o)}>{o}</button>
               {/each}
             </div>
           {/if}
         </div>
+
+        <!-- Effort chip -->
         <div class="dd-wrap">
-          <button class="chip-btn mono" onclick={() => toggleDropdown("effort")}>/effort {curEffort} <span style="opacity:.55">▾</span></button>
+          <button class="chip-btn mono" onclick={() => toggleDropdown("effort")}>{curEffort} <span class="chip-chev">▾</span></button>
           {#if openDropdown === "effort"}
             <div class="dd-menu up">
               {#each EFFORTS as o}
-                <button class="dd-opt" class:sel={o === curEffort} onclick={() => setEffort(o)}>{o}</button>
+                <button class="dd-opt mono" class:sel={o === curEffort} onclick={() => setEffort(o)}>{o}</button>
               {/each}
             </div>
           {/if}
         </div>
-        <div class="dd-wrap">
-          <button class="chip-btn mono" onclick={() => toggleDropdown("perm")}>/permission {curMode} <span style="opacity:.55">▾</span></button>
-          {#if openDropdown === "perm"}
-            <div class="dd-menu up">
-              {#each ["approve", "yolo"] as o}
-                <button class="dd-opt" class:sel={o === curMode} onclick={() => setPermissionMode(o as PermissionMode)}>{o}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        <div class="dd-wrap">
-          <button class="chip-btn mono" class:mutedChip={!!activeSession} onclick={() => { if (!activeSession) toggleDropdown("project"); }} title={activeSession ? "Project is fixed for this session" : "Project for this new session"}>
-            /project {curProjectID ? projectLabel(curProjectID) : "none"} <span style="opacity:.55">▾</span>
-          </button>
-          {#if openDropdown === "project" && !activeSession}
-            <div class="dd-menu up">
-              <button class="dd-opt" class:sel={!draftProjectID} onclick={() => setDraftProject("")}>no project</button>
-              {#each projects as p}
-                <button class="dd-opt" class:sel={draftProjectID === p.id} onclick={() => setDraftProject(p.id)}>{p.name}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        <span style={modeChip(curMode)}>{curMode}</span>
+
+        <!-- Usage chip (right-aligned) -->
+        <UsageChip
+          snapshot={usageSnapshot}
+          provider={usageProvider}
+          profileLabel={accountLabel}
+          open={openDropdown === "usage"}
+          onToggle={() => toggleDropdown("usage")}
+        />
       </div>
     </div>
   </div>
@@ -1561,6 +1622,85 @@
   .dd-opt.sel {
     color: var(--teal-deep);
     background: #e3f1ec;
+  }
+
+  .dd-opt:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  /* ---- Composer chip-bar (usage redesign) ---- */
+  .chip-chev {
+    font-size: 10px;
+    opacity: 0.55;
+    transition: transform 0.15s ease;
+  }
+  .chip-ico {
+    font-size: 12px;
+    opacity: 0.8;
+  }
+  .perm-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .prov-glyph {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+  .prov-glyph.diamond {
+    transform: rotate(45deg);
+  }
+  .chip-divider {
+    width: 1px;
+    height: 18px;
+    background: #e4d8c8;
+    margin: 0 2px;
+    flex: 0 0 auto;
+  }
+  .dd-menu.wide {
+    min-width: 210px;
+  }
+  .dd-section {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: #a2937c;
+    font-weight: 700;
+    padding: 6px 11px 3px;
+  }
+  .dd-note {
+    font-size: 11px;
+    color: #93856f;
+    padding: 0 11px 6px;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .dd-opt2 {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 7px 11px;
+    border-radius: 8px;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    text-align: left;
+  }
+  .dd-opt2:hover {
+    background: #f6efe6;
+  }
+  .dd-opt2.sel {
+    background: #e3f1ec;
+  }
+  .dd-opt2-label {
+    font: 600 12.5px "JetBrains Mono", monospace;
+    color: #4a4032;
+  }
+  .dd-opt2-desc {
+    font-size: 11px;
+    color: #93856f;
   }
 
   .sess-list {
@@ -2744,10 +2884,6 @@
     flex: none;
   }
 
-  .mutedChip {
-    cursor: default;
-    opacity: 0.72;
-  }
 
   .mobile-panel-backdrop {
     display: none;

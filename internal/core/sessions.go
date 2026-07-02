@@ -336,7 +336,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
 				return
 			}
-			assistant, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, events)
+			assistant, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, events)
 			if !ok {
 				runLog.Info("turn aborted", "provider", string(current.Provider))
 				return
@@ -468,7 +468,7 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiummcp.Server, []podiumm
 	return assigned, cat.Servers, nil
 }
 
-func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, events <-chan adapter.Event) (strings.Builder, bool, bool) {
+func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, provider config.Provider, profile string, events <-chan adapter.Event) (strings.Builder, bool, bool) {
 	var assistant strings.Builder
 	for event := range events {
 		switch event.Kind {
@@ -505,8 +505,17 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				)
 			}
 		case adapter.EventRateStatus:
-			if event.RateStatus != nil && event.RateStatus.UsedPercent >= 80 {
-				go c.refreshRollingSummaryBackground(sessionID)
+			if event.RateStatus != nil {
+				if c.onRateStatus != nil {
+					profileKey := profile
+					if profileKey == "" {
+						profileKey = string(provider)
+					}
+					c.onRateStatus(profileKey, provider, *event.RateStatus)
+				}
+				if event.RateStatus.UsedPercent >= 80 {
+					go c.refreshRollingSummaryBackground(sessionID)
+				}
 			}
 		case adapter.EventRateLimited:
 			return assistant, true, true

@@ -25,6 +25,7 @@ import type {
   TaskStatus,
   UpdateApplyResult,
   UpdateStatus,
+  UsageSnapshot,
 } from "./types";
 
 async function asJSON<T>(res: Response): Promise<T> {
@@ -55,6 +56,13 @@ export async function applyUpdate(force = false): Promise<UpdateApplyResult> {
 
 export async function listAgents(): Promise<Agent[]> {
   return (await asJSON<Agent[] | null>(await fetch("/api/agents"))) ?? [];
+}
+
+// getUsage fetches per-profile provider usage snapshots. Live state also arrives
+// via the WebSocket `state` frame; this is for on-demand/refresh reads.
+export async function getUsage(refresh = false): Promise<UsageSnapshot[]> {
+  const path = refresh ? "/api/usage?refresh=1" : "/api/usage";
+  return (await asJSON<UsageSnapshot[] | null>(await fetch(path))) ?? [];
 }
 
 export async function listSkills(): Promise<Skill[]> {

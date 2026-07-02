@@ -82,8 +82,19 @@ type TurnSettings struct {
 }
 
 // RateStatus reports provider-exposed rate-limit utilization when available.
+// UsedPercent is the max across all windows (kept for the ≥80% summary trigger);
+// Windows carries the full per-window breakdown when the provider exposes it.
 type RateStatus struct {
 	UsedPercent float64
+	Windows     []RateWindow
+}
+
+// RateWindow is one provider rate-limit window observed passively mid-turn.
+type RateWindow struct {
+	Key           string
+	UsedPercent   float64
+	ResetsAt      time.Time
+	WindowSeconds int64
 }
 
 // EventKind classifies streamed adapter output.

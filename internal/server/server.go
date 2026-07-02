@@ -17,6 +17,7 @@ import (
 	podiumgithub "github.com/mar-schmidt/Podium/internal/github"
 	"github.com/mar-schmidt/Podium/internal/notify"
 	"github.com/mar-schmidt/Podium/internal/schedule"
+	"github.com/mar-schmidt/Podium/internal/usage"
 )
 
 // BuildInfo is surfaced on /healthz so clients can see what they're talking to.
@@ -33,6 +34,7 @@ type Server struct {
 	started   time.Time
 	core      *core.Core
 	scheduler *schedule.Scheduler
+	usage     *usage.Tracker
 	github    *podiumgithub.Service
 	broker    *permissionBroker
 	input     *userInputBroker
@@ -52,6 +54,7 @@ type Options struct {
 	Build     BuildInfo
 	Core      *core.Core
 	Scheduler *schedule.Scheduler
+	Usage     *usage.Tracker
 	Paths     config.Paths
 	GitHub    config.GitHub
 	Logger    *slog.Logger
@@ -76,6 +79,7 @@ func New(opts Options) *Server {
 		started:     time.Now(),
 		core:        opts.Core,
 		scheduler:   opts.Scheduler,
+		usage:       opts.Usage,
 		github:      podiumgithub.New(podiumgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
 		broker:      newPermissionBroker(log),
 		input:       newUserInputBroker(log),
@@ -130,6 +134,7 @@ func New(opts Options) *Server {
 	mux.HandleFunc("/api/update", s.handleUpdate)
 	mux.HandleFunc("/api/update/apply", s.handleUpdateApply)
 	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/usage", s.handleUsage)
 	mux.HandleFunc("/api/push/vapid", s.handlePushVAPID)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)

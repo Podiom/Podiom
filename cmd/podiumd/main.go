@@ -26,6 +26,7 @@ import (
 	"github.com/mar-schmidt/Podium/internal/server"
 	"github.com/mar-schmidt/Podium/internal/skills"
 	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/mar-schmidt/Podium/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -171,6 +172,17 @@ func run() error {
 	defer scheduler.Stop()
 	log.Info("scheduler started", "dir", paths.SchedulesDir)
 
+	// Usage tracker polls provider plan-limit windows per auth profile. It reads
+	// credential files read-only and never writes or logs tokens.
+	usageTracker := usage.New(usage.Options{
+		Profiles: coreSvc.ListProfileDetails,
+		Logger:   log,
+	})
+	usageTracker.Start()
+	defer usageTracker.Stop()
+	// Passive enrichment: feed mid-turn provider rate data into the usage cache.
+	coreSvc.SetRateStatusHandler(usageTracker.IngestPassive)
+
 	// Web Push: load (or first-time generate) the VAPID keypair and build the
 	// notification dispatcher. Failure here is non-fatal — the daemon still runs,
 	// just without out-of-app push (in-app toasts/red dots are unaffected).
@@ -193,6 +205,7 @@ func run() error {
 		},
 		Core:           coreSvc,
 		Scheduler:      scheduler,
+		Usage:          usageTracker,
 		Paths:          paths,
 		GitHub:         cfg.GitHub,
 		Logger:         log,

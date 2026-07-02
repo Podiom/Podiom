@@ -1,0 +1,11 @@
+{
+  "plan_type": "plus",
+  "rate_limit": {
+    "primary_window": { "used_percent": 30, "reset_at": 1782064800, "limit_window_seconds": 18000 },
+    "secondary_window": { "used_percent": 72, "reset_at": 1782410400, "limit_window_seconds": 604800 }
+  },
+  "additional_rate_limits": [
+    { "name": "gpt-5-codex", "used_percent": 15, "reset_at": 1782064800, "limit_window_seconds": 18000 }
+  ],
+  "credits": { "has_credits": true, "unlimited": false, "balance": 4.25 }
+}

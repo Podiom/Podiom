@@ -11,6 +11,7 @@ import (
 	"github.com/mar-schmidt/Podium/internal/adapter"
 	"github.com/mar-schmidt/Podium/internal/core"
 	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/mar-schmidt/Podium/internal/usage"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -183,7 +184,11 @@ func (s *Server) writeState(ctx context.Context, writer *wsWriter) error {
 	if err != nil {
 		return err
 	}
-	return writer.write(ctx, ServerMessage{Type: "state", Agents: agents, Sessions: sessions, ActiveTurns: s.turns.summaries()})
+	var usageSnaps []usage.Snapshot
+	if s.usage != nil {
+		usageSnaps = s.usage.Snapshots()
+	}
+	return writer.write(ctx, ServerMessage{Type: "state", Agents: agents, Sessions: sessions, ActiveTurns: s.turns.summaries(), Usage: usageSnaps})
 }
 
 func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMessage) {

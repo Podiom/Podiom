@@ -78,9 +78,24 @@ func TestCodexReplayMessageIncludesHistoryAndLiveTurn(t *testing.T) {
 }
 
 func TestCodexRateStatusAndLimitParsing(t *testing.T) {
-	status, ok := codexRateStatus(json.RawMessage(`{"rate_limits":{"primary":{"used_percent":82.5},"secondary":{"used_percent":20}}}`))
+	status, ok := codexRateStatus(json.RawMessage(`{"rate_limits":{"primary":{"used_percent":82.5,"window_minutes":300,"resets_in_seconds":3600},"secondary":{"used_percent":20,"window_minutes":10080}}}`))
 	if !ok || status.UsedPercent != 82.5 {
 		t.Fatalf("bad rate status: %+v ok=%v", status, ok)
+	}
+	if len(status.Windows) != 2 {
+		t.Fatalf("expected 2 structured windows, got %+v", status.Windows)
+	}
+	if status.Windows[0].Key != "primary" || status.Windows[0].UsedPercent != 82.5 {
+		t.Errorf("primary window = %+v", status.Windows[0])
+	}
+	if status.Windows[0].WindowSeconds != 300*60 {
+		t.Errorf("primary window seconds = %d", status.Windows[0].WindowSeconds)
+	}
+	if status.Windows[0].ResetsAt.IsZero() {
+		t.Errorf("primary resets_at should be derived from resets_in_seconds")
+	}
+	if status.Windows[1].Key != "secondary" || status.Windows[1].WindowSeconds != 10080*60 {
+		t.Errorf("secondary window = %+v", status.Windows[1])
 	}
 	if !codexRateLimited(json.RawMessage(`{"error":{"message":"usage_limit_exceeded"}}`)) {
 		t.Fatal("expected usage limit to be detected")

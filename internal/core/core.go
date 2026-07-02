@@ -50,6 +50,16 @@ type Core struct {
 	ledger   *projects.Ledger
 	log      *slog.Logger
 	noBg     bool
+	// onRateStatus, when set, receives provider rate-limit updates observed
+	// mid-turn (attributed to the session's profile/provider). The usage tracker
+	// wires this to IngestPassive; nil disables passive enrichment.
+	onRateStatus func(profile string, provider config.Provider, rs adapter.RateStatus)
+}
+
+// SetRateStatusHandler registers a callback for provider rate-limit updates seen
+// during a turn. Safe to call once during daemon wiring, before turns run.
+func (c *Core) SetRateStatusHandler(fn func(profile string, provider config.Provider, rs adapter.RateStatus)) {
+	c.onRateStatus = fn
 }
 
 // New creates a Core service.

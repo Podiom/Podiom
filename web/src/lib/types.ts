@@ -325,6 +325,49 @@ export interface ActiveTurnSummary {
   pending?: "permission" | "question" | "assistant" | "";
 }
 
+// Usage mirrors internal/usage.Snapshot (snake_case JSON). Per-profile provider
+// plan-limit utilization surfaced in the composer usage chip.
+export type UsageStatus =
+  | "ok"
+  | "no_credentials"
+  | "stale_credentials"
+  | "unauthorized"
+  | "rate_limited"
+  | "unsupported"
+  | "error";
+
+export interface UsageWindow {
+  key: string;
+  label: string;
+  used_percent: number;
+  resets_at?: string;
+  window_seconds?: number;
+}
+
+export interface UsageCredits {
+  enabled: boolean;
+  unlimited?: boolean;
+  balance?: number;
+  monthly_limit?: number;
+  used_credits?: number;
+  utilization_percent?: number;
+  currency?: string;
+}
+
+export interface UsageSnapshot {
+  profile: string;
+  provider: Provider;
+  default: boolean;
+  plan?: string;
+  status: UsageStatus;
+  error?: string;
+  windows?: UsageWindow[];
+  credits?: UsageCredits;
+  fetched_at?: string;
+  next_retry_at?: string;
+  source?: string;
+}
+
 export interface TurnState {
   session_id: string;
   turn_id: string;
@@ -390,6 +433,7 @@ export interface ServerMessage {
   agents?: Agent[];
   sessions?: Session[];
   active_turns?: ActiveTurnSummary[];
+  usage?: UsageSnapshot[];
   session?: Session;
   history?: Message[];
   message?: Message;

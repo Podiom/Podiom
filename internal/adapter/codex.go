@@ -1080,11 +1080,93 @@ func codexRateStatus(params json.RawMessage) (RateStatus, bool) {
 	if err := json.Unmarshal(params, &value); err != nil {
 		return RateStatus{}, false
 	}
+	// UsedPercent stays the max across everything for the ≥80% summary trigger;
+	// Windows carries the structured primary/secondary breakdown when present.
 	max := maxUsedPercent(value)
-	if max <= 0 {
+	windows := codexParseRateWindows(value)
+	if max <= 0 && len(windows) == 0 {
 		return RateStatus{}, false
 	}
-	return RateStatus{UsedPercent: max}, true
+	return RateStatus{UsedPercent: max, Windows: windows}, true
+}
+
+// codexParseRateWindows extracts the primary (5-hour) and secondary (weekly)
+// rate-limit windows from a token_count/account/updated payload. It searches for
+// a "rate_limits" node anywhere in the tree so it is resilient to nesting.
+func codexParseRateWindows(value any) []RateWindow {
+	node := findRateLimitsNode(value)
+	if node == nil {
+		return nil
+	}
+	var out []RateWindow
+	if w, ok := codexWindowFromNode(node["primary"], "primary"); ok {
+		out = append(out, w)
+	}
+	if w, ok := codexWindowFromNode(node["secondary"], "secondary"); ok {
+		out = append(out, w)
+	}
+	return out
+}
+
+func findRateLimitsNode(value any) map[string]any {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			if strings.EqualFold(key, "rate_limits") || strings.EqualFold(key, "rateLimits") {
+				if m, ok := child.(map[string]any); ok {
+					return m
+				}
+			}
+		}
+		for _, child := range v {
+			if m := findRateLimitsNode(child); m != nil {
+				return m
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if m := findRateLimitsNode(child); m != nil {
+				return m
+			}
+		}
+	}
+	return nil
+}
+
+func codexWindowFromNode(value any, key string) (RateWindow, bool) {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return RateWindow{}, false
+	}
+	percent, ok := numFromMap(m, "used_percent", "usedPercent")
+	if !ok {
+		return RateWindow{}, false
+	}
+	w := RateWindow{Key: key, UsedPercent: percent}
+	if secs, ok := numFromMap(m, "window_seconds", "limit_window_seconds"); ok {
+		w.WindowSeconds = int64(secs)
+	} else if mins, ok := numFromMap(m, "window_minutes"); ok {
+		w.WindowSeconds = int64(mins) * 60
+	}
+	if secs, ok := numFromMap(m, "resets_in_seconds"); ok {
+		w.ResetsAt = time.Now().Add(time.Duration(secs) * time.Second)
+	} else if at, ok := numFromMap(m, "reset_at", "resets_at"); ok && at > 0 {
+		w.ResetsAt = time.Unix(int64(at), 0)
+	}
+	return w, true
+}
+
+func numFromMap(m map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		for mk, mv := range m {
+			if strings.EqualFold(mk, key) {
+				if f, ok := mv.(float64); ok {
+					return f, true
+				}
+			}
+		}
+	}
+	return 0, false
 }
 
 func maxUsedPercent(value any) float64 {

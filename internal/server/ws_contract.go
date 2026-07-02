@@ -6,6 +6,7 @@ import (
 	"github.com/mar-schmidt/Podium/internal/adapter"
 	"github.com/mar-schmidt/Podium/internal/config"
 	"github.com/mar-schmidt/Podium/internal/store"
+	"github.com/mar-schmidt/Podium/internal/usage"
 )
 
 // ClientMessage is the browser-to-daemon WebSocket contract.
@@ -31,6 +32,7 @@ type ServerMessage struct {
 	Agents      []store.Agent              `json:"agents,omitempty"`
 	Sessions    []store.Session            `json:"sessions,omitempty"`
 	ActiveTurns []ActiveTurnSummary        `json:"active_turns,omitempty"`
+	Usage       []usage.Snapshot           `json:"usage,omitempty"`
 	Session     *store.Session             `json:"session,omitempty"`
 	History     []store.Message            `json:"history,omitempty"`
 	Message     *store.Message             `json:"message,omitempty"`
