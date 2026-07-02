@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -45,28 +47,58 @@ type claudeCredentialsFile struct {
 	} `json:"claudeAiOauth"`
 }
 
-// claudeCredentialPath resolves the credentials file for a profile. An empty
-// configDir falls back to $CLAUDE_CONFIG_DIR then ~/.claude.
-func claudeCredentialPath(configDir string) string {
+// claudeConfigDir resolves the Claude config directory for a profile. An empty
+// configDir falls back to $CLAUDE_CONFIG_DIR then ~/.claude. A leading ~ is
+// expanded so profile dirs like "~/.claude-work" resolve correctly.
+func claudeConfigDir(configDir string) string {
 	dir := configDir
 	if dir == "" {
 		dir = os.Getenv("CLAUDE_CONFIG_DIR")
 	}
 	if dir == "" {
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".claude")
+		return filepath.Join(home, ".claude")
 	}
-	return filepath.Join(dir, ".credentials.json")
+	return expandHome(dir)
+}
+
+// claudeCredentialPath resolves the credentials file for a profile.
+func claudeCredentialPath(configDir string) string {
+	return filepath.Join(claudeConfigDir(configDir), ".credentials.json")
+}
+
+// isDefaultClaudeDir reports whether configDir resolves to the CLI's default
+// ~/.claude (where macOS stores credentials in the Keychain, not a file).
+func isDefaultClaudeDir(configDir string) bool {
+	if configDir == "" && os.Getenv("CLAUDE_CONFIG_DIR") == "" {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(claudeConfigDir(configDir)) == filepath.Join(home, ".claude")
 }
 
 // readClaudeCredentials reads a profile's Claude OAuth credentials read-only.
+// On macOS the default account stores its token in the login Keychain rather
+// than a file, so an absent default-profile file falls back to the Keychain.
 // os.IsNotExist errors are surfaced so callers can map them to no_credentials.
 func readClaudeCredentials(configDir string) (claudeCredentials, error) {
 	path := claudeCredentialPath(configDir)
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) && runtime.GOOS == "darwin" && isDefaultClaudeDir(configDir) {
+			if creds, kerr := readClaudeKeychainCredentials(); kerr == nil {
+				return creds, nil
+			}
+		}
 		return claudeCredentials{}, err
 	}
+	return parseClaudeCredentials(raw)
+}
+
+func parseClaudeCredentials(raw []byte) (claudeCredentials, error) {
 	var file claudeCredentialsFile
 	if err := json.Unmarshal(raw, &file); err != nil {
 		return claudeCredentials{}, fmt.Errorf("parse claude credentials: %w", err)
@@ -77,6 +109,31 @@ func readClaudeCredentials(configDir string) (claudeCredentials, error) {
 		ExpiresAt:        file.OAuth.ExpiresAt,
 		SubscriptionType: file.OAuth.SubscriptionType,
 	}, nil
+}
+
+// claudeKeychainService is the macOS Keychain generic-password service under
+// which Claude Code stores the default account's OAuth credentials.
+var claudeKeychainService = "Claude Code-credentials"
+
+// readClaudeKeychainCredentials reads the default Claude account's token from
+// the macOS login Keychain via the `security` CLI. The returned blob has the
+// same shape as .credentials.json. The token is only ever passed to the parser.
+func readClaudeKeychainCredentials() (claudeCredentials, error) {
+	out, err := exec.Command("security", "find-generic-password", "-s", claudeKeychainService, "-w").Output()
+	if err != nil {
+		return claudeCredentials{}, err
+	}
+	return parseClaudeCredentials(out)
+}
+
+// expandHome expands a leading ~ to the user's home directory.
+func expandHome(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	return path
 }
 
 func (c claudeCredentials) hasScope(scope string) bool {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,9 +52,9 @@ func codexHomeDir(homeDir string) string {
 	}
 	if dir == "" {
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".codex")
+		return filepath.Join(home, ".codex")
 	}
-	return dir
+	return expandHome(dir)
 }
 
 // readCodexAuth reads a profile's Codex credentials read-only. An auth.json that
@@ -120,10 +121,28 @@ type codexUsageResponse struct {
 	} `json:"rate_limit"`
 	AdditionalRateLimits []codexNamedWindow `json:"additional_rate_limits"`
 	Credits              *struct {
-		HasCredits bool    `json:"has_credits"`
-		Unlimited  bool    `json:"unlimited"`
-		Balance    float64 `json:"balance"`
+		HasCredits bool      `json:"has_credits"`
+		Unlimited  bool      `json:"unlimited"`
+		Balance    flexFloat `json:"balance"`
 	} `json:"credits"`
+}
+
+// flexFloat decodes a JSON number or a numeric string (the Codex usage API
+// returns credits.balance as a quoted string like "4.25"). Unparseable values
+// decode to 0 rather than failing the whole response.
+type flexFloat float64
+
+func (f *flexFloat) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil
+	}
+	*f = flexFloat(v)
+	return nil
 }
 
 type codexWindow struct {
@@ -217,7 +236,7 @@ func FetchCodex(ctx context.Context, hc *http.Client, homeDir string) Snapshot {
 		snap.Credits = &Credits{
 			Enabled:   body.Credits.HasCredits,
 			Unlimited: body.Credits.Unlimited,
-			Balance:   body.Credits.Balance,
+			Balance:   float64(body.Credits.Balance),
 		}
 	}
 	snap.Status = StatusOK

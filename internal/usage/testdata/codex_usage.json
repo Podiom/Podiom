@@ -7,5 +7,5 @@
   "additional_rate_limits": [
     { "name": "gpt-5-codex", "used_percent": 15, "reset_at": 1782064800, "limit_window_seconds": 18000 }
   ],
-  "credits": { "has_credits": true, "unlimited": false, "balance": 4.25 }
+  "credits": { "has_credits": true, "unlimited": false, "balance": "4.25" }
 }
