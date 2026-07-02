@@ -246,7 +246,7 @@ func (c *Client) UpdateAgent(ctx context.Context, name string, req AgentUpdateRe
 // GenerateAgentSoul asks the daemon to draft an agent's SOUL.md.
 func (c *Client) GenerateAgentSoul(ctx context.Context, name string, req AgentGenerateRequest) (AgentGenerateResult, error) {
 	var result AgentGenerateResult
-	if err := c.postJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/generate", req, &result); err != nil {
+	if err := c.postLongJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/generate", req, &result); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -628,13 +628,21 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, in any, out any) error {
+	return c.postWithClient(ctx, c.http, path, in, out)
+}
+
+func (c *Client) postLongJSON(ctx context.Context, path string, in any, out any) error {
+	return c.postWithClient(ctx, &http.Client{}, path, in, out)
+}
+
+func (c *Client) postWithClient(ctx context.Context, hc *http.Client, path string, in any, out any) error {
 	raw, _ := json.Marshal(in)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return err
 	}
