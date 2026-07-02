@@ -333,6 +333,8 @@ func (c *Client) ListAgents(ctx context.Context) ([]store.Agent, error) {
 type SessionCreateRequest struct {
 	AgentName string              `json:"agent_name"`
 	Origin    store.SessionOrigin `json:"origin"`
+	Provider  config.Provider     `json:"provider,omitempty"`
+	Profile   string              `json:"profile,omitempty"`
 }
 
 // CreateSession creates a durable session through the daemon.
@@ -361,9 +363,11 @@ func (c *Client) DeleteSession(ctx context.Context, id string) error {
 // ChatRequest sends one message, either to an existing session or to a new
 // session created from AgentName.
 type ChatRequest struct {
-	SessionID string `json:"session_id,omitempty"`
-	AgentName string `json:"agent_name,omitempty"`
-	Message   string `json:"message"`
+	SessionID string          `json:"session_id,omitempty"`
+	AgentName string          `json:"agent_name,omitempty"`
+	Message   string          `json:"message"`
+	Provider  config.Provider `json:"provider,omitempty"`
+	Profile   string          `json:"profile,omitempty"`
 }
 
 // StreamEvent is one newline-delimited event from /api/chat.

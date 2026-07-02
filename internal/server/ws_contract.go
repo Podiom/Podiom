@@ -16,6 +16,8 @@ type ClientMessage struct {
 	AgentName      string                      `json:"agent_name,omitempty"`
 	SessionID      string                      `json:"session_id,omitempty"`
 	Message        string                      `json:"message,omitempty"`
+	Provider       config.Provider             `json:"provider,omitempty"`
+	Profile        string                      `json:"profile,omitempty"`
 	Model          string                      `json:"model,omitempty"`
 	Effort         string                      `json:"effort,omitempty"`
 	ProjectID      string                      `json:"project_id,omitempty"`

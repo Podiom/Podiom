@@ -35,6 +35,8 @@ type agentCreateRequest struct {
 type sessionCreateRequest struct {
 	AgentName      string                `json:"agent_name"`
 	Origin         store.SessionOrigin   `json:"origin"`
+	Provider       config.Provider       `json:"provider,omitempty"`
+	Profile        string                `json:"profile,omitempty"`
 	Model          string                `json:"model,omitempty"`
 	Effort         string                `json:"effort,omitempty"`
 	PermissionMode config.PermissionMode `json:"permission_mode,omitempty"`
@@ -45,6 +47,8 @@ type chatRequest struct {
 	SessionID      string                `json:"session_id,omitempty"`
 	AgentName      string                `json:"agent_name,omitempty"`
 	Message        string                `json:"message"`
+	Provider       config.Provider       `json:"provider,omitempty"`
+	Profile        string                `json:"profile,omitempty"`
 	Model          string                `json:"model,omitempty"`
 	Effort         string                `json:"effort,omitempty"`
 	PermissionMode config.PermissionMode `json:"permission_mode,omitempty"`
@@ -548,6 +552,8 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		session, err := s.core.CreateSession(r.Context(), core.CreateSessionRequest{
 			AgentName:      req.AgentName,
 			Origin:         req.Origin,
+			Provider:       req.Provider,
+			Profile:        req.Profile,
 			Model:          req.Model,
 			Effort:         req.Effort,
 			PermissionMode: req.PermissionMode,
@@ -664,6 +670,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		session, err = s.core.CreateSession(ctx, core.CreateSessionRequest{
 			AgentName:      req.AgentName,
 			Origin:         store.OriginCLI,
+			Provider:       req.Provider,
+			Profile:        req.Profile,
 			Model:          req.Model,
 			Effort:         req.Effort,
 			PermissionMode: req.PermissionMode,

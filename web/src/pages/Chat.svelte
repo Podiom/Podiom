@@ -20,6 +20,7 @@
     Message,
     PermissionMode,
     PermissionRequest,
+    Provider,
     ProfileInfo,
     Project,
     ServerMessage,
@@ -89,6 +90,8 @@
   let projectFilter = $state("all");
   let projects = $state<Project[]>([]);
   let profiles = $state<ProfileInfo[]>([]);
+  let draftProvider = $state<Provider | "">("");
+  let draftProfile = $state("");
   let draftModel = $state("");
   let draftEffort = $state("");
   let draftPermissionMode = $state<PermissionMode | "">("");
@@ -177,11 +180,15 @@
   const sessionTitle = $derived(
     activeSession ? activeSession.Name || activeSession.AgentName : selectedAgent || "New session",
   );
-  const modelOptions = $derived(
-    activeAgent?.Provider === "codex" ? ["gpt-5.1", "gpt-5.1-mini", "o4"] : ["sonnet", "opus", "haiku"],
+  const draftOrAgentProvider = $derived(draftProvider || activeAgent?.Provider || "claude");
+  const selectedProvider = $derived(activeSession?.Provider ?? draftOrAgentProvider);
+  const selectedProfile = $derived(
+    activeSession?.Profile ?? (draftProvider ? draftProfile : activeAgent?.Profile ?? ""),
   );
+  const inheritedModel = $derived(selectedProvider === activeAgent?.Provider ? activeAgent?.Model || "" : "");
+  const modelOptions = $derived(modelsFor(selectedProvider));
   const curModel = $derived(
-    activeSession ? activeSession.Model || activeAgent?.Model || "—" : draftModel || activeAgent?.Model || "—",
+    activeSession ? activeSession.Model || inheritedModel || "—" : draftModel || inheritedModel || "—",
   );
   const curEffort = $derived(
     activeSession ? activeSession.Effort || activeAgent?.Effort || "medium" : draftEffort || activeAgent?.Effort || "medium",
@@ -197,8 +204,8 @@
   // Account / usage context follows the active session (or, pre-session, the
   // selected agent). The usage snapshot key is the profile name, falling back to
   // the provider name for implicit-default profiles — matching the tracker keys.
-  const usageProvider = $derived(activeSession?.Provider ?? activeAgent?.Provider ?? "claude");
-  const usageProfile = $derived(activeSession?.Profile ?? activeAgent?.Profile ?? "");
+  const usageProvider = $derived(selectedProvider);
+  const usageProfile = $derived(selectedProfile);
   const usageKey = $derived(usageProfile || usageProvider);
   const usageSnapshot = $derived(live.usageByProfile.get(usageKey));
   const accountLabel = $derived(usageProfile ? `${usageProvider} · ${usageProfile}` : usageProvider);
@@ -216,6 +223,10 @@
 
   function sessionSub(s: Session): string {
     return `${s.AgentName} · ${s.Provider}${s.Model ? " " + s.Model : ""}`;
+  }
+
+  function modelsFor(provider: Provider): string[] {
+    return provider === "codex" ? ["gpt-5.1", "gpt-5.1-mini", "o4"] : ["sonnet", "opus", "haiku"];
   }
 
   onMount(() => {
@@ -568,6 +579,8 @@
       agent_name: activeSession ? undefined : selectedAgent,
       session_id: activeSession?.ID,
       message: text,
+      provider: activeSession ? undefined : usageProvider,
+      profile: activeSession ? undefined : usageProfile || undefined,
       model: activeSession ? undefined : draftModel || undefined,
       effort: activeSession ? undefined : draftEffort || undefined,
       permission_mode: activeSession ? undefined : draftPermissionMode || undefined,
@@ -578,6 +591,8 @@
   }
 
   function resetDraftSettings() {
+    draftProvider = "";
+    draftProfile = "";
     draftModel = "";
     draftEffort = "";
     draftPermissionMode = "";
@@ -601,8 +616,27 @@
 
   function startSessionWith(agentName: string) {
     selectedAgent = agentName;
+    draftProvider = "";
+    draftProfile = "";
+    draftModel = "";
+    draftEffort = "";
+    draftPermissionMode = "";
     newSession(false);
     newSessionOpen = false;
+  }
+
+  function setDraftProvider(provider: Provider) {
+    draftProvider = provider;
+    draftProfile = "";
+    if (!modelsFor(provider).includes(draftModel)) draftModel = "";
+    openDropdown = null;
+  }
+
+  function setDraftProfile(profile: ProfileInfo) {
+    draftProvider = profile.Provider;
+    draftProfile = profile.Name;
+    if (!modelsFor(profile.Provider).includes(draftModel)) draftModel = "";
+    openDropdown = null;
   }
 
   function setModel(model: string) {
@@ -1359,8 +1393,7 @@
               </div>
             {/if}
           </div>
-          <!-- Account chip: provider glyph + provider · profile. Informational —
-               the account follows the chosen agent and can't change mid-chat. -->
+          <!-- Account chip: provider glyph + provider · profile for the new session. -->
           <div class="dd-wrap">
             <button class="chip-btn" onclick={() => toggleDropdown("account")} title="Provider & profile for this session">
               <span class="prov-glyph" class:diamond={usageProvider === "codex"}
@@ -1370,11 +1403,18 @@
             {#if openDropdown === "account"}
               <div class="dd-menu up wide">
                 <div class="dd-section">PROVIDER</div>
-                <div class="dd-note">{usageProvider} · follows the selected agent</div>
+                <button class="dd-opt2" class:sel={usageProvider === "claude" && !usageProfile} onclick={() => setDraftProvider("claude")}>
+                  <span class="dd-opt2-label">Claude</span>
+                  <span class="dd-opt2-desc">Use default Claude login</span>
+                </button>
+                <button class="dd-opt2" class:sel={usageProvider === "codex" && !usageProfile} onclick={() => setDraftProvider("codex")}>
+                  <span class="dd-opt2-label">Codex</span>
+                  <span class="dd-opt2-desc">Use default Codex login</span>
+                </button>
                 {#if providerProfiles.length}
                   <div class="dd-section">PROFILE · {providerProfiles.length} account{providerProfiles.length === 1 ? "" : "s"}</div>
                   {#each providerProfiles as p}
-                    <div class="dd-opt mono" class:sel={p.Name === usageProfile}>{p.Name}</div>
+                    <button class="dd-opt mono" class:sel={p.Name === usageProfile} onclick={() => setDraftProfile(p)}>{p.Name}</button>
                   {/each}
                 {/if}
               </div>
@@ -1670,12 +1710,6 @@
     color: #a2937c;
     font-weight: 700;
     padding: 6px 11px 3px;
-  }
-  .dd-note {
-    font-size: 11px;
-    color: #93856f;
-    padding: 0 11px 6px;
-    font-family: "JetBrains Mono", monospace;
   }
   .dd-opt2 {
     display: flex;

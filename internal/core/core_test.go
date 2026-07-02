@@ -341,6 +341,79 @@ func TestUpdateSessionSettingsDirectly(t *testing.T) {
 	}
 }
 
+func TestCreateSessionCanOverrideAgentProvider(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	c, err := New(Options{
+		Paths:   paths,
+		Store:   db,
+		Adapter: adapter.NewFake(),
+		Profiles: []config.Profile{
+			{Name: "claude-work", Provider: config.ProviderClaude, ConfigDir: "/tmp/claude-work"},
+			{Name: "codex-main", Provider: config.ProviderCodex, HomeDir: "/tmp/codex-main"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{
+		Name:     "portable",
+		Provider: config.ProviderClaude,
+		Profile:  "claude-work",
+		Model:    "sonnet",
+	}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	bareCodex, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: "portable",
+		Origin:    store.OriginWeb,
+		Provider:  config.ProviderCodex,
+	})
+	if err != nil {
+		t.Fatalf("create bare codex session: %v", err)
+	}
+	if bareCodex.Provider != config.ProviderCodex || bareCodex.Profile != "" {
+		t.Fatalf("bare provider override did not select codex default: %+v", bareCodex)
+	}
+	if bareCodex.Model != "" {
+		t.Fatalf("cross-provider session should not inherit claude model, got %q", bareCodex.Model)
+	}
+
+	profileCodex, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: "portable",
+		Origin:    store.OriginWeb,
+		Profile:   "codex-main",
+	})
+	if err != nil {
+		t.Fatalf("create profiled codex session: %v", err)
+	}
+	if profileCodex.Provider != config.ProviderCodex || profileCodex.Profile != "codex-main" {
+		t.Fatalf("profile override did not infer codex target: %+v", profileCodex)
+	}
+
+	if _, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: "portable",
+		Origin:    store.OriginWeb,
+		Provider:  config.ProviderClaude,
+		Profile:   "codex-main",
+	}); err == nil {
+		t.Fatal("expected mismatched provider/profile to fail")
+	}
+}
+
 func TestProfileSlashSwitchesTargetAndClearsHandle(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()

@@ -441,6 +441,8 @@ export type ClientMessage =
       type: "create_session";
       request_id: string;
       agent_name: string;
+      provider?: Provider;
+      profile?: string;
       model?: string;
       effort?: string;
       permission_mode?: PermissionMode;
@@ -452,6 +454,8 @@ export type ClientMessage =
       agent_name?: string;
       session_id?: string;
       message: string;
+      provider?: Provider;
+      profile?: string;
       model?: string;
       effort?: string;
       permission_mode?: PermissionMode;

@@ -18,6 +18,7 @@ import (
 type CreateSessionRequest struct {
 	AgentName      string
 	Origin         store.SessionOrigin
+	Provider       config.Provider
 	Profile        string
 	Model          string
 	Effort         string
@@ -41,11 +42,19 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 			return store.Session{}, err
 		}
 	}
+	provider, profile, err := c.resolveSessionTarget(agent, req.Provider, req.Profile)
+	if err != nil {
+		return store.Session{}, err
+	}
+	model := req.Model
+	if model == "" && provider == agent.Provider {
+		model = agent.Model
+	}
 	sess := store.Session{
 		AgentName:      agent.Name,
-		Provider:       agent.Provider,
-		Profile:        firstNonEmpty(req.Profile, agent.Profile),
-		Model:          firstNonEmpty(req.Model, agent.Model),
+		Provider:       provider,
+		Profile:        profile,
+		Model:          model,
 		Effort:         firstNonEmpty(req.Effort, agent.Effort),
 		PermissionMode: agent.PermissionMode,
 		Origin:         req.Origin,
@@ -117,6 +126,33 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		"extra_workspaces", len(c.sessionExtraWorkspaceDirs(projectCtx)),
 	)
 	return updated, nil
+}
+
+func (c *Core) resolveSessionTarget(agent store.Agent, requestedProvider config.Provider, requestedProfile string) (config.Provider, string, error) {
+	provider := requestedProvider
+	profile := strings.TrimSpace(requestedProfile)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if profile != "" {
+		configured, ok := c.profiles[profile]
+		if !ok {
+			return "", "", fmt.Errorf("unknown profile %q", profile)
+		}
+		if provider == "" {
+			provider = configured.Provider
+		} else if configured.Provider != provider {
+			return "", "", fmt.Errorf("profile %q belongs to provider %q, not %q", profile, configured.Provider, provider)
+		}
+	}
+	if provider == "" {
+		provider = agent.Provider
+	} else if provider != config.ProviderClaude && provider != config.ProviderCodex {
+		return "", "", fmt.Errorf("unknown provider %q (want claude|codex)", provider)
+	}
+	if profile == "" && provider == agent.Provider {
+		profile = agent.Profile
+	}
+	return provider, profile, nil
 }
 
 // ListSessions returns all durable sessions, with a compatibility ProjectID

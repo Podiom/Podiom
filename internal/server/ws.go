@@ -103,6 +103,8 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		session, err := s.core.CreateSession(ctx, core.CreateSessionRequest{
 			AgentName:      msg.AgentName,
 			Origin:         store.OriginWeb,
+			Provider:       msg.Provider,
+			Profile:        msg.Profile,
 			Model:          msg.Model,
 			Effort:         msg.Effort,
 			PermissionMode: msg.PermissionMode,
@@ -209,6 +211,8 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 		session, err = s.core.CreateSession(daemonCtx, core.CreateSessionRequest{
 			AgentName:      msg.AgentName,
 			Origin:         store.OriginWeb,
+			Provider:       msg.Provider,
+			Profile:        msg.Profile,
 			Model:          msg.Model,
 			Effort:         msg.Effort,
 			PermissionMode: msg.PermissionMode,
