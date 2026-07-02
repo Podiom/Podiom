@@ -33,6 +33,34 @@ func TestConfirmAgentDeletionRequiresExactName(t *testing.T) {
 	}
 }
 
+func TestConfirmOverwriteDefaultsNo(t *testing.T) {
+	var out bytes.Buffer
+	if confirmOverwrite(strings.NewReader("\n"), &out, "Overwrite?") {
+		t.Fatal("empty answer should abort")
+	}
+	if !strings.Contains(out.String(), "aborted") {
+		t.Fatalf("missing abort message: %q", out.String())
+	}
+
+	out.Reset()
+	if !confirmOverwrite(strings.NewReader("yes\n"), &out, "Overwrite?") {
+		t.Fatal("yes should confirm")
+	}
+}
+
+func TestAgentsUpdateRejectsYesWithoutGenerateSoul(t *testing.T) {
+	addr := "127.0.0.1:1"
+	cmd := newAgentsUpdateCmd(&addr)
+	cmd.SetArgs([]string{"juno", "--yes", "--model", "sonnet"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected --yes without --generate-soul to fail")
+	}
+	if !strings.Contains(err.Error(), "--yes only applies with --generate-soul") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestActiveLogPathUsesPodiumHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PODIUM_HOME", home)

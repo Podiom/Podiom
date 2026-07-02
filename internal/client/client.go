@@ -162,6 +162,28 @@ type AgentUpdateRequest struct {
 	Soul           *string               `json:"soul,omitempty"`
 }
 
+// AgentGenerateRequest asks the daemon to draft an agent's SOUL.md.
+type AgentGenerateRequest struct {
+	Notes         string `json:"notes,omitempty"`
+	Save          bool   `json:"save,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Temperament   string `json:"temperament,omitempty"`
+	Collaboration string `json:"collaboration,omitempty"`
+	Autonomy      string `json:"autonomy,omitempty"`
+	Strengths     string `json:"strengths,omitempty"`
+	Boundaries    string `json:"boundaries,omitempty"`
+	Playfulness   string `json:"playfulness,omitempty"`
+	CaresAbout    string `json:"cares_about,omitempty"`
+	Extra         string `json:"extra,omitempty"`
+}
+
+// AgentGenerateResult is the generated SOUL.md payload.
+type AgentGenerateResult struct {
+	Agent string `json:"agent"`
+	Soul  string `json:"soul"`
+	Saved bool   `json:"saved"`
+}
+
 type MCPSnapshot struct {
 	Servers     []podiummcp.Server  `json:"servers"`
 	Agents      []MCPAgent          `json:"agents"`
@@ -219,6 +241,15 @@ func (c *Client) UpdateAgent(ctx context.Context, name string, req AgentUpdateRe
 		return detail, err
 	}
 	return detail, nil
+}
+
+// GenerateAgentSoul asks the daemon to draft an agent's SOUL.md.
+func (c *Client) GenerateAgentSoul(ctx context.Context, name string, req AgentGenerateRequest) (AgentGenerateResult, error) {
+	var result AgentGenerateResult
+	if err := c.postJSON(ctx, "/api/agents/"+urlPathEscape(name)+"/generate", req, &result); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // AgentDeleteResult is the DELETE /api/agents/<name> response.

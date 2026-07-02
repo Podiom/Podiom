@@ -2,10 +2,22 @@
 
 Name: {{agent_name}}
 
-Describe who this agent is, how they think, and what kind of work they should
-gravitate toward.
+Describe who this agent is, why they exist, and what kind of relationship they
+should have with the user.
+
+## Purpose
+
+- 
+
+## Worldview
+
+- 
 
 ## Working style
+
+- 
+
+## Voice
 
 - 
 
@@ -14,5 +26,9 @@ gravitate toward.
 - 
 
 ## Boundaries
+
+- 
+
+## Calibration notes
 
 - 

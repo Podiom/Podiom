@@ -13,6 +13,8 @@ $PODIUM_HOME/agents/<name>/
 ```
 
 `SOUL.md` is always created from a small identity skeleton and is user-owned.
+See [SOUL.md generation](soul-generation.md) for the generated shape and quality
+bar.
 `workspace/` is the cwd used by backing provider processes in later phases.
 Podium does not create `agents/<name>/AGENTS.md`; that file is optional and left
 for the user to add when an agent needs extra standing instructions.

@@ -188,6 +188,7 @@ Create an agent through `podiumd`. This stores the agent, creates
 ```
 podium agents create jared
 podium agents create builder --provider claude --model sonnet --effort medium --permission approve
+podium agents create juno --generate-soul
 ```
 
 | Flag | Description |
@@ -196,10 +197,26 @@ podium agents create builder --provider claude --model sonnet --effort medium --
 | `--model name` | Default model. Empty means provider default. |
 | `--effort level` | Default provider-supported reasoning effort. |
 | `--permission approve|yolo` | Agent permission default. |
+| `--generate-soul` | Ask the daemon to generate and save the initial `SOUL.md` after creation. |
 
 Choosing `--permission yolo` prints a whole-machine-access warning: in `yolo`
 every tool call is auto-approved and the workspace is **not** a sandbox (R8.31).
 See [Security & logging](security.md) for the full permission model.
+
+### `podium agents update`
+
+Update durable agent defaults or regenerate an agent's `SOUL.md`.
+
+```
+podium agents update jared --model sonnet
+podium agents update jared --generate-soul --notes "make the voice more direct"
+podium agents update jared --generate-soul --yes
+```
+
+When `--generate-soul` is used, the CLI previews the generated markdown and asks
+before overwriting `$PODIUM_HOME/agents/<name>/SOUL.md`. `--yes` skips that
+confirmation. See [SOUL.md generation](soul-generation.md) for the generated
+shape.
 
 ### `podium agents delete`
 

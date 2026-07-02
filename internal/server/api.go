@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -425,6 +426,20 @@ type agentDeleteRequest struct {
 	Confirmation string `json:"confirmation"`
 }
 
+type agentGenerateRequest struct {
+	Notes         string `json:"notes,omitempty"`
+	Save          bool   `json:"save,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Temperament   string `json:"temperament,omitempty"`
+	Collaboration string `json:"collaboration,omitempty"`
+	Autonomy      string `json:"autonomy,omitempty"`
+	Strengths     string `json:"strengths,omitempty"`
+	Boundaries    string `json:"boundaries,omitempty"`
+	Playfulness   string `json:"playfulness,omitempty"`
+	CaresAbout    string `json:"cares_about,omitempty"`
+	Extra         string `json:"extra,omitempty"`
+}
+
 func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	if s.core == nil {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
@@ -435,10 +450,15 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agent name is required", http.StatusBadRequest)
 		return
 	}
-	// Sub-resources: /api/agents/{name}/memory, /{name}/dreams, /{name}/dream.
+	// Sub-resources: /api/agents/{name}/memory, /{name}/dreams, /{name}/dream,
+	// /{name}/generate.
 	// Dispatch on the segment after the name — unambiguous even for an agent
 	// literally named "memory", since that only ever appears as the first segment.
 	if name, sub, ok := strings.Cut(rest, "/"); ok {
+		if sub == "generate" {
+			s.handleAgentGenerate(w, r, name)
+			return
+		}
 		s.handleAgentSubresource(w, r, name, sub)
 		return
 	}
@@ -529,6 +549,44 @@ func (s *Server) handleAgent(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleAgentGenerate(w http.ResponseWriter, r *http.Request, name string) {
+	if s.core == nil {
+		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.refreshProfilesFromConfig(); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	var req agentGenerateRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			if !errors.Is(err, io.EOF) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+	}
+	result, err := s.core.GenerateAgentSoul(r.Context(), name, core.SoulGenerateRequest{
+		Notes:         req.Notes,
+		Save:          req.Save,
+		Role:          req.Role,
+		Temperament:   req.Temperament,
+		Collaboration: req.Collaboration,
+		Autonomy:      req.Autonomy,
+		Strengths:     req.Strengths,
+		Boundaries:    req.Boundaries,
+		Playfulness:   req.Playfulness,
+		CaresAbout:    req.CaresAbout,
+		Extra:         req.Extra,
+	})
+	writeJSON(w, result, err)
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {

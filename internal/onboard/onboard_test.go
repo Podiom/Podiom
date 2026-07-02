@@ -15,8 +15,8 @@ func TestCleanSoulMarkdownRemovesFenceAndRequiresIdentity(t *testing.T) {
 	}
 }
 
-func TestSoulPromptCarriesQuestionnaire(t *testing.T) {
-	prompt := SoulPrompt("juno", answers{
+func TestDeterministicSoulCarriesQuestionnaire(t *testing.T) {
+	soul := deterministicSoul("juno", answers{
 		Role:          "builder",
 		Temperament:   "warm and curious",
 		Collaboration: "make reasonable calls",
@@ -26,10 +26,10 @@ func TestSoulPromptCarriesQuestionnaire(t *testing.T) {
 		Playfulness:   "moderate",
 		CaresAbout:    "finishing meaningful work",
 		Extra:         "likes concise plans",
-	})
-	for _, want := range []string{"juno", "builder", "warm and curious", "avoid destructive changes", "SOUL.md"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+	}, false)
+	for _, want := range []string{"juno", "builder", "warm and curious", "avoid destructive changes", "## Worldview", "## Calibration notes"} {
+		if !strings.Contains(soul, want) {
+			t.Fatalf("soul missing %q:\n%s", want, soul)
 		}
 	}
 }

@@ -16,12 +16,10 @@ import (
 	"github.com/charmbracelet/huh"
 	"golang.org/x/term"
 
-	"github.com/mar-schmidt/Podium/internal/adapter"
 	"github.com/mar-schmidt/Podium/internal/autostart"
 	"github.com/mar-schmidt/Podium/internal/client"
 	"github.com/mar-schmidt/Podium/internal/config"
 	"github.com/mar-schmidt/Podium/internal/providercheck"
-	"github.com/mar-schmidt/Podium/internal/store"
 )
 
 // Options configures the interactive onboarding wizard.
@@ -499,85 +497,21 @@ func sanitizeName(name string) string {
 }
 
 func generateSoul(ctx context.Context, c *client.Client, name string, ans answers) (string, error) {
-	session, err := c.CreateSession(ctx, client.SessionCreateRequest{AgentName: name, Origin: store.OriginOnboarding})
+	result, err := c.GenerateAgentSoul(ctx, name, client.AgentGenerateRequest{
+		Role:          ans.Role,
+		Temperament:   ans.Temperament,
+		Collaboration: ans.Collaboration,
+		Autonomy:      ans.Autonomy,
+		Strengths:     ans.Strengths,
+		Boundaries:    ans.Boundaries,
+		Playfulness:   ans.Playfulness,
+		CaresAbout:    ans.CaresAbout,
+		Extra:         ans.Extra,
+	})
 	if err != nil {
 		return "", err
 	}
-	events, errs := c.Chat(ctx, client.ChatRequest{SessionID: session.ID, Message: SoulPrompt(name, ans)})
-	var b strings.Builder
-	gotDelta := false
-	for event := range events {
-		switch event.Type {
-		case "delta":
-			gotDelta = true
-			b.WriteString(event.Delta)
-		case "assistant":
-			if !gotDelta {
-				b.WriteString(event.Delta)
-			}
-		case "permission_request":
-			if event.Request != nil {
-				_ = c.DecidePermission(ctx, event.Request.ID, adapter.PermissionDecision{
-					Behavior: "deny",
-					Message:  "SOUL.md generation does not need tools",
-				})
-			}
-		case "error":
-			return "", errors.New(event.Error)
-		}
-	}
-	if err := <-errs; err != nil {
-		return "", err
-	}
-	soul := CleanSoulMarkdown(b.String())
-	if strings.TrimSpace(soul) == "" {
-		return "", errors.New("provider returned an empty SOUL.md draft")
-	}
-	return soul, nil
-}
-
-// SoulPrompt builds the LLM request for a first-agent SOUL.md.
-func SoulPrompt(name string, ans answers) string {
-	return fmt.Sprintf(`You are helping a user create a newborn Podium agent.
-
-Write ONLY the contents of a markdown file named SOUL.md. Do not wrap it in code fences.
-The agent name is %q.
-
-User-shaped questionnaire:
-- Role: %s
-- Temperament: %s
-- Collaboration style: %s
-- Autonomy: %s
-- Strengths: %s
-- Boundaries: %s
-- Playfulness: %s
-- Cares about: %s
-- Extra notes: %s
-
-Use exactly these markdown sections:
-# Identity
-
-Name: %s
-
-One short paragraph describing who this agent is and why it exists.
-
-## Working style
-
-- 3 to 5 bullets
-
-## Strengths
-
-- 3 to 5 bullets
-
-## Boundaries
-
-- 3 to 5 bullets
-
-## Voice
-
-- 2 to 4 bullets
-
-Make the agent feel alive, specific, and influenced by the user's choices. Keep it practical for a coding/research assistant.`, name, ans.Role, ans.Temperament, ans.Collaboration, ans.Autonomy, ans.Strengths, ans.Boundaries, ans.Playfulness, ans.CaresAbout, ans.Extra, name)
+	return result.Soul, nil
 }
 
 // CleanSoulMarkdown removes common chat wrapping from generated markdown.
@@ -612,11 +546,27 @@ Name: %s
 %s
 %s is a %s agent with a %s temperament. It exists to help the user move with clarity while preserving the choices that shaped it.
 
+## Purpose
+
+- Help the user make steady progress on meaningful work.
+- Keep the user's priorities visible: %s.
+
+## Worldview
+
+- Good assistance is specific, situated, and willing to make reasonable calls.
+- Momentum matters, but not more than preserving user trust.
+- Identity should affect behavior, not decorate it.
+
 ## Working style
 
 - Collaboration style: %s.
 - Autonomy level: %s.
 - Cares most about: %s.
+
+## Voice
+
+- Playfulness: %s.
+- Extra notes: %s.
 
 ## Strengths
 
@@ -626,11 +576,11 @@ Name: %s
 
 - %s.
 
-## Voice
+## Calibration notes
 
-- Playfulness: %s.
-- Extra notes: %s.
-`, name, note, name, ans.Role, ans.Temperament, ans.Collaboration, ans.Autonomy, ans.CaresAbout, ans.Strengths, ans.Boundaries, ans.Playfulness, firstNonEmpty(ans.Extra, "stay useful, kind, and direct")))
+- The agent sounds like %s rather than a generic assistant.
+- It follows the user's boundaries without becoming timid.
+`, name, note, name, ans.Role, ans.Temperament, ans.CaresAbout, ans.Collaboration, ans.Autonomy, ans.CaresAbout, ans.Playfulness, firstNonEmpty(ans.Extra, "stay useful, kind, and direct"), ans.Strengths, ans.Boundaries, name))
 }
 
 func editText(initial string) (string, error) {

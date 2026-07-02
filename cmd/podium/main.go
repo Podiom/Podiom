@@ -486,13 +486,15 @@ func newAgentsCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agents",
 		Short: "Manage Podium agents",
-		Long:  "List, create, and delete durable Podium agents through the running podiumd daemon.",
+		Long:  "List, create, update, and delete durable Podium agents through the running podiumd daemon.",
 		Example: "  podium agents list\n" +
 			"  podium agents create jared --provider claude --permission approve\n" +
+			"  podium agents update jared --generate-soul\n" +
 			"  podium agents delete jared",
 	}
 	cmd.AddCommand(newAgentsListCmd(addr))
 	cmd.AddCommand(newAgentsCreateCmd(addr))
+	cmd.AddCommand(newAgentsUpdateCmd(addr))
 	cmd.AddCommand(newAgentsDeleteCmd(addr))
 	return cmd
 }
@@ -665,6 +667,7 @@ func newAgentsListCmd(addr *string) *cobra.Command {
 func newAgentsCreateCmd(addr *string) *cobra.Command {
 	var provider, profile, model, effort, permission string
 	var fallback []string
+	var generateSoul bool
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an agent",
@@ -694,6 +697,13 @@ func newAgentsCreateCmd(addr *string) *cobra.Command {
 				return err
 			}
 			fmt.Printf("created agent %s (%s)\n", agent.Name, agent.Provider)
+			if generateSoul {
+				result, err := c.GenerateAgentSoul(cmd.Context(), agent.Name, client.AgentGenerateRequest{Save: true})
+				if err != nil {
+					return fmt.Errorf("generate SOUL.md: %w", err)
+				}
+				fmt.Printf("generated SOUL.md for %s (%d bytes)\n", result.Agent, len(result.Soul))
+			}
 			if agent.PermissionMode == config.PermissionYolo {
 				fmt.Println("  ⚠ yolo: whole-machine access — every tool call is auto-approved and the")
 				fmt.Println("    workspace is NOT a sandbox (R8.31). Use approve mode unless you mean it.")
@@ -707,6 +717,97 @@ func newAgentsCreateCmd(addr *string) *cobra.Command {
 	cmd.Flags().StringVar(&effort, "effort", "", "default reasoning effort (provider-supported level)")
 	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve or yolo")
 	cmd.Flags().StringArrayVar(&fallback, "fallback", nil, "ordered fallback target (repeatable): profile name, claude|codex, or default")
+	cmd.Flags().BoolVar(&generateSoul, "generate-soul", false, "generate and save SOUL.md after creating the agent")
+	return cmd
+}
+
+func newAgentsUpdateCmd(addr *string) *cobra.Command {
+	var provider, profile, model, effort, permission, notes string
+	var fallback []string
+	var generateSoul, yes bool
+	cmd := &cobra.Command{
+		Use:   "update <name>",
+		Short: "Update an agent",
+		Long: "Updates a durable agent through podiumd. Use --generate-soul to draft a new SOUL.md\n" +
+			"through the shared generation endpoint, preview it, then save after confirmation.",
+		Example: "  podium agents update jared --model sonnet\n" +
+			"  podium agents update jared --generate-soul --notes \"make them more direct\"",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if yes && !generateSoul {
+				return fmt.Errorf("--yes only applies with --generate-soul")
+			}
+			if notes != "" && !generateSoul {
+				return fmt.Errorf("--notes only applies with --generate-soul")
+			}
+			req := client.AgentUpdateRequest{}
+			changed := false
+			if cmd.Flags().Changed("provider") {
+				req.Provider = config.Provider(provider)
+				changed = true
+			}
+			if cmd.Flags().Changed("profile") {
+				req.Profile = &profile
+				changed = true
+			}
+			if cmd.Flags().Changed("model") {
+				req.Model = &model
+				changed = true
+			}
+			if cmd.Flags().Changed("effort") {
+				req.Effort = &effort
+				changed = true
+			}
+			if cmd.Flags().Changed("permission") {
+				req.PermissionMode = config.PermissionMode(permission)
+				changed = true
+			}
+			if cmd.Flags().Changed("fallback") {
+				req.Fallback = &fallback
+				changed = true
+			}
+			if !changed && !generateSoul {
+				return fmt.Errorf("nothing to update")
+			}
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			name := args[0]
+			if changed {
+				detail, err := c.UpdateAgent(cmd.Context(), name, req)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("updated agent %s\n", detail.Name)
+			}
+			if !generateSoul {
+				return nil
+			}
+			result, err := c.GenerateAgentSoul(cmd.Context(), name, client.AgentGenerateRequest{Notes: notes})
+			if err != nil {
+				return fmt.Errorf("generate SOUL.md: %w", err)
+			}
+			fmt.Print(result.Soul)
+			if !yes && !confirmOverwrite(os.Stdin, os.Stderr, fmt.Sprintf("Overwrite %s's SOUL.md?", name)) {
+				return nil
+			}
+			if _, err := c.UpdateAgent(cmd.Context(), name, client.AgentUpdateRequest{Soul: &result.Soul}); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "saved SOUL.md for %s\n", name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&provider, "provider", "", "provider: claude or codex")
+	cmd.Flags().StringVar(&profile, "profile", "", "auth profile name")
+	cmd.Flags().StringVar(&model, "model", "", "default model")
+	cmd.Flags().StringVar(&effort, "effort", "", "default reasoning effort (provider-supported level)")
+	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve or yolo")
+	cmd.Flags().StringArrayVar(&fallback, "fallback", nil, "replace fallback chain (repeatable): profile name, claude|codex, or default")
+	cmd.Flags().BoolVar(&generateSoul, "generate-soul", false, "generate a new SOUL.md and ask before saving")
+	cmd.Flags().StringVar(&notes, "notes", "", "extra direction for --generate-soul")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "save generated SOUL.md without prompting")
 	return cmd
 }
 
@@ -766,6 +867,17 @@ func confirmDelete(in io.Reader, out io.Writer, prompt string, yes bool) bool {
 	if yes {
 		return true
 	}
+	fmt.Fprintf(out, "%s [y/N] ", prompt)
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if answer == "y" || answer == "yes" {
+		return true
+	}
+	fmt.Fprintln(out, "aborted")
+	return false
+}
+
+func confirmOverwrite(in io.Reader, out io.Writer, prompt string) bool {
 	fmt.Fprintf(out, "%s [y/N] ", prompt)
 	line, _ := bufio.NewReader(in).ReadString('\n')
 	answer := strings.ToLower(strings.TrimSpace(line))

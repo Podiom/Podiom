@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -181,6 +182,148 @@ func TestProfilesCreatePersistsToConfigAndRefreshesCore(t *testing.T) {
 	if _, err := os.Stat(cfg.Profiles[0].ConfigDir); err != nil {
 		t.Fatalf("profile directory not created: %v", err)
 	}
+}
+
+func TestAgentGenerateDraftDoesNotSaveByDefault(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	fake := adapter.NewFake()
+	fake.Responses = []string{validGeneratedSoul("atlas", "Generated draft.")}
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: fake, DisableBackgroundWork: true})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, Core: coreSvc, Paths: paths})
+	if _, err := srv.core.CreateAgent(ctx, core.CreateAgentRequest{Name: "atlas", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	before, err := srv.core.ReadAgentSoul("atlas")
+	if err != nil {
+		t.Fatalf("read soul: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/atlas/generate", bytes.NewBufferString(`{"notes":"make direct"}`))
+	rr := httptest.NewRecorder()
+	srv.handleAgent(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var result core.SoulGenerateResult
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result.Agent != "atlas" || result.Saved {
+		t.Fatalf("bad result: %+v", result)
+	}
+	if !bytes.Contains([]byte(result.Soul), []byte("Generated draft")) {
+		t.Fatalf("missing generated soul: %+v", result)
+	}
+	after, err := srv.core.ReadAgentSoul("atlas")
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if after != before {
+		t.Fatalf("draft-only generate should not save\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestAgentGenerateCanSave(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	fake := adapter.NewFake()
+	fake.Responses = []string{"```markdown\n" + validGeneratedSoul("atlas", "Saved draft.") + "\n```"}
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: fake, DisableBackgroundWork: true})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, Core: coreSvc, Paths: paths})
+	if _, err := srv.core.CreateAgent(ctx, core.CreateAgentRequest{Name: "atlas", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agents/atlas/generate", bytes.NewBufferString(`{"save":true}`))
+	rr := httptest.NewRecorder()
+	srv.handleAgent(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var result core.SoulGenerateResult
+	if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if !result.Saved {
+		t.Fatalf("expected saved result: %+v", result)
+	}
+	soul, err := srv.core.ReadAgentSoul("atlas")
+	if err != nil {
+		t.Fatalf("read soul: %v", err)
+	}
+	if soul != result.Soul || !bytes.Contains([]byte(soul), []byte("Saved draft")) {
+		t.Fatalf("saved soul mismatch\nresult=%s\nfile=%s", result.Soul, soul)
+	}
+}
+
+func validGeneratedSoul(name, body string) string {
+	return `# Identity
+
+Name: ` + name + `
+
+` + body + `
+
+## Purpose
+
+- Persist the agent's purpose.
+
+## Worldview
+
+- Specific behavior matters.
+
+## Working style
+
+- Collaborate clearly.
+
+## Voice
+
+- Direct and warm.
+
+## Strengths
+
+- Careful implementation.
+
+## Boundaries
+
+- Ask before risky work.
+
+## Calibration notes
+
+- The agent feels specific.
+`
 }
 
 func TestProfilesGetReflectsConfigYAMLEdits(t *testing.T) {

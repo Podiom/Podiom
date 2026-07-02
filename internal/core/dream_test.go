@@ -284,9 +284,10 @@ func TestDreamDueMatrix(t *testing.T) {
 		t.Fatal("should be due: time passed and a session is pending")
 	}
 
-	// A dream time in the future today → not due yet.
-	future := time.Now().Add(2 * time.Hour).Format("15:04")
-	futureAt, _ := todaysDreamTime(future, time.Now())
+	// A dream time in the future → not due yet. Use an absolute future timestamp
+	// rather than formatting through todaysDreamTime; near midnight, "now + 2h"
+	// can become an HH:MM that already passed earlier today.
+	futureAt := time.Now().Add(2 * time.Hour)
 	if c.dreamDue(ctx, "due", futureAt) {
 		t.Fatal("should not be due before the dream time")
 	}
