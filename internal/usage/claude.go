@@ -2,6 +2,8 @@ package usage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,15 +83,16 @@ func isDefaultClaudeDir(configDir string) bool {
 }
 
 // readClaudeCredentials reads a profile's Claude OAuth credentials read-only.
-// On macOS the default account stores its token in the login Keychain rather
-// than a file, so an absent default-profile file falls back to the Keychain.
+// On macOS Claude Code stores tokens in the login Keychain rather than a file —
+// for the default account and for every custom CLAUDE_CONFIG_DIR alike — so an
+// absent credentials file falls back to the profile's Keychain entry.
 // os.IsNotExist errors are surfaced so callers can map them to no_credentials.
 func readClaudeCredentials(configDir string) (claudeCredentials, error) {
 	path := claudeCredentialPath(configDir)
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) && runtime.GOOS == "darwin" && isDefaultClaudeDir(configDir) {
-			if creds, kerr := readClaudeKeychainCredentials(); kerr == nil {
+		if os.IsNotExist(err) && runtime.GOOS == "darwin" {
+			if creds, kerr := readClaudeKeychainCredentials(configDir); kerr == nil {
 				return creds, nil
 			}
 		}
@@ -111,15 +114,27 @@ func parseClaudeCredentials(raw []byte) (claudeCredentials, error) {
 	}, nil
 }
 
-// claudeKeychainService is the macOS Keychain generic-password service under
-// which Claude Code stores the default account's OAuth credentials.
-var claudeKeychainService = "Claude Code-credentials"
+// claudeKeychainBase is the macOS Keychain generic-password service under which
+// Claude Code stores the default account's OAuth credentials.
+const claudeKeychainBase = "Claude Code-credentials"
 
-// readClaudeKeychainCredentials reads the default Claude account's token from
-// the macOS login Keychain via the `security` CLI. The returned blob has the
-// same shape as .credentials.json. The token is only ever passed to the parser.
-func readClaudeKeychainCredentials() (claudeCredentials, error) {
-	out, err := exec.Command("security", "find-generic-password", "-s", claudeKeychainService, "-w").Output()
+// claudeKeychainService returns the Keychain service name for a config dir. The
+// default account uses the bare base name; a custom CLAUDE_CONFIG_DIR uses
+// "<base>-<first 8 hex of sha256(absolute dir)>", matching how the Claude Code
+// CLI names its per-profile Keychain entries.
+func claudeKeychainService(configDir string) string {
+	if isDefaultClaudeDir(configDir) {
+		return claudeKeychainBase
+	}
+	sum := sha256.Sum256([]byte(claudeConfigDir(configDir)))
+	return claudeKeychainBase + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// readClaudeKeychainCredentials reads a Claude account's token from the macOS
+// login Keychain via the `security` CLI. The returned blob has the same shape
+// as .credentials.json. The token is only ever passed to the parser.
+func readClaudeKeychainCredentials(configDir string) (claudeCredentials, error) {
+	out, err := exec.Command("security", "find-generic-password", "-s", claudeKeychainService(configDir), "-w").Output()
 	if err != nil {
 		return claudeCredentials{}, err
 	}
