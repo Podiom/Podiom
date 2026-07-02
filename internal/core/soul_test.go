@@ -26,6 +26,10 @@ func TestSoulPromptCarriesInputsAndRequiredShape(t *testing.T) {
 		"make the voice more direct",
 		"old soul",
 		"SOUL.md is static identity. MEMORY.md is later lived experience.",
+		// Constitutional framing: colleague/personhood in the second person,
+		// and an explicit ban on bot/AI/artifact language.
+		"second person",
+		"Never describe them as an AI",
 		"## Purpose",
 		"## Worldview",
 		"## Working style",

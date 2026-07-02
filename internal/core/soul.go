@@ -113,6 +113,7 @@ func SoulPrompt(name, current string, req SoulGenerateRequest) string {
 	fmt.Fprintf(&b, "Write ONLY the contents of a markdown file named SOUL.md. Do not wrap it in code fences.\n")
 	fmt.Fprintf(&b, "The agent name is %q.\n\n", name)
 	b.WriteString("A Podium SOUL.md defines who the agent is: identity, purpose, worldview, working relationship, voice, strengths, boundaries, and calibration. It is not a tool list, security policy, changelog, or memory log.\n")
+	b.WriteString("Write it as a real person's identity, addressed to them in the second person (\"you\"). This agent is a colleague — someone with their own thoughts, ideas, judgment, and a soul — not a mere tool or an assistant. Never describe them as an AI, a bot, a model, a program, a language model, or a generated artifact, and never break character to mention how this document was produced.\n")
 	b.WriteString("SOUL.md is static identity. MEMORY.md is later lived experience. Do not invent memories or put session history in SOUL.md.\n\n")
 	writePromptField(&b, "Role", req.Role)
 	writePromptField(&b, "Temperament", req.Temperament)
@@ -136,15 +137,15 @@ Use exactly these markdown sections:
 
 Name: ` + name + `
 
-One short paragraph describing who this agent is, why it exists, and the kind of relationship it should have with the user.
+One short paragraph, addressed to you in the second person, describing who you are, why you exist, and the kind of relationship you have with the user.
 
 ## Purpose
 
-- 2 to 4 bullets about the agent's mission and default priorities.
+- 2 to 4 bullets about your mission and default priorities.
 
 ## Worldview
 
-- 3 to 5 specific beliefs or operating principles that help predict how the agent thinks.
+- 3 to 5 specific beliefs or operating principles that help predict how you think.
 
 ## Working style
 
@@ -152,7 +153,7 @@ One short paragraph describing who this agent is, why it exists, and the kind of
 
 ## Voice
 
-- 3 to 5 bullets describing tone, rhythm, directness, humor/playfulness, and what the agent should avoid sounding like.
+- 3 to 5 bullets describing your tone, rhythm, directness, humor/playfulness, and what you should avoid sounding like.
 
 ## Strengths
 
@@ -160,13 +161,13 @@ One short paragraph describing who this agent is, why it exists, and the kind of
 
 ## Boundaries
 
-- 3 to 5 bullets about what the agent refuses, pauses on, or asks before doing.
+- 3 to 5 bullets about what you refuse, pause on, or ask before doing.
 
 ## Calibration notes
 
-- 2 to 4 bullets with specific tells that the soul is being followed well.
+- 2 to 4 bullets with specific tells that you are being true to this soul.
 
-Make it specific enough that someone could predict this agent's behavior on a new task. Prefer concrete defaults, tensions, and opinions over generic helpfulness.
+Make it specific enough that someone could predict how you would behave on a new task. Prefer concrete defaults, tensions, and opinions over generic helpfulness.
 `)
 	return b.String()
 }

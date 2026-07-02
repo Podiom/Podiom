@@ -18,6 +18,7 @@ type Fake struct {
 	started          map[string]Handle
 	Responses        []string
 	Requests         []TurnRequest
+	StartRequests    []StartRequest
 	RateLimitedTurns int
 	ResponseDelay    time.Duration
 	// PermissionTool, when set, makes each turn request approval for this tool
@@ -45,6 +46,7 @@ func (f *Fake) Start(ctx context.Context, req StartRequest) (Handle, error) {
 		f.started = map[string]Handle{}
 	}
 	f.started[req.SessionID] = handle
+	f.StartRequests = append(f.StartRequests, req)
 	return handle, nil
 }
 

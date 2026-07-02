@@ -26,7 +26,7 @@ func TestDeterministicSoulCarriesQuestionnaire(t *testing.T) {
 		Playfulness:   "moderate",
 		CaresAbout:    "finishing meaningful work",
 		Extra:         "likes concise plans",
-	}, false)
+	})
 	for _, want := range []string{"juno", "builder", "warm and curious", "avoid destructive changes", "## Worldview", "## Calibration notes"} {
 		if !strings.Contains(soul, want) {
 			t.Fatalf("soul missing %q:\n%s", want, soul)

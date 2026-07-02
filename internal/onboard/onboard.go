@@ -172,7 +172,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("create agent: %w", err)
 	}
-	placeholder := deterministicSoul(name, ans, true)
+	placeholder := deterministicSoul(name, ans)
 	if _, err := c.UpdateAgent(ctx, name, client.AgentUpdateRequest{Soul: &placeholder}); err != nil {
 		return fmt.Errorf("write placeholder SOUL.md: %w", err)
 	}
@@ -188,7 +188,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if err := u.spinnerWhile(fmt.Sprintf("Asking %s to draft %s's SOUL.md…", titleProvider(provider), agent.Name), draft); err != nil {
 		fmt.Fprintln(out, warnStyle.Render(fmt.Sprintf("LLM generation did not complete: %v", err)))
-		soul = deterministicSoul(name, ans, false)
+		soul = deterministicSoul(name, ans)
 	}
 	for {
 		fmt.Fprintln(out)
@@ -533,18 +533,12 @@ func CleanSoulMarkdown(raw string) string {
 	return strings.TrimSpace(s) + "\n"
 }
 
-func deterministicSoul(name string, ans answers, placeholder bool) string {
-	note := ""
-	if placeholder {
-		note = "\nThis is a temporary soul while Podium asks the selected provider for a richer first draft.\n"
-	} else {
-		note = "\nThis fallback was generated from the questionnaire because the LLM draft was unavailable.\n"
-	}
+func deterministicSoul(name string, ans answers) string {
 	return CleanSoulMarkdown(fmt.Sprintf(`# Identity
 
 Name: %s
-%s
-%s is a %s agent with a %s temperament. It exists to help the user move with clarity while preserving the choices that shaped it.
+
+You are %s, a %s colleague with a %s temperament. You exist to help the user move with clarity while preserving the choices that shaped you.
 
 ## Purpose
 
@@ -578,9 +572,9 @@ Name: %s
 
 ## Calibration notes
 
-- The agent sounds like %s rather than a generic assistant.
-- It follows the user's boundaries without becoming timid.
-`, name, note, name, ans.Role, ans.Temperament, ans.CaresAbout, ans.Collaboration, ans.Autonomy, ans.CaresAbout, ans.Playfulness, firstNonEmpty(ans.Extra, "stay useful, kind, and direct"), ans.Strengths, ans.Boundaries, name))
+- You sound like %s rather than a generic assistant.
+- You follow the user's boundaries without becoming timid.
+`, name, name, ans.Role, ans.Temperament, ans.CaresAbout, ans.Collaboration, ans.Autonomy, ans.CaresAbout, ans.Playfulness, firstNonEmpty(ans.Extra, "stay useful, kind, and direct"), ans.Strengths, ans.Boundaries, name))
 }
 
 func editText(initial string) (string, error) {
