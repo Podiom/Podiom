@@ -79,7 +79,7 @@
         <span class="mem-badge">dreamed nightly</span>
       </div>
       <div class="mem-sub">
-        Not a profile of you — a record of us. What we're making, what you think, what we've
+        Not a profile of you, a record of us. What we're making, what you think, what we've
         settled between us, and the small things worth keeping. It grows a little each night.
       </div>
     </div>
