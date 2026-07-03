@@ -749,8 +749,9 @@ func (c *Core) taskProjectPromptContext(ctx context.Context, projectID string) (
 }
 
 type projectExecutionContext struct {
-	Root   string
-	Prompt string
+	Root       string
+	ProjectDir string
+	Prompt     string
 }
 
 func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Session) (projectExecutionContext, error) {
@@ -769,10 +770,14 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 	if err != nil {
 		return projectExecutionContext{}, nil
 	}
-	if proj.Repo == nil {
-		return projectExecutionContext{}, nil
+	projectDir := filepath.Join(c.paths.ProjectsDir, proj.Path)
+	root := projectDir
+	if proj.Repo != nil {
+		root = filepath.Join(projectDir, "repo")
 	}
-	root := filepath.Join(c.paths.ProjectsDir, proj.Path, "repo")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return projectExecutionContext{}, fmt.Errorf("create project workspace %s: %w", root, err)
+	}
 	payload := map[string]any{
 		"project": map[string]any{
 			"id":          proj.ID,
@@ -781,8 +786,14 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 			"status":      proj.Status,
 			"stack":       proj.Stack,
 			"notes":       proj.Notes,
+			"local_path":  projectDir,
 		},
-		"repo": map[string]any{
+		"workspace": map[string]any{
+			"local_path": root,
+		},
+	}
+	if proj.Repo != nil {
+		payload["repo"] = map[string]any{
 			"provider":       proj.Repo.Provider,
 			"mode":           proj.Repo.Mode,
 			"full_name":      proj.Repo.FullName,
@@ -790,7 +801,7 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 			"ref":            proj.Repo.Ref,
 			"synced_at":      proj.Repo.SyncedAt,
 			"local_path":     root,
-		},
+		}
 	}
 	raw, err := yaml.Marshal(payload)
 	if err != nil {
@@ -798,7 +809,11 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 	}
 	prompt := "Podiom project context for this session:\n" +
 		strings.TrimSpace(string(raw)) + "\n\n" +
-		"The connected GitHub repository has been downloaded as a local source snapshot at " + root + ". " +
-		"You may inspect files there for project facts. It is not a Git checkout: do not assume .git, branches, commits, pushes, or PR operations are available."
-	return projectExecutionContext{Root: root, Prompt: prompt}, nil
+		"This session is bound to project " + proj.ID + ". Create and edit durable project files under " + root + ". " +
+		"Do not create project artifacts in the agent workspace."
+	if proj.Repo != nil {
+		prompt += " The connected GitHub repository has been downloaded as a local source snapshot at " + root + ". " +
+			"You may inspect files there for project facts. It is not a Git checkout: do not assume .git, branches, commits, pushes, or PR operations are available."
+	}
+	return projectExecutionContext{Root: root, ProjectDir: projectDir, Prompt: prompt}, nil
 }

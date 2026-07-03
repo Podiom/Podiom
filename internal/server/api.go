@@ -768,8 +768,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	turnID := uuid.NewString()
 	requests, unsubscribePermissions := s.broker.subscribe(turnID)
 	inputs, unsubscribeInputs := s.input.subscribe(turnID)
+	s.broker.attachTurn(turnID, session.ID)
 	subscribed := true
 	defer func() {
+		s.broker.detachTurn(turnID)
 		if subscribed {
 			unsubscribePermissions()
 			unsubscribeInputs()
@@ -917,6 +919,26 @@ func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request)
 	if rawTimeout := r.URL.Query().Get("timeout"); rawTimeout != "" {
 		if parsed, err := time.ParseDuration(rawTimeout); err == nil {
 			timeout = parsed
+		}
+	}
+	sessionID, ok := s.broker.sessionForTurn(turnID)
+	if !ok {
+		sessionID, ok = s.turns.sessionForTurn(turnID)
+	}
+	if ok {
+		sess, err := s.core.GetSession(r.Context(), sessionID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if core.PlanGateActive(sess) {
+			decision, err := core.NewPlanGateRelay(s.log).RequestPermission(r.Context(), req, timeout)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, decision, nil)
+			return
 		}
 	}
 	decision, err := s.broker.RequestPermission(r.Context(), req, timeout)

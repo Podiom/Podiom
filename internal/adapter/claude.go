@@ -280,6 +280,9 @@ func (c *Claude) args(req TurnRequest) ([]string, func(), error) {
 			args = append(args, "--add-dir", dir)
 		}
 	}
+	if path := strings.TrimSpace(req.Settings.InstructionPath); path != "" {
+		args = append(args, "--append-system-prompt-file", path)
+	}
 	if req.Settings.Model != "" {
 		args = append(args, "--model", req.Settings.Model)
 	}

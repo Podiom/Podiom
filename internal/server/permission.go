@@ -14,11 +14,12 @@ import (
 var errPermissionTimeout = errors.New("permission request timed out")
 
 type permissionBroker struct {
-	mu      sync.Mutex
-	turns   map[string]chan adapter.PermissionRequest
-	pending map[string]chan adapter.PermissionDecision
-	meta    map[string]permissionMeta
-	log     *slog.Logger
+	mu       sync.Mutex
+	turns    map[string]chan adapter.PermissionRequest
+	pending  map[string]chan adapter.PermissionDecision
+	meta     map[string]permissionMeta
+	sessions map[string]string
+	log      *slog.Logger
 }
 
 type permissionMeta struct {
@@ -32,10 +33,11 @@ func newPermissionBroker(loggers ...*slog.Logger) *permissionBroker {
 		log = loggers[0]
 	}
 	return &permissionBroker{
-		turns:   map[string]chan adapter.PermissionRequest{},
-		pending: map[string]chan adapter.PermissionDecision{},
-		meta:    map[string]permissionMeta{},
-		log:     log,
+		turns:    map[string]chan adapter.PermissionRequest{},
+		pending:  map[string]chan adapter.PermissionDecision{},
+		meta:     map[string]permissionMeta{},
+		sessions: map[string]string{},
+		log:      log,
 	}
 }
 
@@ -50,6 +52,25 @@ func (b *permissionBroker) subscribe(turnID string) (<-chan adapter.PermissionRe
 		close(ch)
 		b.mu.Unlock()
 	}
+}
+
+func (b *permissionBroker) attachTurn(turnID, sessionID string) {
+	b.mu.Lock()
+	b.sessions[turnID] = sessionID
+	b.mu.Unlock()
+}
+
+func (b *permissionBroker) detachTurn(turnID string) {
+	b.mu.Lock()
+	delete(b.sessions, turnID)
+	b.mu.Unlock()
+}
+
+func (b *permissionBroker) sessionForTurn(turnID string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sessionID := b.sessions[turnID]
+	return sessionID, sessionID != ""
 }
 
 func (b *permissionBroker) RequestPermission(ctx context.Context, req adapter.PermissionRequest, timeout time.Duration) (adapter.PermissionDecision, error) {

@@ -263,8 +263,10 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 
 	requests, unsubscribePermissions := s.broker.subscribe(turnID)
 	inputs, unsubscribeInputs := s.input.subscribe(turnID)
+	s.broker.attachTurn(turnID, session.ID)
 	defer unsubscribePermissions()
 	defer unsubscribeInputs()
+	defer s.broker.detachTurn(turnID)
 	defer cancel()
 
 	events, err := s.core.StreamTurn(turnCtx, session.ID, msg.Message, core.TurnOptions{

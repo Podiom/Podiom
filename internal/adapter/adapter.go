@@ -35,6 +35,7 @@ type StartRequest struct {
 	PermissionMode     config.PermissionMode
 	WorkspaceDir       string
 	ExtraWorkspaceDirs []string
+	InstructionPath    string
 	Instructions       []byte
 	MCPServers         []podiommcp.Server
 	MCPAllServers      []podiommcp.Server
@@ -68,6 +69,7 @@ type TurnSettings struct {
 	PermissionMode     config.PermissionMode
 	WorkspaceDir       string
 	ExtraWorkspaceDirs []string
+	InstructionPath    string
 	PermissionTurnID   string
 	PermissionTimeout  time.Duration
 	// Unattended marks a run with no human at the keyboard (a scheduled run).

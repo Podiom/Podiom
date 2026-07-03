@@ -9,11 +9,7 @@ import (
 )
 
 func (c *Core) ensureSessionInstructions(ctx context.Context, sess store.Session) error {
-	agent, err := c.store.GetAgent(ctx, sess.AgentName)
-	if err != nil {
-		return err
-	}
-	_, err = c.ComposeInstructionsForProvider(ctx, agent, sess.Provider)
+	_, err := c.sessionInstructionPayload(ctx, sess)
 	return err
 }
 

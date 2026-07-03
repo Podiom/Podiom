@@ -154,6 +154,17 @@ func (h *activeTurnHub) hasRunning(sessionID string) bool {
 	return turn != nil && turn.status == turnStatusRunning
 }
 
+func (h *activeTurnHub) sessionForTurn(turnID string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, turn := range h.turns {
+		if turn.turnID == turnID && turn.status == turnStatusRunning {
+			return turn.sessionID, true
+		}
+	}
+	return "", false
+}
+
 func (h *activeTurnHub) attach(sessionID string, writer *wsWriter) (TurnState, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

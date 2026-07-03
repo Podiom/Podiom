@@ -15,7 +15,7 @@ import (
 
 func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
 	ctx := context.Background()
-	c, _, cleanup := newScheduledTestCore(t)
+	c, fake, cleanup := newScheduledTestCore(t)
 	defer cleanup()
 
 	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
@@ -52,6 +52,17 @@ func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
 	found, ok, err := c.TaskSession(ctx, task.ID)
 	if err != nil || !ok || found.ID != sess.ID {
 		t.Fatalf("task session lookup failed: ok=%v err=%v", ok, err)
+	}
+
+	req := fake.StartRequests[0]
+	projectRoot := filepath.Join(c.paths.ProjectsDir, "mission-control")
+	agentWorkspace := c.AgentPaths("jared").Workspace
+	if req.WorkspaceDir != projectRoot {
+		t.Fatalf("workspace dir = %q, want %q", req.WorkspaceDir, projectRoot)
+	}
+	wantDirs := []string{agentWorkspace, c.paths.ProjectsDir}
+	if !reflect.DeepEqual(req.ExtraWorkspaceDirs, wantDirs) {
+		t.Fatalf("start extra workspace dirs = %#v, want %#v", req.ExtraWorkspaceDirs, wantDirs)
 	}
 }
 
@@ -118,9 +129,11 @@ func TestConnectedRepoContextIsSentToRoadmapSession(t *testing.T) {
 	if !strings.Contains(req.Message, "local source snapshot") || !strings.Contains(req.Message, root) {
 		t.Fatalf("request missing repo context:\n%s", req.Message)
 	}
-	// Every session gets the shared projects ledger dir; a roadmap session bound
-	// to a repo additionally gets its downloaded project snapshot.
-	wantDirs := []string{c.paths.ProjectsDir, root}
+	if req.Settings.WorkspaceDir != root {
+		t.Fatalf("workspace dir = %q, want %q", req.Settings.WorkspaceDir, root)
+	}
+	projectRoot := filepath.Join(c.paths.ProjectsDir, "mission-control")
+	wantDirs := []string{c.AgentPaths("jared").Workspace, c.paths.ProjectsDir, projectRoot}
 	if !reflect.DeepEqual(req.Settings.ExtraWorkspaceDirs, wantDirs) {
 		t.Fatalf("extra workspace dirs = %#v, want %#v", req.Settings.ExtraWorkspaceDirs, wantDirs)
 	}
@@ -166,7 +179,50 @@ func TestConnectedRepoContextIsSentToManualProjectSession(t *testing.T) {
 	if !strings.Contains(req.Message, "Podiom project context for this session") || !strings.Contains(req.Message, root) {
 		t.Fatalf("request missing project context:\n%s", req.Message)
 	}
-	wantDirs := []string{c.paths.ProjectsDir, root}
+	if req.Settings.WorkspaceDir != root {
+		t.Fatalf("workspace dir = %q, want %q", req.Settings.WorkspaceDir, root)
+	}
+	projectRoot := filepath.Join(c.paths.ProjectsDir, "mission-control")
+	wantDirs := []string{c.AgentPaths("jared").Workspace, c.paths.ProjectsDir, projectRoot}
+	if !reflect.DeepEqual(req.Settings.ExtraWorkspaceDirs, wantDirs) {
+		t.Fatalf("extra workspace dirs = %#v, want %#v", req.Settings.ExtraWorkspaceDirs, wantDirs)
+	}
+}
+
+func TestPlainProjectContextUsesProjectDirectory(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "dinesh", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "snake", Name: "Snake"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	task, err := c.CreateTask(ctx, store.Task{ProjectID: "snake", Title: "snake", Body: "build a small snake game", AssignedAgent: "dinesh"})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	sess, err := c.StartTask(ctx, StartTaskRequest{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	if _, err := c.AppendTurn(ctx, sess.ID, TaskPrompt(task)); err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
+	}
+	projectRoot := filepath.Join(c.paths.ProjectsDir, "snake")
+	req := fake.Requests[0]
+	if req.Settings.WorkspaceDir != projectRoot {
+		t.Fatalf("workspace dir = %q, want %q", req.Settings.WorkspaceDir, projectRoot)
+	}
+	if !strings.Contains(req.Message, "Create and edit durable project files under "+projectRoot) {
+		t.Fatalf("request missing plain project workspace instruction:\n%s", req.Message)
+	}
+	wantDirs := []string{c.AgentPaths("dinesh").Workspace, c.paths.ProjectsDir}
 	if !reflect.DeepEqual(req.Settings.ExtraWorkspaceDirs, wantDirs) {
 		t.Fatalf("extra workspace dirs = %#v, want %#v", req.Settings.ExtraWorkspaceDirs, wantDirs)
 	}

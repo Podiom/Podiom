@@ -95,6 +95,8 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		return store.Session{}, err
 	}
 	mcpServers, mcpAll = c.withInternalPlanMCP(created, created.ID, mcpServers, mcpAll)
+	workspaceDir := c.sessionWorkspaceDir(agent.Name, projectCtx)
+	extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(agent.Name).Workspace, projectCtx)
 	handle, err := c.adapter.Start(ctx, adapter.StartRequest{
 		SessionID:          created.ID,
 		AgentName:          agent.Name,
@@ -104,8 +106,9 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		Model:              created.Model,
 		Effort:             created.Effort,
 		PermissionMode:     created.PermissionMode,
-		WorkspaceDir:       c.AgentPaths(agent.Name).Workspace,
-		ExtraWorkspaceDirs: c.sessionExtraWorkspaceDirs(projectCtx),
+		WorkspaceDir:       workspaceDir,
+		ExtraWorkspaceDirs: extraWorkspaceDirs,
+		InstructionPath:    payload.Path,
 		Instructions:       payload.Bytes,
 		MCPServers:         mcpServers,
 		MCPAllServers:      mcpAll,
@@ -131,7 +134,8 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		"project", updated.ProjectID,
 		"provider_handle_set", updated.ProviderHandle != "",
 		"mcp_servers", len(mcpServers),
-		"extra_workspaces", len(c.sessionExtraWorkspaceDirs(projectCtx)),
+		"workspace", workspaceDir,
+		"extra_workspaces", len(extraWorkspaceDirs),
 	)
 	return updated, nil
 }
@@ -353,7 +357,8 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 		fallbacks := 0
 		for {
 			tried[targetKey(current.Provider, current.Profile)] = true
-			if err := c.ensureSessionInstructions(ctx, current); err != nil {
+			payload, err := c.sessionInstructionPayload(ctx, current)
+			if err != nil {
 				runLog.Warn("turn failed", "stage", "compose", "error", err)
 				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
 				return
@@ -374,7 +379,9 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
 				return
 			}
-			events, err := c.adapter.SendTurn(ctx, c.turnRequest(current, history, providerMessage, opts, c.sessionExtraWorkspaceDirs(projectCtx), mcpServers, mcpAll))
+			workspaceDir := c.sessionWorkspaceDir(current.AgentName, projectCtx)
+			extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(current.AgentName).Workspace, projectCtx)
+			events, err := c.adapter.SendTurn(ctx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, mcpServers, mcpAll))
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "dispatch", "provider", string(current.Provider), "error", err)
 				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
@@ -441,16 +448,37 @@ func (c *Core) appendFinalMessages(ctx context.Context, sessionID string, messag
 	return c.store.AppendMessages(persistCtx, sessionID, messages)
 }
 
-// sessionExtraWorkspaceDirs returns the directories exposed to a session's
-// provider process beyond its own workspace. The shared project ledger under
-// ~/.podiom/projects/ is always included so agents can honor the base operating
-// rule to consult projects.yaml; a roadmap session additionally gets its bound
-// project's downloaded source snapshot repo directory (projectCtx.Root).
-func (c *Core) sessionExtraWorkspaceDirs(projectCtx projectExecutionContext) []string {
-	return nonEmptyStrings(c.paths.ProjectsDir, projectCtx.Root)
+func (c *Core) sessionInstructionPayload(ctx context.Context, sess store.Session) (InstructionPayload, error) {
+	agent, err := c.store.GetAgent(ctx, sess.AgentName)
+	if err != nil {
+		return InstructionPayload{}, err
+	}
+	return c.ComposeInstructionsForProvider(ctx, agent, sess.Provider)
 }
 
-func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, extraWorkspaceDirs []string, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
+func (c *Core) sessionWorkspaceDir(agentName string, projectCtx projectExecutionContext) string {
+	if strings.TrimSpace(projectCtx.Root) != "" {
+		return projectCtx.Root
+	}
+	return c.AgentPaths(agentName).Workspace
+}
+
+// sessionExtraWorkspaceDirs returns directories exposed beyond the primary cwd.
+// Project sessions keep the agent workspace visible for skills/instruction
+// artifacts while making durable project files land under ~/.podiom/projects.
+func (c *Core) sessionExtraWorkspaceDirs(workspaceDir, agentWorkspace string, projectCtx projectExecutionContext) []string {
+	candidates := nonEmptyStrings(agentWorkspace, c.paths.ProjectsDir, projectCtx.ProjectDir, projectCtx.Root)
+	var out []string
+	for _, dir := range candidates {
+		if dir == workspaceDir {
+			continue
+		}
+		out = append(out, dir)
+	}
+	return out
+}
+
+func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
 	effectivePermission := sess.PermissionMode
 	relay := opts.PermissionRelay
 	if PlanGateActive(sess) {
@@ -473,8 +501,9 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			Model:              sess.Model,
 			Effort:             sess.Effort,
 			PermissionMode:     effectivePermission,
-			WorkspaceDir:       c.AgentPaths(sess.AgentName).Workspace,
+			WorkspaceDir:       workspaceDir,
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
+			InstructionPath:    instructionPath,
 			PermissionTurnID:   firstNonEmpty(opts.PermissionTurnID, fmt.Sprintf("%s-%d", sess.ID, time.Now().UnixNano())),
 			PermissionTimeout:  c.permissionTimeout(),
 			Unattended:         opts.Unattended,
@@ -638,10 +667,17 @@ func firstNonEmpty(values ...string) string {
 
 func nonEmptyStrings(values ...string) []string {
 	var out []string
+	seen := map[string]bool{}
 	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			out = append(out, v)
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
 		}
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
 	}
 	return out
 }
