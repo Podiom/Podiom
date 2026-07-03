@@ -23,15 +23,25 @@ Defaults applied across all agents unless overridden per agent.
 
 ## `github`
 
-Public GitHub App details for connecting project repositories.
+**Entirely optional.** Omit this block and Podiom uses its **official GitHub App**
+(`podiom-llm-orchestrator`) to connect and sync project repositories — nothing to
+configure, it works out of the box for every user.
+
+The block exists purely so that, if you want, you can register and point at your
+**own** GitHub App instead of Podiom's. When you set these fields, connect + sync
+run through your App rather than the official one.
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `app_slug` | string | Official Podiom GitHub App slug, used for the install URL. |
-| `client_id` | string | Public GitHub App client ID used for device authorization. |
-| `web_base` | URL | Optional override; defaults to `https://github.com`. |
-| `api_base` | URL | Optional override; defaults to `https://api.github.com`. |
-| `login_base` | URL | Optional override; defaults to `https://github.com/login`. |
+| `app_slug` | string | Your GitHub App's slug, used for the install URL. Defaults to Podiom's official App. |
+| `client_id` | string | Your GitHub App's public client ID, used for device authorization. Defaults to Podiom's official App. |
+| `web_base` | URL | Optional override; defaults to `https://github.com`. Set for GitHub Enterprise. |
+| `api_base` | URL | Optional override; defaults to `https://api.github.com`. Set for GitHub Enterprise. |
+| `login_base` | URL | Optional override; defaults to `https://github.com/login`. Set for GitHub Enterprise. |
+
+These are all **public identifiers — never secrets**. Do not put tokens, private
+keys, or client secrets here. Authorization happens via GitHub's device flow, and
+the resulting access token is stored separately in `~/.podiom/github/token.json`.
 
 Connected repos are downloaded as source snapshots into each project's `repo/`
 subdirectory.

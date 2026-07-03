@@ -63,9 +63,10 @@ type Global struct {
 	DreamTime string `yaml:"dream_time"`
 }
 
-// GitHub configures the public GitHub App details used for local user
-// authorization. These values are not secrets; do not add private keys or client
-// secrets here.
+// GitHub is optional. Omitted, it defaults to Podiom's official GitHub App
+// (podiom-llm-orchestrator) for repo connect + sync; set it only to use your own
+// GitHub App instead. These values are public identifiers, not secrets; do not
+// add private keys or client secrets here.
 type GitHub struct {
 	AppSlug   string `yaml:"app_slug"`
 	ClientID  string `yaml:"client_id"`
