@@ -354,9 +354,39 @@ func CodexProfile(assigned []Server, all []Server) (string, []string) {
 		if path == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "\n[%s]\nenabled = false\n", path)
+		switch s.Transport {
+		case TransportStdio:
+			writeCodexServer(&b, path, s.Name, s.Command, s.Args, false)
+			b.WriteString("enabled = false\n")
+		case TransportHTTP:
+			if HasMCPProxy() {
+				writeCodexServer(&b, path, s.Name, "mcp-proxy", []string{s.URL}, false)
+				b.WriteString("enabled = false\n")
+			}
+		}
 	}
 	return strings.TrimLeft(b.String(), "\n"), unavailable
+}
+
+func CodexConfigOverrides(content string) []string {
+	tables := parseTOMLTables(content)
+	out := make([]string, 0)
+	paths := make([]string, 0, len(tables))
+	for path := range tables {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		keys := make([]string, 0, len(tables[path]))
+		for key := range tables[path] {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			out = append(out, path+"."+key+"="+tomlValue(tables[path][key]))
+		}
+	}
+	return out
 }
 
 func ProfileName(agent string) string {
@@ -685,6 +715,22 @@ func tomlStringArray(values []string) string {
 		parts = append(parts, tomlString(v))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func tomlValue(v any) string {
+	switch x := v.(type) {
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case []string:
+		return tomlStringArray(x)
+	case string:
+		return tomlString(x)
+	default:
+		return tomlString(fmt.Sprint(x))
+	}
 }
 
 func envVarsFromLegacy(v any) []string {

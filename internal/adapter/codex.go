@@ -33,8 +33,10 @@ type CodexOptions struct {
 	Logger            *slog.Logger
 }
 
-// Codex drives a long-lived `codex --profile <podiom-agent> app-server
-// --listen stdio://` process. A separate app-server is maintained for each
+// Codex drives a long-lived `codex app-server --listen stdio://` process.
+// Generated MCP profile content is passed as app-server config overrides
+// because current Codex app-server does not accept the root --profile flag.
+// A separate app-server is maintained for each
 // CODEX_HOME plus generated MCP profile hash.
 type Codex struct {
 	bin               string
@@ -70,11 +72,11 @@ func (c *Codex) Start(ctx context.Context, req StartRequest) (Handle, error) {
 		return Handle{}, errors.New("codex workspace dir is required")
 	}
 	c.providerLog(req.SessionID, req.AgentName, req.Profile).Info("provider thread start requested", "event", "provider", "stage", "thread_start", "permission", string(req.PermissionMode), "mcp_servers", len(req.MCPServers), "extra_workspaces", len(req.ExtraWorkspaceDirs))
-	profileName, profileHash, err := c.ensureMCPProfile(req.ProfileDir, req.AgentName, req.MCPServers, req.MCPAllServers)
+	profileName, profileHash, profileConfig, err := c.ensureMCPProfile(req.ProfileDir, req.AgentName, req.MCPServers, req.MCPAllServers)
 	if err != nil {
 		return Handle{}, err
 	}
-	client := c.client(req.ProfileDir, profileName, profileHash)
+	client := c.client(req.ProfileDir, profileName, profileHash, profileConfig)
 	result, err := client.call(ctx, "thread/start", codexThreadStartParams(req))
 	if err != nil {
 		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider rpc failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
@@ -115,11 +117,11 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 		return nil, errors.New("codex workspace dir is required")
 	}
 	c.turnLog(req).Info("provider turn start requested", "event", "provider", "stage", "turn_start", "thread", req.Handle.ID, "permission", string(req.Settings.PermissionMode), "mcp_servers", len(req.Settings.MCPServers), "extra_workspaces", len(req.Settings.ExtraWorkspaceDirs))
-	profileName, profileHash, err := c.ensureMCPProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers)
+	profileName, profileHash, profileConfig, err := c.ensureMCPProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers)
 	if err != nil {
 		return nil, err
 	}
-	client := c.client(req.Settings.ProfileDir, profileName, profileHash)
+	client := c.client(req.Settings.ProfileDir, profileName, profileHash, profileConfig)
 	threadID := req.Handle.ID
 	firstEvents := []Event{}
 	startedFresh := threadID == ""
@@ -222,7 +224,7 @@ func (c *Codex) Teardown(ctx context.Context, handle Handle) error {
 // response includes model-aware reasoning-effort options, so Podiom can keep
 // the picker aligned with the installed Codex CLI/account.
 func (c *Codex) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
-	client := c.client(req.ProfileDir, "", "")
+	client := c.client(req.ProfileDir, "", "", "")
 	caps, err := client.modelList(ctx, req.Profile)
 	if err != nil {
 		return capabilities.WithError(capabilities.Fallback(config.ProviderCodex, req.Profile), err), nil
@@ -233,7 +235,7 @@ func (c *Codex) Capabilities(ctx context.Context, req capabilities.Request) (cap
 	return caps, nil
 }
 
-func (c *Codex) client(profileDir, profileName, profileHash string) *codexClient {
+func (c *Codex) client(profileDir, profileName, profileHash, profileConfig string) *codexClient {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.clients == nil {
@@ -242,33 +244,34 @@ func (c *Codex) client(profileDir, profileName, profileHash string) *codexClient
 	key := profileDir + "|" + profileName + "|" + profileHash
 	client := c.clients[key]
 	if client == nil {
-		client = newCodexClient(c.bin, profileDir, profileName, profileHash, c.log)
+		client = newCodexClient(c.bin, profileDir, profileName, profileHash, profileConfig, c.log)
 		c.clients[key] = client
 	}
 	return client
 }
 
-func (c *Codex) ensureMCPProfile(profileDir, agentName string, assigned, all []podiommcp.Server) (string, string, error) {
+func (c *Codex) ensureMCPProfile(profileDir, agentName string, assigned, all []podiommcp.Server) (string, string, string, error) {
 	if len(assigned) == 0 && len(all) == 0 {
-		return "", "", nil
+		return "", "", "", nil
 	}
 	content, unavailable := podiommcp.CodexProfile(assigned, all)
 	if len(unavailable) > 0 {
-		return "", "", fmt.Errorf("mcp server(s) unavailable on codex: %s", strings.Join(unavailable, ", "))
+		return "", "", "", fmt.Errorf("mcp server(s) unavailable on codex: %s", strings.Join(unavailable, ", "))
 	}
 	name, _, err := podiommcp.WriteCodexProfile(profileDir, agentName, content)
 	if err != nil {
-		return "", "", fmt.Errorf("write codex mcp profile: %w", err)
+		return "", "", "", fmt.Errorf("write codex mcp profile: %w", err)
 	}
-	return name, podiommcp.ProfileHash(content), nil
+	return name, podiommcp.ProfileHash(content), content, nil
 }
 
 type codexClient struct {
-	bin         string
-	profileDir  string
-	profileName string
-	profileHash string
-	log         *slog.Logger
+	bin           string
+	profileDir    string
+	profileName   string
+	profileHash   string
+	profileConfig string
+	log           *slog.Logger
 
 	initMu sync.Mutex
 	mu     sync.Mutex
@@ -335,12 +338,13 @@ type codexStreamEvent struct {
 	err    error
 }
 
-func newCodexClient(bin, profileDir, profileName, profileHash string, log *slog.Logger) *codexClient {
+func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig string, log *slog.Logger) *codexClient {
 	return &codexClient{
-		bin:         bin,
-		profileDir:  profileDir,
-		profileName: profileName,
-		profileHash: profileHash,
+		bin:           bin,
+		profileDir:    profileDir,
+		profileName:   profileName,
+		profileHash:   profileHash,
+		profileConfig: profileConfig,
 		log: loggerOrDefault(log).With(
 			"provider", string(config.ProviderCodex),
 			"profile_dir_set", profileDir != "",
@@ -428,10 +432,11 @@ func (c *codexClient) ensureProcess(ctx context.Context) error {
 }
 
 func (c *codexClient) startLocked() error {
-	args := []string{"app-server", "--listen", "stdio://"}
-	if c.profileName != "" {
-		args = append([]string{"--profile", c.profileName}, args...)
+	args := []string{"app-server"}
+	for _, override := range podiommcp.CodexConfigOverrides(c.profileConfig) {
+		args = append(args, "-c", override)
 	}
+	args = append(args, "--listen", "stdio://")
 	cmd := podiomexec.Command(context.Background(), c.bin, args...)
 	cmd.Env = codexEnv(c.profileDir)
 	stdin, err := cmd.StdinPipe()

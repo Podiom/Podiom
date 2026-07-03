@@ -256,7 +256,7 @@ func TestCodexResumesThreadAfterAppServerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	codex.client("", "", "").reset()
+	codex.client("", "", "", "").reset()
 
 	events, err := codex.SendTurn(ctx, TurnRequest{
 		SessionID: "session-1",
@@ -313,10 +313,13 @@ func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
 		t.Fatalf("read argv: %v", err)
 	}
 	text := string(got)
-	for _, want := range []string{"--profile", "podiom-atlas", "app-server", "--listen", "stdio://"} {
+	for _, want := range []string{"app-server", "-c", "mcp_servers.filesystem.command=\"npx\"", "--listen", "stdio://"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("argv missing %q: %s", want, text)
 		}
+	}
+	if strings.Contains(text, "--profile") {
+		t.Fatalf("app-server argv should use config overrides, not --profile: %s", text)
 	}
 }
 
