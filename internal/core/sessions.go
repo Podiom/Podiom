@@ -369,10 +369,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
 				return
 			}
-			providerMessage := userMessage
-			if strings.TrimSpace(projectCtx.Prompt) != "" {
-				providerMessage = projectCtx.Prompt + "\n\nUser message:\n" + userMessage
-			}
+			providerMessage := c.providerMessage(current, projectCtx, userMessage)
 			mcpServers, mcpAll, err := c.sessionMCPServers(ctx, current)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "mcp", "error", err)
@@ -461,6 +458,20 @@ func (c *Core) sessionWorkspaceDir(agentName string, projectCtx projectExecution
 		return projectCtx.Root
 	}
 	return c.AgentPaths(agentName).Workspace
+}
+
+func (c *Core) providerMessage(sess store.Session, projectCtx projectExecutionContext, userMessage string) string {
+	var parts []string
+	if PlanGateActive(sess) {
+		parts = append(parts, c.planModePrompt(sess, projectCtx))
+	}
+	if strings.TrimSpace(projectCtx.Prompt) != "" {
+		parts = append(parts, projectCtx.Prompt)
+	}
+	if len(parts) == 0 {
+		return userMessage
+	}
+	return strings.Join(parts, "\n\n") + "\n\nUser message:\n" + userMessage
 }
 
 // sessionExtraWorkspaceDirs returns directories exposed beyond the primary cwd.

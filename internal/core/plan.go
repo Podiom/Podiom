@@ -16,6 +16,18 @@ import (
 
 const PlanGateMessage = "A plan must be approved before implementation — call podiom_submit_plan with your plan."
 
+var requiredPlanHeadings = []string{
+	"# Plan:",
+	"## Goal",
+	"## Context",
+	"## Approach",
+	"## Changes",
+	"## Steps",
+	"## Tests",
+	"## Risks And Rollback",
+	"## Open Questions",
+}
+
 type SubmitPlanRequest struct {
 	SessionID string
 	FilePath  string
@@ -39,6 +51,9 @@ func (c *Core) SubmitPlan(ctx context.Context, req SubmitPlanRequest) (store.Ses
 	markdown := strings.TrimSpace(req.Markdown)
 	if markdown == "" {
 		return store.Session{}, fmt.Errorf("plan markdown is required")
+	}
+	if err := validateStructuredPlanMarkdown(markdown); err != nil {
+		return store.Session{}, err
 	}
 	path, err := c.validatePlanPath(ctx, sess, req.FilePath)
 	if err != nil {
@@ -111,8 +126,104 @@ func (c *Core) FeedbackPlan(ctx context.Context, sessionID, feedback string) (Pl
 	}
 	return PlanDecision{
 		Session:     sess,
-		NextMessage: "Please revise the implementation plan using this feedback, overwrite the same plan file, and call podiom_submit_plan again:\n\n" + feedback,
+		NextMessage: "Please revise the implementation plan using this feedback. Keep the required structured Markdown headings, overwrite the same plan file, and call podiom_submit_plan again with the full updated Markdown:\n\n" + feedback,
 	}, nil
+}
+
+func (c *Core) planModePrompt(sess store.Session, projectCtx projectExecutionContext) string {
+	planDir := filepath.Join(c.paths.ProjectsDir, "<project>", "plans")
+	if strings.TrimSpace(projectCtx.ProjectDir) != "" {
+		planDir = filepath.Join(projectCtx.ProjectDir, "plans")
+	}
+	lines := []string{
+		"Podiom plan mode is active for this session.",
+		"",
+		"Stop before implementation. You may do read-only exploration to make the plan accurate, but do not edit files, run mutating commands, install dependencies, delete files, push changes, or otherwise implement anything until the user approves the submitted plan.",
+		"",
+		"Write the plan as Markdown under this plans directory:",
+		planDir,
+		"",
+		"Use a sortable, collision-resistant filename like YYYYMMDD-HHMM-<short-topic>.md.",
+		"",
+		"Submit the plan by calling podiom_submit_plan with file_path and markdown. The markdown argument must be the full rendered plan and must use exactly this structure:",
+		"",
+		structuredPlanMarkdownTemplate(),
+	}
+	if sess.PlanState == store.PlanAwaitingApproval {
+		lines = append(lines,
+			"",
+			"Revision turn: incorporate the user's feedback, keep the same required Markdown structure, overwrite the same plan file when possible, and call podiom_submit_plan again with the full updated Markdown.",
+		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func structuredPlanMarkdownTemplate() string {
+	return strings.Join([]string{
+		"```markdown",
+		"# Plan: <short title>",
+		"",
+		"## Goal",
+		"<What the user wants and what done means.>",
+		"",
+		"## Context",
+		"<Relevant files, project state, constraints, and assumptions discovered so far.>",
+		"",
+		"## Approach",
+		"<High-level implementation strategy.>",
+		"",
+		"## Changes",
+		"- <Subsystem/file area and intended change>",
+		"- <Subsystem/file area and intended change>",
+		"",
+		"## Steps",
+		"1. <Concrete implementation step>",
+		"2. <Concrete implementation step>",
+		"3. <Concrete implementation step>",
+		"",
+		"## Tests",
+		"- <Test/check to run>",
+		"- <Manual verification if relevant>",
+		"",
+		"## Risks And Rollback",
+		"<Risks, edge cases, and how to recover/revert if needed.>",
+		"",
+		"## Open Questions",
+		"- <Only include real blockers or decisions needed from the user; otherwise write \"None.\">",
+		"```",
+	}, "\n")
+}
+
+func validateStructuredPlanMarkdown(markdown string) error {
+	found := map[string]bool{}
+	for _, line := range strings.Split(markdown, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "# plan:") && strings.TrimSpace(line[strings.Index(line, ":")+1:]) != "" {
+			found["# Plan:"] = true
+			continue
+		}
+		if !strings.HasPrefix(line, "## ") {
+			continue
+		}
+		heading := strings.TrimSpace(strings.TrimPrefix(line, "## "))
+		for _, required := range requiredPlanHeadings[1:] {
+			want := strings.TrimSpace(strings.TrimPrefix(required, "## "))
+			if strings.EqualFold(heading, want) {
+				found[required] = true
+			}
+		}
+	}
+	var missing []string
+	for _, heading := range requiredPlanHeadings {
+		if !found[heading] {
+			missing = append(missing, heading)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("plan markdown is missing required headings: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func (c *Core) RejectPlan(ctx context.Context, sessionID string) (store.Session, error) {

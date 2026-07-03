@@ -66,10 +66,41 @@ Write the plan as Markdown in the active project's `plans/` directory:
 exist. Use a sortable, collision-resistant filename:
 `YYYYMMDD-HHMM-<short-topic>.md`.
 
-The plan must include the goal, why the work is risky or comprehensive, intended
-files or subsystems, implementation approach, tests and verification, rollback
-or recovery notes, and any open questions. After writing the file, submit it
-with the internal MCP tool:
+The plan must use this Markdown structure:
+
+```markdown
+# Plan: <short title>
+
+## Goal
+<What the user wants and what done means.>
+
+## Context
+<Relevant files, project state, constraints, and assumptions discovered so far.>
+
+## Approach
+<High-level implementation strategy.>
+
+## Changes
+- <Subsystem/file area and intended change>
+- <Subsystem/file area and intended change>
+
+## Steps
+1. <Concrete implementation step>
+2. <Concrete implementation step>
+3. <Concrete implementation step>
+
+## Tests
+- <Test/check to run>
+- <Manual verification if relevant>
+
+## Risks And Rollback
+<Risks, edge cases, and how to recover/revert if needed.>
+
+## Open Questions
+- <Only include real blockers or decisions needed from the user; otherwise write "None.">
+```
+
+After writing the file, submit it with the internal MCP tool:
 
 ```json
 {

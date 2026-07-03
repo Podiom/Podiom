@@ -73,13 +73,19 @@ func handlePlanMCPRequest(ctx context.Context, addr, sessionID, turnID string, r
 			Result: map[string]any{
 				"tools": []map[string]any{{
 					"name":        "podiom_submit_plan",
-					"description": "Submit a Podiom implementation plan for user approval.",
+					"description": "Submit a Podiom implementation plan for user approval. The markdown argument must be the full rendered Markdown plan using the required Podiom structure: # Plan:, ## Goal, ## Context, ## Approach, ## Changes, ## Steps, ## Tests, ## Risks And Rollback, and ## Open Questions.",
 					"inputSchema": map[string]any{
 						"type":     "object",
 						"required": []string{"file_path", "markdown"},
 						"properties": map[string]any{
-							"file_path": map[string]any{"type": "string"},
-							"markdown":  map[string]any{"type": "string"},
+							"file_path": map[string]any{
+								"type":        "string",
+								"description": "Absolute path to the plan file under the active project's plans directory.",
+							},
+							"markdown": map[string]any{
+								"type":        "string",
+								"description": "The full rendered Markdown plan, including # Plan: and all required ## sections.",
+							},
 						},
 					},
 				}},

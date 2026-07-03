@@ -49,10 +49,11 @@ func TestPlanSessionSubmitRejectApproveFlow(t *testing.T) {
 	if err := os.WriteFile(planPath, []byte("# Plan\n"), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
+	planMarkdown := validStructuredPlanMarkdown("Demo")
 	submitted, err := c.SubmitPlan(ctx, SubmitPlanRequest{
 		SessionID: session.ID,
 		FilePath:  planPath,
-		Markdown:  "# Plan\n\n- Step one",
+		Markdown:  planMarkdown,
 	})
 	if err != nil {
 		t.Fatalf("submit plan: %v", err)
@@ -64,7 +65,7 @@ func TestPlanSessionSubmitRejectApproveFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
 	}
-	if len(history) != 1 || history[0].Role != store.RoleAssistant || !strings.Contains(history[0].Content, "# Plan") {
+	if len(history) != 1 || history[0].Role != store.RoleAssistant || !strings.Contains(history[0].Content, "# Plan: Demo") {
 		t.Fatalf("submit should append canonical assistant plan message, got %+v", history)
 	}
 
@@ -85,7 +86,7 @@ func TestPlanSessionSubmitRejectApproveFlow(t *testing.T) {
 	if _, err := c.store.UpdateSessionPlanState(ctx, session.ID, store.PlanPendingSubmission, true, store.PlanInfo{}); err != nil {
 		t.Fatalf("reset plan state: %v", err)
 	}
-	if _, err := c.SubmitPlan(ctx, SubmitPlanRequest{SessionID: session.ID, FilePath: planPath, Markdown: "# Plan v2"}); err != nil {
+	if _, err := c.SubmitPlan(ctx, SubmitPlanRequest{SessionID: session.ID, FilePath: planPath, Markdown: validStructuredPlanMarkdown("Demo v2")}); err != nil {
 		t.Fatalf("resubmit plan: %v", err)
 	}
 	approved, err := c.ApprovePlan(ctx, session.ID)
@@ -100,6 +101,140 @@ func TestPlanSessionSubmitRejectApproveFlow(t *testing.T) {
 	}
 	if !strings.Contains(approved.NextMessage, "Proceed with implementation") {
 		t.Fatalf("approve should return continuation message, got %q", approved.NextMessage)
+	}
+}
+
+func TestPlanModePromptIsInjectedIntoGatedTurn(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "demo", Name: "Demo"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      "planner",
+		Origin:                         store.OriginWeb,
+		ProjectID:                      "demo",
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := c.AppendTurn(ctx, session.ID, "Build a dashboard"); err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
+	}
+	got := fake.Requests[0].Message
+	for _, want := range []string{
+		"Podiom plan mode is active for this session.",
+		"# Plan: <short title>",
+		"## Risks And Rollback",
+		filepath.Join(c.paths.ProjectsDir, "demo", "plans"),
+		"User message:\nBuild a dashboard",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("plan-mode provider message missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestPlanFeedbackTurnInjectsRevisionInstruction(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "demo", Name: "Demo"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      "planner",
+		Origin:                         store.OriginWeb,
+		ProjectID:                      "demo",
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	planPath := filepath.Join(c.paths.ProjectsDir, "demo", "plans", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+	if _, err := c.SubmitPlan(ctx, SubmitPlanRequest{
+		SessionID: session.ID,
+		FilePath:  planPath,
+		Markdown:  validStructuredPlanMarkdown("Demo"),
+	}); err != nil {
+		t.Fatalf("submit plan: %v", err)
+	}
+	decision, err := c.FeedbackPlan(ctx, session.ID, "Add a migration step.")
+	if err != nil {
+		t.Fatalf("feedback plan: %v", err)
+	}
+	if !strings.Contains(decision.NextMessage, "Keep the required structured Markdown headings") {
+		t.Fatalf("feedback next message missing structured instruction: %q", decision.NextMessage)
+	}
+	if _, err := c.AppendTurn(ctx, session.ID, decision.NextMessage); err != nil {
+		t.Fatalf("append feedback turn: %v", err)
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
+	}
+	got := fake.Requests[0].Message
+	for _, want := range []string{
+		"Revision turn: incorporate the user's feedback",
+		"Keep the required structured Markdown headings",
+		"Add a migration step.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("feedback provider message missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSubmitPlanRejectsMissingStructuredHeadings(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "demo", Name: "Demo"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      "planner",
+		Origin:                         store.OriginWeb,
+		ProjectID:                      "demo",
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	planPath := filepath.Join(c.paths.ProjectsDir, "demo", "plans", "plan.md")
+	err = os.MkdirAll(filepath.Dir(planPath), 0o755)
+	if err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+	_, err = c.SubmitPlan(ctx, SubmitPlanRequest{
+		SessionID: session.ID,
+		FilePath:  planPath,
+		Markdown:  "# Plan: Demo\n\n## Goal\nBuild it.",
+	})
+	if err == nil {
+		t.Fatal("expected missing headings to fail")
+	}
+	if !strings.Contains(err.Error(), "plan markdown is missing required headings") || !strings.Contains(err.Error(), "## Context") {
+		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
 
@@ -142,4 +277,36 @@ func TestPlanGateRelayAllowsReadsAndDeniesMutations(t *testing.T) {
 	if write.Behavior != "deny" || write.Message != PlanGateMessage {
 		t.Fatalf("write should be denied with plan gate message, got %+v", write)
 	}
+}
+
+func validStructuredPlanMarkdown(title string) string {
+	return strings.Join([]string{
+		"# Plan: " + title,
+		"",
+		"## Goal",
+		"Build the requested capability.",
+		"",
+		"## Context",
+		"The session is in plan mode.",
+		"",
+		"## Approach",
+		"Use the existing architecture.",
+		"",
+		"## Changes",
+		"- Update the relevant subsystem.",
+		"",
+		"## Steps",
+		"1. Inspect the code.",
+		"2. Implement the change.",
+		"3. Verify behavior.",
+		"",
+		"## Tests",
+		"- Run focused tests.",
+		"",
+		"## Risks And Rollback",
+		"Revert the touched files if needed.",
+		"",
+		"## Open Questions",
+		"- None.",
+	}, "\n")
 }
