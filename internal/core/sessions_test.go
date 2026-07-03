@@ -8,6 +8,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
+	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -39,6 +40,32 @@ func newTestCoreAdapter(t *testing.T) (*Core, *adapter.Fake, func()) {
 	}
 }
 
+func newTestCoreAdapterWithDaemon(t *testing.T) (*Core, *adapter.Fake, func()) {
+	t.Helper()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	fake := adapter.NewFake()
+	c, err := New(Options{Paths: paths, Store: db, Adapter: fake, DaemonAddr: "127.0.0.1:8787"})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	return c, fake, func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}
+}
+
 // startRequestFor returns the StartRequest the fake adapter recorded for the
 // given session ID.
 func startRequestFor(t *testing.T, fake *adapter.Fake, sessionID string) adapter.StartRequest {
@@ -50,6 +77,41 @@ func startRequestFor(t *testing.T, fake *adapter.Fake, sessionID string) adapter
 	}
 	t.Fatalf("adapter received no StartRequest for session %q", sessionID)
 	return adapter.StartRequest{}
+}
+
+func TestSessionStartIncludesInternalPlanMCP(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapterWithDaemon(t)
+	defer cleanup()
+
+	agent, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "builder", Provider: config.ProviderCodex})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: agent.Name,
+		Origin:    store.OriginWeb,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := startRequestFor(t, fake, session.ID)
+	if !hasMCPServer(req.MCPServers, "podiom_plan") {
+		t.Fatalf("initial StartRequest missing internal plan MCP server: %+v", req.MCPServers)
+	}
+	if !hasMCPServer(req.MCPAllServers, "podiom_plan") {
+		t.Fatalf("initial StartRequest missing plan MCP in all servers: %+v", req.MCPAllServers)
+	}
+}
+
+func hasMCPServer(servers []podiommcp.Server, name string) bool {
+	for _, server := range servers {
+		if server.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSessionStartSendsAllContextLayers verifies that every context markdown

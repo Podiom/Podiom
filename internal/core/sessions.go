@@ -94,6 +94,7 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	if err != nil {
 		return store.Session{}, err
 	}
+	mcpServers, mcpAll = c.withInternalPlanMCP(created, created.ID, mcpServers, mcpAll)
 	handle, err := c.adapter.Start(ctx, adapter.StartRequest{
 		SessionID:          created.ID,
 		AgentName:          agent.Name,
