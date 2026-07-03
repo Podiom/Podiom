@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/google/uuid"
 )
 
 // CreateSession inserts a durable session. If ID is empty, a UUID is assigned.
@@ -15,9 +15,13 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 	if sess.ID == "" {
 		sess.ID = uuid.NewString()
 	}
+	if sess.PlanState == "" {
+		sess.PlanState = PlanNone
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions
-		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, project_id, rolling_summary, provider_handle)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)`,
+		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, project_id, rolling_summary, provider_handle,
+		 plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
 		sess.AgentName,
 		sess.Name,
@@ -35,6 +39,12 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 		sess.ProjectID,
 		sess.RollingSummary,
 		sess.ProviderHandle,
+		sess.PlanState,
+		boolInt(sess.PlanExplicit),
+		sess.PlanInfo.FilePath,
+		sess.PlanInfo.Markdown,
+		sess.PlanInfo.SubmittedAt,
+		sess.PlanInfo.UpdatedAt,
 	)
 	if err != nil {
 		return Session{}, fmt.Errorf("create session %q: %w", sess.ID, err)
@@ -46,7 +56,9 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE id = ?`, id)
 	sess, err := scanSession(row)
 	if err != nil {
@@ -62,7 +74,9 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -85,7 +99,9 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE agent_name = ? ORDER BY created_at, id`, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for agent %q: %w", agentName, err)
@@ -108,7 +124,9 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE schedule_id = ? ORDER BY created_at DESC, id DESC`, scheduleName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for schedule %q: %w", scheduleName, err)
@@ -130,7 +148,9 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle, COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(dreamed_at, ''), created_at, updated_at
 		FROM sessions WHERE task_id = ? ORDER BY created_at DESC, id DESC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for task %q: %w", taskID, err)
@@ -212,6 +232,37 @@ func (s *Store) UpdateSessionProviderHandle(ctx context.Context, id, handle stri
 		WHERE id = ?`, handle, id)
 	if err != nil {
 		return Session{}, fmt.Errorf("update session %q provider handle: %w", id, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return Session{}, fmt.Errorf("update session %q rows affected: %w", id, err)
+	}
+	if changed == 0 {
+		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
+	}
+	return s.GetSession(ctx, id)
+}
+
+// UpdateSessionPlanState stores the current plan gate state and displayable
+// plan artifact. Empty info fields clear the stored artifact.
+func (s *Store) UpdateSessionPlanState(ctx context.Context, id string, state PlanState, explicit bool, info PlanInfo) (Session, error) {
+	if state == "" {
+		state = PlanNone
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET plan_state = ?, plan_explicit = ?, plan_file_path = ?, plan_markdown = ?,
+			plan_submitted_at = ?, plan_updated_at = ?, updated_at = datetime('now')
+		WHERE id = ?`,
+		state,
+		boolInt(explicit),
+		info.FilePath,
+		info.Markdown,
+		info.SubmittedAt,
+		info.UpdatedAt,
+		id,
+	)
+	if err != nil {
+		return Session{}, fmt.Errorf("update session %q plan state: %w", id, err)
 	}
 	changed, err := res.RowsAffected()
 	if err != nil {
@@ -375,6 +426,12 @@ func scanSession(row scanner) (Session, error) {
 		&sess.ProjectID,
 		&sess.RollingSummary,
 		&sess.ProviderHandle,
+		&sess.PlanState,
+		&sess.PlanExplicit,
+		&sess.PlanInfo.FilePath,
+		&sess.PlanInfo.Markdown,
+		&sess.PlanInfo.SubmittedAt,
+		&sess.PlanInfo.UpdatedAt,
 		&sess.DreamedAt,
 		&sess.CreatedAt,
 		&sess.UpdatedAt,

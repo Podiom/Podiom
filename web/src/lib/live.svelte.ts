@@ -24,7 +24,7 @@ export interface Toast {
   id: string;
   title: string;
   body: string;
-  kind: "permission" | "question";
+  kind: "permission" | "question" | "plan";
   sessionId: string;
 }
 
@@ -51,9 +51,12 @@ class LiveStore {
   // the session-row red dot and the Chat nav badge.
   attention = $derived(
     new Set(
-      Object.values(this.activeTurns)
-        .filter((t) => t.pending === "permission" || t.pending === "question")
-        .map((t) => t.session_id),
+      [
+        ...Object.values(this.activeTurns)
+          .filter((t) => t.pending === "permission" || t.pending === "question")
+          .map((t) => t.session_id),
+        ...this.sessions.filter((s) => s.PlanState === "awaiting_approval").map((s) => s.ID),
+      ],
     ),
   );
 
@@ -173,11 +176,13 @@ class LiveStore {
         this.sessions = msg.sessions ?? [];
         this.applyTurnSummaries(msg.active_turns ?? []);
         if (msg.usage) this.usage = msg.usage;
+        this.edgePlanAttention();
         break;
       case "session":
         if (msg.session) {
           const s = msg.session;
           this.sessions = [s, ...this.sessions.filter((e) => e.ID !== s.ID)];
+          this.edgePlanAttention();
         }
         break;
       case "turn_state":
@@ -224,6 +229,7 @@ class LiveStore {
       this.edge(t.session_id, (t.pending ?? "") as Pending);
     }
     for (const id of Object.keys(this.lastPending)) {
+      if (id.includes(":plan")) continue;
       if (!seen.has(id)) this.lastPending[id] = "";
     }
   }
@@ -274,6 +280,27 @@ class LiveStore {
     };
     this.toasts = [...this.toasts, toast];
     window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
+  }
+
+  private edgePlanAttention() {
+    for (const session of this.sessions) {
+      const key = `${session.ID}:plan`;
+      if (session.PlanState !== "awaiting_approval") {
+        this.lastPending[key] = "";
+        continue;
+      }
+      if (this.lastPending[key] === "question") continue;
+      this.lastPending[key] = "question";
+      const toast: Toast = {
+        id: crypto.randomUUID(),
+        kind: "plan",
+        sessionId: session.ID,
+        title: `${session.AgentName} submitted a plan`,
+        body: "Review it to approve, revise, or reject.",
+      };
+      this.toasts = [...this.toasts, toast];
+      window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
+    }
   }
 
   // ---- Web Push ---------------------------------------------------------

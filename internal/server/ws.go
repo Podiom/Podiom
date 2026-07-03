@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/store"
 	"github.com/Podiom/Podiom/internal/usage"
+	"github.com/google/uuid"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -101,14 +102,15 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		return s.writeState(ctx, writer)
 	case "create_session":
 		session, err := s.core.CreateSession(ctx, core.CreateSessionRequest{
-			AgentName:      msg.AgentName,
-			Origin:         store.OriginWeb,
-			Provider:       msg.Provider,
-			Profile:        msg.Profile,
-			Model:          msg.Model,
-			Effort:         msg.Effort,
-			PermissionMode: msg.PermissionMode,
-			ProjectID:      msg.ProjectID,
+			AgentName:                      msg.AgentName,
+			Origin:                         store.OriginWeb,
+			Provider:                       msg.Provider,
+			Profile:                        msg.Profile,
+			Model:                          msg.Model,
+			Effort:                         msg.Effort,
+			PermissionMode:                 msg.PermissionMode,
+			ProjectID:                      msg.ProjectID,
+			CreatePlanBeforeImplementation: msg.CreatePlanBeforeImplementation,
 		})
 		if err != nil {
 			return err
@@ -124,6 +126,14 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 	case "send_turn":
 		go s.runWSTurn(ctx, writer, msg)
 		return nil
+	case "plan_approve":
+		go s.runWSPlanDecision(ctx, writer, msg, "approve")
+		return nil
+	case "plan_feedback":
+		go s.runWSPlanDecision(ctx, writer, msg, "feedback")
+		return nil
+	case "plan_reject":
+		return s.rejectWSPlan(ctx, writer, msg)
 	case "dream":
 		if msg.AgentName == "" {
 			return errors.New("agent_name is required")
@@ -209,14 +219,15 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 			return
 		}
 		session, err = s.core.CreateSession(daemonCtx, core.CreateSessionRequest{
-			AgentName:      msg.AgentName,
-			Origin:         store.OriginWeb,
-			Provider:       msg.Provider,
-			Profile:        msg.Profile,
-			Model:          msg.Model,
-			Effort:         msg.Effort,
-			PermissionMode: msg.PermissionMode,
-			ProjectID:      msg.ProjectID,
+			AgentName:                      msg.AgentName,
+			Origin:                         store.OriginWeb,
+			Provider:                       msg.Provider,
+			Profile:                        msg.Profile,
+			Model:                          msg.Model,
+			Effort:                         msg.Effort,
+			PermissionMode:                 msg.PermissionMode,
+			ProjectID:                      msg.ProjectID,
+			CreatePlanBeforeImplementation: msg.CreatePlanBeforeImplementation,
 		})
 	} else {
 		session, err = s.core.GetSession(daemonCtx, msg.SessionID)
@@ -304,6 +315,53 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	stateCtx, stateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stateCancel()
 	_ = s.writeState(stateCtx, writer)
+}
+
+func (s *Server) runWSPlanDecision(ctx context.Context, writer *wsWriter, msg ClientMessage, action string) {
+	if msg.SessionID == "" {
+		_ = writer.write(ctx, ServerMessage{Type: "error", RequestID: msg.RequestID, Error: "session_id is required"})
+		return
+	}
+	var decision core.PlanDecision
+	var err error
+	switch action {
+	case "approve":
+		decision, err = s.core.ApprovePlan(context.Background(), msg.SessionID)
+	case "feedback":
+		decision, err = s.core.FeedbackPlan(context.Background(), msg.SessionID, msg.Feedback)
+	default:
+		err = errors.New("unknown plan action")
+	}
+	if err != nil {
+		_ = writer.write(ctx, ServerMessage{Type: "error", RequestID: msg.RequestID, SessionID: msg.SessionID, Error: err.Error()})
+		return
+	}
+	_ = writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, SessionID: decision.Session.ID, Session: &decision.Session, NextMessage: decision.NextMessage})
+	stateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.writeState(stateCtx, writer)
+	if strings.TrimSpace(decision.NextMessage) == "" {
+		return
+	}
+	next := msg
+	next.Message = decision.NextMessage
+	next.AgentName = ""
+	next.SessionID = decision.Session.ID
+	s.runWSTurn(ctx, writer, next)
+}
+
+func (s *Server) rejectWSPlan(ctx context.Context, writer *wsWriter, msg ClientMessage) error {
+	if msg.SessionID == "" {
+		return errors.New("session_id is required")
+	}
+	session, err := s.core.RejectPlan(context.Background(), msg.SessionID)
+	if err != nil {
+		return err
+	}
+	if err := writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, SessionID: session.ID, Session: &session}); err != nil {
+		return err
+	}
+	return s.writeState(ctx, writer)
 }
 
 // runWSDream runs a manual dream and streams its phases to the requesting

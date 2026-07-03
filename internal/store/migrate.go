@@ -231,6 +231,20 @@ var migrations = []migration{
 
 		CREATE INDEX idx_dreams_agent ON dreams(agent_name, ran_at DESC);`,
 	},
+	{
+		version: 11,
+		name:    "plan_mode",
+		sql: `ALTER TABLE sessions ADD COLUMN plan_state TEXT NOT NULL DEFAULT 'none'
+			CHECK (plan_state IN ('none', 'pending_submission', 'awaiting_approval'));
+		ALTER TABLE sessions ADD COLUMN plan_explicit INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE sessions ADD COLUMN plan_file_path TEXT NOT NULL DEFAULT '';
+		ALTER TABLE sessions ADD COLUMN plan_markdown TEXT NOT NULL DEFAULT '';
+		ALTER TABLE sessions ADD COLUMN plan_submitted_at TEXT NOT NULL DEFAULT '';
+		ALTER TABLE sessions ADD COLUMN plan_updated_at TEXT NOT NULL DEFAULT '';
+		CREATE INDEX idx_sessions_plan_state ON sessions(plan_state);
+
+		ALTER TABLE tasks ADD COLUMN plan_required INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

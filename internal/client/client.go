@@ -394,11 +394,12 @@ func (c *Client) DeleteSession(ctx context.Context, id string) error {
 // ChatRequest sends one message, either to an existing session or to a new
 // session created from AgentName.
 type ChatRequest struct {
-	SessionID string          `json:"session_id,omitempty"`
-	AgentName string          `json:"agent_name,omitempty"`
-	Message   string          `json:"message"`
-	Provider  config.Provider `json:"provider,omitempty"`
-	Profile   string          `json:"profile,omitempty"`
+	SessionID                      string          `json:"session_id,omitempty"`
+	AgentName                      string          `json:"agent_name,omitempty"`
+	Message                        string          `json:"message"`
+	Provider                       config.Provider `json:"provider,omitempty"`
+	Profile                        string          `json:"profile,omitempty"`
+	CreatePlanBeforeImplementation bool            `json:"create_plan_before_implementation,omitempty"`
 }
 
 // StreamEvent is one newline-delimited event from /api/chat.
@@ -470,6 +471,42 @@ func (c *Client) DecidePermission(ctx context.Context, id string, decision adapt
 // DecideUserInput sends answers for a pending provider clarification request.
 func (c *Client) DecideUserInput(ctx context.Context, id string, decision adapter.UserInputDecision) error {
 	return c.postJSON(ctx, "/api/user-input-decisions/"+id, decision, nil)
+}
+
+type PlanStatus struct {
+	SessionID string          `json:"session_id"`
+	State     store.PlanState `json:"state"`
+	Explicit  bool            `json:"explicit"`
+	Plan      store.PlanInfo  `json:"plan"`
+}
+
+type PlanDecision struct {
+	Session     store.Session `json:"session"`
+	NextMessage string        `json:"next_message,omitempty"`
+}
+
+func (c *Client) GetPlan(ctx context.Context, sessionID string) (PlanStatus, error) {
+	var status PlanStatus
+	err := c.getJSON(ctx, "/api/plans/"+urlPathEscape(sessionID), &status)
+	return status, err
+}
+
+func (c *Client) ApprovePlan(ctx context.Context, sessionID string) (PlanDecision, error) {
+	var decision PlanDecision
+	err := c.postJSON(ctx, "/api/plans/"+urlPathEscape(sessionID)+"/approve", map[string]string{}, &decision)
+	return decision, err
+}
+
+func (c *Client) FeedbackPlan(ctx context.Context, sessionID, feedback string) (PlanDecision, error) {
+	var decision PlanDecision
+	err := c.postJSON(ctx, "/api/plans/"+urlPathEscape(sessionID)+"/feedback", map[string]string{"feedback": feedback}, &decision)
+	return decision, err
+}
+
+func (c *Client) RejectPlan(ctx context.Context, sessionID string) (store.Session, error) {
+	var session store.Session
+	err := c.postJSON(ctx, "/api/plans/"+urlPathEscape(sessionID)+"/reject", map[string]string{}, &session)
+	return session, err
 }
 
 // ListSchedules fetches schedule status (next run + recent run history) from the

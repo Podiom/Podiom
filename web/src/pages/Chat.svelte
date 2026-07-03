@@ -103,6 +103,7 @@
   let draftEffort = $state("");
   let draftPermissionMode = $state<PermissionMode | "">("");
   let draftProjectID = $state("");
+  let draftPlanFirst = $state(false);
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let sending = $state(false);
@@ -122,6 +123,9 @@
   let openDropdown = $state<string | null>(null);
   let newSessionOpen = $state(false);
   let customModelDraft = $state("");
+  let planFeedbackOpen = $state(false);
+  let planFeedbackText = $state("");
+  let planYoloAck = $state(false);
 
   const SLASH_CMDS = [
     { cmd: "/model", desc: "set the model for this session" },
@@ -214,6 +218,10 @@
   );
   const curProjectID = $derived(activeSession ? activeSession.ProjectID : draftProjectID);
   const linkedProjectName = $derived(curProjectID ? projectName || projectLabel(curProjectID) : "");
+  const planPending = $derived(activeSession?.PlanState === "pending_submission");
+  const planAwaiting = $derived(activeSession?.PlanState === "awaiting_approval");
+  const planInfo = $derived(activeSession?.PlanInfo);
+  const planHtml = $derived(renderMarkdown(planInfo?.markdown ?? ""));
 
   // Account / usage context follows the active session (or, pre-session, the
   // selected agent). The usage snapshot key is the profile name, falling back to
@@ -347,6 +355,7 @@
           selectedAgent = msg.session.AgentName;
           rememberSession(msg.session.ID);
           if (!msg.session.ProjectID) projectName = "";
+          if (msg.session.PlanState !== "awaiting_approval") resetPlanReview();
           resetDraftSettings();
         }
         break;
@@ -614,6 +623,7 @@
       effort: activeSession ? undefined : draftEffort || undefined,
       permission_mode: activeSession ? undefined : draftPermissionMode || undefined,
       project_id: activeSession ? undefined : draftProjectID || undefined,
+      create_plan_before_implementation: activeSession ? undefined : draftPlanFirst,
     })) return;
     messageText = "";
     forceScrollToBottom();
@@ -626,6 +636,7 @@
     draftEffort = "";
     draftPermissionMode = "";
     draftProjectID = "";
+    draftPlanFirst = false;
   }
 
   function newSession(resetDrafts = true) {
@@ -638,6 +649,7 @@
     pendingPermission = null;
     resetApprovalForm();
     pendingUserInput = null;
+    resetPlanReview();
     notice = null;
     error = null;
     if (isPhone) sessOpen = false;
@@ -720,6 +732,58 @@
   function stopActiveTurn() {
     if (!activeSession) return;
     send({ type: "stop_turn", request_id: crypto.randomUUID(), session_id: activeSession.ID });
+  }
+
+  function resetPlanReview() {
+    planFeedbackOpen = false;
+    planFeedbackText = "";
+    planYoloAck = false;
+  }
+
+  function approvePlanFromPanel() {
+    if (!activeSession || !planAwaiting) return;
+    if (curMode === "yolo" && !planYoloAck) return;
+    error = null;
+    notice = null;
+    sending = true;
+    pendingAssistant = "";
+    resetPlanReview();
+    send({
+      type: "plan_approve",
+      request_id: crypto.randomUUID(),
+      session_id: activeSession.ID,
+    });
+  }
+
+  function sendPlanFeedback() {
+    if (!activeSession || !planAwaiting) return;
+    const feedback = planFeedbackText.trim();
+    if (!feedback) return;
+    error = null;
+    notice = null;
+    sending = true;
+    pendingAssistant = "";
+    send({
+      type: "plan_feedback",
+      request_id: crypto.randomUUID(),
+      session_id: activeSession.ID,
+      feedback,
+    });
+    planFeedbackOpen = false;
+    planFeedbackText = "";
+    planYoloAck = false;
+  }
+
+  function rejectPlanFromPanel() {
+    if (!activeSession || !planAwaiting) return;
+    error = null;
+    notice = null;
+    send({
+      type: "plan_reject",
+      request_id: crypto.randomUUID(),
+      session_id: activeSession.ID,
+    });
+    resetPlanReview();
   }
 
   function activeApprovalSessionID(): string | undefined {
@@ -1113,6 +1177,10 @@
                 <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
                   {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
                 </span>
+              {:else if s.PlanState === "awaiting_approval"}
+                <span class="run-pill needs mono">plan</span>
+              {:else if s.PlanState === "pending_submission"}
+                <span class="run-pill mono">plan gate</span>
               {/if}
               <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
             </button>
@@ -1160,6 +1228,18 @@
         {#if permissionRemaining > 0}
           <span class="approval-banner-time mono">auto-denies in {permissionRemaining}s</span>
         {/if}
+      </div>
+    {/if}
+
+    {#if planPending}
+      <div class="plan-banner">
+        <span class="plan-banner-dot"></span>
+        <span>Plan gate active - reads are allowed, writes are blocked until a plan is submitted.</span>
+      </div>
+    {:else if planAwaiting}
+      <div class="plan-banner awaiting">
+        <span class="plan-banner-dot"></span>
+        <span>Plan ready for review - approve it, send feedback, or reject it.</span>
       </div>
     {/if}
 
@@ -1428,6 +1508,15 @@
               </div>
             {/if}
           </div>
+          <button
+            class="chip-btn plan-chip"
+            class:plan-on={draftPlanFirst}
+            title="Ask the agent to submit a plan before implementation"
+            onclick={() => (draftPlanFirst = !draftPlanFirst)}
+          >
+            <span class="plan-chip-dot"></span>
+            {draftPlanFirst ? "plan first" : "direct"}
+          </button>
           <!-- Account chip: provider glyph + provider · profile for the new session. -->
           <div class="dd-wrap">
             <button class="chip-btn" onclick={() => toggleDropdown("account")} title="Provider & profile for this session">
@@ -1501,8 +1590,56 @@
     </div>
   </div>
 
+  <!-- ===== plan review panel ===== -->
+  {#if planAwaiting && activeSession}
+    <div class="plan-panel">
+      <div class="plan-panel-head">
+        <div>
+          <div class="plan-panel-kicker mono">PLAN REVIEW</div>
+          <div class="plan-panel-title">Implementation plan</div>
+        </div>
+        <button class="sq-btn" onclick={resetPlanReview} title="Reset review form">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v6h6" /></svg>
+        </button>
+      </div>
+      <div class="plan-panel-meta">
+        {#if planInfo?.file_path}<div class="plan-file mono">{planInfo.file_path}</div>{/if}
+        {#if planInfo?.updated_at}
+          <div class="mono">submitted {new Date(planInfo.updated_at).toLocaleString()}</div>
+        {/if}
+      </div>
+      <div class="plan-panel-body">{@html planHtml}</div>
+      <div class="plan-panel-actions">
+        {#if curMode === "yolo"}
+          <label class="plan-warning">
+            <input type="checkbox" bind:checked={planYoloAck} />
+            <span>Approval resumes this session in yolo mode.</span>
+          </label>
+        {/if}
+        {#if planFeedbackOpen}
+          <textarea
+            class="plan-feedback"
+            rows="4"
+            bind:value={planFeedbackText}
+            placeholder="What should change before implementation?"
+          ></textarea>
+          <div class="plan-action-row">
+            <button class="approval-deny" onclick={() => { planFeedbackOpen = false; planFeedbackText = ""; }}>Cancel</button>
+            <button class="approval-approve" disabled={!planFeedbackText.trim()} onclick={sendPlanFeedback}>Send feedback</button>
+          </div>
+        {:else}
+          <div class="plan-action-row">
+            <button class="approval-deny" onclick={rejectPlanFromPanel}>Reject</button>
+            <button class="approval-deny" onclick={() => (planFeedbackOpen = true)}>Give feedback</button>
+            <button class="approval-approve" disabled={curMode === "yolo" && !planYoloAck} onclick={approvePlanFromPanel}>Approve</button>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <!-- ===== context panel ===== -->
-  {#if ctxOpen}
+  {#if ctxOpen && !planAwaiting}
     <div class="ctx">
       <div class="ctx-collapse">
         <button class="sq-btn" onclick={() => (ctxOpen = false)} title="Collapse">
@@ -1562,6 +1699,14 @@
             </div>
           {/if}
         </div>
+        <button
+          class="plan-toggle"
+          class:on={draftPlanFirst}
+          onclick={() => (draftPlanFirst = !draftPlanFirst)}
+        >
+          <span class="plan-chip-dot"></span>
+          Create plan before implementation
+        </button>
       </div>
       <div class="ns-list">
         {#each agents as a}
@@ -1998,6 +2143,33 @@
     font-size: 11px;
     font-weight: 600;
     white-space: nowrap;
+  }
+
+  .plan-banner {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 24px;
+    flex: none;
+    background: #eaf5f0;
+    border-bottom: 1px solid #cfe3d8;
+    color: var(--teal-deep);
+    font: 650 12.5px "Hanken Grotesk";
+  }
+
+  .plan-banner.awaiting {
+    background: #fbf1dd;
+    border-bottom-color: #f0dca9;
+    color: #9a6e1e;
+  }
+
+  .plan-banner-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 99px;
+    background: currentColor;
+    box-shadow: 0 0 0 4px rgba(63, 143, 126, 0.12);
   }
 
   .msgs {
@@ -2815,6 +2987,171 @@
     cursor: pointer;
   }
 
+  .plan-chip.plan-on,
+  .plan-toggle.on {
+    border-color: #f0dca9;
+    background: #fbf1dd;
+    color: #9a6e1e;
+  }
+
+  .plan-chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
+    background: currentColor;
+    opacity: 0.75;
+  }
+
+  .plan-panel {
+    width: 372px;
+    flex: none;
+    background: #fffdfb;
+    border-left: 1px solid #eadfd1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .plan-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid #f1e7dc;
+  }
+
+  .plan-panel-head > div {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .plan-panel-kicker {
+    color: #9a6e1e;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+  }
+
+  .plan-panel-title {
+    margin-top: 3px;
+    color: var(--ink);
+    font: 800 18px/1.2 "Hanken Grotesk";
+  }
+
+  .plan-panel-meta {
+    display: grid;
+    gap: 5px;
+    padding: 10px 18px;
+    border-bottom: 1px solid #f1e7dc;
+    color: #9a8e80;
+    font-size: 11px;
+  }
+
+  .plan-file {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #6f6459;
+  }
+
+  .plan-panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px;
+    color: var(--ink-soft);
+    font: 400 14px/1.58 "Hanken Grotesk";
+  }
+
+  .plan-panel-body :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .plan-panel-body :global(:last-child) {
+    margin-bottom: 0;
+  }
+
+  .plan-panel-body :global(h1),
+  .plan-panel-body :global(h2),
+  .plan-panel-body :global(h3) {
+    color: var(--ink);
+    line-height: 1.24;
+    letter-spacing: 0;
+  }
+
+  .plan-panel-body :global(h1) {
+    font-size: 1.28em;
+  }
+
+  .plan-panel-body :global(h2) {
+    font-size: 1.13em;
+  }
+
+  .plan-panel-body :global(pre) {
+    overflow-x: auto;
+    border: 1px solid #eadfd1;
+    border-radius: 8px;
+    background: #f8f2ea;
+    padding: 10px;
+  }
+
+  .plan-panel-actions {
+    flex: none;
+    display: grid;
+    gap: 10px;
+    padding: 14px 18px 18px;
+    border-top: 1px solid #f1e7dc;
+    background: #faf6f0;
+  }
+
+  .plan-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 10px;
+    border: 1px solid #e7c3b5;
+    border-radius: 10px;
+    background: #fbeeea;
+    color: #a23e22;
+    font: 650 12px/1.35 "Hanken Grotesk";
+  }
+
+  .plan-warning input {
+    margin-top: 1px;
+  }
+
+  .plan-feedback {
+    width: 100%;
+    resize: vertical;
+    border: 1px solid #e6d9cc;
+    border-radius: 10px;
+    padding: 10px 11px;
+    color: var(--ink);
+    background: #fff;
+    font: 400 13.5px/1.45 "Hanken Grotesk";
+    outline: none;
+  }
+
+  .plan-feedback:focus {
+    border-color: #caa57c;
+    box-shadow: 0 0 0 3px rgba(154, 110, 30, 0.12);
+  }
+
+  .plan-action-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .plan-action-row button {
+    flex: 1;
+  }
+
+  .plan-action-row button:disabled {
+    opacity: 0.45;
+    cursor: default;
+    box-shadow: none;
+  }
+
   .ctx {
     width: 288px;
     flex: none;
@@ -2910,7 +3247,23 @@
   .ns-controls {
     padding: 14px 26px 0;
     display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .plan-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid #e6dbcb;
+    border-radius: 999px;
+    background: #f1eadf;
+    color: #6f5b45;
+    padding: 5px 11px;
+    cursor: pointer;
+    font: 650 11px "JetBrains Mono", monospace;
   }
 
   .ns-project-chip {
@@ -2984,7 +3337,8 @@
     }
 
     .sess-col,
-    .ctx {
+    .ctx,
+    .plan-panel {
       position: fixed;
       top: 0;
       bottom: calc(72px + env(safe-area-inset-bottom));
@@ -2999,11 +3353,15 @@
       border-right: 1px solid var(--line);
     }
 
-    .ctx {
+    .ctx,
+    .plan-panel {
       right: 0;
       border-left: 1px solid var(--line);
-      padding: 16px 18px 20px;
       box-shadow: -18px 0 42px -32px rgba(43, 37, 32, 0.58);
+    }
+
+    .ctx {
+      padding: 16px 18px 20px;
     }
 
     .conv {
@@ -3028,6 +3386,11 @@
       padding: 8px 14px;
       align-items: flex-start;
       flex-wrap: wrap;
+    }
+
+    .plan-banner {
+      padding: 8px 14px;
+      align-items: flex-start;
     }
 
     .approval-banner-time {
@@ -3158,6 +3521,18 @@
     .composer-meta .dd-wrap,
     .chip-btn {
       flex: none;
+    }
+
+    .plan-panel-head,
+    .plan-panel-meta,
+    .plan-panel-body,
+    .plan-panel-actions {
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+
+    .plan-action-row {
+      flex-direction: column;
     }
 
     .slash-menu {

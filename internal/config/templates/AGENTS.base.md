@@ -68,8 +68,20 @@ exist. Use a sortable, collision-resistant filename:
 
 The plan must include the goal, why the work is risky or comprehensive, intended
 files or subsystems, implementation approach, tests and verification, rollback
-or recovery notes, and any open questions. After writing the file, ask the user
-to approve the plan before proceeding with implementation.
+or recovery notes, and any open questions. After writing the file, submit it
+with the internal MCP tool:
+
+```json
+{
+  "file_path": "$PODIOM_HOME/projects/<project>/plans/YYYYMMDD-HHMM-<short-topic>.md",
+  "markdown": "<the full plan markdown>"
+}
+```
+
+Use `podiom_submit_plan` for this submission. While plan mode is active, reads
+and exploration are allowed, but implementation, file edits, commands with side
+effects, installs, deletes, pushes, and other mutations must wait until the user
+approves the submitted plan.
 
 ## Workspace
 

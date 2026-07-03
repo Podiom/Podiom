@@ -109,6 +109,7 @@ func New(opts Options) *Server {
 	mux.HandleFunc("/api/profiles/", s.handleProfile)
 	mux.HandleFunc("/api/sessions", s.handleSessions)
 	mux.HandleFunc("/api/sessions/", s.handleSession)
+	mux.HandleFunc("/api/plans/", s.handlePlan)
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/ws", s.handleWebSocket)
 	mux.HandleFunc("/api/schedules", s.handleSchedules)

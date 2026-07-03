@@ -28,6 +28,9 @@ type Options struct {
 	Adapter  adapter.Adapter
 	Global   config.Global
 	Profiles []config.Profile
+	// DaemonAddr is used to expose Podiom-owned MCP helpers to provider
+	// processes. Empty disables those helpers, which is useful in unit tests.
+	DaemonAddr string
 	// Logger receives structured run logging (R11.5). Defaults to slog.Default().
 	Logger *slog.Logger
 	// DisableBackgroundWork suppresses post-turn helper goroutines in tests that
@@ -44,13 +47,14 @@ type Core struct {
 	adapter adapter.Adapter
 	// mu guards global and profiles, which the Settings/Profile APIs mutate at
 	// runtime after persisting config.yaml.
-	mu       sync.RWMutex
-	global   config.Global
-	profiles map[string]config.Profile
-	composer InstructionComposer
-	ledger   *projects.Ledger
-	log      *slog.Logger
-	noBg     bool
+	mu         sync.RWMutex
+	global     config.Global
+	profiles   map[string]config.Profile
+	composer   InstructionComposer
+	ledger     *projects.Ledger
+	log        *slog.Logger
+	daemonAddr string
+	noBg       bool
 	// onRateStatus, when set, receives provider rate-limit updates observed
 	// mid-turn (attributed to the session's profile/provider). The usage tracker
 	// wires this to IngestPassive; nil disables passive enrichment.
@@ -113,17 +117,18 @@ func New(opts Options) (*Core, error) {
 		logger = slog.Default()
 	}
 	c := &Core{
-		paths:    opts.Paths,
-		store:    opts.Store,
-		adapter:  ad,
-		global:   global,
-		profiles: map[string]config.Profile{},
-		composer: NewFileComposer(opts.Paths),
-		ledger:   projects.New(opts.Paths.ProjectsDir),
-		log:      logger,
-		noBg:     opts.DisableBackgroundWork,
-		dreaming: map[string]bool{},
-		capCache: map[string]capabilityCacheEntry{},
+		paths:      opts.Paths,
+		store:      opts.Store,
+		adapter:    ad,
+		global:     global,
+		profiles:   map[string]config.Profile{},
+		composer:   NewFileComposer(opts.Paths),
+		ledger:     projects.New(opts.Paths.ProjectsDir),
+		log:        logger,
+		daemonAddr: opts.DaemonAddr,
+		noBg:       opts.DisableBackgroundWork,
+		dreaming:   map[string]bool{},
+		capCache:   map[string]capabilityCacheEntry{},
 	}
 	for _, profile := range opts.Profiles {
 		c.profiles[profile.Name] = profile

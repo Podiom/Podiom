@@ -53,6 +53,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newMemoryCmd(&addr))
 	root.AddCommand(newProfilesCmd(&addr))
 	root.AddCommand(newChatCmd(&addr))
+	root.AddCommand(newPlanCmd(&addr))
 	root.AddCommand(newSessionsCmd(&addr))
 	root.AddCommand(newSchedulesCmd(&addr))
 	root.AddCommand(newProjectsCmd(&addr))
@@ -890,6 +891,7 @@ func confirmOverwrite(in io.Reader, out io.Writer, prompt string) bool {
 
 func newChatCmd(addr *string) *cobra.Command {
 	var agentName, sessionID string
+	var planFirst bool
 	cmd := &cobra.Command{
 		Use:   "chat <message>",
 		Short: "Send one chat turn through podiomd",
@@ -907,74 +909,237 @@ func newChatCmd(addr *string) *cobra.Command {
 				return err
 			}
 			chatReq := client.ChatRequest{
-				AgentName: agentName,
-				SessionID: sessionID,
-				Message:   args[0],
+				AgentName:                      agentName,
+				SessionID:                      sessionID,
+				Message:                        args[0],
+				CreatePlanBeforeImplementation: planFirst,
 			}
-			for {
-				events, errs := c.Chat(cmd.Context(), chatReq)
-				printedDelta := false
-				followup := ""
-				for event := range events {
-					switch event.Type {
-					case "session":
-						if event.Session != nil {
-							chatReq.SessionID = event.Session.ID
-							chatReq.AgentName = ""
-							fmt.Fprintf(os.Stderr, "session %s (%s)\n", event.Session.ID, event.Session.AgentName)
-						}
-					case "delta":
-						fmt.Print(event.Delta)
-						printedDelta = true
-					case "assistant":
-						if !printedDelta {
-							fmt.Print(event.Delta)
-							printedDelta = true
-						}
-					case "notice":
-						fmt.Fprintf(os.Stderr, "%s\n", event.Notice)
-					case "permission_request":
-						if event.Request != nil {
-							if err := promptPermission(cmd.Context(), c, *event.Request); err != nil {
-								return err
-							}
-						}
-					case "user_input_request":
-						if event.Input != nil {
-							decision, text, err := promptUserInput(*event.Input)
-							if err != nil {
-								return err
-							}
-							if event.Input.Provider == config.ProviderClaude {
-								if err := c.DecideUserInput(cmd.Context(), event.Input.ID, decision); err != nil {
-									return err
-								}
-								followup = text
-							} else if err := c.DecideUserInput(cmd.Context(), event.Input.ID, decision); err != nil {
-								return err
-							}
-						}
-					case "error":
-						return errors.New(event.Error)
-					}
-				}
-				if err := <-errs; err != nil {
-					return err
-				}
-				if followup == "" {
-					fmt.Println()
-					return nil
-				}
-				if chatReq.SessionID == "" {
-					return errors.New("cannot answer provider question without a session")
-				}
-				chatReq.Message = followup
-			}
+			return runCLIChat(cmd.Context(), c, chatReq)
 		},
 	}
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent name for a new session")
 	cmd.Flags().StringVar(&sessionID, "session", "", "existing session ID to continue")
+	cmd.Flags().BoolVar(&planFirst, "plan", false, "create a plan before implementation")
 	return cmd
+}
+
+func runCLIChat(ctx context.Context, c *client.Client, chatReq client.ChatRequest) error {
+	for {
+		events, errs := c.Chat(ctx, chatReq)
+		printedDelta := false
+		followup := ""
+		for event := range events {
+			switch event.Type {
+			case "session":
+				if event.Session != nil {
+					chatReq.SessionID = event.Session.ID
+					chatReq.AgentName = ""
+					fmt.Fprintf(os.Stderr, "session %s (%s)\n", event.Session.ID, event.Session.AgentName)
+				}
+			case "delta":
+				fmt.Print(event.Delta)
+				printedDelta = true
+			case "assistant":
+				if !printedDelta {
+					fmt.Print(event.Delta)
+					printedDelta = true
+				}
+			case "notice":
+				fmt.Fprintf(os.Stderr, "%s\n", event.Notice)
+			case "permission_request":
+				if event.Request != nil {
+					if err := promptPermission(ctx, c, *event.Request); err != nil {
+						return err
+					}
+				}
+			case "user_input_request":
+				if event.Input != nil {
+					decision, text, err := promptUserInput(*event.Input)
+					if err != nil {
+						return err
+					}
+					if event.Input.Provider == config.ProviderClaude {
+						if err := c.DecideUserInput(ctx, event.Input.ID, decision); err != nil {
+							return err
+						}
+						followup = text
+					} else if err := c.DecideUserInput(ctx, event.Input.ID, decision); err != nil {
+						return err
+					}
+				}
+			case "error":
+				return errors.New(event.Error)
+			}
+		}
+		if err := <-errs; err != nil {
+			return err
+		}
+		if followup == "" {
+			fmt.Println()
+			return nil
+		}
+		if chatReq.SessionID == "" {
+			return errors.New("cannot answer provider question without a session")
+		}
+		chatReq.Message = followup
+	}
+}
+
+func newPlanCmd(addr *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Review and decide implementation plans",
+	}
+	cmd.AddCommand(newPlanShowCmd(addr))
+	cmd.AddCommand(newPlanStatusCmd(addr))
+	cmd.AddCommand(newPlanApproveCmd(addr))
+	cmd.AddCommand(newPlanFeedbackCmd(addr))
+	cmd.AddCommand(newPlanRejectCmd(addr))
+	return cmd
+}
+
+func newPlanShowCmd(addr *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show [session]",
+		Short: "Print the current plan Markdown",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			id, err := resolvePlanSession(cmd.Context(), c, args)
+			if err != nil {
+				return err
+			}
+			status, err := c.GetPlan(cmd.Context(), id)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(status.Plan.Markdown) == "" {
+				return fmt.Errorf("session %s has no submitted plan", id)
+			}
+			fmt.Println(status.Plan.Markdown)
+			return nil
+		},
+	}
+}
+
+func newPlanStatusCmd(addr *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status [session]",
+		Short: "Show whether a session is awaiting plan approval",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			id, err := resolvePlanSession(cmd.Context(), c, args)
+			if err != nil {
+				return err
+			}
+			status, err := c.GetPlan(cmd.Context(), id)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s\tstate=%s\texplicit=%t", status.SessionID, status.State, status.Explicit)
+			if status.Plan.FilePath != "" {
+				fmt.Printf("\tfile=%s", status.Plan.FilePath)
+			}
+			if status.Plan.UpdatedAt != "" {
+				fmt.Printf("\tupdated=%s", status.Plan.UpdatedAt)
+			}
+			fmt.Println()
+			return nil
+		},
+	}
+}
+
+func newPlanApproveCmd(addr *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "approve <session>",
+		Short: "Approve a submitted plan and continue the build",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			decision, err := c.ApprovePlan(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "approved plan for session %s\n", decision.Session.ID)
+			if strings.TrimSpace(decision.NextMessage) == "" {
+				return nil
+			}
+			return runCLIChat(cmd.Context(), c, client.ChatRequest{SessionID: decision.Session.ID, Message: decision.NextMessage})
+		},
+	}
+}
+
+func newPlanFeedbackCmd(addr *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "feedback <session> <text>",
+		Short: "Send feedback and ask the agent to revise the plan",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			decision, err := c.FeedbackPlan(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "sent plan feedback for session %s\n", decision.Session.ID)
+			return runCLIChat(cmd.Context(), c, client.ChatRequest{SessionID: decision.Session.ID, Message: decision.NextMessage})
+		},
+	}
+}
+
+func newPlanRejectCmd(addr *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "reject <session>",
+		Short: "Reject a submitted plan and leave plan mode",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			session, err := c.RejectPlan(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("rejected plan for session %s\n", session.ID)
+			return nil
+		},
+	}
+}
+
+func resolvePlanSession(ctx context.Context, c *client.Client, args []string) (string, error) {
+	if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
+		return args[0], nil
+	}
+	sessions, err := c.ListSessions(ctx)
+	if err != nil {
+		return "", err
+	}
+	var awaiting []string
+	for _, s := range sessions {
+		if string(s.PlanState) == "awaiting_approval" {
+			awaiting = append(awaiting, s.ID)
+		}
+	}
+	if len(awaiting) == 1 {
+		return awaiting[0], nil
+	}
+	if len(awaiting) == 0 {
+		return "", errors.New("no session is awaiting plan approval")
+	}
+	return "", fmt.Errorf("multiple sessions are awaiting plan approval: %s", strings.Join(awaiting, ", "))
 }
 
 func newSessionsCmd(addr *string) *cobra.Command {

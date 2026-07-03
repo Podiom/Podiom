@@ -13,7 +13,7 @@
     updateTask,
   } from "../lib/api";
   import { agentGradient, avatarStyle, initial, projectColor } from "../lib/theme";
-  import type { Agent, Project, Task, TaskStatus } from "../lib/types";
+  import type { Agent, Project, Session, Task, TaskStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -44,6 +44,7 @@
   let busy = $state(false);
   let activeColumn = $state<TaskStatus>("backlog");
   let taskHasSession = $state<Record<string, boolean>>({});
+  let taskSessions = $state<Record<string, Session | null>>({});
   let busyDescribe = $state("");
 
   // Task delete confirmation.
@@ -64,6 +65,7 @@
   let ntAgent = $state("");
   let ntScheduled = $state(false);
   let ntPickup = $state("");
+  let ntPlanRequired = $state(false);
   let newProjName = $state("");
   let newProjOpen = $state(false);
 
@@ -75,6 +77,7 @@
   let etAgent = $state("");
   let etScheduled = $state(false);
   let etPickup = $state("");
+  let etPlanRequired = $state(false);
   let savingEdit = $state(false);
 
   onMount(load);
@@ -83,10 +86,11 @@
     try {
       const [nextTasks, nextProjects] = await Promise.all([listTasks(), listProjects()]);
       const sessionPairs = await Promise.all(
-        nextTasks.map(async (task) => [task.ID, Boolean(await taskSession(task.ID))] as const),
+        nextTasks.map(async (task) => [task.ID, await taskSession(task.ID)] as const),
       );
       projects = nextProjects;
-      taskHasSession = Object.fromEntries(sessionPairs);
+      taskSessions = Object.fromEntries(sessionPairs);
+      taskHasSession = Object.fromEntries(sessionPairs.map(([id, session]) => [id, Boolean(session)]));
       tasks = nextTasks;
       if (!ntAgent && agents.length) ntAgent = agents[0].Name;
     } catch (e) {
@@ -112,6 +116,10 @@
 
   function hasSession(task: Task): boolean {
     return taskHasSession[task.ID] ?? false;
+  }
+
+  function linkedSession(task: Task): Session | null {
+    return taskSessions[task.ID] ?? null;
   }
 
   async function move(task: Task, status: TaskStatus) {
@@ -194,7 +202,11 @@
   function chip(task: Task): { label: string; bg: string; fg: string } {
     if (task.Status === "done") return { label: "✓ done", bg: "#E3F1EC", fg: "#3F7A5F" };
     if (task.Status === "in_progress") return { label: "● working", bg: "#E3F1EC", fg: "#2F6E60" };
+    if (task.Status === "review" && linkedSession(task)?.PlanState === "awaiting_approval") {
+      return { label: "awaiting plan", bg: "#FBF1DD", fg: "#9A6E1E" };
+    }
     if (task.Status === "review") return { label: "awaiting review", bg: "#EEEAFB", fg: "#5847B8" };
+    if (task.PlanRequired && !hasSession(task)) return { label: "plans first", bg: "#FBF1DD", fg: "#9A6E1E" };
     if (task.PickupAt) return { label: "⟳ scheduled", bg: "#FBF1DD", fg: "#9A6E1E" };
     return { label: "on demand", bg: "#F1EADF", fg: "#8A7560" };
   }
@@ -220,12 +232,14 @@
         title: ntTitle.trim(),
         body: ntBody.trim(),
         assigned_agent: ntAgent,
+        plan_required: ntPlanRequired,
         pickup_at: ntScheduled && ntPickup ? new Date(ntPickup).toISOString() : "",
       });
       creating = false;
       ntTitle = ntBody = "";
       ntScheduled = false;
       ntPickup = "";
+      ntPlanRequired = false;
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -291,6 +305,7 @@
     etAgent = task.AssignedAgent;
     etScheduled = Boolean(task.PickupAt);
     etPickup = toDateTimeLocal(task.PickupAt);
+    etPlanRequired = task.PlanRequired;
     openCard = null;
   }
 
@@ -304,6 +319,7 @@
         title: etTitle.trim(),
         body: etBody.trim(),
         assigned_agent: etAgent,
+        plan_required: etPlanRequired,
         pickup_at: etScheduled && etPickup ? new Date(etPickup).toISOString() : "",
       });
       editing = null;
@@ -564,6 +580,12 @@
           {/each}
         </div>
 
+        <div class="label-mono" style="margin:18px 0 8px">start mode</div>
+        <button class="plan-task-toggle" class:on={ntPlanRequired} onclick={() => (ntPlanRequired = !ntPlanRequired)}>
+          <span class="plan-task-dot"></span>
+          Create plan before implementation
+        </button>
+
         <div class="label-mono" style="margin:18px 0 8px">when</div>
         <div style="display:flex;gap:9px">
           <button style={projChipStyle("", !ntScheduled)} onclick={() => (ntScheduled = false)}>On demand</button>
@@ -618,6 +640,12 @@
             </button>
           {/each}
         </div>
+
+        <div class="label-mono" style="margin:18px 0 8px">start mode</div>
+        <button class="plan-task-toggle" class:on={etPlanRequired} onclick={() => (etPlanRequired = !etPlanRequired)}>
+          <span class="plan-task-dot"></span>
+          Create plan before implementation
+        </button>
 
         <div class="label-mono" style="margin:18px 0 8px">when</div>
         <div style="display:flex;gap:9px">
@@ -1017,6 +1045,35 @@
     border: 1.5px dashed #c9b89f;
     background: transparent;
     color: #a8825e;
+  }
+
+  .plan-task-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    border: 1px solid #eae0d4;
+    border-radius: 11px;
+    background: #fff;
+    color: #6f6459;
+    padding: 8px 13px;
+    cursor: pointer;
+    font: 650 12.5px "Hanken Grotesk";
+  }
+
+  .plan-task-toggle.on {
+    border-color: #f0dca9;
+    background: #fbf1dd;
+    color: #9a6e1e;
+  }
+
+  .plan-task-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 99px;
+    background: currentColor;
+    opacity: 0.72;
   }
 
   @media (max-width: 768px) {

@@ -545,10 +545,11 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 	}
 
 	sess, err := c.CreateSession(ctx, CreateSessionRequest{
-		AgentName: task.AssignedAgent,
-		Origin:    store.OriginRoadmap,
-		TaskID:    task.ID,
-		ProjectID: task.ProjectID,
+		AgentName:                      task.AssignedAgent,
+		Origin:                         store.OriginRoadmap,
+		TaskID:                         task.ID,
+		ProjectID:                      task.ProjectID,
+		CreatePlanBeforeImplementation: task.PlanRequired,
 	})
 	if err != nil {
 		return store.Session{}, err
@@ -605,6 +606,7 @@ func taskLogFields(t store.Task) map[string]string {
 		"body":    boolString(strings.TrimSpace(t.Body) != ""),
 		"agent":   t.AssignedAgent,
 		"status":  string(t.Status),
+		"plan":    boolString(t.PlanRequired),
 		"pickup":  boolString(strings.TrimSpace(t.PickupAt) != ""),
 	}
 }
@@ -652,6 +654,7 @@ func taskChangesLockedFields(before, after store.Task) bool {
 		before.Title != after.Title ||
 		before.Body != after.Body ||
 		before.AssignedAgent != after.AssignedAgent ||
+		before.PlanRequired != after.PlanRequired ||
 		before.PickupAt != after.PickupAt
 }
 

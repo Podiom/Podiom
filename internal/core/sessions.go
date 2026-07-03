@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,17 +17,18 @@ import (
 // CreateSessionRequest creates a durable session bound to an agent. Empty
 // settings inherit the agent defaults; origin is immutable after creation.
 type CreateSessionRequest struct {
-	AgentName      string
-	Origin         store.SessionOrigin
-	Provider       config.Provider
-	Profile        string
-	Model          string
-	Effort         string
-	PermissionMode config.PermissionMode
-	ScheduleID     string
-	RunID          string
-	TaskID         string
-	ProjectID      string
+	AgentName                      string
+	Origin                         store.SessionOrigin
+	Provider                       config.Provider
+	Profile                        string
+	Model                          string
+	Effort                         string
+	PermissionMode                 config.PermissionMode
+	ScheduleID                     string
+	RunID                          string
+	TaskID                         string
+	ProjectID                      string
+	CreatePlanBeforeImplementation bool
 }
 
 // CreateSession creates a durable session and starts a fake/provider backing
@@ -62,6 +64,11 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		RunID:          req.RunID,
 		TaskID:         req.TaskID,
 		ProjectID:      projectID,
+		PlanState:      store.PlanNone,
+	}
+	if req.CreatePlanBeforeImplementation {
+		sess.PlanState = store.PlanPendingSubmission
+		sess.PlanExplicit = true
 	}
 	if req.PermissionMode != "" {
 		sess.PermissionMode = req.PermissionMode
@@ -443,6 +450,13 @@ func (c *Core) sessionExtraWorkspaceDirs(projectCtx projectExecutionContext) []s
 }
 
 func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, extraWorkspaceDirs []string, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
+	effectivePermission := sess.PermissionMode
+	relay := opts.PermissionRelay
+	if PlanGateActive(sess) {
+		effectivePermission = config.PermissionApprove
+		relay = NewPlanGateRelay(c.log)
+	}
+	mcpServers, mcpAll = c.withInternalPlanMCP(sess, opts.PermissionTurnID, mcpServers, mcpAll)
 	return adapter.TurnRequest{
 		SessionID: sess.ID,
 		Handle: adapter.Handle{
@@ -457,7 +471,7 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			ProfileDir:         c.profileDir(sess.Provider, sess.Profile),
 			Model:              sess.Model,
 			Effort:             sess.Effort,
-			PermissionMode:     sess.PermissionMode,
+			PermissionMode:     effectivePermission,
 			WorkspaceDir:       c.AgentPaths(sess.AgentName).Workspace,
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
 			PermissionTurnID:   firstNonEmpty(opts.PermissionTurnID, fmt.Sprintf("%s-%d", sess.ID, time.Now().UnixNano())),
@@ -467,9 +481,35 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			MCPServers:         mcpServers,
 			MCPAllServers:      mcpAll,
 		},
-		Relay: opts.PermissionRelay,
+		Relay: relay,
 		Input: opts.UserInputRelay,
 	}
+}
+
+func (c *Core) withInternalPlanMCP(sess store.Session, turnID string, assigned, all []podiommcp.Server) ([]podiommcp.Server, []podiommcp.Server) {
+	if c.daemonAddr == "" {
+		return assigned, all
+	}
+	exe, err := os.Executable()
+	if err != nil || strings.TrimSpace(exe) == "" {
+		return assigned, all
+	}
+	if turnID == "" {
+		turnID = sess.ID
+	}
+	server := podiommcp.Server{
+		Name:      "podiom_plan",
+		Transport: podiommcp.TransportStdio,
+		Command:   exe,
+		Args: []string{
+			"plan-mcp",
+			"--addr", c.daemonAddr,
+			"--session", sess.ID,
+			"--turn", turnID,
+		},
+		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
+	}
+	return append(assigned, server), append(all, server)
 }
 
 func (c *Core) permissionTimeout() time.Duration {

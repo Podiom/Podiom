@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/google/uuid"
 )
 
 const defaultHTTPPermissionTimeout = 3 * time.Minute
@@ -34,26 +34,28 @@ type agentCreateRequest struct {
 }
 
 type sessionCreateRequest struct {
-	AgentName      string                `json:"agent_name"`
-	Origin         store.SessionOrigin   `json:"origin"`
-	Provider       config.Provider       `json:"provider,omitempty"`
-	Profile        string                `json:"profile,omitempty"`
-	Model          string                `json:"model,omitempty"`
-	Effort         string                `json:"effort,omitempty"`
-	PermissionMode config.PermissionMode `json:"permission_mode,omitempty"`
-	ProjectID      string                `json:"project_id,omitempty"`
+	AgentName                      string                `json:"agent_name"`
+	Origin                         store.SessionOrigin   `json:"origin"`
+	Provider                       config.Provider       `json:"provider,omitempty"`
+	Profile                        string                `json:"profile,omitempty"`
+	Model                          string                `json:"model,omitempty"`
+	Effort                         string                `json:"effort,omitempty"`
+	PermissionMode                 config.PermissionMode `json:"permission_mode,omitempty"`
+	ProjectID                      string                `json:"project_id,omitempty"`
+	CreatePlanBeforeImplementation bool                  `json:"create_plan_before_implementation,omitempty"`
 }
 
 type chatRequest struct {
-	SessionID      string                `json:"session_id,omitempty"`
-	AgentName      string                `json:"agent_name,omitempty"`
-	Message        string                `json:"message"`
-	Provider       config.Provider       `json:"provider,omitempty"`
-	Profile        string                `json:"profile,omitempty"`
-	Model          string                `json:"model,omitempty"`
-	Effort         string                `json:"effort,omitempty"`
-	PermissionMode config.PermissionMode `json:"permission_mode,omitempty"`
-	ProjectID      string                `json:"project_id,omitempty"`
+	SessionID                      string                `json:"session_id,omitempty"`
+	AgentName                      string                `json:"agent_name,omitempty"`
+	Message                        string                `json:"message"`
+	Provider                       config.Provider       `json:"provider,omitempty"`
+	Profile                        string                `json:"profile,omitempty"`
+	Model                          string                `json:"model,omitempty"`
+	Effort                         string                `json:"effort,omitempty"`
+	PermissionMode                 config.PermissionMode `json:"permission_mode,omitempty"`
+	ProjectID                      string                `json:"project_id,omitempty"`
+	CreatePlanBeforeImplementation bool                  `json:"create_plan_before_implementation,omitempty"`
 }
 
 type streamEvent struct {
@@ -608,14 +610,15 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			req.Origin = store.OriginCLI
 		}
 		session, err := s.core.CreateSession(r.Context(), core.CreateSessionRequest{
-			AgentName:      req.AgentName,
-			Origin:         req.Origin,
-			Provider:       req.Provider,
-			Profile:        req.Profile,
-			Model:          req.Model,
-			Effort:         req.Effort,
-			PermissionMode: req.PermissionMode,
-			ProjectID:      req.ProjectID,
+			AgentName:                      req.AgentName,
+			Origin:                         req.Origin,
+			Provider:                       req.Provider,
+			Profile:                        req.Profile,
+			Model:                          req.Model,
+			Effort:                         req.Effort,
+			PermissionMode:                 req.PermissionMode,
+			ProjectID:                      req.ProjectID,
+			CreatePlanBeforeImplementation: req.CreatePlanBeforeImplementation,
 		})
 		if err == nil {
 			s.log.Info("session create requested", "event", "run", "session", session.ID, "agent", session.AgentName, "provider", string(session.Provider), "origin", string(session.Origin), "project", session.ProjectID)
@@ -726,14 +729,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session, err = s.core.CreateSession(ctx, core.CreateSessionRequest{
-			AgentName:      req.AgentName,
-			Origin:         store.OriginCLI,
-			Provider:       req.Provider,
-			Profile:        req.Profile,
-			Model:          req.Model,
-			Effort:         req.Effort,
-			PermissionMode: req.PermissionMode,
-			ProjectID:      req.ProjectID,
+			AgentName:                      req.AgentName,
+			Origin:                         store.OriginCLI,
+			Provider:                       req.Provider,
+			Profile:                        req.Profile,
+			Model:                          req.Model,
+			Effort:                         req.Effort,
+			PermissionMode:                 req.PermissionMode,
+			ProjectID:                      req.ProjectID,
+			CreatePlanBeforeImplementation: req.CreatePlanBeforeImplementation,
 		})
 	} else {
 		session, err = s.core.GetSession(ctx, req.SessionID)

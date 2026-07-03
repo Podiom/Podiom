@@ -97,6 +97,14 @@ export interface GlobalConfigPatch {
 }
 export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap";
 export type MessageRole = "user" | "assistant";
+export type PlanState = "none" | "pending_submission" | "awaiting_approval";
+
+export interface PlanInfo {
+  file_path: string;
+  markdown: string;
+  submitted_at: string;
+  updated_at: string;
+}
 
 export interface Agent {
   Name: string;
@@ -137,6 +145,9 @@ export interface Session {
   TaskID: string;
   ProjectID: string;
   ProviderHandle: string;
+  PlanState: PlanState;
+  PlanExplicit: boolean;
+  PlanInfo: PlanInfo;
   // Set once a session has been consolidated into the agent's memory. Empty
   // means the session is un-dreamed (pending consolidation).
   DreamedAt?: string;
@@ -292,6 +303,7 @@ export interface Task {
   Body: string;
   AssignedAgent: string;
   Status: TaskStatus;
+  PlanRequired: boolean;
   PickupAt: string;
   CreatedAt: string;
   UpdatedAt: string;
@@ -474,6 +486,7 @@ export type ClientMessage =
       effort?: string;
       permission_mode?: PermissionMode;
       project_id?: string;
+      create_plan_before_implementation?: boolean;
     }
   | {
       type: "send_turn";
@@ -487,7 +500,11 @@ export type ClientMessage =
       effort?: string;
       permission_mode?: PermissionMode;
       project_id?: string;
+      create_plan_before_implementation?: boolean;
     }
+  | { type: "plan_approve"; request_id: string; session_id: string }
+  | { type: "plan_feedback"; request_id: string; session_id: string; feedback: string }
+  | { type: "plan_reject"; request_id: string; session_id: string }
   | { type: "permission_decision"; request_id: string; decision: PermissionDecision }
   | { type: "user_input_decision"; request_id: string; input: UserInputDecision }
   | { type: "dream"; request_id: string; agent_name: string };
@@ -515,6 +532,8 @@ export interface ServerMessage {
   active_turns?: ActiveTurnSummary[];
   usage?: UsageSnapshot[];
   session?: Session;
+  plan?: PlanInfo;
+  next_message?: string;
   history?: Message[];
   message?: Message;
   delta?: string;

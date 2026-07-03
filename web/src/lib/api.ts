@@ -18,6 +18,8 @@ import type {
   MCPSnapshot,
   MCPServer,
   MemoryInfo,
+  PlanInfo,
+  PlanState,
   ProfileInfo,
   Project,
   Provider,
@@ -507,6 +509,7 @@ export interface NewTaskRequest {
   body: string;
   assigned_agent: string;
   status?: TaskStatus;
+  plan_required?: boolean;
   pickup_at?: string;
 }
 
@@ -526,6 +529,7 @@ export interface TaskPatch {
   body?: string;
   assigned_agent?: string;
   status?: TaskStatus;
+  plan_required?: boolean;
   pickup_at?: string;
 }
 
@@ -537,6 +541,40 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
       body: JSON.stringify(patch),
     }),
   );
+}
+
+export interface PlanStatus {
+  session_id: string;
+  state: PlanState;
+  explicit: boolean;
+  plan: PlanInfo;
+}
+
+export interface PlanDecision {
+  session: Session;
+  next_message?: string;
+}
+
+export async function getPlan(sessionId: string): Promise<PlanStatus> {
+  return asJSON(await fetch(`/api/plans/${encodeURIComponent(sessionId)}`));
+}
+
+export async function approvePlan(sessionId: string): Promise<PlanDecision> {
+  return asJSON(await fetch(`/api/plans/${encodeURIComponent(sessionId)}/approve`, { method: "POST" }));
+}
+
+export async function feedbackPlan(sessionId: string, feedback: string): Promise<PlanDecision> {
+  return asJSON(
+    await fetch(`/api/plans/${encodeURIComponent(sessionId)}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feedback }),
+    }),
+  );
+}
+
+export async function rejectPlan(sessionId: string): Promise<Session> {
+  return asJSON(await fetch(`/api/plans/${encodeURIComponent(sessionId)}/reject`, { method: "POST" }));
 }
 
 export async function deleteTask(id: string): Promise<void> {

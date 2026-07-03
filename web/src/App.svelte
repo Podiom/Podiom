@@ -505,6 +505,7 @@
       <button
         class="toast"
         class:permission={t.kind === "permission"}
+        class:plan={t.kind === "plan"}
         onclick={() => {
           live.navigateToSession(t.sessionId);
           live.dismissToast(t.id);
@@ -686,6 +687,11 @@
   .toast.permission .toast-dot {
     background: #d64528;
     box-shadow: 0 0 0 3px rgba(214, 69, 40, 0.16);
+  }
+
+  .toast.plan .toast-dot {
+    background: #9a6e1e;
+    box-shadow: 0 0 0 3px rgba(154, 110, 30, 0.16);
   }
 
   .toast-body {

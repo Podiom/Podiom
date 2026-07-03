@@ -21,21 +21,28 @@ func TestTaskCRUDAndDuePickup(t *testing.T) {
 		t.Fatalf("create agent: %v", err)
 	}
 
-	created, err := db.CreateTask(ctx, Task{ProjectID: "mc", Title: "Add dark mode", AssignedAgent: "jared"})
+	created, err := db.CreateTask(ctx, Task{ProjectID: "mc", Title: "Add dark mode", AssignedAgent: "jared", PlanRequired: true})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 	if created.Status != TaskBacklog {
 		t.Fatalf("default status = %q, want backlog", created.Status)
 	}
+	if !created.PlanRequired {
+		t.Fatalf("plan_required did not round-trip on create")
+	}
 
 	created.Status = TaskInProgress
+	created.PlanRequired = false
 	updated, err := db.UpdateTask(ctx, created)
 	if err != nil {
 		t.Fatalf("update task: %v", err)
 	}
 	if updated.Status != TaskInProgress {
 		t.Fatalf("status not updated: %+v", updated)
+	}
+	if updated.PlanRequired {
+		t.Fatalf("plan_required did not round-trip on update")
 	}
 
 	all, err := db.ListTasks(ctx)

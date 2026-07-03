@@ -224,6 +224,11 @@ func (h *activeTurnHub) recordMessage(sessionID string, msg *store.Message) {
 	h.broadcast(writers, ServerMessage{Type: "message", RequestID: requestID, SessionID: sessionID, Message: msg})
 }
 
+func (h *activeTurnHub) recordSession(session store.Session) {
+	writers, requestID := h.turnWriters(session.ID)
+	h.broadcast(writers, ServerMessage{Type: "session", RequestID: requestID, SessionID: session.ID, Session: &session})
+}
+
 func (h *activeTurnHub) recordDelta(sessionID, delta string) {
 	h.mu.Lock()
 	turn := h.turns[sessionID]

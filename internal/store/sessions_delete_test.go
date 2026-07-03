@@ -22,6 +22,9 @@ func TestDeleteSessionCascadesMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
+	if sess.PlanState != PlanNone || sess.PlanExplicit || sess.PlanInfo.Markdown != "" {
+		t.Fatalf("new session should default to no plan state, got %+v", sess)
+	}
 	if _, err := db.AppendMessages(ctx, sess.ID, []Message{
 		{Role: RoleUser, Content: "hi"},
 		{Role: RoleAssistant, Content: "hello"},

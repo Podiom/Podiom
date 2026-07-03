@@ -52,6 +52,7 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newPermissionMCPCmd())
+	cmd.AddCommand(newPlanMCPCmd())
 	return cmd
 }
 
@@ -149,12 +150,13 @@ func run() error {
 		adapters[config.ProviderCodex] = codex
 	}
 	coreSvc, err := core.New(core.Options{
-		Paths:    paths,
-		Store:    db,
-		Adapter:  adapter.NewRouter(adapters),
-		Global:   cfg.Global,
-		Profiles: cfg.Profiles,
-		Logger:   log,
+		Paths:      paths,
+		Store:      db,
+		Adapter:    adapter.NewRouter(adapters),
+		Global:     cfg.Global,
+		Profiles:   cfg.Profiles,
+		DaemonAddr: addr,
+		Logger:     log,
 	})
 	if err != nil {
 		return err

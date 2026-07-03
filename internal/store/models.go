@@ -20,6 +20,27 @@ const (
 	OriginRoadmap SessionOrigin = "roadmap"
 )
 
+// PlanState records whether a session is mechanically gated for plan mode.
+type PlanState string
+
+const (
+	// PlanNone means the session is not gated by plan mode.
+	PlanNone PlanState = "none"
+	// PlanPendingSubmission means plan mode is explicit and the agent still
+	// needs to submit the first plan.
+	PlanPendingSubmission PlanState = "pending_submission"
+	// PlanAwaitingApproval means a submitted plan is waiting on the user.
+	PlanAwaitingApproval PlanState = "awaiting_approval"
+)
+
+// PlanInfo is the displayable plan artifact attached to a session.
+type PlanInfo struct {
+	FilePath    string `json:"file_path"`
+	Markdown    string `json:"markdown"`
+	SubmittedAt string `json:"submitted_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
 // MessageRole identifies the speaker for a canonical history entry.
 type MessageRole string
 
@@ -71,6 +92,9 @@ type Session struct {
 	CreatedAt      string
 	UpdatedAt      string
 	ProjectID      string
+	PlanState      PlanState
+	PlanExplicit   bool
+	PlanInfo       PlanInfo
 	// DreamedAt is set once a session has been consolidated into the agent's
 	// MEMORY.md. Empty means the session is un-dreamed (pending consolidation).
 	DreamedAt string
@@ -210,6 +234,7 @@ type Task struct {
 	Body          string
 	AssignedAgent string
 	Status        TaskStatus
+	PlanRequired  bool
 	PickupAt      string // optional RFC3339 scheduled pickup time
 	CreatedAt     string
 	UpdatedAt     string

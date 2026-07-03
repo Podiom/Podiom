@@ -11,19 +11,21 @@ import (
 
 // ClientMessage is the browser-to-daemon WebSocket contract.
 type ClientMessage struct {
-	Type           string                      `json:"type"`
-	RequestID      string                      `json:"request_id,omitempty"`
-	AgentName      string                      `json:"agent_name,omitempty"`
-	SessionID      string                      `json:"session_id,omitempty"`
-	Message        string                      `json:"message,omitempty"`
-	Provider       config.Provider             `json:"provider,omitempty"`
-	Profile        string                      `json:"profile,omitempty"`
-	Model          string                      `json:"model,omitempty"`
-	Effort         string                      `json:"effort,omitempty"`
-	ProjectID      string                      `json:"project_id,omitempty"`
-	PermissionMode config.PermissionMode       `json:"permission_mode,omitempty"`
-	Decision       *adapter.PermissionDecision `json:"decision,omitempty"`
-	Input          *adapter.UserInputDecision  `json:"input,omitempty"`
+	Type                           string                      `json:"type"`
+	RequestID                      string                      `json:"request_id,omitempty"`
+	AgentName                      string                      `json:"agent_name,omitempty"`
+	SessionID                      string                      `json:"session_id,omitempty"`
+	Message                        string                      `json:"message,omitempty"`
+	Provider                       config.Provider             `json:"provider,omitempty"`
+	Profile                        string                      `json:"profile,omitempty"`
+	Model                          string                      `json:"model,omitempty"`
+	Effort                         string                      `json:"effort,omitempty"`
+	ProjectID                      string                      `json:"project_id,omitempty"`
+	PermissionMode                 config.PermissionMode       `json:"permission_mode,omitempty"`
+	CreatePlanBeforeImplementation bool                        `json:"create_plan_before_implementation,omitempty"`
+	Feedback                       string                      `json:"feedback,omitempty"`
+	Decision                       *adapter.PermissionDecision `json:"decision,omitempty"`
+	Input                          *adapter.UserInputDecision  `json:"input,omitempty"`
 }
 
 // ServerMessage is the daemon-to-browser WebSocket contract.
@@ -36,6 +38,8 @@ type ServerMessage struct {
 	ActiveTurns []ActiveTurnSummary        `json:"active_turns,omitempty"`
 	Usage       []usage.Snapshot           `json:"usage,omitempty"`
 	Session     *store.Session             `json:"session,omitempty"`
+	Plan        *store.PlanInfo            `json:"plan,omitempty"`
+	NextMessage string                     `json:"next_message,omitempty"`
 	History     []store.Message            `json:"history,omitempty"`
 	Message     *store.Message             `json:"message,omitempty"`
 	Delta       string                     `json:"delta,omitempty"`
