@@ -323,6 +323,27 @@ func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
 	}
 }
 
+func TestCodexAppServerStartupErrorIncludesStderr(t *testing.T) {
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "stderr_exit")
+	codex := newTestCodex(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := codex.Start(ctx, StartRequest{
+		SessionID:      "session-stderr",
+		AgentName:      "atlas",
+		Provider:       config.ProviderCodex,
+		PermissionMode: config.PermissionApprove,
+		WorkspaceDir:   t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("expected startup error")
+	}
+	if !strings.Contains(err.Error(), "invalid type: boolean") {
+		t.Fatalf("startup error should include stderr tail, got: %v", err)
+	}
+}
+
 func TestCodexHelperProcess(t *testing.T) {
 	if os.Getenv("PODIOM_CODEX_HELPER") != "1" {
 		return
@@ -400,6 +421,11 @@ func collectCodexText(t *testing.T, events <-chan Event) string {
 }
 
 func runFakeCodexAppServer() {
+	if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "stderr_exit" {
+		fmt.Fprintln(os.Stderr, "Error: invalid type: boolean `false`, expected a string")
+		time.Sleep(50 * time.Millisecond)
+		os.Exit(1)
+	}
 	enc := json.NewEncoder(os.Stdout)
 	scanner := bufio.NewScanner(os.Stdin)
 	loaded := map[string]bool{}

@@ -273,24 +273,27 @@ type codexClient struct {
 	profileConfig string
 	log           *slog.Logger
 
-	initMu sync.Mutex
-	mu     sync.Mutex
+	initMu   sync.Mutex
+	mu       sync.Mutex
+	stderrMu sync.Mutex
 
 	cmd         *osProcess
 	stdin       io.WriteCloser
 	nextID      int64
 	initialized bool
 
-	pending  map[string]chan codexCallResponse
-	loaded   map[string]bool
-	watchers map[codexTurnKey]chan codexStreamEvent
-	buffered map[codexTurnKey][]codexStreamEvent
-	active   map[codexTurnKey]codexActiveTurn
+	pending    map[string]chan codexCallResponse
+	loaded     map[string]bool
+	watchers   map[codexTurnKey]chan codexStreamEvent
+	buffered   map[codexTurnKey][]codexStreamEvent
+	active     map[codexTurnKey]codexActiveTurn
+	stderrTail []string
 }
 
 type osProcess struct {
-	cmdWait func() error
-	kill    func() error
+	cmdWait    func() error
+	kill       func() error
+	stderrDone chan struct{}
 }
 
 type codexCallResponse struct {
@@ -420,11 +423,12 @@ func (c *codexClient) ensureProcess(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stdin == nil {
-		return fmt.Errorf("%w: app-server exited during initialize", errCodexTransport)
+		return c.withStderrTail(fmt.Errorf("%w: app-server exited during initialize", errCodexTransport))
 	}
 	if err := c.writeJSONLocked(map[string]any{"method": "initialized"}); err != nil {
-		c.log.Warn("provider initialized notification failed", "stage", "initialize", "method", "initialized", "error", podiomlog.Redact(err.Error()))
-		return fmt.Errorf("%w: write initialized: %v", errCodexTransport, err)
+		transportErr := c.withStderrTail(fmt.Errorf("%w: write initialized: %v", errCodexTransport, err))
+		c.log.Warn("provider initialized notification failed", "stage", "initialize", "method", "initialized", "error", podiomlog.Redact(transportErr.Error()))
+		return transportErr
 	}
 	c.initialized = true
 	c.log.Info("provider initialized", "event", "provider", "stage", "initialize", "mcp_profile", c.profileName, "mcp_profile_hash", c.profileHash)
@@ -451,22 +455,25 @@ func (c *codexClient) startLocked() error {
 	if err != nil {
 		return fmt.Errorf("codex stderr: %w", err)
 	}
+	c.clearStderrTail()
 	if err := cmd.Start(); err != nil {
 		c.log.Warn("provider app-server start failed", "stage", "start", "error", err)
 		return fmt.Errorf("start codex app-server: %w", err)
 	}
 	c.log.Info("provider app-server started", "event", "provider", "stage", "start", "command", c.bin, "mcp_profile", c.profileName, "profile_dir_set", c.profileDir != "")
 
+	stderrDone := make(chan struct{})
 	proc := &osProcess{
-		cmdWait: cmd.Wait,
-		kill:    func() error { return podiomexec.Kill(cmd) },
+		cmdWait:    cmd.Wait,
+		kill:       func() error { return podiomexec.Kill(cmd) },
+		stderrDone: stderrDone,
 	}
 	c.cmd = proc
 	c.stdin = stdin
 	c.initialized = false
 	c.loaded = map[string]bool{}
 	go c.readLoop(proc, stdout)
-	go c.readStderr(stderr)
+	go c.readStderr(stderr, stderrDone)
 	return nil
 }
 
@@ -536,26 +543,71 @@ func (c *codexClient) readLoop(proc *osProcess, stdout io.Reader) {
 	if err == nil {
 		err = io.EOF
 	}
-	c.log.Warn("provider app-server stream ended", "event", "provider", "stage", "read_stdout", "error", podiomlog.Redact(err.Error()))
+	if proc.stderrDone != nil {
+		select {
+		case <-proc.stderrDone:
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	transportErr := c.withStderrTail(fmt.Errorf("%w: %v", errCodexTransport, err))
+	c.log.Warn("provider app-server stream ended", "event", "provider", "stage", "read_stdout", "error", podiomlog.Redact(transportErr.Error()))
 	c.mu.Lock()
 	if c.cmd == proc {
-		c.failLocked(fmt.Errorf("%w: %v", errCodexTransport, err))
+		c.failLocked(transportErr)
 	}
 	c.mu.Unlock()
 }
 
-func (c *codexClient) readStderr(stderr io.Reader) {
+func (c *codexClient) readStderr(stderr io.Reader, done chan<- struct{}) {
+	defer close(done)
 	scanner := bufio.NewScanner(stderr)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" {
-			c.log.Debug("provider stderr", "stage", "read_stderr", "stderr_tail", podiomlog.RedactTail(line, 4096))
+			redacted := podiomlog.RedactTail(line, 4096)
+			c.recordStderr(redacted)
+			c.log.Debug("provider stderr", "stage", "read_stderr", "stderr_tail", redacted)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		c.log.Warn("provider stderr read failed", "stage", "read_stderr", "error", err)
 	}
+}
+
+const codexStderrTailLines = 20
+
+func (c *codexClient) clearStderrTail() {
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	c.stderrTail = nil
+}
+
+func (c *codexClient) recordStderr(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	c.stderrTail = append(c.stderrTail, line)
+	if len(c.stderrTail) > codexStderrTailLines {
+		c.stderrTail = c.stderrTail[len(c.stderrTail)-codexStderrTailLines:]
+	}
+}
+
+func (c *codexClient) stderrTailString() string {
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	return strings.Join(append([]string(nil), c.stderrTail...), "\n")
+}
+
+func (c *codexClient) withStderrTail(err error) error {
+	tail := strings.TrimSpace(c.stderrTailString())
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("%w; stderr: %s", err, tail)
 }
 
 func (c *codexClient) dispatch(msg codexRPCMessage) {

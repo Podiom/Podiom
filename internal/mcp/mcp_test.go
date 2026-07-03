@@ -90,6 +90,77 @@ command = "computer-use"
 	}
 }
 
+func TestImportCodexIgnoresNestedMCPChildTables(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(codexPath, []byte(`
+[mcp_servers.node_repl]
+command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"
+args = []
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+NODE_REPL_NATIVE_PIPE_CONNECT_TIMEOUT_MS = "1000"
+CODEX_CLI_PATH = "/Applications/Codex.app/Contents/Resources/codex"
+
+[mcp_servers.node_repl.headers]
+Authorization = "Bearer secret"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, err := ImportCodex(codexPath)
+	if err != nil {
+		t.Fatalf("import codex: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("codex import len = %d: %+v", len(servers), servers)
+	}
+	if servers[0].Name != "node_repl" {
+		t.Fatalf("imported wrong server: %+v", servers[0])
+	}
+	if servers[0].CodexTablePath != "mcp_servers.node_repl" {
+		t.Fatalf("codex table path = %q", servers[0].CodexTablePath)
+	}
+}
+
+func TestCodexProfileDoesNotDisableNestedChildTables(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(codexPath, []byte(`
+[mcp_servers.node_repl]
+command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"
+
+[mcp_servers.node_repl.env]
+CODEX_CLI_PATH = "/Applications/Codex.app/Contents/Resources/codex"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, err := ImportCodex(codexPath)
+	if err != nil {
+		t.Fatalf("import codex: %v", err)
+	}
+	profile, unavailable := CodexProfile(nil, servers)
+	if len(unavailable) != 0 {
+		t.Fatalf("unexpected unavailable: %+v", unavailable)
+	}
+	if strings.Contains(profile, "mcp_servers.node_repl.env") {
+		t.Fatalf("profile should not include nested env table:\n%s", profile)
+	}
+	if !strings.Contains(profile, "[mcp_servers.node_repl]") || !strings.Contains(profile, "enabled = false") {
+		t.Fatalf("profile should disable valid top-level native server:\n%s", profile)
+	}
+
+	overrides := strings.Join(CodexConfigOverrides(profile), "\n")
+	if strings.Contains(overrides, "mcp_servers.node_repl.env.enabled=false") {
+		t.Fatalf("overrides should not disable nested env table:\n%s", overrides)
+	}
+	if !strings.Contains(overrides, "mcp_servers.node_repl.enabled=false") {
+		t.Fatalf("overrides should disable top-level native server:\n%s", overrides)
+	}
+}
+
 func TestCodexProfileDisablesUnassignedAndBridgesHTTP(t *testing.T) {
 	old := execLookPath
 	execLookPath = func(file string) (string, error) { return "/usr/local/bin/" + file, nil }

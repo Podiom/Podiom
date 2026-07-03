@@ -548,6 +548,9 @@ func codexServerName(table string) (string, bool) {
 	parts := splitTable(table)
 	for i, p := range parts {
 		if p == "mcp_servers" && i+1 < len(parts) {
+			if i+2 != len(parts) {
+				return "", false
+			}
 			return parts[i+1], true
 		}
 	}
