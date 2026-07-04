@@ -4,9 +4,10 @@ configuration:
     description: >-
       The token the Podiom web UI and CLI use to authenticate with the Podiom
       daemon. Podiom writes it here so you can copy it into the token screen;
-      it is not a setting. Anything you type here is overwritten with the real
-      value on the next add-on start. To get a new token, use "Rotate gateway
-      token" instead.
+      it is not a setting. After copying it, return to the Podiom screen and
+      use the Claude/Codex terminal buttons there to finish CLI login. Anything
+      you type here is overwritten with the real value on the next add-on
+      start. To get a new token, use "Rotate gateway token" instead.
   rotate_token:
     name: Rotate gateway token
     description: >-

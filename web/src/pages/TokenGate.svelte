@@ -8,11 +8,14 @@
   import { verifyToken } from "../lib/http";
 
   const mode = deployment();
+  const profilePattern = /^[A-Za-z0-9._-]{1,64}$/;
 
   let value = $state("");
   let checking = $state(false);
   let error = $state<string | null>(null);
   let daemonUp = $state<boolean | null>(null);
+  let terminalProfile = $state("");
+  let terminalError = $state<string | null>(null);
 
   onMount(() => {
     void probe();
@@ -45,6 +48,19 @@
     }
     auth.setToken(candidate);
   }
+
+  function openTerminal(provider: "claude" | "codex") {
+    const profile = terminalProfile.trim();
+    terminalError = null;
+    if (profile && !profilePattern.test(profile)) {
+      terminalError = "Profile names may use letters, numbers, dots, underscores, and dashes.";
+      return;
+    }
+    const path = profile
+      ? `terminal/${provider}/${encodeURIComponent(profile)}/`
+      : `terminal/${provider}/`;
+    window.open(apiUrl(path).toString(), "_blank", "noopener,noreferrer");
+  }
 </script>
 
 <div class="gate-root">
@@ -67,13 +83,48 @@
       <ol class="gate-steps">
         <li>Open the Podiom app's <strong>Configuration</strong> page in Home Assistant (Settings → Add-ons → Podiom → Configuration).</li>
         <li>Copy the <span class="mono">gateway_token</span> value.</li>
-        <li>Paste it below.</li>
+        <li>Open one or both CLI login terminals below.</li>
+        <li>Paste the token below and unlock Podiom.</li>
       </ol>
     {:else}
       <ol class="gate-steps">
         <li>On the machine running Podiom, run <span class="mono">podiom token show</span>.</li>
         <li>Paste the printed value below.</li>
       </ol>
+    {/if}
+
+    {#if mode === "ha"}
+      <div class="terminal-setup">
+        <div>
+          <div class="terminal-title">CLI login terminals</div>
+          <p class="terminal-copy">
+            Claude and Codex keep their own logins. Open the terminal for each
+            CLI you want to use, finish the device login, then return here.
+          </p>
+        </div>
+        <label class="terminal-profile">
+          <span>Profile</span>
+          <input
+            class="gate-input mono"
+            bind:value={terminalProfile}
+            placeholder="optional"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Optional CLI profile"
+          />
+        </label>
+        {#if terminalError}
+          <div class="gate-error">{terminalError}</div>
+        {/if}
+        <div class="terminal-actions">
+          <button type="button" class="terminal-button claude" onclick={() => openTerminal("claude")}>
+            Claude terminal
+          </button>
+          <button type="button" class="terminal-button codex" onclick={() => openTerminal("codex")}>
+            Codex terminal
+          </button>
+        </div>
+      </div>
     {/if}
 
     <form onsubmit={submit}>
@@ -111,7 +162,7 @@
   }
   .gate-card {
     width: 100%;
-    max-width: 420px;
+    max-width: 500px;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 16px;
@@ -158,6 +209,55 @@
     font-size: 13.5px;
     display: grid;
     gap: 6px;
+  }
+  .terminal-setup {
+    margin: 0 0 18px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  .terminal-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .terminal-copy {
+    margin: 4px 0 12px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .terminal-profile {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .terminal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .terminal-button {
+    min-height: 40px;
+    border: 1px solid var(--field-line);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .terminal-button:hover {
+    border-color: var(--teal);
+  }
+  .terminal-button.claude {
+    color: #8a3d21;
+  }
+  .terminal-button.codex {
+    color: #3e4b55;
   }
   .gate-input {
     width: 100%;
@@ -211,5 +311,17 @@
   }
   .gate-dot.down {
     background: var(--orange);
+  }
+  @media (max-width: 520px) {
+    .gate-root {
+      padding: 14px;
+      align-items: flex-start;
+    }
+    .gate-card {
+      padding: 22px;
+    }
+    .terminal-actions {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

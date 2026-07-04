@@ -28,12 +28,11 @@ Exact bundled versions are listed in the changelog for every release.
 1. **Start the add-on** and open **Podiom** from the sidebar.
 2. The UI asks for the **gateway token**. Open the add-on's
    **Configuration** page — the token is in the *Gateway token* field
-   (Podiom put it there for you). Copy it, paste it into the token screen.
-   Each browser only asks once.
-3. **Log in the CLIs.** In the Podiom UI's address bar, append
-   `terminal/claude` (or `terminal/codex`) to the page URL and open it —
-   these are dedicated onboarding links, not part of the UI. Each drops you
-   straight into that CLI's login flow:
+   (Podiom put it there for you). Copy it.
+3. **Log in the CLIs.** Return to the Podiom token screen and use the
+   **Claude terminal** and **Codex terminal** buttons. Add a profile name first
+   if you want a profile-scoped login. Each button opens a dedicated onboarding
+   terminal outside the UI and drops you straight into that CLI's login flow:
    - **claude**: follow the printed URL in your own browser, then paste the
      code back into the terminal if prompted.
    - **codex**: a device-code flow prints a URL and a short one-time code.
@@ -41,15 +40,17 @@ Exact bundled versions are listed in the changelog for every release.
      settings (or by your workspace admin).
    When the login finishes you land in a shell, and a link back to Podiom is
    printed.
-4. **Return to Podiom** via the printed link and create your first agent.
+4. **Paste the gateway token** into the token screen. Each browser only asks
+   once.
+5. **Create your first agent.**
 
 ### Profiles
 
 Profiles are named CLI login contexts (e.g. `work` and `personal`). Define
 them in Podiom's config, then log each one in via a profile-scoped onboarding
-link: `terminal/claude/<profile-name>` or `terminal/codex/<profile-name>`.
-The profile is a path segment — the same link works for the first login and
-for re-logins later.
+link from the token screen. The underlying paths are
+`terminal/claude/<profile-name>` and `terminal/codex/<profile-name>`; the same
+path works for the first login and for re-logins later.
 
 ## The gateway token
 

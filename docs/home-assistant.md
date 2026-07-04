@@ -26,9 +26,11 @@ works — the LLM compute is cloud-side; see the resource note below).
 2. Open the add-on's **Configuration** page and copy the `gateway_token`
    value (it is generated on first start and managed by Podiom — treat the
    field as read-only).
-3. Paste it into the token screen. The browser remembers it.
-4. Log in the CLIs through the onboarding terminal links (below), then return
-   to Podiom and create your first agent.
+3. Return to the token screen and open the **Claude terminal** and/or
+   **Codex terminal** buttons. Add a profile name first if you want a
+   profile-scoped CLI login.
+4. Paste the token into the token screen. The browser remembers it.
+5. Create your first agent.
 
 ## The gateway token
 
@@ -56,9 +58,10 @@ Podiom UI:
 | `…/terminal/codex` | `codex` device-code login |
 | `…/terminal/<cli>/<profile>` | the same, scoped to a named [profile](configuration.md#profiles) |
 
-Each entry runs the right login command, then drops to a shell and prints a
-link back to Podiom. The login prints a URL you open in your own browser and a
-code to paste back — this works fully over the web terminal.
+The HA token screen has buttons for these entries, so you do not need to edit
+the URL by hand. Each entry runs the right login command, then drops to a shell
+and prints a link back to Podiom. The login prints a URL you open in your own
+browser and a code to paste back — this works fully over the web terminal.
 
 > **Honest note:** whoever reaches a terminal entry has shell access to the
 > whole container — `$PODIOM_HOME`, every profile's credentials, and the
