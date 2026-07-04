@@ -163,10 +163,6 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) saveProfile(w http.ResponseWriter, r *http.Request, currentName string) {
-	if !localRequest(r) {
-		http.Error(w, "profiles are only editable from loopback clients", http.StatusForbidden)
-		return
-	}
 	var req profileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -275,10 +271,6 @@ func boolLogString(v bool) string {
 }
 
 func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request, name string) {
-	if !localRequest(r) {
-		http.Error(w, "profiles are only editable from loopback clients", http.StatusForbidden)
-		return
-	}
 	if _, ok := s.profileByName(name); !ok {
 		http.Error(w, "profile not found", http.StatusNotFound)
 		return

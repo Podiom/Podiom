@@ -25,10 +25,6 @@ func (s *Server) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !localRequest(r) {
-		http.Error(w, "GitHub authorization is only available from loopback clients", http.StatusForbidden)
-		return
-	}
 	start, err := s.github.StartDevice(r.Context())
 	writeJSON(w, start, err)
 }
@@ -36,10 +32,6 @@ func (s *Server) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !localRequest(r) {
-		http.Error(w, "GitHub authorization is only available from loopback clients", http.StatusForbidden)
 		return
 	}
 	var req githubDevicePollRequest

@@ -32,6 +32,7 @@ type Paths struct {
 	LogsDir      string // logs/
 	ArchiveDir   string // archive/ (archived tasks and other exports)
 	PushDir      string // push/ (VAPID keypair for Web Push)
+	GatewayToken string // gateway.token (the API/WS gateway token, HA7/HA8)
 }
 
 // ResolveHome returns the absolute storage root. Precedence:
@@ -72,6 +73,7 @@ func NewPaths(home string) Paths {
 		LogsDir:      filepath.Join(home, "logs"),
 		ArchiveDir:   filepath.Join(home, "archive"),
 		PushDir:      filepath.Join(home, "push"),
+		GatewayToken: filepath.Join(home, "gateway.token"),
 	}
 }
 

@@ -1,0 +1,4 @@
+#!/command/with-contenv bashio
+# podiomd longrun: the front server on ingress_port 8099 (plan D1).
+bashio::log.info "Starting podiomd"
+exec /usr/local/bin/podiomd

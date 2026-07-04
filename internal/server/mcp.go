@@ -43,10 +43,6 @@ func (s *Server) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !localRequest(r) {
-		http.Error(w, "mcp servers are only editable from loopback clients", http.StatusForbidden)
-		return
-	}
 	var req podiommcp.Server
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -77,10 +73,6 @@ func (s *Server) handleMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodDelete:
-		if !localRequest(r) {
-			http.Error(w, "mcp servers are only editable from loopback clients", http.StatusForbidden)
-			return
-		}
 		if err := podiommcp.RemoveUserServer(s.paths.MCPYAML, name); err != nil {
 			writeJSON(w, nil, err)
 			return
@@ -96,10 +88,6 @@ func (s *Server) handleMCPServer(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMCPAssignments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut && r.Method != http.MethodPatch {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !localRequest(r) {
-		http.Error(w, "mcp assignments are only editable from loopback clients", http.StatusForbidden)
 		return
 	}
 	var req mcpAssignmentRequest

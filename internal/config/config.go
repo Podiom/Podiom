@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,11 @@ type Agent struct {
 type Server struct {
 	Bind string `yaml:"bind"`
 	Port int    `yaml:"port"`
+	// AllowFrom optionally restricts which source IPs/CIDRs may connect at
+	// all (useful when binding beyond loopback). Loopback is always allowed;
+	// empty means no restriction. In HA-app mode the Ingress proxy address is
+	// enforced automatically regardless of this list (HA6).
+	AllowFrom []string `yaml:"allow_from,omitempty"`
 }
 
 // Logging configures daemon-owned structured log files under Paths.LogsDir.
@@ -313,6 +319,17 @@ func (c *Config) Validate() error {
 
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port out of range: %d", c.Server.Port)
+	}
+	for i, entry := range c.Server.AllowFrom {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return fmt.Errorf("server.allow_from[%d]: entry is empty", i)
+		}
+		if _, errPrefix := netip.ParsePrefix(entry); errPrefix != nil {
+			if _, errAddr := netip.ParseAddr(entry); errAddr != nil {
+				return fmt.Errorf("server.allow_from[%d]: %q is neither an IP nor a CIDR", i, entry)
+			}
+		}
 	}
 	if c.Logging.RetentionDays < 0 {
 		return fmt.Errorf("logging.retention_days must be greater than 0")

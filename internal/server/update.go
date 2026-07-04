@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -22,8 +21,8 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !localRequest(r) {
-		http.Error(w, "update checks are only available from loopback clients", http.StatusForbidden)
+	if s.haMode {
+		http.Error(w, "updates are managed by Home Assistant", http.StatusForbidden)
 		return
 	}
 	started := time.Now()
@@ -46,8 +45,12 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !localRequest(r) {
-		http.Error(w, "updates are only available from loopback clients", http.StatusForbidden)
+	// Self-update is refused in HA mode: new Podiom versions arrive as app
+	// updates through Home Assistant, never by the daemon replacing itself
+	// (HA26). Elsewhere the gateway-token middleware already authenticated the
+	// caller, which supersedes the old loopback-only gate.
+	if s.haMode {
+		http.Error(w, "updates are managed by Home Assistant", http.StatusForbidden)
 		return
 	}
 	var req updateApplyRequest
@@ -85,13 +88,4 @@ func (s *Server) exitAfterUpdate() {
 		}
 	}
 	os.Exit(0)
-}
-
-func localRequest(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }

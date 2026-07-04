@@ -10,6 +10,22 @@ The browser sends JSON client messages and receives JSON server messages. The
 TypeScript mirror lives in `web/src/lib/types.ts`; the Go source of truth lives
 in `internal/server/ws_contract.go`.
 
+## Authentication
+
+The handshake must carry the [gateway token](security.md#gateway-token).
+Browsers cannot set headers on a WebSocket, so the token rides the
+subprotocol list: the client offers `podiom.v1` plus `podiom-token.<token>`,
+and the server validates before upgrading and echoes only `podiom.v1`.
+Non-browser clients may instead send the `X-Podiom-Token` header (or
+`Authorization: Bearer`). A handshake without a valid token is rejected
+with `401`.
+
+When the token is rotated, the daemon force-closes every live connection with
+close code **`4401`** — the web UI treats that as "re-enter the token" (and
+any other close as "reconnect"). The connection URL must be derived from the
+page's own location (the app may live under a proxy sub-path, e.g. Home
+Assistant Ingress), never hard-coded to the origin root.
+
 ## Client Messages
 
 ```json

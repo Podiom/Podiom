@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { applyUpdate, checkUpdate, createProfile, getHealth, hireAgent, listAgents, listProfiles } from "./lib/api";
+  import { auth } from "./lib/auth.svelte";
   import { live } from "./lib/live.svelte";
+  import TokenGate from "./pages/TokenGate.svelte";
   import ProviderLogo from "./lib/ProviderLogo.svelte";
   import type { Agent, Health, PermissionMode, ProfileInfo, Provider, UpdateStatus } from "./lib/types";
   import Chat from "./pages/Chat.svelte";
@@ -87,7 +89,21 @@
   // Notification opt-in state for the Web Push toggle.
   let pushState = $state<PushState>("idle");
 
-  onMount(async () => {
+  // Boot only once the gateway token is present (HA10): before it, nothing but
+  // the token screen renders and no API/WS traffic is attempted. Re-runs after
+  // a rotation (token cleared → re-entered) to reopen the socket and refresh.
+  let booted = $state(false);
+  $effect(() => {
+    if (!auth.token) return;
+    if (booted) {
+      live.connect(); // reopen after re-authentication
+      return;
+    }
+    booted = true;
+    void boot();
+  });
+
+  async function boot() {
     // Open the app-wide socket once, above any page, so attention signalling
     // (toasts, red dots, nav badge) keeps working on every route. Wire toast /
     // push taps to open the relevant chat session.
@@ -97,7 +113,7 @@
     await refreshHealth();
     await refreshAgents();
     await refreshUpdate();
-  });
+  }
 
   async function refreshPushStatus() {
     try {
@@ -121,8 +137,12 @@
   // chat socket: health is the source of truth for "live", and we poll for new
   // releases every 5 minutes.
   onMount(() => {
-    const healthTimer = window.setInterval(refreshHealth, 10_000);
-    const updateTimer = window.setInterval(() => refreshUpdate(true), 5 * 60 * 1000);
+    const healthTimer = window.setInterval(() => {
+      if (auth.token) void refreshHealth();
+    }, 10_000);
+    const updateTimer = window.setInterval(() => {
+      if (auth.token) void refreshUpdate(true);
+    }, 5 * 60 * 1000);
     return () => {
       window.clearInterval(healthTimer);
       window.clearInterval(updateTimer);
@@ -319,6 +339,9 @@
   }
 </script>
 
+{#if !auth.token}
+  <TokenGate />
+{:else}
 <div class="app-root">
   <!-- ============ SIDEBAR ============ -->
   <aside class="sidebar">
@@ -534,6 +557,7 @@
     {/each}
   </div>
 </div>
+{/if}
 
 <style>
   .sidebar {

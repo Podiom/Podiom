@@ -1,0 +1,13 @@
+#!/command/with-contenv bashio
+# ttyd longrun: single shared web terminal, loopback-only — reached exclusively
+# through podiomd's /terminal/* reverse proxy (plan D2, HA22).
+#
+# Flags (verified against ttyd 1.7.7 man page):
+#   -W / --writable       clients may write to the TTY (readonly by default)
+#   -a / --url-arg        allow ?arg=x query args, appended as positional args
+#                         to the command — podiomd injects cli/profile/return-url
+#   -i / --interface      bind 127.0.0.1 only (never directly exposed)
+#   -p / --port           7681 (= PODIOM_TERMINAL_PROXY)
+#   -P / --ping-interval  20s WS keepalive, keeps Ingress connections open
+bashio::log.info "Starting ttyd on 127.0.0.1:7681"
+exec /usr/local/bin/ttyd -W -a -i 127.0.0.1 -p 7681 -P 20 /usr/local/bin/podiom-terminal

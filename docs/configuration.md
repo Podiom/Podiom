@@ -85,6 +85,14 @@ present, after archiving its sessions into the preserved agent workspace.
 | --- | --- | --- |
 | `bind` | `127.0.0.1` | Web UI / API bind address (keep on loopback unless intentionally exposing). |
 | `port` | `8787` | Web UI / API port. |
+| `allow_from` | *(empty)* | Optional list of source IPs/CIDRs allowed to connect at all (e.g. `["192.168.1.0/24"]`). Loopback is always allowed; empty means no restriction. Useful when `bind` is not loopback. |
+
+Every API and WebSocket client must present the **gateway token**, generated
+automatically on first daemon start and stored at `$PODIOM_HOME/gateway.token`.
+Retrieve it with `podiom token show`, rotate it with `podiom token rotate` —
+see [Security](security.md#gateway-token) for the full model. In the
+[Home Assistant app](home-assistant.md), the Ingress proxy address is
+additionally enforced automatically, independent of `allow_from`.
 
 ## `logging`
 

@@ -1,0 +1,6 @@
+#!/command/execlineb -S1
+# Same restart-via-watchdog policy as podiomd: onboarding terminals are part of
+# the contract (HA22); a dead ttyd should surface, not linger.
+if { s6-test ${1} -ne 0 }
+if { s6-test ${1} -ne 256 }
+/run/s6/basedir/bin/halt

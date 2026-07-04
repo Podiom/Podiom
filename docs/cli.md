@@ -158,6 +158,32 @@ scheduled runs because `podiomd` restarts.
 Linux support is distro-neutral: releases ship static Go binaries, not distro
 packages.
 
+### `podiom token show`
+
+Print the gateway token — the secret every API/WebSocket client must present
+(see [Security](security.md#gateway-token)). Reads straight from
+`$PODIOM_HOME/gateway.token`, so it works whether or not the daemon is running.
+
+```
+podiom token show
+```
+
+Paste the value into the web UI's token screen; each browser remembers it.
+
+### `podiom token rotate`
+
+Rotate the gateway token through the running daemon. The old value stops
+working immediately: connected web clients are disconnected and prompted for
+the new value, while CLI clients pick it up from disk automatically.
+
+```
+podiom token rotate
+```
+
+Rotation requires a running daemon so its in-memory token flips atomically
+with the on-disk one. In the [Home Assistant app](home-assistant.md), use the
+`rotate_token` toggle on the Configuration page instead.
+
 ### `podiom onboard` / `podiom setup`
 
 Run the first-use wizard.

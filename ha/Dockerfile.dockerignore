@@ -1,0 +1,7 @@
+# BuildKit per-Dockerfile ignore (applies when building with -f ha/Dockerfile).
+# The image only needs the prebuilt Linux binaries and the rootfs overlay;
+# keep web/node_modules, .git, etc. out of the build context.
+*
+!bin/linux-amd64/
+!bin/linux-arm64/
+!ha/rootfs/

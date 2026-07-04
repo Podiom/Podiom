@@ -166,6 +166,7 @@ func forwardPermission(ctx context.Context, addr, turnID string, timeout time.Du
 		return adapter.PermissionDecision{Behavior: "deny"}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	setGatewayToken(httpReq)
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return adapter.PermissionDecision{Behavior: "deny"}, err

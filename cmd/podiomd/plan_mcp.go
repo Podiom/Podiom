@@ -138,6 +138,7 @@ func forwardPlanSubmission(ctx context.Context, addr, sessionID, turnID string, 
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	setGatewayToken(httpReq)
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return err

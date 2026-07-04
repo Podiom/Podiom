@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
 
@@ -38,16 +39,38 @@ func TestHandleLogsReturnsTailForLoopback(t *testing.T) {
 	}
 }
 
-func TestHandleLogsRejectsNonLoopback(t *testing.T) {
-	s := New(Options{Paths: config.NewPaths(t.TempDir())})
+// Logs used to be gated to loopback callers; that gate is superseded by the
+// gateway token, which the full handler chain enforces on every /api/ route.
+func TestHandleLogsRequiresGatewayToken(t *testing.T) {
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	keeper, _, err := gateway.LoadOrCreate(paths.GatewayToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Paths: paths, Tokens: keeper})
+
 	req := httptest.NewRequest(http.MethodGet, "/api/logs", nil)
 	req.RemoteAddr = "203.0.113.10:12345"
 	rr := httptest.NewRecorder()
+	s.httpSrv.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status without token = %d, want 401", rr.Code)
+	}
 
-	s.handleLogs(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rr.Code)
+	if err := os.MkdirAll(paths.LogsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(podiomlog.Path(paths.LogsDir), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/logs?lines=1", nil)
+	req.RemoteAddr = "203.0.113.10:12345"
+	req.Header.Set(gateway.Header, keeper.Current())
+	rr = httptest.NewRecorder()
+	s.httpSrv.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status with token = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 

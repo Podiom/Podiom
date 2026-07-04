@@ -10,14 +10,17 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/gateway"
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/usage"
+	"nhooyr.io/websocket"
 )
 
 // BuildInfo is surfaced on /healthz so clients can see what they're talking to.
@@ -45,6 +48,16 @@ type Server struct {
 	// vapidPublic is the VAPID public key served to browsers so they can create
 	// a Web Push subscription bound to this daemon. Empty disables push.
 	vapidPublic string
+	// tokens is the gateway-token keeper enforcing HA7 on every /api/ request
+	// and WebSocket handshake. Nil disables enforcement (bare test servers).
+	tokens *gateway.Keeper
+	// haMode is true when running as a Home Assistant app: self-update is
+	// refused (HA26) and the SPA gets the "ha" deployment hint (HA10).
+	haMode bool
+	// wsConns tracks live WebSocket connections so a token rotation can
+	// force-close them (HA12).
+	wsMu    sync.Mutex
+	wsConns map[*websocket.Conn]struct{}
 }
 
 // Options configures the server.
@@ -63,6 +76,18 @@ type Options struct {
 	Notifier *notify.Dispatcher
 	// VAPIDPublicKey is served at GET /api/push/vapid for browser subscription.
 	VAPIDPublicKey string
+	// Tokens enforces the gateway token on the API/WS surface (HA7). Nil
+	// disables enforcement.
+	Tokens *gateway.Keeper
+	// HAMode marks a Home Assistant app deployment (see hamode.Detect).
+	HAMode bool
+	// AllowFrom optionally restricts accepted source addresses (IPs/CIDRs);
+	// loopback is always allowed, and HA mode adds the Ingress proxy (HA6).
+	AllowFrom []string
+	// TerminalProxy, when set (HA app only), is the local ttyd base URL that
+	// /terminal/{claude,codex} onboarding sub-paths are reverse-proxied to
+	// (HA15/HA22). Empty leaves the sub-paths unrouted as today.
+	TerminalProxy string
 }
 
 // New constructs a Server bound to the given address. It does not start
@@ -88,6 +113,8 @@ func New(opts Options) *Server {
 		log:         log,
 		notifier:    opts.Notifier,
 		vapidPublic: opts.VAPIDPublicKey,
+		tokens:      opts.Tokens,
+		haMode:      opts.HAMode,
 	}
 	// Let the turn hub raise out-of-app notifications when a turn blocks on the
 	// user, resolving the session's agent name for the notification text.
@@ -102,6 +129,8 @@ func New(opts Options) *Server {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/api/auth/check", s.handleAuthCheck)
+	mux.HandleFunc("/api/token/rotate", s.handleTokenRotate)
 	mux.HandleFunc("/api/agents", s.handleAgents)
 	mux.HandleFunc("/api/agents/", s.handleAgent)
 	mux.HandleFunc("/api/memory/status", s.handleMemoryStatus)
@@ -141,11 +170,30 @@ func New(opts Options) *Server {
 	mux.HandleFunc("/api/push/vapid", s.handlePushVAPID)
 	mux.HandleFunc("/api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("/api/push/unsubscribe", s.handlePushUnsubscribe)
-	mux.Handle("/", spaHandler())
+	if opts.TerminalProxy != "" {
+		if terminal, err := newTerminalProxy(opts.TerminalProxy); err != nil {
+			log.Warn("terminal proxy disabled", "error", err)
+		} else {
+			mux.Handle("/terminal/", terminal)
+			log.Info("terminal proxy enabled", "upstream", opts.TerminalProxy)
+		}
+	}
+	mux.Handle("/", s.spaHandler())
 
+	// Middleware order (outermost first): source-IP guard covers everything
+	// including static assets (HA6); token auth then gates the /api/ surface
+	// (HA7/HA10).
+	handler := s.withAuth(mux)
+	guarded, err := buildSourceGuard(handler, opts.AllowFrom, opts.HAMode)
+	if err != nil {
+		// A malformed allow_from entry must fail closed, not open: refuse all
+		// non-loopback traffic and surface the error in the log.
+		log.Error("invalid allow_from config; restricting to loopback", "error", err)
+		guarded, _ = buildSourceGuard(handler, nil, true)
+	}
 	s.httpSrv = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           guarded,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s

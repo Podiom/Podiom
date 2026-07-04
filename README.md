@@ -111,5 +111,6 @@ All runtime state lives under `$PODIOM_HOME` (default `~/.podiom/`).
 - [Configuration](docs/configuration.md)
 - [Scheduling](docs/scheduling.md)
 - [Projects & Roadmap](docs/projects.md)
-- [Security & logging](docs/security.md) — permission modes, redaction, run logs
+- [Security & logging](docs/security.md) — permission modes, gateway token, redaction, run logs
+- [Home Assistant app](docs/home-assistant.md) — deploy Podiom as an HA add-on
 - [Integration contracts](docs/integrations/README.md)

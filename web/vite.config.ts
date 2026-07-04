@@ -10,6 +10,10 @@ const DAEMON = process.env.PODIOM_ADDR ?? "127.0.0.1:8787";
 
 export default defineConfig({
   plugins: [svelte(), tailwindcss()],
+  // Relative base: the built app must render under HA Ingress's rewritten
+  // sub-path (/api/hassio_ingress/<token>/...), so asset URLs cannot assume
+  // the origin root (HA14). podiomd injects a <base href> for deep paths.
+  base: "./",
   build: {
     outDir: "dist",
     emptyOutDir: true,

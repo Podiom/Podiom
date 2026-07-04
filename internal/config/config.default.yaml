@@ -73,6 +73,16 @@ agents: []
 # ---------------------------------------------------------------------------
 # server: the local web UI / API bind address. Keep it on loopback unless you
 # know you want it exposed (single-user, local deployment is the v1 assumption).
+#
+# Every API/WebSocket client must present the gateway token, auto-generated on
+# first start and stored at $PODIOM_HOME/gateway.token. Retrieve it with
+# `podiom token show`; rotate it with `podiom token rotate` (browsers are then
+# prompted again; the CLI picks the new value up from disk automatically).
+#
+# allow_from (optional) restricts which source IPs/CIDRs may connect at all —
+# useful when bind is not loopback. Loopback is always allowed; omit for no
+# restriction. Example:
+#   allow_from: ["192.168.1.0/24"]
 # ---------------------------------------------------------------------------
 server:
   bind: 127.0.0.1

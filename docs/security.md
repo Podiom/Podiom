@@ -44,6 +44,37 @@ Scheduled fires and server-side task pickups have no human to answer a prompt
   natively via `--allowedTools`; Codex/fake consult the in-process
   `core.AllowListRelay`. **An empty allow-list denies everything.**
 
+## Gateway token
+
+Every API call and WebSocket connection to `podiomd` must present the
+**gateway token** — a cryptographically random secret generated automatically
+on the daemon's first start and stored (mode `0600`) at
+`$PODIOM_HOME/gateway.token`. Only static web assets, the token-entry screen,
+and `/healthz` are reachable without it; nothing about sessions, agents,
+plans, or memory is exposed pre-token.
+
+How each client gets it:
+
+- **The `podiom` CLI** reads it from disk automatically — same machine, same
+  trust domain, zero friction.
+- **Browsers** enter it once in the web UI's token screen and remember it per
+  browser. Get the value with `podiom token show` (standalone) or from the
+  add-on's Configuration page (Home Assistant).
+
+Rotation (`podiom token rotate`, or the `rotate_token` toggle in the HA app)
+invalidates the previous value immediately: live browser tabs are disconnected
+with close code `4401` and prompted for the new token, while the CLI picks it
+up from disk on its next call.
+
+Two rules keep the value contained: the daemon logs token *events* (generated,
+rotated) but never the value, and there is deliberately no API that returns
+the token — the web UI can never display its own credential.
+
+Why a token even when the UI sits behind authenticated proxies (HA Ingress):
+defense in depth for the client→daemon hop, safe LAN exposure of standalone
+installs (`server.bind` beyond loopback plus `server.allow_from`), and the
+auth primitive for the future remote mode.
+
 ## Sensitive data handling
 
 ### MCP configuration & credentials (R8.29)

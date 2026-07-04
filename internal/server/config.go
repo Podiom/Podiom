@@ -60,11 +60,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !localRequest(r) {
-		http.Error(w, "config is only editable from loopback clients", http.StatusForbidden)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, globalToDTO(s.core.GetGlobal()), nil)

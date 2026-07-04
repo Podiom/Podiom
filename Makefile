@@ -10,7 +10,10 @@ LDFLAGS := -X github.com/Podiom/Podiom/internal/buildinfo.Version=$(VERSION) \
 GO      ?= go
 BINDIR  ?= bin
 
-.PHONY: all build web go-build podiom podiomd check test tidy clean cross package help
+HA_IMAGE ?= ghcr.io/podiom/podiom-ha
+HA_TAG   ?= dev
+
+.PHONY: all build web go-build podiom podiomd check test tidy clean cross package ha-image help
 
 all: build ## Build the web UI and both binaries (default)
 
@@ -64,6 +67,26 @@ package: web cross ## Archive release binaries and emit SHA256SUMS in dist/
 	  done; \
 	done; \
 	(cd dist && { command -v sha256sum >/dev/null 2>&1 && sha256sum podiom_* || shasum -a 256 podiom_*; } > SHA256SUMS)
+
+# Build the Home Assistant add-on image for the host arch and load it into the
+# local docker daemon. Pins come from ha/versions.env (every key is passed as a
+# build-arg); binaries come from bin/linux-<arch>/ via the `cross` dependency.
+ha-image: web cross ## Build the HA add-on image for the host arch (docker buildx --load)
+	@set -e; set -a; . ha/versions.env; set +a; \
+	arch=$$(uname -m); \
+	case "$$arch" in \
+	  x86_64) arch=amd64 ;; \
+	  arm64|aarch64) arch=arm64 ;; \
+	  *) echo "unsupported host arch: $$arch" >&2; exit 1 ;; \
+	esac; \
+	build_args=$$(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/--build-arg \1/p' ha/versions.env); \
+	echo "building $(HA_IMAGE):$(HA_TAG) for linux/$$arch"; \
+	docker buildx build --load \
+	  --platform "linux/$$arch" \
+	  -f ha/Dockerfile \
+	  $$build_args \
+	  --build-arg PODIOM_VERSION="$(VERSION)" \
+	  -t "$(HA_IMAGE):$(HA_TAG)" .
 
 clean: ## Remove build artifacts
 	rm -rf $(BINDIR) dist web/dist/assets

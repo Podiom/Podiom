@@ -18,10 +18,6 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !localRequest(r) {
-		http.Error(w, "logs are only available from loopback clients", http.StatusForbidden)
-		return
-	}
 	path := podiomlog.Path(s.paths.LogsDir)
 	lines, err := podiomlog.Tail(path, logLines(r, defaultLogLines, false))
 	if err != nil {
@@ -34,10 +30,6 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogsFollow(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if !localRequest(r) {
-		http.Error(w, "logs are only available from loopback clients", http.StatusForbidden)
 		return
 	}
 	flusher, ok := w.(http.Flusher)

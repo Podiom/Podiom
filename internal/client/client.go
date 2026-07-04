@@ -20,6 +20,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/schedule"
@@ -35,16 +36,67 @@ var ErrDaemonUnreachable = errors.New("podiomd is not reachable")
 
 // Client talks to podiomd at a base URL like http://127.0.0.1:8787.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL   string
+	http      *http.Client
+	transport http.RoundTripper
+}
+
+// Option customizes a Client.
+type Option func(*Client)
+
+// WithToken attaches the gateway token to every request (HA7/HA9). The CLI
+// reads it from $PODIOM_HOME/gateway.token; an empty token sends no header,
+// which keeps the client compatible with pre-token daemons.
+func WithToken(token string) Option {
+	return func(c *Client) {
+		if token != "" {
+			c.transport = &tokenTransport{token: token}
+		}
+	}
 }
 
 // New returns a client for the given host:port.
-func New(addr string) *Client {
-	return &Client{
-		baseURL: "http://" + addr,
-		http:    &http.Client{Timeout: 5 * time.Second},
+func New(addr string, opts ...Option) *Client {
+	c := &Client{
+		baseURL:   "http://" + addr,
+		transport: http.DefaultTransport,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	c.http = &http.Client{Timeout: 5 * time.Second, Transport: c.transport}
+	return c
+}
+
+// tokenTransport injects the gateway token header on every request. All the
+// client's HTTP paths — including the bespoke streaming/long-timeout clients —
+// share it, so the token rides every call without per-site header code.
+type tokenTransport struct {
+	token string
+}
+
+func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set(gateway.Header, t.token)
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// bespokeClient builds an *http.Client sharing the token transport for call
+// sites that need a non-default timeout (0 = none, for streaming turns).
+func (c *Client) bespokeClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: c.transport}
+}
+
+// RotateToken asks the daemon to rotate the gateway token (HA12). The daemon
+// invalidates the old value, force-closes live web clients, and persists the
+// new token to disk before returning it.
+func (c *Client) RotateToken(ctx context.Context) (string, error) {
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := c.postJSON(ctx, "/api/token/rotate", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Token, nil
 }
 
 // Health fetches /healthz. It maps connection refusals to ErrDaemonUnreachable so
@@ -428,7 +480,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpClient := &http.Client{}
+		httpClient := c.bespokeClient(0)
 		resp, err := httpClient.Do(httpReq)
 		if err != nil {
 			errs <- err
@@ -528,7 +580,7 @@ func (c *Client) RunSchedule(ctx context.Context, name string) (store.ScheduleRu
 	if err != nil {
 		return run, err
 	}
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := c.bespokeClient(0).Do(req)
 	if err != nil {
 		return run, err
 	}
@@ -574,7 +626,7 @@ func (c *Client) Usage(ctx context.Context, refresh bool) ([]usage.Snapshot, err
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{Timeout: 20 * time.Second}
+	hc := c.bespokeClient(20 * time.Second)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err

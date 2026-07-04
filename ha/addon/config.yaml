@@ -1,0 +1,36 @@
+# Podiom add-on manifest. This directory is rendered into
+# Podiom/homeassistant-addons/podiom/ by release CI, which replaces `version`
+# with the release number.
+name: Podiom
+version: "0.0.0"
+slug: podiom
+description: Agentic AI colleagues (claude & codex) with a web UI, safely exposed through Home Assistant
+url: https://github.com/Podiom/homeassistant-addons
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/podiom/podiom-ha
+# The image ships s6-overlay v3 (hassio-addons debian-base); its /init is PID 1.
+init: false
+startup: services
+boot: auto
+# tcp (not http): the Supervisor's probe would be rejected by podiomd's
+# Ingress source-IP filter, a plain TCP connect is not.
+watchdog: tcp://[HOST]:[PORT:8099]
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:account-group
+panel_title: Podiom
+# Needed by the token-sync service to write gateway_token into these options
+# via the Supervisor API (plan D5). If self-writes 403 at the default role,
+# add `hassio_role: manager`.
+hassio_api: true
+# gateway_token is pseudo-read-only: HA schemas have no true read-only field,
+# so token-sync rewrites it from disk truth on every start and the translation
+# labels it "managed by Podiom".
+options:
+  gateway_token: ""
+  rotate_token: false
+schema:
+  gateway_token: str?
+  rotate_token: bool

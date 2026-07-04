@@ -21,6 +21,8 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/dream"
+	"github.com/Podiom/Podiom/internal/gateway"
+	"github.com/Podiom/Podiom/internal/hamode"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/schedule"
@@ -122,6 +124,24 @@ func run() error {
 	defer db.Close()
 	log.Info("database open", "path", paths.DB)
 
+	// The gateway token gates every API/WS client (HA7). Auto-generated on
+	// first start; retrieved via `podiom token show` (standalone) or the HA
+	// Configuration page (HA app). Log events only — never the value (HA21).
+	tokens, created, err := gateway.LoadOrCreate(paths.GatewayToken)
+	if err != nil {
+		return fmt.Errorf("gateway token: %w", err)
+	}
+	if created {
+		log.Info("gateway token generated", "path", paths.GatewayToken)
+	} else {
+		log.Info("gateway token ready", "path", paths.GatewayToken)
+	}
+
+	haMode := hamode.Detect()
+	if haMode {
+		log.Info("home assistant mode detected")
+	}
+
 	addr := net.JoinHostPort(cfg.Server.Bind, strconv.Itoa(cfg.Server.Port))
 	permissionTimeout, err := time.ParseDuration(cfg.Global.PermissionTimeout)
 	if err != nil {
@@ -214,6 +234,10 @@ func run() error {
 		Logger:         log,
 		Notifier:       notifier,
 		VAPIDPublicKey: vapidPublic,
+		Tokens:         tokens,
+		HAMode:         haMode,
+		AllowFrom:      cfg.Server.AllowFrom,
+		TerminalProxy:  os.Getenv("PODIOM_TERMINAL_PROXY"),
 	})
 
 	// The dream runner needs to know which sessions have a live turn so it never

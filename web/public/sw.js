@@ -6,6 +6,13 @@
 // notification. When no window is visible (tab backgrounded or closed) we show
 // the system notification — the whole point of Web Push.
 
+// The worker may be scoped under a sub-path (HA Ingress), so every URL below
+// derives from self.registration.scope — never the origin root. Authenticated
+// calls read the gateway token from the IndexedDB mirror the app maintains
+// (service workers cannot read localStorage).
+
+const BASE = () => self.registration.scope;
+
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
@@ -42,8 +49,8 @@ async function handlePush(event) {
     body: data.body || "",
     tag: data.session_id || "podiom",
     renotify: true,
-    icon: "/favicon.svg",
-    badge: "/favicon.svg",
+    icon: new URL("favicon.svg", BASE()).href,
+    badge: new URL("favicon.svg", BASE()).href,
     actions,
     data,
   });
@@ -70,7 +77,7 @@ async function focusSession(data) {
     }
   }
   if (self.clients.openWindow) {
-    await self.clients.openWindow("/");
+    await self.clients.openWindow(BASE());
   }
 }
 
@@ -80,15 +87,54 @@ async function approvePermission(data) {
     await focusSession(data);
     return;
   }
-  const res = await fetch(`/api/permission-decisions/${encodeURIComponent(approval.request_id)}`, {
+  const token = await readGatewayToken();
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["X-Podiom-Token"] = token;
+  const res = await fetch(new URL(`api/permission-decisions/${encodeURIComponent(approval.request_id)}`, BASE()), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       behavior: "allow",
       updatedInput: approval.input || {},
     }),
   });
   if (!res.ok) {
+    // Includes 401 after a token rotation: focusing the app surfaces the
+    // token screen so the user can re-authenticate and decide there.
     await focusSession(data);
   }
+}
+
+// readGatewayToken reads the token from the IndexedDB mirror written by the
+// app (lib/auth.svelte.ts — same DB/store/key). Best-effort: "" on any error.
+function readGatewayToken() {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open("podiom", 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains("auth")) {
+          req.result.createObjectStore("auth");
+        }
+      };
+      req.onerror = () => resolve("");
+      req.onsuccess = () => {
+        try {
+          const db = req.result;
+          const get = db.transaction("auth", "readonly").objectStore("auth").get("gateway-token");
+          get.onsuccess = () => {
+            db.close();
+            resolve(get.result || "");
+          };
+          get.onerror = () => {
+            db.close();
+            resolve("");
+          };
+        } catch (_e) {
+          resolve("");
+        }
+      };
+    } catch (_e) {
+      resolve("");
+    }
+  });
 }

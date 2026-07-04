@@ -9,6 +9,9 @@
 // only registers the browser for push and routes taps back to a session.
 
 import { getUsage, getVapidKey, subscribePush } from "./api";
+import { auth, WS_PROTOCOL, wsTokenProtocol } from "./auth.svelte";
+import { appBase, wsUrl } from "./base";
+import { request } from "./http";
 import type {
   ActiveTurnSummary,
   ClientMessage,
@@ -70,10 +73,14 @@ class LiveStore {
   private navigator: ((sessionId: string) => void) | null = null;
   private usageRefreshPromise: Promise<void> | null = null;
 
-  // connect is idempotent: the first caller (App.svelte on mount) opens the
-  // socket; later callers are no-ops so multiple components can call it safely.
+  // connect is idempotent: the first caller (App.svelte, once the token gate
+  // has passed) opens the socket; later callers just ensure it is open again —
+  // needed after a token rotation dropped the app back to the gate.
   connect() {
-    if (this.started) return;
+    if (this.started) {
+      if (!this.ws || this.ws.readyState === WebSocket.CLOSED) this.open();
+      return;
+    }
     this.started = true;
     this.open();
     window.setInterval(() => this.send({ type: "list" }), 4000);
@@ -81,16 +88,24 @@ class LiveStore {
   }
 
   private open() {
-    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    if (!auth.token) return; // gated: the token screen is up, nothing to connect
     this.status = "connecting";
-    const ws = new WebSocket(`${protocol}://${location.host}/api/ws`);
+    // The WS URL derives from the app's base (sub-path safe under Ingress) and
+    // the token rides the subprotocol list — the browser WebSocket API cannot
+    // set headers. The server echoes only the non-secret protocol.
+    const ws = new WebSocket(wsUrl(), [WS_PROTOCOL, wsTokenProtocol(auth.token)]);
     this.ws = ws;
     ws.onopen = () => {
       this.status = "live";
       this.send({ type: "list" });
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       this.status = "offline";
+      if (event.code === 4401) {
+        // Token rotated (HA12): drop to the token screen instead of retrying.
+        auth.invalidate();
+        return;
+      }
       this.scheduleReconnect();
     };
     ws.onerror = () => {
@@ -103,8 +118,21 @@ class LiveStore {
     if (this.reconnect) return;
     this.reconnect = window.setTimeout(() => {
       this.reconnect = undefined;
-      this.open();
+      void this.retryOrGate();
     }, 2000);
+  }
+
+  // retryOrGate disambiguates "daemon down" from "token rejected": a rejected
+  // WS handshake surfaces as a generic close in browsers, so probe the API —
+  // request() drops the stored token on 401, which gates the app.
+  private async retryOrGate() {
+    if (!auth.token) return;
+    try {
+      await request("api/auth/check");
+    } catch {
+      // Network error: daemon down — keep retrying below.
+    }
+    if (auth.token) this.open();
   }
 
   send(msg: ClientMessage) {
@@ -341,7 +369,9 @@ class LiveStore {
   }
 
   private async ensurePushSubscription(publicKey: string): Promise<void> {
-    const reg = await navigator.serviceWorker.register("/sw.js");
+    // Register relative to the app's base so the worker's scope matches the
+    // Ingress sub-path (HA14).
+    const reg = await navigator.serviceWorker.register(new URL("sw.js", appBase));
     const ready = await navigator.serviceWorker.ready.catch(() => reg);
 
     const existing = await ready.pushManager.getSubscription();

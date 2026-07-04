@@ -1,6 +1,10 @@
 // Typed REST helpers for the Podiom daemon. The chat stream uses the WebSocket
 // (see Chat.svelte); everything else is plain JSON over these helpers.
+// All calls go through request() (lib/http.ts), which resolves paths against
+// the app's base (sub-path safety under HA Ingress) and attaches the gateway
+// token.
 
+import { request } from "./http";
 import type {
   Agent,
   AgentDetail,
@@ -44,16 +48,16 @@ async function asJSON<T>(res: Response): Promise<T> {
 }
 
 export async function getHealth(): Promise<Health> {
-  return asJSON(await fetch("/healthz"));
+  return asJSON(await request("/healthz"));
 }
 
 export async function checkUpdate(): Promise<UpdateStatus> {
-  return asJSON(await fetch("/api/update"));
+  return asJSON(await request("/api/update"));
 }
 
 export async function applyUpdate(force = false): Promise<UpdateApplyResult> {
   return asJSON(
-    await fetch("/api/update/apply", {
+    await request("/api/update/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ force }),
@@ -62,27 +66,27 @@ export async function applyUpdate(force = false): Promise<UpdateApplyResult> {
 }
 
 export async function listAgents(): Promise<Agent[]> {
-  return (await asJSON<Agent[] | null>(await fetch("/api/agents"))) ?? [];
+  return (await asJSON<Agent[] | null>(await request("/api/agents"))) ?? [];
 }
 
 // getUsage fetches per-profile provider usage snapshots. Live state also arrives
 // via the WebSocket `state` frame; this is for on-demand/refresh reads.
 export async function getUsage(refresh = false): Promise<UsageSnapshot[]> {
   const path = refresh ? "/api/usage?refresh=1" : "/api/usage";
-  return (await asJSON<UsageSnapshot[] | null>(await fetch(path))) ?? [];
+  return (await asJSON<UsageSnapshot[] | null>(await request(path))) ?? [];
 }
 
 export async function listSkills(): Promise<Skill[]> {
-  return (await asJSON<Skill[] | null>(await fetch("/api/skills"))) ?? [];
+  return (await asJSON<Skill[] | null>(await request("/api/skills"))) ?? [];
 }
 
 export async function getMCP(): Promise<MCPSnapshot> {
-  return asJSON(await fetch("/api/mcp"));
+  return asJSON(await request("/api/mcp"));
 }
 
 export async function saveMCPServer(server: MCPServer): Promise<MCPSnapshot> {
   return asJSON(
-    await fetch("/api/mcp/servers", {
+    await request("/api/mcp/servers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(server),
@@ -91,12 +95,12 @@ export async function saveMCPServer(server: MCPServer): Promise<MCPSnapshot> {
 }
 
 export async function removeMCPServer(name: string): Promise<MCPSnapshot> {
-  return asJSON(await fetch(`/api/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" }));
+  return asJSON(await request(`/api/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" }));
 }
 
 export async function setMCPAssignment(agentName: string, serverName: string, assigned: boolean): Promise<MCPSnapshot> {
   return asJSON(
-    await fetch("/api/mcp/assignments", {
+    await request("/api/mcp/assignments", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agent_name: agentName, server_name: serverName, assigned }),
@@ -105,7 +109,7 @@ export async function setMCPAssignment(agentName: string, serverName: string, as
 }
 
 export async function listProfiles(): Promise<ProfileInfo[]> {
-  return (await asJSON<ProfileInfo[] | null>(await fetch("/api/profiles"))) ?? [];
+  return (await asJSON<ProfileInfo[] | null>(await request("/api/profiles"))) ?? [];
 }
 
 export async function getProviderCapabilities(
@@ -116,7 +120,7 @@ export async function getProviderCapabilities(
   const params = new URLSearchParams({ provider });
   if (profile) params.set("profile", profile);
   if (refresh) params.set("refresh", "1");
-  return asJSON(await fetch(`/api/provider-capabilities?${params.toString()}`));
+  return asJSON(await request(`/api/provider-capabilities?${params.toString()}`));
 }
 
 export interface ProfileRequest {
@@ -128,7 +132,7 @@ export interface ProfileRequest {
 
 export async function createProfile(req: ProfileRequest): Promise<ProfileInfo> {
   return asJSON(
-    await fetch("/api/profiles", {
+    await request("/api/profiles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -138,7 +142,7 @@ export async function createProfile(req: ProfileRequest): Promise<ProfileInfo> {
 
 export async function updateProfile(name: string, req: ProfileRequest): Promise<ProfileInfo> {
   return asJSON(
-    await fetch(`/api/profiles/${encodeURIComponent(name)}`, {
+    await request(`/api/profiles/${encodeURIComponent(name)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -147,16 +151,16 @@ export async function updateProfile(name: string, req: ProfileRequest): Promise<
 }
 
 export async function deleteProfile(name: string): Promise<void> {
-  await asJSON(await fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" }));
+  await asJSON(await request(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" }));
 }
 
 export async function getConfig(): Promise<GlobalConfig> {
-  return asJSON(await fetch("/api/config"));
+  return asJSON(await request("/api/config"));
 }
 
 export async function updateConfig(patch: GlobalConfigPatch): Promise<GlobalConfig> {
   return asJSON(
-    await fetch("/api/config", {
+    await request("/api/config", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -165,11 +169,11 @@ export async function updateConfig(patch: GlobalConfigPatch): Promise<GlobalConf
 }
 
 export async function getLogs(lines = 200): Promise<LogSnapshot> {
-  return asJSON(await fetch(`/api/logs?lines=${encodeURIComponent(String(lines))}`));
+  return asJSON(await request(`/api/logs?lines=${encodeURIComponent(String(lines))}`));
 }
 
 export async function followLogs(lines: number, signal: AbortSignal, onEvent: (event: LogStreamEvent) => void): Promise<void> {
-  const res = await fetch(`/api/logs/follow?lines=${encodeURIComponent(String(lines))}`, { signal });
+  const res = await request(`/api/logs/follow?lines=${encodeURIComponent(String(lines))}`, { signal });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(body || `${res.status} ${res.statusText}`);
@@ -206,7 +210,7 @@ export interface HireRequest {
 
 export async function hireAgent(req: HireRequest): Promise<Agent> {
   return asJSON(
-    await fetch("/api/agents", {
+    await request("/api/agents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -215,7 +219,7 @@ export async function hireAgent(req: HireRequest): Promise<Agent> {
 }
 
 export async function getAgent(name: string): Promise<AgentDetail> {
-  return asJSON(await fetch(`/api/agents/${encodeURIComponent(name)}`));
+  return asJSON(await request(`/api/agents/${encodeURIComponent(name)}`));
 }
 
 export interface AgentUpdate {
@@ -231,7 +235,7 @@ export interface AgentUpdate {
 
 export async function updateAgent(name: string, patch: AgentUpdate): Promise<AgentDetail> {
   return asJSON(
-    await fetch(`/api/agents/${encodeURIComponent(name)}`, {
+    await request(`/api/agents/${encodeURIComponent(name)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -246,7 +250,7 @@ export interface AgentDeleteResult {
 
 export async function deleteAgent(name: string, confirmation: string): Promise<AgentDeleteResult> {
   return asJSON(
-    await fetch(`/api/agents/${encodeURIComponent(name)}`, {
+    await request(`/api/agents/${encodeURIComponent(name)}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmation }),
@@ -257,12 +261,12 @@ export async function deleteAgent(name: string, confirmation: string): Promise<A
 // --- Memory & dreaming ---
 
 export async function getMemory(name: string): Promise<MemoryInfo> {
-  return asJSON(await fetch(`/api/agents/${encodeURIComponent(name)}/memory`));
+  return asJSON(await request(`/api/agents/${encodeURIComponent(name)}/memory`));
 }
 
 export async function updateMemory(name: string, memory: string): Promise<MemoryInfo> {
   return asJSON(
-    await fetch(`/api/agents/${encodeURIComponent(name)}/memory`, {
+    await request(`/api/agents/${encodeURIComponent(name)}/memory`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ memory }),
@@ -272,46 +276,46 @@ export async function updateMemory(name: string, memory: string): Promise<Memory
 
 export async function clearMemory(name: string): Promise<MemoryInfo> {
   return asJSON(
-    await fetch(`/api/agents/${encodeURIComponent(name)}/memory`, { method: "DELETE" }),
+    await request(`/api/agents/${encodeURIComponent(name)}/memory`, { method: "DELETE" }),
   );
 }
 
 export async function dreamAgent(name: string): Promise<DreamResult> {
   return asJSON(
-    await fetch(`/api/agents/${encodeURIComponent(name)}/dream`, { method: "POST" }),
+    await request(`/api/agents/${encodeURIComponent(name)}/dream`, { method: "POST" }),
   );
 }
 
 export async function listDreams(name: string, limit = 30): Promise<Dream[]> {
   return (
     (await asJSON<Dream[] | null>(
-      await fetch(`/api/agents/${encodeURIComponent(name)}/dreams?limit=${limit}`),
+      await request(`/api/agents/${encodeURIComponent(name)}/dreams?limit=${limit}`),
     )) ?? []
   );
 }
 
 export async function listSessions(): Promise<Session[]> {
-  return (await asJSON<Session[] | null>(await fetch("/api/sessions"))) ?? [];
+  return (await asJSON<Session[] | null>(await request("/api/sessions"))) ?? [];
 }
 
 export async function getSession(id: string): Promise<SessionDetail> {
-  return asJSON(await fetch(`/api/sessions/${id}`));
+  return asJSON(await request(`/api/sessions/${id}`));
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  await asJSON(await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }));
+  await asJSON(await request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }));
 }
 
 export async function listSchedules(): Promise<ScheduleStatus[]> {
-  return (await asJSON<ScheduleStatus[] | null>(await fetch("/api/schedules"))) ?? [];
+  return (await asJSON<ScheduleStatus[] | null>(await request("/api/schedules"))) ?? [];
 }
 
 export async function runSchedule(name: string): Promise<unknown> {
-  return asJSON(await fetch(`/api/schedules/${name}/run`, { method: "POST" }));
+  return asJSON(await request(`/api/schedules/${name}/run`, { method: "POST" }));
 }
 
 export async function deleteSchedule(name: string): Promise<void> {
-  await asJSON(await fetch(`/api/schedules/${encodeURIComponent(name)}`, { method: "DELETE" }));
+  await asJSON(await request(`/api/schedules/${encodeURIComponent(name)}`, { method: "DELETE" }));
 }
 
 export interface NewScheduleRequest {
@@ -328,7 +332,7 @@ export interface NewScheduleRequest {
 
 export async function createSchedule(req: NewScheduleRequest): Promise<ScheduleStatus> {
   return asJSON(
-    await fetch("/api/schedules", {
+    await request("/api/schedules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -337,7 +341,7 @@ export async function createSchedule(req: NewScheduleRequest): Promise<ScheduleS
 }
 
 export async function listProjects(): Promise<Project[]> {
-  return (await asJSON<Project[] | null>(await fetch("/api/projects"))) ?? [];
+  return (await asJSON<Project[] | null>(await request("/api/projects"))) ?? [];
 }
 
 export interface NewProjectRequest {
@@ -350,7 +354,7 @@ export interface NewProjectRequest {
 
 export async function createProject(req: NewProjectRequest): Promise<Project> {
   return asJSON(
-    await fetch("/api/projects", {
+    await request("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -369,7 +373,7 @@ export interface ProjectPatch {
 
 export async function updateProject(id: string, patch: ProjectPatch): Promise<Project> {
   return asJSON(
-    await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+    await request(`/api/projects/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -379,7 +383,7 @@ export async function updateProject(id: string, patch: ProjectPatch): Promise<Pr
 
 export async function describeProject(id: string, agent: string): Promise<string> {
   const res = await asJSON<{ description: string }>(
-    await fetch(`/api/projects/${encodeURIComponent(id)}/describe`, {
+    await request(`/api/projects/${encodeURIComponent(id)}/describe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agent }),
@@ -389,16 +393,16 @@ export async function describeProject(id: string, agent: string): Promise<string
 }
 
 export async function githubStatus(): Promise<GitHubStatus> {
-  return asJSON(await fetch("/api/github/status"));
+  return asJSON(await request("/api/github/status"));
 }
 
 export async function githubDeviceStart(): Promise<GitHubDeviceStart> {
-  return asJSON(await fetch("/api/github/device/start", { method: "POST" }));
+  return asJSON(await request("/api/github/device/start", { method: "POST" }));
 }
 
 export async function githubDevicePoll(device_code: string): Promise<GitHubDevicePoll> {
   return asJSON(
-    await fetch("/api/github/device/poll", {
+    await request("/api/github/device/poll", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_code }),
@@ -407,7 +411,7 @@ export async function githubDevicePoll(device_code: string): Promise<GitHubDevic
 }
 
 export async function githubRepos(): Promise<GitHubRepo[]> {
-  return (await asJSON<GitHubRepo[] | null>(await fetch("/api/github/repos"))) ?? [];
+  return (await asJSON<GitHubRepo[] | null>(await request("/api/github/repos"))) ?? [];
 }
 
 export interface ConnectProjectRepoRequest {
@@ -422,7 +426,7 @@ export interface ConnectProjectRepoRequest {
 }
 
 export async function connectProjectRepo(id: string, req: ConnectProjectRepoRequest): Promise<Project> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(id)}/repo`, {
+  const res = await request(`/api/projects/${encodeURIComponent(id)}/repo`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -434,7 +438,7 @@ export async function connectProjectRepo(id: string, req: ConnectProjectRepoRequ
 }
 
 export async function createProjectFromGitHub(req: ConnectProjectRepoRequest): Promise<Project> {
-  const res = await fetch("/api/projects/from-github", {
+  const res = await request("/api/projects/from-github", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -447,7 +451,7 @@ export async function createProjectFromGitHub(req: ConnectProjectRepoRequest): P
 
 export async function analyzeProject(id: string, agent?: string): Promise<Project> {
   return asJSON(
-    await fetch(`/api/projects/${encodeURIComponent(id)}/analyze`, {
+    await request(`/api/projects/${encodeURIComponent(id)}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agent }),
@@ -456,7 +460,7 @@ export async function analyzeProject(id: string, agent?: string): Promise<Projec
 }
 
 export async function syncProjectRepo(id: string, force = false): Promise<Project> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(id)}/repo/sync`, {
+  const res = await request(`/api/projects/${encodeURIComponent(id)}/repo/sync`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ force }),
@@ -468,7 +472,7 @@ export async function syncProjectRepo(id: string, force = false): Promise<Projec
 }
 
 export async function disconnectProjectRepo(id: string): Promise<Project> {
-  return asJSON(await fetch(`/api/projects/${encodeURIComponent(id)}/repo`, { method: "DELETE" }));
+  return asJSON(await request(`/api/projects/${encodeURIComponent(id)}/repo`, { method: "DELETE" }));
 }
 
 export interface TaskDescribeRequest {
@@ -490,7 +494,7 @@ export async function describeTask(req: TaskDescribeRequest): Promise<string> {
     assigned_agent: req.assigned_agent,
   };
   const res = await asJSON<{ body: string }>(
-    await fetch(id ? `/api/tasks/${encodeURIComponent(id)}/describe` : "/api/tasks/describe", {
+    await request(id ? `/api/tasks/${encodeURIComponent(id)}/describe` : "/api/tasks/describe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -500,7 +504,7 @@ export async function describeTask(req: TaskDescribeRequest): Promise<string> {
 }
 
 export async function listTasks(): Promise<Task[]> {
-  return (await asJSON<Task[] | null>(await fetch("/api/tasks"))) ?? [];
+  return (await asJSON<Task[] | null>(await request("/api/tasks"))) ?? [];
 }
 
 export interface NewTaskRequest {
@@ -515,7 +519,7 @@ export interface NewTaskRequest {
 
 export async function createTask(req: NewTaskRequest): Promise<Task> {
   return asJSON(
-    await fetch("/api/tasks", {
+    await request("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
@@ -535,7 +539,7 @@ export interface TaskPatch {
 
 export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
   return asJSON(
-    await fetch(`/api/tasks/${id}`, {
+    await request(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -556,16 +560,16 @@ export interface PlanDecision {
 }
 
 export async function getPlan(sessionId: string): Promise<PlanStatus> {
-  return asJSON(await fetch(`/api/plans/${encodeURIComponent(sessionId)}`));
+  return asJSON(await request(`/api/plans/${encodeURIComponent(sessionId)}`));
 }
 
 export async function approvePlan(sessionId: string): Promise<PlanDecision> {
-  return asJSON(await fetch(`/api/plans/${encodeURIComponent(sessionId)}/approve`, { method: "POST" }));
+  return asJSON(await request(`/api/plans/${encodeURIComponent(sessionId)}/approve`, { method: "POST" }));
 }
 
 export async function feedbackPlan(sessionId: string, feedback: string): Promise<PlanDecision> {
   return asJSON(
-    await fetch(`/api/plans/${encodeURIComponent(sessionId)}/feedback`, {
+    await request(`/api/plans/${encodeURIComponent(sessionId)}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ feedback }),
@@ -574,11 +578,11 @@ export async function feedbackPlan(sessionId: string, feedback: string): Promise
 }
 
 export async function rejectPlan(sessionId: string): Promise<Session> {
-  return asJSON(await fetch(`/api/plans/${encodeURIComponent(sessionId)}/reject`, { method: "POST" }));
+  return asJSON(await request(`/api/plans/${encodeURIComponent(sessionId)}/reject`, { method: "POST" }));
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await asJSON(await fetch(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }));
+  await asJSON(await request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }));
 }
 
 export interface ArchiveDoneResult {
@@ -589,7 +593,7 @@ export interface ArchiveDoneResult {
 
 export async function archiveDoneTasks(): Promise<ArchiveDoneResult> {
   return asJSON(
-    await fetch("/api/tasks/archive-done", {
+    await request("/api/tasks/archive-done", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -598,12 +602,12 @@ export async function archiveDoneTasks(): Promise<ArchiveDoneResult> {
 }
 
 export async function startTask(id: string): Promise<Session> {
-  return asJSON(await fetch(`/api/tasks/${id}/start`, { method: "POST" }));
+  return asJSON(await request(`/api/tasks/${id}/start`, { method: "POST" }));
 }
 
 // taskSession returns the latest session for a started task, or null if none.
 export async function taskSession(id: string): Promise<Session | null> {
-  const res = await fetch(`/api/tasks/${id}/session`);
+  const res = await request(`/api/tasks/${id}/session`);
   if (res.status === 404) return null;
   return asJSON(res);
 }
@@ -611,13 +615,13 @@ export async function taskSession(id: string): Promise<Session | null> {
 // getVapidKey returns the daemon's VAPID public key for Web Push subscription.
 // An empty key means push is disabled on the daemon.
 export async function getVapidKey(): Promise<{ public_key: string }> {
-  return asJSON(await fetch("/api/push/vapid"));
+  return asJSON(await request("/api/push/vapid"));
 }
 
 // subscribePush registers a browser Web Push subscription with the daemon.
 export async function subscribePush(subscription: unknown): Promise<void> {
   await asJSON(
-    await fetch("/api/push/subscribe", {
+    await request("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(subscription),
@@ -628,7 +632,7 @@ export async function subscribePush(subscription: unknown): Promise<void> {
 // unsubscribePush removes a browser Web Push subscription from the daemon.
 export async function unsubscribePush(subscription: unknown): Promise<void> {
   await asJSON(
-    await fetch("/api/push/unsubscribe", {
+    await request("/api/push/unsubscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(subscription),

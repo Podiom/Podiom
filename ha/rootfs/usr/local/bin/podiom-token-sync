@@ -1,0 +1,74 @@
+#!/usr/bin/env bashio
+# ==============================================================================
+# podiom-token-sync (plan D5, HA8): mirror the gateway token onto the add-on's
+# Configuration page and service the rotate_token toggle.
+#
+# SECURITY (HA21 / checks 11+12): the token VALUE must never reach the add-on
+# log. It only travels captured-in-variables -> Supervisor API body. Never add
+# `set -x`, never echo $current/$stored/$payload.
+# ==============================================================================
+set -e
+
+readonly HEALTHZ_URL="http://127.0.0.1:8099/healthz"
+readonly SUPERVISOR_OPTIONS_URL="http://supervisor/addons/self/options"
+
+# Longruns must not exit (s6 would restart-loop); park instead of quitting.
+park() {
+    exec sleep infinity
+}
+
+# Outside HA (local docker run / smoke test) there is no Supervisor: no-op.
+if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
+    bashio::log.info "SUPERVISOR_TOKEN not set; token sync disabled (standalone container)"
+    park
+fi
+
+# Wait for podiomd to be up (it generates the token file on first start).
+until curl -fs -o /dev/null "${HEALTHZ_URL}"; do
+    bashio::log.debug "Waiting for podiomd healthz..."
+    sleep 2
+done
+
+rotated=false
+if bashio::config.true 'rotate_token'; then
+    bashio::log.info "rotate_token is set; rotating the gateway token"
+    # Output suppressed: rotate may print the new value.
+    if podiom token rotate >/dev/null 2>&1; then
+        rotated=true
+        bashio::log.info "Gateway token rotated"
+    else
+        bashio::log.warning "Gateway token rotation failed; will still sync current value"
+    fi
+fi
+
+current="$(podiom token show 2>/dev/null || true)"
+if [ -z "${current}" ]; then
+    bashio::log.warning "Could not read the gateway token from podiom; nothing to sync"
+    park
+fi
+
+stored="$(bashio::config 'gateway_token')"
+[ "${stored}" = "null" ] && stored=""
+
+# Write own add-on options only when needed: after a rotation (also resets the
+# toggle) or when the stored field drifted (self-heals edits of the
+# pseudo-read-only field). Supervisor API self-writes do NOT restart the add-on.
+if [ "${rotated}" = "true" ] || [ "${current}" != "${stored}" ]; then
+    payload="$(jq -cn --arg t "${current}" \
+        '{options: {gateway_token: $t, rotate_token: false}}')"
+    if curl -fsS -o /dev/null -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "${payload}" \
+        "${SUPERVISOR_OPTIONS_URL}"; then
+        bashio::log.info "Gateway token synced to the add-on Configuration page (value not logged)"
+    else
+        # If this 403s at the default hassio role, config.yaml may need
+        # hassio_role: manager (plan D5 fallback path).
+        bashio::log.error "Failed to write add-on options via the Supervisor API"
+    fi
+else
+    bashio::log.info "Gateway token already in sync"
+fi
+
+park

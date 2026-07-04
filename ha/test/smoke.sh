@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Smoke test for the Podiom HA add-on image (plan B1 / acceptance check 11).
+#
+#   ha/test/smoke.sh [image]        default image: podiom-ha:dev
+#
+# Runs the image standalone (no Supervisor), then asserts:
+#   - podiomd serves /healthz on 8099
+#   - claude / codex / mcp-proxy / ttyd are present at their pinned versions
+#   - ttyd is listening on 127.0.0.1:7681
+#   - token-sync (no-supervisor mode) never prints a stubbed token value,
+#     and the real gateway token never appears in the container log
+# ==============================================================================
+set -euo pipefail
+
+IMAGE="${1:-podiom-ha:dev}"
+HEALTHZ_TIMEOUT="${HEALTHZ_TIMEOUT:-90}"
+STUB_TOKEN="SMOKE-STUB-TOKEN-d41d8cd98f00b204"
+
+cid=""
+cleanup() {
+    [ -n "${cid}" ] && docker rm -f "${cid}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
+pass() { echo "  ok: $*"; }
+
+echo "== starting ${IMAGE}"
+cid="$(docker run -d "${IMAGE}")"
+
+echo "== waiting for /healthz (max ${HEALTHZ_TIMEOUT}s)"
+deadline=$((SECONDS + HEALTHZ_TIMEOUT))
+until docker exec "${cid}" curl -fsS -o /dev/null http://127.0.0.1:8099/healthz 2>/dev/null; do
+    [ ${SECONDS} -lt ${deadline} ] || {
+        docker logs "${cid}" | tail -50 >&2
+        fail "podiomd /healthz not up after ${HEALTHZ_TIMEOUT}s"
+    }
+    sleep 2
+done
+pass "/healthz responds on 8099"
+
+echo "== bundled tool versions"
+docker exec "${cid}" claude --version || fail "claude --version"
+docker exec "${cid}" codex --version || fail "codex --version"
+docker exec "${cid}" mcp-proxy --help >/dev/null || fail "mcp-proxy --help"
+docker exec "${cid}" ttyd --version || fail "ttyd --version"
+pass "claude / codex / mcp-proxy / ttyd all run"
+
+echo "== ttyd listening on 127.0.0.1:7681"
+docker exec "${cid}" bash -c 'exec 3<>/dev/tcp/127.0.0.1/7681' \
+    || fail "nothing listening on 7681"
+pass "ttyd port open"
+
+echo "== token-sync no-supervisor mode never leaks a token"
+# Plant a stub token file, run token-sync with SUPERVISOR_TOKEN guaranteed
+# unset, and assert the stub never appears in its output. `timeout` kills the
+# expected `sleep infinity` park.
+out="$(docker exec -e SUPERVISOR_TOKEN= "${cid}" bash -c "
+    mkdir -p /data/podiom-smoke &&
+    printf '%s' '${STUB_TOKEN}' > /data/podiom-smoke/gateway.token &&
+    PODIOM_HOME=/data/podiom-smoke timeout 5 podiom-token-sync 2>&1 || true
+")"
+echo "${out}" | grep -q "token sync disabled" \
+    || fail "token-sync did not report no-supervisor no-op mode; output: ${out}"
+if echo "${out}" | grep -qF "${STUB_TOKEN}"; then
+    fail "token-sync printed the stubbed token value"
+fi
+pass "token-sync no-ops quietly without a Supervisor"
+
+echo "== container log must not contain the real gateway token"
+real_token="$(docker exec "${cid}" cat /data/podiom/gateway.token 2>/dev/null || true)"
+if [ -n "${real_token}" ]; then
+    if docker logs "${cid}" 2>&1 | grep -qF "${real_token}"; then
+        fail "gateway token value found in the container log"
+    fi
+    pass "gateway token absent from the container log"
+else
+    echo "  skip: no gateway.token on disk (podiomd token support not built yet?)"
+fi
+
+echo "SMOKE OK"

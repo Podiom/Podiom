@@ -1,0 +1,16 @@
+configuration:
+  gateway_token:
+    name: Gateway token (read-only — managed by Podiom)
+    description: >-
+      The token the Podiom web UI and CLI use to authenticate with the Podiom
+      daemon. Podiom writes it here so you can copy it into the token screen;
+      it is not a setting. Anything you type here is overwritten with the real
+      value on the next add-on start. To get a new token, use "Rotate gateway
+      token" instead.
+  rotate_token:
+    name: Rotate gateway token
+    description: >-
+      Turn this on and save to rotate the gateway token. The add-on restarts,
+      generates a new token, invalidates the old one everywhere (open browser
+      tabs will ask for the new token), updates the field above, and switches
+      this toggle back off.

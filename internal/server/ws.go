@@ -10,6 +10,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/gateway"
 	"github.com/Podiom/Podiom/internal/store"
 	"github.com/Podiom/Podiom/internal/usage"
 	"github.com/google/uuid"
@@ -22,13 +23,22 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	// The auth middleware already validated the gateway token (browsers carry
+	// it in the Sec-WebSocket-Protocol list — the browser WebSocket API cannot
+	// set headers). Accept echoing only the non-secret application protocol:
+	// browsers require the server to select one of the offered protocols, and
+	// echoing the token entry would reflect the secret.
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*"},
+		Subprotocols:   []string{gateway.WSProtocol},
 	})
 	if err != nil {
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	// Track the live connection so a token rotation can force-close it (HA12).
+	s.registerWS(conn)
+	defer s.unregisterWS(conn)
 
 	ctx := r.Context()
 	writer := &wsWriter{conn: conn}
@@ -61,6 +71,38 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+	}
+}
+
+func (s *Server) registerWS(conn *websocket.Conn) {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.wsConns == nil {
+		s.wsConns = map[*websocket.Conn]struct{}{}
+	}
+	s.wsConns[conn] = struct{}{}
+}
+
+func (s *Server) unregisterWS(conn *websocket.Conn) {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	delete(s.wsConns, conn)
+}
+
+// closeAllWS force-closes every live WebSocket connection with the given
+// application close code; clients decide from the code whether to re-prompt
+// for the token (4401) or reconnect. Closes run concurrently because Close
+// performs a full close handshake (it waits briefly for the peer's echo) and
+// the caller — the rotate endpoint — must not block on slow clients.
+func (s *Server) closeAllWS(code websocket.StatusCode, reason string) {
+	s.wsMu.Lock()
+	conns := make([]*websocket.Conn, 0, len(s.wsConns))
+	for c := range s.wsConns {
+		conns = append(conns, c)
+	}
+	s.wsMu.Unlock()
+	for _, c := range conns {
+		go func(c *websocket.Conn) { _ = c.Close(code, reason) }(c)
 	}
 }
 

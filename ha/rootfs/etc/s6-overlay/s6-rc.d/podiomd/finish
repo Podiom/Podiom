@@ -1,0 +1,6 @@
+#!/command/execlineb -S1
+# Halt the container when podiomd dies abnormally so the HA watchdog restarts
+# the add-on (s6-overlay v3 convention; 256 = killed by signal during shutdown).
+if { s6-test ${1} -ne 0 }
+if { s6-test ${1} -ne 256 }
+/run/s6/basedir/bin/halt

@@ -19,6 +19,7 @@ import (
 	"github.com/Podiom/Podiom/internal/buildinfo"
 	"github.com/Podiom/Podiom/internal/client"
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/onboard"
 	"github.com/Podiom/Podiom/internal/providercheck"
@@ -65,7 +66,73 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDoctorCmd(&addr))
 	root.AddCommand(newOnboardCmd(&addr))
 	root.AddCommand(newUpdateCmd(&addr))
+	root.AddCommand(newTokenCmd(&addr))
 	return root
+}
+
+func newTokenCmd(addr *string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "token",
+		Short: "Show or rotate the gateway token",
+		Long: "The gateway token authenticates every API and WebSocket client of podiomd.\n" +
+			"It is auto-generated on first daemon start and stored under $PODIOM_HOME.\n" +
+			"Browsers enter it once in the web UI's token screen; the CLI reads it from\n" +
+			"disk automatically.",
+	}
+	cmd.AddCommand(newTokenShowCmd())
+	cmd.AddCommand(newTokenRotateCmd(addr))
+	return cmd
+}
+
+func newTokenShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Print the current gateway token",
+		Long: "Print the gateway token from $PODIOM_HOME/gateway.token. Reads straight from\n" +
+			"disk, so it works whether or not the daemon is running.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := config.ResolveHome()
+			if err != nil {
+				return err
+			}
+			path := config.NewPaths(home).GatewayToken
+			token, err := gateway.ReadTokenFile(path)
+			if err != nil || token == "" {
+				return fmt.Errorf("no gateway token at %s — start podiomd once to generate it", path)
+			}
+			fmt.Println(token)
+			fmt.Fprintln(os.Stderr, "Paste this in the web UI's token screen. Rotate with `podiom token rotate`.")
+			return nil
+		},
+	}
+}
+
+func newTokenRotateCmd(addr *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rotate",
+		Short: "Rotate the gateway token",
+		Long: "Ask the running daemon to rotate the gateway token. The old token stops\n" +
+			"working immediately: web clients are disconnected and must enter the new\n" +
+			"value, while CLI clients pick it up from disk automatically.\n" +
+			"Rotation goes through the daemon so its in-memory token flips atomically —\n" +
+			"start podiomd first.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := daemonClient(*addr)
+			if err != nil {
+				return err
+			}
+			token, err := c.RotateToken(cmd.Context())
+			if err != nil {
+				if errors.Is(err, client.ErrDaemonUnreachable) {
+					return fmt.Errorf("%w — rotation needs a running daemon so live clients are cut over atomically", err)
+				}
+				return err
+			}
+			fmt.Println(token)
+			fmt.Fprintln(os.Stderr, "Token rotated. Web clients must re-enter it; the CLI is already up to date.")
+			return nil
+		},
+	}
 }
 
 func newUpdateCmd(addr *string) *cobra.Command {
@@ -1424,7 +1491,23 @@ func daemonClient(flagAddr string) (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(resolved), nil
+	// Attach the gateway token from disk when present (HA9): same machine,
+	// same trust domain, zero friction. Best-effort — a missing file just
+	// sends no header, which still works against pre-token daemons.
+	return client.New(resolved, client.WithToken(gatewayTokenFromDisk())), nil
+}
+
+// gatewayTokenFromDisk reads $PODIOM_HOME/gateway.token, or "" when absent.
+func gatewayTokenFromDisk() string {
+	home, err := config.ResolveHome()
+	if err != nil {
+		return ""
+	}
+	token, err := gateway.ReadTokenFile(config.NewPaths(home).GatewayToken)
+	if err != nil {
+		return ""
+	}
+	return token
 }
 
 // resolveAddr determines the daemon address with precedence:
