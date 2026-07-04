@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -44,5 +45,24 @@ func TestCheckMissingProviderIncludesInstallHint(t *testing.T) {
 	}
 	if status.InstallHint == "" {
 		t.Fatalf("missing install hint: %+v", status)
+	}
+}
+
+func TestLoginArgsAreContainerSafe(t *testing.T) {
+	cases := []struct {
+		provider config.Provider
+		want     []string
+	}{
+		{config.ProviderClaude, []string{"/login"}},
+		{config.ProviderCodex, []string{"login", "--device-auth"}},
+	}
+	for _, tc := range cases {
+		got, err := LoginArgs(tc.provider)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.provider, err)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s args = %v, want %v", tc.provider, got, tc.want)
+		}
 	}
 }

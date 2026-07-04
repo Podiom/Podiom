@@ -9,6 +9,15 @@ export interface Health {
   uptime_ms: number;
 }
 
+export interface OnboardingState {
+  completed: boolean;
+  completed_at?: string;
+}
+
+export interface OnboardingToken {
+  token: string;
+}
+
 export interface UpdateStatus {
   current_version: string;
   current_commit: string;

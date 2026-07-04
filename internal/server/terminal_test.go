@@ -72,6 +72,33 @@ func TestTerminalProxyProfileSegment(t *testing.T) {
 	}
 }
 
+func TestTerminalProxyOnboardAndShellFlows(t *testing.T) {
+	ts, seen := terminalUpstream(t)
+	h, err := newTerminalProxy(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path string
+		arg  string
+	}{
+		{"/terminal/onboard/ws", "onboard"},
+		{"/terminal/shell/token", "shell"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", tc.path, rr.Code)
+		}
+		got := (*seen)[len(*seen)-1]
+		args := got.Query()["arg"]
+		if len(args) != 2 || args[0] != tc.arg {
+			t.Fatalf("%s: args = %v", tc.path, args)
+		}
+	}
+}
+
 func TestTerminalProxyCanonicalizesEntryURL(t *testing.T) {
 	ts, _ := terminalUpstream(t)
 	h, err := newTerminalProxy(ts.URL)
@@ -94,6 +121,13 @@ func TestTerminalProxyCanonicalizesEntryURL(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if loc := rr.Header().Get("Location"); loc != "work/" {
 		t.Fatalf("profile location = %q, want work/", loc)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/terminal/onboard", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if loc := rr.Header().Get("Location"); loc != "onboard/" {
+		t.Fatalf("onboard location = %q, want onboard/", loc)
 	}
 }
 

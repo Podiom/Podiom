@@ -26,13 +26,10 @@ Exact bundled versions are listed in the changelog for every release.
 ## First run, step by step
 
 1. **Start the add-on** and open **Podiom** from the sidebar.
-2. The UI asks for the **gateway token**. Open the add-on's
-   **Configuration** page — the token is in the *Gateway token* field
-   (Podiom put it there for you). Copy it.
-3. **Log in the CLIs.** Return to the Podiom token screen and use the
-   **Claude terminal** and **Codex terminal** buttons. Add a profile name first
-   if you want a profile-scoped login. Each button opens a dedicated onboarding
-   terminal outside the UI and drops you straight into that CLI's login flow:
+2. The UI opens a Home Assistant setup page with an embedded terminal.
+3. **Log in the CLIs.** Use the **Claude** and **Codex** buttons. Add a
+   profile name first if you want a profile-scoped login. Each button drops
+   you straight into that CLI's login flow:
    - **claude**: follow the printed URL in your own browser, then paste the
      code back into the terminal if prompted.
    - **codex**: a device-code flow prints a URL and a short one-time code.
@@ -40,26 +37,32 @@ Exact bundled versions are listed in the changelog for every release.
      settings (or by your workspace admin).
    When the login finishes you land in a shell, and a link back to Podiom is
    printed.
-4. **Paste the gateway token** into the token screen. Each browser only asks
-   once.
-5. **Create your first agent.**
+4. **Run Onboard** from the same terminal panel. This launches the shared
+   `podiom onboard` wizard to choose provider/profile, create your first
+   agent, and generate its `SOUL.md`.
+5. **Copy the gateway token** on the final setup page, then press
+   **Finished**. Each browser only needs this once.
+
+After setup, Podiom opens directly to the dashboard. The **Terminal** sidebar
+item stays available for later Claude/Codex re-authentication or shell access.
 
 ### Profiles
 
 Profiles are named CLI login contexts (e.g. `work` and `personal`). Define
-them in Podiom's config, then log each one in via a profile-scoped onboarding
-link from the token screen. The underlying paths are
-`terminal/claude/<profile-name>` and `terminal/codex/<profile-name>`; the same
-path works for the first login and for re-logins later.
+them in Podiom's config, then log each one in via a profile-scoped terminal
+entry from the setup page or the later Terminal sidebar page. The underlying
+paths are `terminal/claude/<profile-name>` and
+`terminal/codex/<profile-name>`; the same paths work for the first login and
+for re-logins later.
 
 ## The gateway token
 
 Home Assistant's login protects the *browser → HA* hop; the gateway token
 protects the *client → Podiom* hop. It is generated automatically on first
-start and mirrored to this add-on's **Configuration** page.
+start and copied into the browser at the end of setup.
 
-- **Reading it:** Configuration page only. It is deliberately never printed
-  to the add-on **log**.
+- **Reading it:** first-run setup copy step or `podiom token show` inside the
+  container. It is deliberately never printed to the add-on **log**.
 - **Rotating it:** turn on **Rotate gateway token** on the Configuration page
   and save. The add-on restarts, rotates the token, updates the field, and
   resets the toggle. Open browser tabs are disconnected and ask for the new

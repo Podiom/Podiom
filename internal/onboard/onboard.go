@@ -19,6 +19,8 @@ import (
 	"github.com/Podiom/Podiom/internal/autostart"
 	"github.com/Podiom/Podiom/internal/client"
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
+	"github.com/Podiom/Podiom/internal/onboardstate"
 	"github.com/Podiom/Podiom/internal/providercheck"
 )
 
@@ -135,14 +137,15 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	section(out, "Choosing a provider")
-	provider, err := chooseProvider(u, ready)
+	profiles := loadProfilesForOnboarding()
+	provider, profile, err := chooseProvider(u, ready, profiles)
 	if err != nil {
 		return err
 	}
-	if err := confirmProviderLogin(ctx, u, provider, statuses); err != nil {
+	if err := confirmProviderLogin(ctx, u, provider, profile, statuses); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("Great. %s will help draft this agent's SOUL.md.", titleProvider(provider))))
+	fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("Great. %s will help draft this agent's SOUL.md.", providerLabel(provider, profile))))
 
 	section(out, "Waking the stage")
 	c, addr, err := ensureDaemon(ctx, opts.Addr, out, errOut)
@@ -165,6 +168,7 @@ func Run(ctx context.Context, opts Options) error {
 	agent, err := c.CreateAgent(ctx, client.AgentCreateRequest{
 		Name:           name,
 		Provider:       provider,
+		Profile:        profile,
 		Model:          "",
 		Effort:         "medium",
 		PermissionMode: config.PermissionApprove,
@@ -203,6 +207,9 @@ func Run(ctx context.Context, opts Options) error {
 				return fmt.Errorf("save SOUL.md: %w", err)
 			}
 			if err := offerAutostart(u); err != nil {
+				return err
+			}
+			if err := finishOnboarding(out); err != nil {
 				return err
 			}
 			fmt.Fprintln(out)
@@ -257,6 +264,55 @@ func offerAutostart(u *ui) error {
 	return nil
 }
 
+func finishOnboarding(out io.Writer) error {
+	home, err := config.ResolveHome()
+	if err != nil {
+		return err
+	}
+	paths := config.NewPaths(home)
+	if _, err := onboardstate.MarkComplete(paths.Onboarding, time.Now()); err != nil {
+		return err
+	}
+	section(out, "Gateway token")
+	token, err := gateway.ReadTokenFile(paths.GatewayToken)
+	if err != nil {
+		fmt.Fprintln(out, warnStyle.Render("Could not read the gateway token yet: "+err.Error()))
+		fmt.Fprintf(out, "You can show it later with: podiom token show\n")
+		return nil
+	}
+	fmt.Fprintf(out, "Your gateway token is stored at:\n  %s\n", paths.GatewayToken)
+	if err := copyToClipboard(token); err == nil {
+		fmt.Fprintln(out, noticeStyle.Render("Copied the gateway token to your clipboard."))
+		return nil
+	}
+	fmt.Fprintln(out, warnStyle.Render("Clipboard copy was unavailable in this terminal."))
+	fmt.Fprintln(out, "Copy this token into the web UI when it asks:")
+	fmt.Fprintf(out, "\n%s\n", token)
+	return nil
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "windows":
+		cmd = exec.Command("clip")
+	default:
+		if path, err := exec.LookPath("wl-copy"); err == nil {
+			cmd = exec.Command(path)
+		} else if path, err := exec.LookPath("xclip"); err == nil {
+			cmd = exec.Command(path, "-selection", "clipboard")
+		} else if path, err := exec.LookPath("xsel"); err == nil {
+			cmd = exec.Command(path, "--clipboard", "--input")
+		} else {
+			return errors.New("no clipboard command found")
+		}
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
 // isTerminalWriter reports whether w is a terminal we can safely clear.
 func isTerminalWriter(w io.Writer) bool {
 	f, ok := w.(*os.File)
@@ -282,9 +338,9 @@ func ensureDaemon(ctx context.Context, addr string, out, errOut io.Writer) (*cli
 	if addr == "" {
 		addr = "127.0.0.1:8787"
 	}
-	c := client.New(addr)
-	if _, err := c.Health(ctx); err == nil {
-		return c, addr, nil
+	healthClient := client.New(addr)
+	if _, err := healthClient.Health(ctx); err == nil {
+		return daemonClient(addr), addr, nil
 	}
 	fmt.Fprintln(out, "Starting podiomd for onboarding...")
 	podiomd, err := findPodiomd()
@@ -299,11 +355,23 @@ func ensureDaemon(ctx context.Context, addr string, out, errOut io.Writer) (*cli
 	}
 	for i := 0; i < 30; i++ {
 		time.Sleep(300 * time.Millisecond)
-		if _, err := c.Health(ctx); err == nil {
-			return c, addr, nil
+		if _, err := healthClient.Health(ctx); err == nil {
+			return daemonClient(addr), addr, nil
 		}
 	}
 	return nil, addr, errors.New("podiomd did not become ready")
+}
+
+func daemonClient(addr string) *client.Client {
+	home, err := config.ResolveHome()
+	if err != nil {
+		return client.New(addr)
+	}
+	token, err := gateway.ReadTokenFile(config.NewPaths(home).GatewayToken)
+	if err != nil || token == "" {
+		return client.New(addr)
+	}
+	return client.New(addr, client.WithToken(token))
 }
 
 func findPodiomd() (string, error) {
@@ -357,22 +425,64 @@ func readyProviders(statuses []providercheck.Status) []config.Provider {
 	return out
 }
 
-func chooseProvider(u *ui, providers []config.Provider) (config.Provider, error) {
-	if len(providers) == 1 {
-		return providers[0], nil
+type providerChoice struct {
+	Label    string
+	Provider config.Provider
+	Profile  string
+}
+
+func chooseProvider(u *ui, providers []config.Provider, profiles []config.Profile) (config.Provider, string, error) {
+	choices := providerChoices(providers, profiles)
+	if len(choices) == 1 {
+		return choices[0].Provider, choices[0].Profile, nil
 	}
-	labels := make([]string, 0, len(providers))
-	for _, provider := range providers {
-		labels = append(labels, string(provider))
+	labels := make([]string, 0, len(choices))
+	byLabel := make(map[string]providerChoice, len(choices))
+	for _, choice := range choices {
+		labels = append(labels, choice.Label)
+		byLabel[choice.Label] = choice
 	}
 	choice, err := u.selectOne("Which provider do you want to start using?", labels, labels[0])
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return config.Provider(choice), nil
+	selected := byLabel[choice]
+	return selected.Provider, selected.Profile, nil
 }
 
-func confirmProviderLogin(ctx context.Context, u *ui, provider config.Provider, statuses []providercheck.Status) error {
+func providerChoices(providers []config.Provider, profiles []config.Profile) []providerChoice {
+	ready := map[config.Provider]bool{}
+	out := make([]providerChoice, 0, len(providers)+len(profiles))
+	for _, provider := range providers {
+		ready[provider] = true
+		out = append(out, providerChoice{Label: titleProvider(provider) + " (default)", Provider: provider})
+	}
+	for _, profile := range profiles {
+		if !ready[profile.Provider] {
+			continue
+		}
+		out = append(out, providerChoice{
+			Label:    fmt.Sprintf("%s profile: %s", titleProvider(profile.Provider), profile.Name),
+			Provider: profile.Provider,
+			Profile:  profile.Name,
+		})
+	}
+	return out
+}
+
+func loadProfilesForOnboarding() []config.Profile {
+	home, err := config.ResolveHome()
+	if err != nil {
+		return nil
+	}
+	cfg, err := config.Load(config.NewPaths(home).ConfigYAML)
+	if err != nil {
+		return nil
+	}
+	return cfg.Profiles
+}
+
+func confirmProviderLogin(ctx context.Context, u *ui, provider config.Provider, profile string, statuses []providercheck.Status) error {
 	var status providercheck.Status
 	for _, candidate := range statuses {
 		if candidate.Provider == provider {
@@ -383,7 +493,7 @@ func confirmProviderLogin(ctx context.Context, u *ui, provider config.Provider, 
 	if status.Path == "" {
 		return fmt.Errorf("%s is not available", titleProvider(provider))
 	}
-	ok, err := u.confirm(fmt.Sprintf("Is %s logged in and ready to run?", titleProvider(provider)), true)
+	ok, err := u.confirm(fmt.Sprintf("Is %s logged in and ready to run?", providerLabel(provider, profile)), true)
 	if err != nil {
 		return err
 	}
@@ -399,6 +509,13 @@ func confirmProviderLogin(ctx context.Context, u *ui, provider config.Provider, 
 		return fmt.Errorf("%s still does not look ready: %s", titleProvider(provider), next.Error)
 	}
 	return nil
+}
+
+func providerLabel(provider config.Provider, profile string) string {
+	if profile == "" {
+		return titleProvider(provider)
+	}
+	return fmt.Sprintf("%s profile %q", titleProvider(provider), profile)
 }
 
 func collectAnswers(u *ui) (answers, error) {

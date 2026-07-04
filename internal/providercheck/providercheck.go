@@ -100,21 +100,28 @@ func CheckAll(ctx context.Context, opts Options) []Status {
 
 // RunNativeLogin starts the provider's own login flow in the current terminal.
 func RunNativeLogin(ctx context.Context, provider config.Provider, path string) error {
-	var args []string
-	switch provider {
-	case config.ProviderClaude:
-		// Claude Code normally starts auth from its interactive CLI when needed.
-		args = []string{}
-	case config.ProviderCodex:
-		args = []string{"login"}
-	default:
-		return fmt.Errorf("unknown provider %q", provider)
+	args, err := LoginArgs(provider)
+	if err != nil {
+		return err
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// LoginArgs returns login commands that are safe inside containers and HA
+// Ingress: device/terminal auth instead of localhost callback URLs.
+func LoginArgs(provider config.Provider) ([]string, error) {
+	switch provider {
+	case config.ProviderClaude:
+		return []string{"/login"}, nil
+	case config.ProviderCodex:
+		return []string{"login", "--device-auth"}, nil
+	default:
+		return nil, fmt.Errorf("unknown provider %q", provider)
+	}
 }
 
 func runCapture(ctx context.Context, timeout time.Duration, bin string, args ...string) (string, error) {
@@ -165,11 +172,11 @@ func loginHint(provider config.Provider) string {
 	switch provider {
 	case config.ProviderClaude:
 		if runtime.GOOS == "windows" {
-			return "Run claude and follow the browser/device login prompts."
+			return "Run claude /login and follow the browser/device login prompts."
 		}
-		return "Run claude and follow the native Claude Code login prompts."
+		return "Run claude /login and follow the native Claude Code login prompts."
 	case config.ProviderCodex:
-		return "Run codex login and follow the OpenAI account prompts."
+		return "Run codex login --device-auth and follow the OpenAI account prompts."
 	default:
 		return ""
 	}

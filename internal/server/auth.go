@@ -18,7 +18,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") && !s.tokens.Authorize(r) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.haOnboardingBootstrapRoute(r) && !s.tokens.Authorize(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"gateway token required (podiom token show)"}`))
@@ -26,6 +26,22 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) haOnboardingBootstrapRoute(r *http.Request) bool {
+	if !s.haMode {
+		return false
+	}
+	switch r.URL.Path {
+	case "/api/onboarding":
+		return r.Method == http.MethodGet
+	case "/api/onboarding/complete":
+		return r.Method == http.MethodPost
+	case "/api/onboarding/token":
+		return r.Method == http.MethodGet
+	default:
+		return false
+	}
 }
 
 // handleAuthCheck answers 204 for any authenticated request. The middleware

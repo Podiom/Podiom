@@ -5,15 +5,14 @@
 reading the full Podiom requirements. Cross-references to the main doc (e.g.
 Principle 7, D2, D5, D6, §7.6) and to the skills/MCP specs are for context only.*
 
-Status: v1.1 — ready for implementation.
+Status: v1.2 — ready for implementation.
 
-> Revision v1.1: the web terminal moved *out* of the SPA into dedicated
-> onboarding sub-paths (`/terminal/claude`, `/terminal/codex`) behind the same
-> Ingress entry, and gateway-token retrieval/rotation in HA mode moved off the
-> terminal onto HA's **Configuration page** (read-only value + rotate toggle).
-> Affected: HA8, HA10, HA15, HA22, HA23, HA24, HA27, HA28, acceptance checks
-> 3/4/7 and a new check 12. The CLI `podiom token show`/`rotate` commands are
-> unchanged and remain the standalone path.
+> Revision v1.2: Home Assistant installs now use a HA-only pre-dashboard
+> onboarding page with an embedded terminal. The page guides CLI login,
+> `podiom onboard`, gateway-token copy, and then opens the dashboard. Completed
+> installs skip onboarding on later visits, and HA dashboards expose a
+> persistent Terminal sidebar item. Token rotation remains an add-on
+> Configuration action.
 
 > Naming: the project is **Podiom** (`$PODIOM_HOME`, `~/.podiom/`). Home
 > Assistant recently renamed "add-ons" to "apps"; this document uses **app**,
@@ -107,45 +106,26 @@ layers:
   deployment method:
   - **Standalone:** via the CLI commands **`podiom token show`** and
     **`podiom token rotate`**, run in any shell.
-  - **HA app:** via HA's **Configuration page** (§9), not the web terminal. On
-    first start `podiomd` writes the generated value into the app's add-on
-    options via the Supervisor API, where it appears as a **read-only field**;
-    a **`rotate_token` toggle** on the same page triggers rotation (`podiomd`
-    reads the toggle, rotates, writes the new value back, and resets the
-    toggle). This makes the entire token lifecycle **terminal-free in the HA
-    web case**. The CLI commands remain available inside the container for
-    parity but are not the intended HA path.
+  - **HA app:** after `podiom onboard` completes, a narrow HA-only
+    pre-dashboard surface exposes a one-time browser copy/store step. Rotation
+    remains available through the add-on Configuration page's `rotate_token`
+    toggle. The CLI commands remain available inside the container for parity.
 
-  Rationale for surfacing the token on the Configuration page (not the app log):
-  the Configuration page is gated behind HA login exactly like the terminal, is
-  purposed for values a user actively reads, and is already covered by the same
-  `/data`/backup exposure as the token itself (HA20) — so it introduces no new
-  exposure. This is distinct from the **app log** (streaming stdout/stderr),
-  where the token must still never appear (HA21).
-
-  **Implementation note (Supervisor mechanics).** Writing the generated value
-  back into the add-on's own options requires the add-on to call the Supervisor
-  API (`/addons/self/options`, surfaced in bashio as `bashio::addon.option`)
-  with `SUPERVISOR_TOKEN`; this needs the appropriate API permission declared in
-  `config.yaml` (a self-write without it returns 403). If declaring that
-  permission is undesirable, an equally acceptable variant satisfying the same
-  requirement is to render the value on a **small HA-login-gated info surface
-  the add-on serves itself** (behind Ingress) rather than round-tripping it
-  through the options schema. The invariant is only that the value appears on an
-  HA-authenticated, actively-read surface and never in the app log; the
-  implementer picks whichever is cleaner. The rotate control (`rotate_token`)
-  follows the same choice of mechanism.
+  The invariant is that the token appears only on an HA-authenticated,
+  actively-read surface or in an explicit CLI command, and never in the app log
+  (HA21).
 - **HA9 — Client behaviours.** The `podiom` CLI reads the token from
   `$PODIOM_HOME` automatically (zero friction — same machine, same trust
-  domain). **Browsers** enter it once in a token screen (UI designed separately
-  in Claude Design); the SPA remembers it per browser thereafter.
+  domain). **Browsers** store it once per browser. In HA mode the first-run
+  copy step stores it; in standalone the token screen verifies and stores a
+  value shown by `podiom token show`.
 - **HA10 — Unauthenticated surface is minimal.** Static SPA assets and the
   token-entry view are served without the token; **every API/WS endpoint
-  requires it**. Nothing about sessions, agents, plans, or memory is reachable
-  pre-token. The token-entry view instructs where to obtain the value — in the
-  HA case, HA's **Configuration page** (HA8); in the standalone case,
-  `podiom token show`. The SPA never displays its own gateway token (that would
-  serve the secret to a pre-token surface).
+  requires it**, except the HA-only onboarding state/token-copy endpoints used
+  before the dashboard. Those endpoints are unavailable outside HA mode, and
+  the token-copy endpoint is only available after onboarding is complete.
+  Nothing about sessions, agents, plans, or memory is reachable pre-token. In
+  standalone, the token-entry view points to `podiom token show`.
 - **HA11 — Why a token even behind Ingress.** (a) Defense in depth — Ingress
   authenticates *who reaches HA*, the token authenticates *who may operate
   Podiom*; (b) it is **the** auth primitive for future remote mode (HA3), where
@@ -227,25 +207,25 @@ layers:
   credentials and the gateway token**. App documentation must recommend
   password-protected HA backups, and Podiom must never print token or credential
   values into the **app log** (log the token's existence/rotation events, never
-  the value). The value's retrieval path is the **Configuration page** in HA
-  mode and `podiom token show` in standalone (HA8) — deliberately *not* the app
-  log, which is the one surface where the value must never surface even though
-  the Configuration page (a different, HA-login-gated surface) does show it.
+  the value). The value's retrieval paths are the HA first-run copy step and
+  `podiom token show` — deliberately *not* the app log.
 
 ---
 
 ## 7. CLI authentication (web terminal on dedicated sub-paths)
 
 - **HA22** The app bundles a **single shared `ttyd`** process, reached through
-  **dedicated onboarding sub-paths outside the SPA** (HA15):
-  `/{ingress-base}/terminal/claude` and `/{ingress-base}/terminal/codex`. `ttyd`
-  maps a **start command per path**, so each sub-path drops the user straight
-  into the right CLI's login flow. The login itself is a device-style flow that
-  prints a URL the user opens **in their own browser** and pastes a code back,
-  which works fully over a web terminal.
+  **dedicated terminal sub-paths** (HA15):
+  `/{ingress-base}/terminal/claude`, `/{ingress-base}/terminal/codex`,
+  `/{ingress-base}/terminal/onboard`, and `/{ingress-base}/terminal/shell`.
+  Claude/Codex entries drop the user straight into the right CLI's login flow;
+  the onboarding entry runs the shared `podiom onboard` wizard; the shell entry
+  is for later maintenance. CLI login itself is a device-style flow that prints
+  a URL the user opens **in their own browser** and pastes a code back, which
+  works fully over a web terminal.
   - **Auto-run then drop to shell (required).** Each entry runs a small
     **wrapper script** that (a) executes the correct login command
-    (`claude login` / the Codex login) and, (b) on completion, **drops to an
+    (`claude /login` / `codex login --device-auth`) and, (b) on completion, **drops to an
     interactive shell** rather than exiting. Exiting on completion would kill
     the `ttyd` session and leave the user at a dead terminal; the drop-to-shell
     also lets per-profile logins (HA23) continue in the same session.
@@ -257,7 +237,7 @@ layers:
     rendered by the thin HTML page `ttyd` serves around the terminal; either
     placement satisfies this requirement.
 - **HA23 — Profiles supported, selectable on the entry.** Per-profile logins
-  work the same way: `CLAUDE_CONFIG_DIR=<profile-dir> claude login` (and the
+  work the same way: `CLAUDE_CONFIG_DIR=<profile-dir> claude /login` (and the
   Codex equivalent), once per profile — repeatable, matching the profile model.
   The onboarding entry **can target a specific profile**, so the same link is
   reused both for first login and for adding a profile later.
@@ -304,21 +284,16 @@ layers:
   HA app store, plus pre-built multi-arch images in a container registry. The
   app manifest (`config.yaml`) declares at minimum: `ingress: true`,
   `ingress_port`, panel icon/title, `startup`/watchdog settings, the `/data`
-  mapping, and — new in v1.1 — an **options schema exposing a read-only
-  `gateway_token` field and a `rotate_token` boolean toggle** (HA8), which
-  `podiomd` writes to / reads from via the Supervisor API for terminal-free
-  token retrieval and rotation.
+  mapping, and a `rotate_token` boolean toggle (HA8), which `podiomd` reads via
+  the Supervisor API for token rotation.
 - **HA28** First-run experience: on first start the app generates the gateway
-  token (HA8) and writes it to the **Configuration page** as a read-only field.
-  The app log directs the user to open the UI (sidebar); the token screen
-  instructs retrieving the value from the **Configuration page** (not a
-  terminal). Documentation (`DOCS.md`) walks through: install → open UI →
-  **copy token from the Configuration page** → enter token → **open the
-  `terminal/claude` and/or `terminal/codex` onboarding link(s) to log in the
-  CLIs** (each drops straight into the login flow, then to a shell; a link back
-  to Podiom is printed on completion) → return to Podiom → create first agent.
-  The onboarding links are the *only* way the terminal is surfaced; there is no
-  general Terminal view in the SPA (HA15).
+  token (HA8) and opens a HA-only onboarding page before the dashboard. The
+  page embeds the terminal, lets the user run Claude/Codex login flows (default
+  or profile-scoped), runs `podiom onboard`, then shows a HA-authenticated
+  gateway-token copy step and a **Finished** button. Onboarding completion is
+  persisted in `$PODIOM_HOME/onboarding.json`; future visits open the dashboard
+  directly. HA dashboards also show a **Terminal** sidebar item for later
+  re-authentication or shell access.
 
 ---
 
@@ -348,25 +323,27 @@ A correct implementation satisfies all of:
    (HA5, HA16, HA27).
 2. The app's web server rejects connections not originating from the Ingress
    proxy; no direct port is exposed (HA6).
-3. All API/WS calls without the gateway token are rejected; static assets and
-   the token screen load without it; the SPA never displays its own gateway
-   token (HA7, HA10).
-4. The token is auto-generated on first start. In the HA app it appears as a
-   read-only field on the Configuration page, and toggling `rotate_token` there
-   rotates it (new value written back, toggle reset), forcing browser re-entry
-   while the CLI recovers automatically from disk; in standalone,
+3. All API/WS calls without the gateway token are rejected, except the HA-only
+   onboarding bootstrap endpoints; static assets and the first-run HA
+   onboarding page load without it; sessions, agents, plans, and memory do not
+   (HA7, HA10).
+4. The token is auto-generated on first start. In the HA app the token-copy
+   surface is available only after onboarding completes; toggling
+   `rotate_token` on the Configuration page rotates it, forcing browser
+   re-entry while the CLI recovers automatically from disk. In standalone,
    `podiom token show`/`rotate` behave equivalently (HA8, HA9, HA12).
 5. The full UI — including live WebSocket streaming, permission prompts, and
    plan-mode rendering — works through Ingress **and** remotely via Nabu Casa
    (HA13).
 6. The SPA renders and connects correctly under the Ingress sub-path (no
    absolute-path breakage; WS URL derived from the ingress path) (HA14).
-7. The `terminal/claude` and `terminal/codex` sub-paths (outside the SPA, behind
-   the single Ingress entry) each open the shared `ttyd` directly into the right
-   login flow, drop to a shell on completion, and print a working link back to
-   the Podiom SPA; `claude login` and the Codex login complete successfully
-   there, including for a profile-scoped entry (path segment / wrapper arg, not a
-   query param) (HA15, HA22, HA23).
+7. The `terminal/claude`, `terminal/codex`, `terminal/onboard`, and
+   `terminal/shell` sub-paths (behind the single Ingress entry) open the shared
+   `ttyd` directly into the right flow, drop to a shell when appropriate, and
+   print a working link back to the Podiom SPA; `claude /login` and
+   `codex login --device-auth` complete successfully there, including for a
+   profile-scoped entry (path segment / wrapper arg, not a query param) (HA15,
+   HA22, HA23).
 8. Restarting the app and updating it to a new version preserves: sessions,
    agent SOUL/MEMORY files, skills links, profiles' CLI auth, and the gateway
    token (`/data`-anchored `PODIOM_HOME` and `HOME`) (HA19, HA26).
@@ -376,6 +353,8 @@ A correct implementation satisfies all of:
     after the reboot fires, and a missed dream catches up (HA25).
 11. Neither the gateway token value nor any profile credential ever appears in
     the app log (HA21).
-12. The gateway token is retrievable from the HA Configuration page and never
-    from the app log; the two surfaces are distinct, and only the
-    Configuration-page surface exposes the value (HA8, HA10, HA21).
+12. Fresh HA install opens the onboarding page, lets the user authenticate
+    Claude/Codex, run `podiom onboard`, copy/store the gateway token, and enter
+    the dashboard. Reopening the app after completion lands directly in the
+    dashboard, with a HA-only Terminal sidebar item available (HA8, HA10,
+    HA22, HA28).

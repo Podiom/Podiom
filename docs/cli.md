@@ -194,9 +194,15 @@ podiom setup
 ```
 
 The wizard starts `podiomd` if needed, helps get Claude and/or Codex available,
-asks personality/workstyle questions, creates the first agent, then asks a
-working provider to draft the agent's `SOUL.md`. The generated soul is previewed
-before saving, with regenerate and edit options.
+lets you choose a default provider or configured profile for the first agent,
+asks personality/workstyle questions, creates the agent, then asks a working
+provider to draft the agent's `SOUL.md`. The generated soul is previewed before
+saving, with regenerate and edit options.
+
+At the end, onboarding records completion in `$PODIOM_HOME/onboarding.json` and
+prints the gateway-token location. On supported local desktops it copies the
+token to the clipboard; otherwise it prints clear manual-copy instructions. The
+token value is printed only to your terminal, never to daemon or add-on logs.
 
 ### `podiom agents list`
 

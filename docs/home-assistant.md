@@ -22,29 +22,36 @@ works — the LLM compute is cloud-side; see the resource note below).
 
 ## First run
 
-1. Open **Podiom** from the sidebar — the web UI shows a token screen.
-2. Open the add-on's **Configuration** page and copy the `gateway_token`
-   value (it is generated on first start and managed by Podiom — treat the
-   field as read-only).
-3. Return to the token screen and open the **Claude terminal** and/or
-   **Codex terminal** buttons. Add a profile name first if you want a
+1. Open **Podiom** from the sidebar. On a fresh install, the web UI opens a
+   Home Assistant setup page with an embedded terminal.
+2. Use the **Claude** and/or **Codex** terminal buttons to authenticate the
+   CLIs. Add a profile name before opening a login if you want a
    profile-scoped CLI login.
-4. Paste the token into the token screen. The browser remembers it.
-5. Create your first agent.
+3. Open **Onboard** in the same terminal panel. This runs the shared
+   `podiom onboard` wizard: choose provider/profile, answer the first-agent
+   questions, and accept or edit the generated `SOUL.md`.
+4. When the wizard finishes, the web page shows the gateway-token step. Click
+   **Copy token**, then **Finished** to open the dashboard.
+5. Future visits open the dashboard directly. HA installs also show a
+   **Terminal** sidebar item for later Claude/Codex re-authentication or
+   maintenance shell access.
 
 ## The gateway token
 
 HA's login protects the *browser → HA* hop; the gateway token authenticates
 the *client → podiomd* hop ([full model](security.md#gateway-token)). In the
-HA app the token lifecycle is terminal-free:
+HA app the token lifecycle is mostly terminal-free:
 
-- **Retrieve** — the Configuration page's `gateway_token` field.
+- **First browser setup** — after `podiom onboard` completes, the setup page
+  exposes a narrow HA-only copy button and stores the token in that browser.
 - **Rotate** — switch on the `rotate_token` toggle and save; the app restarts,
   rotates, writes the new value back, and resets the toggle. Open browser tabs
-  drop back to the token screen; enter the new value.
+  disconnect; use the HA token-copy surface to store the new value in the
+  browser.
 
-The token value never appears in the add-on **log** — only the Configuration
-page shows it.
+The token value never appears in the add-on **log**. The CLI can still show it
+with `podiom token show` inside the container, and the HA setup page can show
+it after onboarding has completed.
 
 ## CLI logins (web terminal)
 
@@ -54,14 +61,17 @@ Podiom UI:
 
 | URL (under the app's Ingress path) | Drops you into |
 | --- | --- |
-| `…/terminal/claude` | `claude` login |
-| `…/terminal/codex` | `codex` device-code login |
+| `…/terminal/claude` | `claude /login` |
+| `…/terminal/codex` | `codex login --device-auth` |
 | `…/terminal/<cli>/<profile>` | the same, scoped to a named [profile](configuration.md#profiles) |
+| `…/terminal/onboard` | the shared `podiom onboard` wizard |
+| `…/terminal/shell` | a maintenance shell |
 
-The HA token screen has buttons for these entries, so you do not need to edit
-the URL by hand. Each entry runs the right login command, then drops to a shell
-and prints a link back to Podiom. The login prints a URL you open in your own
-browser and a code to paste back — this works fully over the web terminal.
+The HA setup page and the later **Terminal** sidebar page have buttons for
+these entries, so you do not need to edit the URL by hand. Each login entry
+runs the right login command, then drops to a shell and prints a link back to
+Podiom. The login prints a URL you open in your own browser and a code to paste
+back — this works fully over the web terminal.
 
 > **Honest note:** whoever reaches a terminal entry has shell access to the
 > whole container — `$PODIOM_HOME`, every profile's credentials, and the

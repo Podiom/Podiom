@@ -2,8 +2,10 @@
   import { onMount } from "svelte";
   import { applyUpdate, checkUpdate, createProfile, getHealth, hireAgent, listAgents, listProfiles } from "./lib/api";
   import { auth } from "./lib/auth.svelte";
+  import { deployment } from "./lib/base";
   import { live } from "./lib/live.svelte";
   import TokenGate from "./pages/TokenGate.svelte";
+  import HAOnboarding from "./pages/HAOnboarding.svelte";
   import ProviderLogo from "./lib/ProviderLogo.svelte";
   import type { Agent, Health, PermissionMode, ProfileInfo, Provider, UpdateStatus } from "./lib/types";
   import Chat from "./pages/Chat.svelte";
@@ -13,9 +15,10 @@
   import Projects from "./pages/Projects.svelte";
   import Skills from "./pages/Skills.svelte";
   import Settings from "./pages/Settings.svelte";
+  import Terminal from "./pages/Terminal.svelte";
   import type { PushState } from "./lib/live.svelte";
 
-  type Route = "chat" | "roadmap" | "projects" | "agents" | "schedules" | "skills" | "settings";
+  type Route = "chat" | "roadmap" | "projects" | "agents" | "schedules" | "skills" | "terminal" | "settings";
   type SettingsTab = "global" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
@@ -57,11 +60,19 @@
     },
   ];
 
+  const TERMINAL_NAV: { key: Route; label: string; icon: string } = {
+    key: "terminal",
+    label: "Terminal",
+    icon: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  };
+
   // Gear icon for the Settings entry pinned in the sidebar footer.
   const SETTINGS_ICON =
     '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
 
   let route = $state<Route>("chat");
+  const mode = deployment();
+  let showHAOnboarding = $state(mode === "ha" && !auth.token);
   let health = $state<Health | null>(null);
   let update = $state<UpdateStatus | null>(null);
   let updateState = $state<"idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed">("idle");
@@ -94,7 +105,9 @@
   // a rotation (token cleared → re-entered) to reopen the socket and refresh.
   let booted = $state(false);
   $effect(() => {
+    if (mode === "ha" && !auth.token) showHAOnboarding = true;
     if (!auth.token) return;
+    if (mode === "ha" && showHAOnboarding) return;
     if (booted) {
       live.connect(); // reopen after re-authentication
       return;
@@ -309,6 +322,7 @@
   }
 
   const hireProfileOptions = $derived(profiles.filter((p) => p.Provider === hireProvider));
+  const visibleNav = $derived(mode === "ha" ? [...NAV, TERMINAL_NAV] : NAV);
 
   const daemonLabel = $derived(daemonStatus === "live" ? "podiomd live" : `podiomd ${daemonStatus}`);
   const daemonAddr = $derived(health ? `${health.version} · ${health.commit}` : "127.0.0.1:8787");
@@ -339,7 +353,9 @@
   }
 </script>
 
-{#if !auth.token}
+{#if mode === "ha" && showHAOnboarding}
+  <HAOnboarding onUnlocked={() => { showHAOnboarding = false; route = "chat"; booted = false; }} />
+{:else if !auth.token}
   <TokenGate />
 {:else}
 <div class="app-root">
@@ -361,7 +377,7 @@
     </div>
 
     <nav class="nav-links">
-      {#each NAV as item}
+      {#each visibleNav as item}
         <button class="nav-link" class:active={route === item.key} onclick={() => (route = item.key)}>
           <svg
             width="18"
@@ -446,6 +462,8 @@
       <Schedules {agents} onOpenChat={openChat} />
     {:else if route === "skills"}
       <Skills />
+    {:else if route === "terminal" && mode === "ha"}
+      <Terminal />
     {:else if route === "settings"}
       <Settings
         {health}

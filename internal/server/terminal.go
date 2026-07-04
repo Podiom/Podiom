@@ -9,14 +9,15 @@ import (
 	"strings"
 )
 
-// The terminal onboarding sub-paths (HA15/HA22): /terminal/claude and
-// /terminal/codex — optionally /terminal/<cli>/<profile> (HA23) — are proxied
-// to the container's shared ttyd. Each entry lands the user directly in the
-// right CLI's login flow: the proxy resolves cli/profile from the *path* and
-// injects them as ttyd --url-arg query args on the forwarded requests, so the
-// wrapper script receives them as argv while the browser URL stays a clean
-// path segment (HA23's implementation note). The client's own query string is
-// dropped — args are trusted only when minted here.
+// The terminal onboarding sub-paths (HA15/HA22): /terminal/claude,
+// /terminal/codex, /terminal/onboard, and /terminal/shell are proxied to the
+// container's shared ttyd. Claude/Codex may include an optional profile segment
+// (HA23). Each entry lands the user directly in the right flow: the proxy
+// resolves cli/profile from the *path* and injects them as ttyd --url-arg query
+// args on the forwarded requests, so the wrapper script receives them as argv
+// while the browser URL stays a clean path segment (HA23's implementation
+// note). The client's own query string is dropped — args are trusted only when
+// minted here.
 //
 // These routes are exempt from gateway-token auth by design: whoever reaches
 // them holds an HA-authenticated Ingress session, and the terminal is
@@ -84,9 +85,10 @@ func (t *terminalProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t.proxy.ServeHTTP(w, r)
 }
 
-// splitTerminalPath decomposes /terminal/<cli>[/<profile>][/<rest>...]. The
-// profile is distinguished from ttyd sub-resources by reservation: "ws" and
-// "token" are ttyd's own endpoints and never profile names.
+// splitTerminalPath decomposes /terminal/<flow>[/<profile>][/<rest>...].
+// Profiles are supported only for claude/codex and distinguished from ttyd
+// sub-resources by reservation: "ws" and "token" are ttyd's own endpoints and
+// never profile names.
 func splitTerminalPath(p string) (cli, profile, rest string, ok bool) {
 	trimmed := strings.TrimPrefix(p, "/terminal/")
 	if trimmed == p {
@@ -94,7 +96,7 @@ func splitTerminalPath(p string) (cli, profile, rest string, ok bool) {
 	}
 	parts := strings.SplitN(trimmed, "/", 3)
 	cli = parts[0]
-	if cli != "claude" && cli != "codex" {
+	if cli != "claude" && cli != "codex" && cli != "onboard" && cli != "shell" {
 		return "", "", "", false
 	}
 	if len(parts) == 1 {
@@ -104,6 +106,9 @@ func splitTerminalPath(p string) (cli, profile, rest string, ok bool) {
 	tail := ""
 	if len(parts) == 3 {
 		tail = parts[2]
+	}
+	if cli == "onboard" || cli == "shell" {
+		return cli, "", strings.TrimPrefix(trimmed[len(cli)+1:], "/"), true
 	}
 	if second == "" || isTTYDResource(second) {
 		return cli, "", strings.TrimPrefix(trimmed[len(cli)+1:], "/"), true

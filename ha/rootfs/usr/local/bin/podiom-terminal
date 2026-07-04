@@ -4,7 +4,7 @@
 # /terminal/* session. podiomd's reverse proxy injects the arguments via
 # ttyd's --url-arg mechanism:
 #
-#   podiom-terminal <cli> [--profile=<name>] [--return-url=<url>]
+#   podiom-terminal <flow> [--profile=<name>] [--return-url=<url>]
 #
 # Contract: NEVER exit — exiting kills the ttyd session and leaves a dead
 # terminal. Every path (success, bad args, unknown profile) ends in
@@ -81,30 +81,48 @@ run_login() {
     esac
 }
 
+run_onboard() {
+    echo "Starting the shared Podiom onboarding wizard."
+    echo "This creates your first agent and marks onboarding complete when it finishes."
+    echo
+    PODIOM_OFFER_AUTOSTART=0 podiom onboard
+}
+
 banner() {
     echo "=================================================="
-    echo " Podiom onboarding terminal — ${cli} login"
+    case "${cli}" in
+        onboard) echo " Podiom onboarding wizard" ;;
+        shell)   echo " Podiom maintenance shell" ;;
+        *)       echo " Podiom onboarding terminal — ${cli} login" ;;
+    esac
     [ -n "${profile}" ] && echo " Profile: ${profile}"
     echo "=================================================="
 }
 
 main() {
     case "${cli}" in
-        claude|codex) ;;
+        claude|codex|onboard|shell) ;;
         "")
             echo "Podiom onboarding terminal."
-            echo "Open one of these to log in a CLI:"
+            echo "Open one of these:"
             echo "  .../terminal/claude            log in the claude CLI"
             echo "  .../terminal/codex             log in the codex CLI"
             echo "  .../terminal/<cli>/<profile>   log in a specific profile"
+            echo "  .../terminal/onboard           run the Podiom onboarding wizard"
+            echo "  .../terminal/shell             open a maintenance shell"
             echo "Dropping to a shell."
             return
             ;;
         *)
-            echo "Unknown CLI '${cli}' (expected claude or codex). Dropping to a shell."
+            echo "Unknown flow '${cli}' (expected claude, codex, onboard, or shell). Dropping to a shell."
             return
             ;;
     esac
+
+    if [ -n "${profile}" ] && [ "${cli}" != "claude" ] && [ "${cli}" != "codex" ]; then
+        echo "Profiles are only supported for claude and codex login flows. Ignoring profile '${profile}'."
+        profile=""
+    fi
 
     if [ -n "${profile}" ]; then
         if ! [[ "${profile}" =~ ${PROFILE_RE} ]]; then
@@ -119,12 +137,16 @@ main() {
     fi
 
     banner
-    run_login
+    case "${cli}" in
+        claude|codex) run_login ;;
+        onboard)      run_onboard ;;
+        shell)        ;;
+    esac
     echo
     if [ -n "${return_url}" ]; then
-        echo "Done. Return to Podiom: ${return_url}"
+        echo "Return to Podiom: ${return_url}"
     else
-        echo "Done. Return to the Podiom tab in your Home Assistant sidebar."
+        echo "Return to the Podiom tab in your Home Assistant sidebar."
     fi
     echo "You are now in a shell inside the add-on container."
 }

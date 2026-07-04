@@ -22,6 +22,8 @@ import type {
   MCPSnapshot,
   MCPServer,
   MemoryInfo,
+  OnboardingState,
+  OnboardingToken,
   PlanInfo,
   PlanState,
   ProfileInfo,
@@ -49,6 +51,18 @@ async function asJSON<T>(res: Response): Promise<T> {
 
 export async function getHealth(): Promise<Health> {
   return asJSON(await request("/healthz"));
+}
+
+export async function getOnboardingState(): Promise<OnboardingState> {
+  return asJSON(await request("/api/onboarding"));
+}
+
+export async function completeOnboarding(): Promise<OnboardingState> {
+  return asJSON(await request("/api/onboarding/complete", { method: "POST" }));
+}
+
+export async function getOnboardingToken(): Promise<OnboardingToken> {
+  return asJSON(await request("/api/onboarding/token"));
 }
 
 export async function checkUpdate(): Promise<UpdateStatus> {
