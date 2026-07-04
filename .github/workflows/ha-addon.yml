@@ -1,9 +1,13 @@
 name: ha-addon
 
 on:
-  release:
+  workflow_run:
+    workflows:
+      - release
+    branches:
+      - master
     types:
-      - published
+      - completed
   workflow_dispatch:
     inputs:
       version:
@@ -21,20 +25,21 @@ permissions:
   packages: write
 
 concurrency:
-  group: ha-addon-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+  group: ha-addon-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.version }}
   cancel-in-progress: false
 
 jobs:
   publish:
     name: Publish Home Assistant add-on
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -64,7 +69,7 @@ jobs:
 
       - name: Build web and Linux binaries
         env:
-          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
         run: |
           make web
           target_sha="$(git rev-parse HEAD)"
@@ -72,7 +77,7 @@ jobs:
 
       - name: Build amd64 add-on image
         env:
-          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
         run: |
           set -euo pipefail
           set -a; . ha/versions.env; set +a
@@ -89,7 +94,7 @@ jobs:
 
       - name: Push multi-arch add-on image
         env:
-          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
         run: |
           set -euo pipefail
           set -a; . ha/versions.env; set +a
@@ -105,7 +110,7 @@ jobs:
 
       - name: Publish add-on to Podiom/homeassistant-addons
         env:
-          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
           ADDON_REPO_TOKEN: ${{ secrets.ADDON_REPO_TOKEN }}
         run: |
           set -euo pipefail
