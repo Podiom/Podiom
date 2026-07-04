@@ -282,12 +282,13 @@ type codexClient struct {
 	nextID      int64
 	initialized bool
 
-	pending    map[string]chan codexCallResponse
-	loaded     map[string]bool
-	watchers   map[codexTurnKey]chan codexStreamEvent
-	buffered   map[codexTurnKey][]codexStreamEvent
-	active     map[codexTurnKey]codexActiveTurn
-	stderrTail []string
+	pending     map[string]chan codexCallResponse
+	loaded      map[string]bool
+	watchers    map[codexTurnKey]chan codexStreamEvent
+	buffered    map[codexTurnKey][]codexStreamEvent
+	active      map[codexTurnKey]codexActiveTurn
+	fileChanges map[codexTurnKey]map[string]string
+	stderrTail  []string
 }
 
 type osProcess struct {
@@ -354,11 +355,12 @@ func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig str
 			"mcp_profile", profileName,
 			"mcp_profile_hash", profileHash,
 		),
-		pending:  map[string]chan codexCallResponse{},
-		loaded:   map[string]bool{},
-		watchers: map[codexTurnKey]chan codexStreamEvent{},
-		buffered: map[codexTurnKey][]codexStreamEvent{},
-		active:   map[codexTurnKey]codexActiveTurn{},
+		pending:     map[string]chan codexCallResponse{},
+		loaded:      map[string]bool{},
+		watchers:    map[codexTurnKey]chan codexStreamEvent{},
+		buffered:    map[codexTurnKey][]codexStreamEvent{},
+		active:      map[codexTurnKey]codexActiveTurn{},
+		fileChanges: map[codexTurnKey]map[string]string{},
 	}
 }
 
@@ -643,6 +645,9 @@ func (c *codexClient) dispatchResponse(msg codexRPCMessage) {
 }
 
 func (c *codexClient) dispatchNotification(msg codexRPCMessage) {
+	if msg.Method == "item/fileChange/patchUpdated" {
+		c.recordFileChangePatch(msg.Params)
+	}
 	key, ok := codexNotificationKey(msg.Method, msg.Params)
 	if !ok {
 		return
@@ -683,6 +688,7 @@ func (c *codexClient) failLocked(err error) {
 	c.stdin = nil
 	c.initialized = false
 	c.loaded = map[string]bool{}
+	c.fileChanges = map[codexTurnKey]map[string]string{}
 	for key, ch := range c.pending {
 		delete(c.pending, key)
 		ch <- codexCallResponse{err: err}
@@ -857,6 +863,7 @@ func (c *codexClient) unregisterTurn(key codexTurnKey) {
 	c.mu.Lock()
 	delete(c.watchers, key)
 	delete(c.active, key)
+	delete(c.fileChanges, key)
 	c.mu.Unlock()
 }
 
@@ -946,7 +953,7 @@ func (c *codexClient) handleServerRequest(msg codexRPCMessage) {
 	active, ok := c.waitActiveForRequest(msg.Method, msg.Params, 2*time.Second)
 	decision := PermissionDecision{Behavior: "deny"}
 	if ok && active.relay != nil {
-		req := codexPermissionRequest(msg.Method, msg.ID, msg.Params, active)
+		req := c.codexPermissionRequest(msg.Method, msg.ID, msg.Params, active)
 		got, err := active.relay.RequestPermission(active.ctx, req, active.timeout)
 		if err == nil && got.Behavior != "" {
 			decision = got
@@ -982,6 +989,30 @@ func (c *codexClient) activeForRequest(method string, params json.RawMessage) (c
 		}
 	}
 	return codexActiveTurn{}, false
+}
+
+func (c *codexClient) recordFileChangePatch(params json.RawMessage) {
+	key, itemID, summary := codexFileChangePatchSummary(params)
+	if key.threadID == "" || key.turnID == "" || itemID == "" || summary == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fileChanges == nil {
+		c.fileChanges = map[codexTurnKey]map[string]string{}
+	}
+	byItem := c.fileChanges[key]
+	if byItem == nil {
+		byItem = map[string]string{}
+		c.fileChanges[key] = byItem
+	}
+	byItem[itemID] = summary
+}
+
+func (c *codexClient) fileChangeSummary(threadID, turnID, itemID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fileChanges[codexTurnKey{threadID: threadID, turnID: turnID}][itemID]
 }
 
 func (c *codexClient) respond(id json.RawMessage, result any) {
@@ -1390,10 +1421,10 @@ func codexIsApprovalRequest(method string) bool {
 	}
 }
 
-func codexPermissionRequest(method string, id, params json.RawMessage, active codexActiveTurn) PermissionRequest {
+func (c *codexClient) codexPermissionRequest(method string, id, params json.RawMessage, active codexActiveTurn) PermissionRequest {
 	fields := map[string]json.RawMessage{}
 	_ = json.Unmarshal(params, &fields)
-	_, codexTurnID := codexRequestThreadTurn(method, params)
+	threadID, codexTurnID := codexRequestThreadTurn(method, params)
 	toolUseID := firstRawString(fields, "approvalId", "itemId", "callId")
 	if toolUseID == "" {
 		toolUseID = codexIDKey(id)
@@ -1407,9 +1438,115 @@ func codexPermissionRequest(method string, id, params json.RawMessage, active co
 		TurnID:      turnID,
 		ToolName:    codexToolName(method),
 		ToolUseID:   toolUseID,
-		Description: firstRawString(fields, "description"),
+		Description: c.codexPermissionDescription(method, fields, threadID, codexTurnID, toolUseID),
 		Input:       append(json.RawMessage(nil), params...),
 	}
+}
+
+func (c *codexClient) codexPermissionDescription(method string, fields map[string]json.RawMessage, threadID, turnID, itemID string) string {
+	switch method {
+	case "item/fileChange/requestApproval":
+		if summary := c.fileChangeSummary(threadID, turnID, itemID); summary != "" {
+			return summary
+		}
+		if root := firstRawString(fields, "grantRoot"); root != "" {
+			if reason := firstRawString(fields, "reason", "description"); reason != "" {
+				return fmt.Sprintf("Approve file changes under %s: %s", root, reason)
+			}
+			return "Approve file changes under " + root
+		}
+		if reason := firstRawString(fields, "reason", "description"); reason != "" {
+			return "Approve file changes: " + reason
+		}
+		if itemID != "" {
+			return "Approve file changes from Codex item " + itemID
+		}
+		return "Approve file changes"
+	case "applyPatchApproval":
+		if summary := codexLegacyFileChangeSummary(fields); summary != "" {
+			return summary
+		}
+	}
+	return firstRawString(fields, "description", "reason")
+}
+
+func codexFileChangePatchSummary(params json.RawMessage) (codexTurnKey, string, string) {
+	var p struct {
+		ThreadID string                       `json:"threadId"`
+		TurnID   string                       `json:"turnId"`
+		ItemID   string                       `json:"itemId"`
+		Changes  []codexFileChangeSummaryItem `json:"changes"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return codexTurnKey{}, "", ""
+	}
+	return codexTurnKey{threadID: p.ThreadID, turnID: p.TurnID}, p.ItemID, codexFormatFileChanges(p.Changes)
+}
+
+func codexLegacyFileChangeSummary(fields map[string]json.RawMessage) string {
+	raw := fields["fileChanges"]
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		raw = fields["changes"]
+	}
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return ""
+	}
+	var changes []codexLegacyFileChange
+	if err := json.Unmarshal(raw, &changes); err != nil {
+		return ""
+	}
+	items := make([]codexFileChangeSummaryItem, 0, len(changes))
+	for _, change := range changes {
+		item := codexFileChangeSummaryItem{Path: change.Path}
+		item.Kind.Type = change.Type
+		item.Kind.MovePath = change.MovePath
+		items = append(items, item)
+	}
+	return codexFormatFileChanges(items)
+}
+
+type codexFileChangeSummaryItem struct {
+	Path string `json:"path"`
+	Kind struct {
+		Type     string `json:"type"`
+		MovePath string `json:"move_path"`
+	} `json:"kind"`
+}
+
+type codexLegacyFileChange struct {
+	Path     string `json:"path"`
+	Type     string `json:"type"`
+	MovePath string `json:"move_path"`
+}
+
+func codexFormatFileChanges(changes []codexFileChangeSummaryItem) string {
+	if len(changes) == 0 {
+		return ""
+	}
+	const maxShown = 5
+	parts := make([]string, 0, min(len(changes), maxShown))
+	for i, change := range changes {
+		if i >= maxShown {
+			break
+		}
+		path := strings.TrimSpace(change.Path)
+		kind := strings.TrimSpace(change.Kind.Type)
+		if kind == "" {
+			kind = "update"
+		}
+		if path == "" {
+			path = "unknown path"
+		}
+		if kind == "update" && strings.TrimSpace(change.Kind.MovePath) != "" {
+			parts = append(parts, fmt.Sprintf("move %s -> %s", path, strings.TrimSpace(change.Kind.MovePath)))
+			continue
+		}
+		parts = append(parts, kind+" "+path)
+	}
+	if len(changes) > maxShown {
+		parts = append(parts, fmt.Sprintf("+ %d more", len(changes)-maxShown))
+	}
+	return "Approve file changes: " + strings.Join(parts, "; ")
 }
 
 func codexRequestThreadTurn(method string, params json.RawMessage) (string, string) {

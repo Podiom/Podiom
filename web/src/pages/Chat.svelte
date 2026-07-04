@@ -3063,17 +3063,10 @@
     font: 400 14px/1.58 "Hanken Grotesk";
   }
 
-  .plan-panel-body :global(:first-child) {
-    margin-top: 0;
-  }
-
-  .plan-panel-body :global(:last-child) {
-    margin-bottom: 0;
-  }
-
   .plan-panel-body :global(h1),
   .plan-panel-body :global(h2),
   .plan-panel-body :global(h3) {
+    margin: 1.25rem 0 0.55rem;
     color: var(--ink);
     line-height: 1.24;
     letter-spacing: 0;
@@ -3087,7 +3080,34 @@
     font-size: 1.13em;
   }
 
+  .plan-panel-body :global(p) {
+    margin: 0 0 0.9rem;
+  }
+
+  .plan-panel-body :global(ul),
+  .plan-panel-body :global(ol) {
+    margin: 0 0 1rem 1.25rem;
+    padding: 0;
+  }
+
+  .plan-panel-body :global(li) {
+    margin: 0.28rem 0;
+  }
+
+  .plan-panel-body :global(li > p) {
+    margin: 0.25rem 0;
+  }
+
+  .plan-panel-body :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .plan-panel-body :global(:last-child) {
+    margin-bottom: 0;
+  }
+
   .plan-panel-body :global(pre) {
+    margin: 0 0 1rem;
     overflow-x: auto;
     border: 1px solid #eadfd1;
     border-radius: 8px;

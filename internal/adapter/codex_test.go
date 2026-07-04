@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +18,10 @@ import (
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/store"
 )
+
+func slogDiscard() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	approveStart := codexThreadStartParams(StartRequest{
@@ -106,6 +112,46 @@ func TestCodexReplayMessageIncludesHistoryAndLiveTurn(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("replay message missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestCodexFileChangeApprovalUsesPatchSummary(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	params := json.RawMessage(`{
+		"threadId": "thread-1",
+		"turnId": "turn-1",
+		"itemId": "call-1",
+		"changes": [
+			{"path": "web/src/pages/Chat.svelte", "kind": {"type": "update"}, "diff": "@@"},
+			{"path": "web/src/lib/plan.ts", "kind": {"type": "add"}, "diff": "@@"}
+		]
+	}`)
+	client.recordFileChangePatch(params)
+
+	req := client.codexPermissionRequest(
+		"item/fileChange/requestApproval",
+		json.RawMessage("7"),
+		json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"call-1","startedAtMs":1,"reason":null,"grantRoot":null}`),
+		codexActiveTurn{podiomTurnID: "podiom-turn"},
+	)
+	if req.Description != "Approve file changes: update web/src/pages/Chat.svelte; add web/src/lib/plan.ts" {
+		t.Fatalf("description = %q", req.Description)
+	}
+	if req.TurnID != "podiom-turn" || req.ToolUseID != "call-1" {
+		t.Fatalf("bad request metadata: %+v", req)
+	}
+}
+
+func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	req := client.codexPermissionRequest(
+		"item/fileChange/requestApproval",
+		json.RawMessage("8"),
+		json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"call-2","startedAtMs":1,"reason":null,"grantRoot":null}`),
+		codexActiveTurn{},
+	)
+	if req.Description != "Approve file changes from Codex item call-2" {
+		t.Fatalf("description = %q", req.Description)
 	}
 }
 
