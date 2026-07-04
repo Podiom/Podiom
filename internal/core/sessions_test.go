@@ -105,6 +105,58 @@ func TestSessionStartIncludesInternalPlanMCP(t *testing.T) {
 	}
 }
 
+func TestPlanMCPProfileStableAcrossSessionStartAndTurn(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapterWithDaemon(t)
+	defer cleanup()
+
+	agent, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      agent.Name,
+		Origin:                         store.OriginRoadmap,
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	events, err := c.StreamTurn(ctx, session.ID, "create a plan", TurnOptions{PermissionTurnID: "ws-turn-1"})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	for range events {
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake turn requests len = %d", len(fake.Requests))
+	}
+
+	startReq := startRequestFor(t, fake, session.ID)
+	turnReq := fake.Requests[0]
+	startProfile, unavailable := podiommcp.CodexProfile(startReq.MCPServers, startReq.MCPAllServers)
+	if len(unavailable) != 0 {
+		t.Fatalf("unexpected start unavailable: %+v", unavailable)
+	}
+	turnProfile, unavailable := podiommcp.CodexProfile(turnReq.Settings.MCPServers, turnReq.Settings.MCPAllServers)
+	if len(unavailable) != 0 {
+		t.Fatalf("unexpected turn unavailable: %+v", unavailable)
+	}
+	if startProfile != turnProfile {
+		t.Fatalf("plan MCP profile changed between start and turn:\nstart:\n%s\nturn:\n%s", startProfile, turnProfile)
+	}
+	if strings.Contains(turnProfile, "ws-turn-1") {
+		t.Fatalf("provider MCP profile should not include live turn IDs:\n%s", turnProfile)
+	}
+	if !strings.Contains(turnProfile, session.ID) {
+		t.Fatalf("provider MCP profile should include stable session ID:\n%s", turnProfile)
+	}
+	if turnReq.Settings.PermissionTurnID != "ws-turn-1" {
+		t.Fatalf("permission turn id = %q, want ws-turn-1", turnReq.Settings.PermissionTurnID)
+	}
+}
+
 func hasMCPServer(servers []podiommcp.Server, name string) bool {
 	for _, server := range servers {
 		if server.Name == name {

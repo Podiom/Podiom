@@ -496,7 +496,12 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 		effectivePermission = config.PermissionApprove
 		relay = NewPlanGateRelay(c.log)
 	}
-	mcpServers, mcpAll = c.withInternalPlanMCP(sess, opts.PermissionTurnID, mcpServers, mcpAll)
+	// Keep the generated provider MCP profile stable for the life of the
+	// session. Codex app-server stores freshly-created thread rollouts in the
+	// profile-scoped process; changing the internal plan MCP args between
+	// StartRequest and the first TurnRequest forces a different app-server and
+	// makes Codex unable to resume the new thread.
+	mcpServers, mcpAll = c.withInternalPlanMCP(sess, sess.ID, mcpServers, mcpAll)
 	return adapter.TurnRequest{
 		SessionID: sess.ID,
 		Handle: adapter.Handle{

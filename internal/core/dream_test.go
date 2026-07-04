@@ -265,14 +265,9 @@ func TestDreamDueMatrix(t *testing.T) {
 		t.Fatalf("create agent: %v", err)
 	}
 
-	// Compute a dream time already in the past today so "now" is past it.
-	past := time.Now().Add(-2 * time.Hour).Format("15:04")
-	g := c.GetGlobal()
-	g.DreamTime = past
-	dueAt, ok := todaysDreamTime(g.DreamTime, time.Now())
-	if !ok {
-		t.Fatal("dream time should parse")
-	}
+	// Use an absolute past timestamp; near midnight, formatting "now - 2h" as
+	// HH:MM can resolve to a time later today instead of a time already passed.
+	dueAt := time.Now().Add(-2 * time.Hour)
 
 	// No sessions yet → not due even though the time has passed.
 	if c.dreamDue(ctx, "due", dueAt) {
