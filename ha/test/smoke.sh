@@ -4,7 +4,7 @@
 #
 #   ha/test/smoke.sh [image]        default image: podiom-ha:dev
 #
-# Runs the image standalone (no Supervisor), then asserts:
+# Runs the image standalone (no Supervisor, no s6 base startup), then asserts:
 #   - podiomd serves /healthz on 8099
 #   - claude / codex / mcp-proxy / ttyd are present at their pinned versions
 #   - ttyd is listening on 127.0.0.1:7681
@@ -27,7 +27,29 @@ fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok: $*"; }
 
 echo "== starting ${IMAGE}"
-cid="$(docker run -d "${IMAGE}")"
+cid="$(
+    docker run -d \
+        --entrypoint /bin/bash \
+        -e PODIOM_HOME=/data/podiom \
+        -e HOME=/data/home \
+        -e DISABLE_AUTOUPDATER=1 \
+        -e PODIOM_TERMINAL_PROXY=http://127.0.0.1:7681 \
+        "${IMAGE}" \
+        -lc '
+            set -euo pipefail
+            mkdir -p "${PODIOM_HOME}" "${HOME}"
+            if [ ! -f "${PODIOM_HOME}/config.yaml" ]; then
+                printf "%s\n" \
+                    "server:" \
+                    "  bind: 0.0.0.0" \
+                    "  port: 8099" \
+                    > "${PODIOM_HOME}/config.yaml"
+            fi
+            /usr/local/bin/podiomd &
+            /usr/local/bin/ttyd -W -a -i 127.0.0.1 -p 7681 -P 20 /usr/local/bin/podiom-terminal &
+            wait -n
+        '
+)"
 
 echo "== waiting for /healthz (max ${HEALTHZ_TIMEOUT}s)"
 deadline=$((SECONDS + HEALTHZ_TIMEOUT))

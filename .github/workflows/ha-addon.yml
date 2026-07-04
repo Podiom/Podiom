@@ -1,0 +1,157 @@
+name: ha-addon
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to publish, for example v0.1.61"
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build"
+        required: true
+        default: master
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ha-addon-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Home Assistant add-on
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build web and Linux binaries
+        env:
+          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+        run: |
+          make web
+          target_sha="$(git rev-parse HEAD)"
+          make cross VERSION="$VERSION" COMMIT="${target_sha::7}"
+
+      - name: Build amd64 add-on image
+        env:
+          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+        run: |
+          set -euo pipefail
+          set -a; . ha/versions.env; set +a
+          build_args=$(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/--build-arg \1/p' ha/versions.env)
+          docker buildx build --load \
+            --platform linux/amd64 \
+            -f ha/Dockerfile \
+            $build_args \
+            --build-arg PODIOM_VERSION="${VERSION#v}" \
+            -t "ghcr.io/podiom/podiom-ha:smoke" .
+
+      - name: Smoke test add-on image
+        run: bash ha/test/smoke.sh ghcr.io/podiom/podiom-ha:smoke
+
+      - name: Push multi-arch add-on image
+        env:
+          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+        run: |
+          set -euo pipefail
+          set -a; . ha/versions.env; set +a
+          build_args=$(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/--build-arg \1/p' ha/versions.env)
+          addon_version="${VERSION#v}"
+          docker buildx build --push \
+            --platform linux/amd64,linux/arm64 \
+            -f ha/Dockerfile \
+            $build_args \
+            --build-arg PODIOM_VERSION="${addon_version}" \
+            -t "ghcr.io/podiom/podiom-ha:${addon_version}" \
+            -t "ghcr.io/podiom/podiom-ha:latest" .
+
+      - name: Publish add-on to Podiom/homeassistant-addons
+        env:
+          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version }}
+          ADDON_REPO_TOKEN: ${{ secrets.ADDON_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          addon_version="${VERSION#v}"
+          repo_dir="${RUNNER_TEMP}/homeassistant-addons"
+          target_sha="$(git rev-parse HEAD)"
+
+          git clone --depth 1 \
+            "https://x-access-token:${ADDON_REPO_TOKEN}@github.com/Podiom/homeassistant-addons.git" \
+            "$repo_dir"
+
+          old_changelog="${RUNNER_TEMP}/old-changelog.md"
+          if [ -f "$repo_dir/podiom/CHANGELOG.md" ]; then
+            tail -n +2 "$repo_dir/podiom/CHANGELOG.md" > "$old_changelog"
+          else
+            tail -n +2 ha/addon/CHANGELOG.md > "$old_changelog"
+          fi
+
+          mkdir -p "$repo_dir/podiom"
+          rsync -a --delete --exclude CHANGELOG.md ha/addon/ "$repo_dir/podiom/"
+
+          ADDON_VERSION="$addon_version" \
+            yq -i '.version = strenv(ADDON_VERSION)' "$repo_dir/podiom/config.yaml"
+
+          previous_tag="$(git tag --merged "$target_sha" --list 'v0.1.*' --sort=-version:refname | grep -v "^${VERSION}$" | head -n 1 || true)"
+          if [ -n "$previous_tag" ]; then range="${previous_tag}..${target_sha}"; else range="${target_sha}"; fi
+          {
+            echo "# Changelog"
+            echo
+            echo "## ${addon_version} - $(date -u +%Y-%m-%d)"
+            echo
+            git log --reverse --format='- %s' "$range"
+            echo
+            echo "### Bundled versions"
+            echo
+            sed -n 's/^\([A-Z_][A-Z0-9_]*\)=\(.*\)/- \1: \2/p' ha/versions.env | grep -v SHA256
+            echo
+            echo "> Compare with the previous entry for CLI version drift; CLI flags"
+            echo "> Podiom depends on (e.g. --mcp-config, --add-dir, --profile) are"
+            echo "> version-sensitive."
+            echo
+          } | cat - "$old_changelog" > "$repo_dir/podiom/CHANGELOG.md"
+
+          cd "$repo_dir"
+          git config user.name "podiom-release[bot]"
+          git config user.email "podiom-release[bot]@users.noreply.github.com"
+          git add podiom
+          git commit -m "Podiom ${addon_version}"
+          git push
