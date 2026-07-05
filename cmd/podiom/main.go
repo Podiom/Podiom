@@ -291,10 +291,14 @@ func newDoctorCmd(addr *string) *cobra.Command {
 			}
 			for _, status := range providercheck.CheckAll(cmd.Context(), providercheck.Options{}) {
 				state := "missing"
-				if status.Ready {
+				if (status.LoginChecked && status.LoggedIn) || (status.Found && !status.LoginChecked && status.Ready) {
 					state = "ready"
 				} else if status.Found {
-					state = "found"
+					if status.LoginChecked {
+						state = "installed, not logged in"
+					} else {
+						state = "login unknown"
+					}
 				}
 				fmt.Printf("%s: %s\n", status.Provider, state)
 				if status.Path != "" {
@@ -302,6 +306,13 @@ func newDoctorCmd(addr *string) *cobra.Command {
 				}
 				if status.Version != "" {
 					fmt.Printf("  version: %s\n", status.Version)
+				}
+				if status.LoginChecked {
+					if status.LoggedIn {
+						fmt.Println("  login: logged in")
+					} else {
+						fmt.Println("  login: not logged in")
+					}
 				}
 				if !status.Ready && status.Error != "" {
 					fmt.Printf("  note: %s\n", status.Error)

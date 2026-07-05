@@ -5,6 +5,8 @@ package providercheck
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +29,7 @@ type Status struct {
 	Doctor       string
 	Ready        bool
 	LoginChecked bool
+	LoggedIn     bool
 	Error        string
 	InstallHint  string
 	LoginHint    string
@@ -67,8 +70,14 @@ func Check(ctx context.Context, provider config.Provider, opts Options) Status {
 
 	switch provider {
 	case config.ProviderClaude:
+		if out, err := runCapture(ctx, timeout, found.Path, "auth", "status"); parseClaudeAuthStatus(out, &status) {
+			status.Ready = status.Version != ""
+			return status
+		} else if err != nil && status.Error == "" && !errors.Is(err, context.DeadlineExceeded) {
+			status.Error = err.Error()
+		}
+
 		out, err := runCapture(ctx, timeout, found.Path, "doctor")
-		status.LoginChecked = true
 		status.Doctor = trimOutput(out)
 		if err == nil {
 			status.Ready = true
@@ -82,12 +91,47 @@ func Check(ctx context.Context, provider config.Provider, opts Options) Status {
 		// the native login flow and then perform the real LLM generation.
 		status.Ready = status.Version != ""
 	case config.ProviderCodex:
-		status.LoginChecked = false
+		out, err := runCapture(ctx, timeout, found.Path, "login", "status")
+		status.LoginChecked = true
+		if err == nil {
+			status.LoggedIn = true
+		} else if errors.Is(err, context.DeadlineExceeded) || looksLikeMissingSubcommand(out) {
+			status.LoginChecked = false
+			if status.Error == "" {
+				status.Error = err.Error()
+			}
+		} else if status.Error == "" {
+			status.Error = err.Error()
+		}
 		status.Ready = status.Version != ""
 	default:
 		status.Error = fmt.Sprintf("unknown provider %q", provider)
 	}
 	return status
+}
+
+func parseClaudeAuthStatus(out string, status *Status) bool {
+	i := strings.IndexByte(out, '{')
+	if i < 0 {
+		return false
+	}
+	var parsed struct {
+		LoggedIn bool `json:"loggedIn"`
+	}
+	if err := json.Unmarshal([]byte(out[i:]), &parsed); err != nil {
+		return false
+	}
+	status.LoginChecked = true
+	status.LoggedIn = parsed.LoggedIn
+	status.Error = ""
+	return true
+}
+
+func looksLikeMissingSubcommand(out string) bool {
+	lower := strings.ToLower(out)
+	return strings.Contains(lower, "unrecognized") ||
+		strings.Contains(lower, "unknown command") ||
+		strings.Contains(lower, "usage:")
 }
 
 // CheckAll inspects Claude and Codex.
@@ -105,6 +149,44 @@ func RunNativeLogin(ctx context.Context, provider config.Provider, path string) 
 		return err
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// InstallPackage returns the npm package used to install a provider CLI.
+func InstallPackage(provider config.Provider) (string, error) {
+	switch provider {
+	case config.ProviderClaude:
+		return "@anthropic-ai/claude-code", nil
+	case config.ProviderCodex:
+		return "@openai/codex", nil
+	default:
+		return "", fmt.Errorf("unknown provider %q", provider)
+	}
+}
+
+// NpmPath returns npm's executable path, or an empty string when unavailable.
+func NpmPath() string {
+	path, err := exec.LookPath("npm")
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+// RunInstall installs a provider CLI with npm in the current terminal.
+func RunInstall(ctx context.Context, provider config.Provider) error {
+	pkg, err := InstallPackage(provider)
+	if err != nil {
+		return err
+	}
+	npm := NpmPath()
+	if npm == "" {
+		return errors.New("npm not found")
+	}
+	cmd := exec.CommandContext(ctx, npm, "install", "-g", pkg)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

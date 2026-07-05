@@ -10,7 +10,7 @@
     </div>
   </header>
   <div class="terminal-shell">
-    <HATerminalPanel initialFlow="shell" />
+    <HATerminalPanel flow="shell" showToolbar={true} />
   </div>
 </main>
 

@@ -27,33 +27,35 @@ Exact bundled versions are listed in the changelog for every release.
 
 1. **Start the add-on** and open **Podiom** from the sidebar.
 2. The UI opens a Home Assistant setup page with an embedded terminal.
-3. **Log in the CLIs.** Use the **Claude** and **Codex** buttons. Add a
-   profile name first if you want a profile-scoped login. Each button drops
-   you straight into that CLI's login flow:
-   - **claude**: follow the printed URL in your own browser, then paste the
-     code back into the terminal if prompted.
-   - **codex**: a device-code flow prints a URL and a short one-time code.
-     Note: *device code login* must be enabled in your ChatGPT security
-     settings (or by your workspace admin).
-   When the login finishes you land in a shell, and a link back to Podiom is
-   printed.
-4. **Run Onboard** from the same terminal panel. This launches the shared
-   `podiom onboard` wizard to choose provider/profile, create your first
-   agent, and generate its `SOUL.md`.
-5. **Copy the gateway token** on the final setup page, then press
-   **Finished**. Each browser only needs this once.
+3. **Run Onboard.** The embedded wizard verifies the bundled Claude/Codex
+   CLIs, guides you through device login when needed, lets you choose a
+   provider/profile, creates your first agent, and generates its `SOUL.md`.
+4. When the wizard finishes, press **Take the stage**. The setup page stores
+   the gateway token in this browser and opens the dashboard. Each browser only
+   needs this once.
 
 After setup, Podiom opens directly to the dashboard. The **Terminal** sidebar
 item stays available for later Claude/Codex re-authentication or shell access.
 
-### Profiles
+### Re-authenticating later
 
-Profiles are named CLI login contexts (e.g. `work` and `personal`). Define
-them in Podiom's config, then log each one in via a profile-scoped terminal
-entry from the setup page or the later Terminal sidebar page. The underlying
-paths are `terminal/claude/<profile-name>` and
-`terminal/codex/<profile-name>`; the same paths work for the first login and
-for re-logins later.
+Use **Terminal** → Shell, then run:
+
+```sh
+claude /login
+codex login --device-auth
+```
+
+For a profile-scoped login, create the directory yourself and prefix the CLI's
+environment variable:
+
+```sh
+mkdir -p /data/home/.claude-work
+CLAUDE_CONFIG_DIR=/data/home/.claude-work claude /login
+
+mkdir -p /data/home/.codex-work
+CODEX_HOME=/data/home/.codex-work codex login --device-auth
+```
 
 ## The gateway token
 

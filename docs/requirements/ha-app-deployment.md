@@ -166,6 +166,9 @@ layers:
   the terminal sub-paths must both tolerate the Ingress base path (HA14) — the
   terminal surface derives its own base from the request path just as the SPA
   does.
+  **2026-07 update:** dedicated Claude/Codex terminal login entries are
+  superseded by onboard-integrated CLI login checks; current terminal surfaces
+  are `/{ingress-base}/terminal/onboard` and `/{ingress-base}/terminal/shell`.
 
 ---
 
@@ -236,6 +239,8 @@ layers:
     robust. If a chrome around the terminal is used, the link may instead be
     rendered by the thin HTML page `ttyd` serves around the terminal; either
     placement satisfies this requirement.
+  **2026-07 update:** Claude/Codex login now happens inside `podiom onboard`;
+  the wrapper dispatches only `onboard` and `shell`.
 - **HA23 — Profiles supported, selectable on the entry.** Per-profile logins
   work the same way: `CLAUDE_CONFIG_DIR=<profile-dir> claude /login` (and the
   Codex equivalent), once per profile — repeatable, matching the profile model.
@@ -248,6 +253,9 @@ layers:
   `ttyd` would not route to a distinct command. The requirement is stated
   transport-neutrally; either mechanism is acceptable so long as the entry lands
   in a login flow scoped to the named profile dir.
+  **2026-07 update:** profile-scoped terminal login entries are superseded by
+  onboard-integrated login checks; later profile re-authentication is manual in
+  Shell with `CLAUDE_CONFIG_DIR=<dir>` or `CODEX_HOME=<dir>`.
 - **HA24 — The terminal is Podiom-root (honest note).** Whoever reaches a
   terminal sub-path reaches the whole container: `$PODIOM_HOME`, every profile's
   credentials, and the gateway token. Ingress gates these sub-paths behind HA
@@ -337,13 +345,12 @@ A correct implementation satisfies all of:
    (HA13).
 6. The SPA renders and connects correctly under the Ingress sub-path (no
    absolute-path breakage; WS URL derived from the ingress path) (HA14).
-7. The `terminal/claude`, `terminal/codex`, `terminal/onboard`, and
-   `terminal/shell` sub-paths (behind the single Ingress entry) open the shared
-   `ttyd` directly into the right flow, drop to a shell when appropriate, and
-   print a working link back to the Podiom SPA; `claude /login` and
-   `codex login --device-auth` complete successfully there, including for a
-   profile-scoped entry (path segment / wrapper arg, not a query param) (HA15,
-   HA22, HA23).
+7. The `terminal/onboard` and `terminal/shell` sub-paths (behind the single
+   Ingress entry) open the shared `ttyd` directly into the right flow, drop to
+   a shell when appropriate, and print a working link back to the Podiom SPA;
+   provider login is checked and launched by the onboard wizard, while later
+   manual `claude /login` and `codex login --device-auth` work from Shell
+   (HA15, HA22, HA23 superseded by onboard-integrated logins).
 8. Restarting the app and updating it to a new version preserves: sessions,
    agent SOUL/MEMORY files, skills links, profiles' CLI auth, and the gateway
    token (`/data`-anchored `PODIOM_HOME` and `HOME`) (HA19, HA26).

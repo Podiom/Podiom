@@ -20,6 +20,7 @@ import (
 	"github.com/Podiom/Podiom/internal/client"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/gateway"
+	"github.com/Podiom/Podiom/internal/hamode"
 	"github.com/Podiom/Podiom/internal/onboardstate"
 	"github.com/Podiom/Podiom/internal/providercheck"
 )
@@ -106,12 +107,59 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	statuses := checkProviders("Detecting Claude and Codex…")
 	printDoctor(out, statuses)
-	ready := readyProviders(statuses)
-	for len(ready) == 0 {
+
+	haMode := hamode.Detect()
+	npm := providercheck.NpmPath()
+	for !hasFoundProvider(statuses) {
 		fmt.Fprintln(out, warnStyle.Render("Podiom needs Claude or Codex before it can generate a SOUL.md."))
 		for _, s := range statuses {
-			if !s.Found {
-				fmt.Fprintf(out, "\n%s not found.\n  %s\n", titleProvider(s.Provider), s.InstallHint)
+			if s.Found {
+				continue
+			}
+			pkg, _ := providercheck.InstallPackage(s.Provider)
+			fmt.Fprintf(out, "\n%s not found.\n", titleProvider(s.Provider))
+			if haMode {
+				fmt.Fprintf(out, "  %s\n", s.InstallHint)
+				continue
+			}
+			if npm == "" {
+				fmt.Fprintf(out, "  %s\n", s.InstallHint)
+				fmt.Fprintln(out, "  Install it manually, then come back here to re-check.")
+				continue
+			}
+			ok, err := u.confirm(fmt.Sprintf("Install %s now with npm (npm install -g %s)?", titleProvider(s.Provider), pkg), true)
+			if err != nil {
+				return err
+			}
+			if ok {
+				u.restoreTTY()
+				if err := providercheck.RunInstall(ctx, s.Provider); err != nil {
+					fmt.Fprintln(out, warnStyle.Render(fmt.Sprintf("%s install did not complete: %v", titleProvider(s.Provider), err)))
+				}
+				u.restoreTTY()
+				statuses = checkProviders("Re-checking providers…")
+				printDoctor(out, statuses)
+				break
+			}
+		}
+		if !hasFoundProvider(statuses) {
+			again, err := u.confirm("Check for the CLIs again?", true)
+			if err != nil {
+				return err
+			}
+			if !again {
+				return errors.New("no agent CLI available; install claude or codex and run `podiom onboard` again")
+			}
+			statuses = checkProviders("Re-checking providers…")
+			printDoctor(out, statuses)
+		}
+	}
+
+	section(out, "Checking provider logins")
+	loggedIn := loggedInProviders(statuses)
+	for len(loggedIn) == 0 {
+		for _, s := range statuses {
+			if !s.Found || providerLoggedIn(s) {
 				continue
 			}
 			ok, err := u.confirm(fmt.Sprintf("Open the native %s login now?", titleProvider(s.Provider)), true)
@@ -119,30 +167,35 @@ func Run(ctx context.Context, opts Options) error {
 				return err
 			}
 			if ok {
-				_ = providercheck.RunNativeLogin(ctx, s.Provider, s.Path)
+				u.restoreTTY()
+				if err := providercheck.RunNativeLogin(ctx, s.Provider, s.Path); err != nil {
+					fmt.Fprintln(out, warnStyle.Render(fmt.Sprintf("%s login did not complete: %v", titleProvider(s.Provider), err)))
+				}
+				u.restoreTTY()
+				statuses = checkProviders("Re-checking provider logins…")
+				printDoctor(out, statuses)
+				loggedIn = loggedInProviders(statuses)
+				break
 			}
 		}
-		statuses = checkProviders("Re-checking providers…")
-		printDoctor(out, statuses)
-		ready = readyProviders(statuses)
-		if len(ready) == 0 {
-			again, err := u.confirm("Try provider checks again?", true)
+		if len(loggedIn) == 0 {
+			again, err := u.confirm("Try the login checks again?", true)
 			if err != nil {
 				return err
 			}
 			if !again {
-				return errors.New("no working provider available; run `podiom doctor` after installing or logging in")
+				return errors.New("no provider login available; run `podiom doctor` after logging in")
 			}
+			statuses = checkProviders("Re-checking provider logins…")
+			printDoctor(out, statuses)
+			loggedIn = loggedInProviders(statuses)
 		}
 	}
 
 	section(out, "Choosing a provider")
 	profiles := loadProfilesForOnboarding()
-	provider, profile, err := chooseProvider(u, ready, profiles)
+	provider, profile, err := chooseProvider(u, loggedIn, profiles)
 	if err != nil {
-		return err
-	}
-	if err := confirmProviderLogin(ctx, u, provider, profile, statuses); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, noticeStyle.Render(fmt.Sprintf("Great. %s will help draft this agent's SOUL.md.", providerLabel(provider, profile))))
@@ -396,10 +449,14 @@ func findPodiomd() (string, error) {
 func printDoctor(out io.Writer, statuses []providercheck.Status) {
 	for _, s := range statuses {
 		state := warnStyle.Render("missing")
-		if s.Ready {
+		if providerLoggedIn(s) {
 			state = noticeStyle.Render("ready")
 		} else if s.Found {
-			state = goldStyle.Render("found")
+			if s.LoginChecked {
+				state = goldStyle.Render("installed, not logged in")
+			} else {
+				state = goldStyle.Render("login unknown")
+			}
 		}
 		fmt.Fprintf(out, "  %s: %s", titleProvider(s.Provider), state)
 		if s.Version != "" {
@@ -415,14 +472,27 @@ func printDoctor(out io.Writer, statuses []providercheck.Status) {
 	}
 }
 
-func readyProviders(statuses []providercheck.Status) []config.Provider {
+func hasFoundProvider(statuses []providercheck.Status) bool {
+	for _, s := range statuses {
+		if s.Found {
+			return true
+		}
+	}
+	return false
+}
+
+func loggedInProviders(statuses []providercheck.Status) []config.Provider {
 	var out []config.Provider
 	for _, s := range statuses {
-		if s.Ready {
+		if providerLoggedIn(s) {
 			out = append(out, s.Provider)
 		}
 	}
 	return out
+}
+
+func providerLoggedIn(s providercheck.Status) bool {
+	return (s.LoginChecked && s.LoggedIn) || (s.Found && !s.LoginChecked && s.Ready)
 }
 
 type providerChoice struct {
@@ -480,35 +550,6 @@ func loadProfilesForOnboarding() []config.Profile {
 		return nil
 	}
 	return cfg.Profiles
-}
-
-func confirmProviderLogin(ctx context.Context, u *ui, provider config.Provider, profile string, statuses []providercheck.Status) error {
-	var status providercheck.Status
-	for _, candidate := range statuses {
-		if candidate.Provider == provider {
-			status = candidate
-			break
-		}
-	}
-	if status.Path == "" {
-		return fmt.Errorf("%s is not available", titleProvider(provider))
-	}
-	ok, err := u.confirm(fmt.Sprintf("Is %s logged in and ready to run?", providerLabel(provider, profile)), true)
-	if err != nil {
-		return err
-	}
-	if ok {
-		return nil
-	}
-	fmt.Fprintf(u.out, "Opening %s's native login flow.\n", titleProvider(provider))
-	if err := providercheck.RunNativeLogin(ctx, provider, status.Path); err != nil {
-		return err
-	}
-	next := providercheck.Check(ctx, provider, providercheck.Options{})
-	if !next.Ready {
-		return fmt.Errorf("%s still does not look ready: %s", titleProvider(provider), next.Error)
-	}
-	return nil
 }
 
 func providerLabel(provider config.Provider, profile string) string {

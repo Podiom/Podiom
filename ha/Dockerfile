@@ -20,9 +20,6 @@ ARG MCP_PROXY_VERSION
 ARG TTYD_VERSION
 ARG TTYD_SHA256_AMD64
 ARG TTYD_SHA256_ARM64
-ARG YQ_VERSION
-ARG YQ_SHA256_AMD64
-ARG YQ_SHA256_ARM64
 ARG PODIOM_VERSION=dev
 
 # Container ↔ podiomd interface contract (plan Part B):
@@ -37,7 +34,7 @@ ENV PODIOM_HOME=/data/podiom \
 # Fail early if the pins were not passed (versions.env is the source of truth).
 RUN set -eu; \
     for v in "$NODE_MAJOR" "$CLAUDE_CODE_VERSION" "$CODEX_VERSION" \
-             "$MCP_PROXY_VERSION" "$TTYD_VERSION" "$YQ_VERSION"; do \
+             "$MCP_PROXY_VERSION" "$TTYD_VERSION"; do \
       [ -n "$v" ] || { echo "missing build-arg; source ha/versions.env" >&2; exit 1; }; \
     done
 
@@ -59,20 +56,17 @@ RUN npm install -g \
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
     pipx install "mcp-proxy==${MCP_PROXY_VERSION}"
 
-# ttyd + yq: SHA256-verified static release binaries.
+# ttyd: SHA256-verified static release binary.
 RUN set -eu; \
     case "${TARGETARCH}" in \
-      amd64) ttyd_arch=x86_64;  ttyd_sha="${TTYD_SHA256_AMD64}"; yq_sha="${YQ_SHA256_AMD64}" ;; \
-      arm64) ttyd_arch=aarch64; ttyd_sha="${TTYD_SHA256_ARM64}"; yq_sha="${YQ_SHA256_ARM64}" ;; \
+      amd64) ttyd_arch=x86_64;  ttyd_sha="${TTYD_SHA256_AMD64}" ;; \
+      arm64) ttyd_arch=aarch64; ttyd_sha="${TTYD_SHA256_ARM64}" ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     curl -fsSL -o /usr/local/bin/ttyd \
       "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${ttyd_arch}"; \
     echo "${ttyd_sha}  /usr/local/bin/ttyd" | sha256sum -c -; \
-    curl -fsSL -o /usr/local/bin/yq \
-      "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}"; \
-    echo "${yq_sha}  /usr/local/bin/yq" | sha256sum -c -; \
-    chmod 0755 /usr/local/bin/ttyd /usr/local/bin/yq
+    chmod 0755 /usr/local/bin/ttyd
 
 # Podiom binaries, prebuilt by `make cross` on the host/CI.
 COPY bin/linux-${TARGETARCH}/podiomd bin/linux-${TARGETARCH}/podiom /usr/local/bin/

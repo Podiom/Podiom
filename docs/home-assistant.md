@@ -24,15 +24,12 @@ works — the LLM compute is cloud-side; see the resource note below).
 
 1. Open **Podiom** from the sidebar. On a fresh install, the web UI opens a
    Home Assistant setup page with an embedded terminal.
-2. Use the **Claude** and/or **Codex** terminal buttons to authenticate the
-   CLIs. Add a profile name before opening a login if you want a
-   profile-scoped CLI login.
-3. Open **Onboard** in the same terminal panel. This runs the shared
-   `podiom onboard` wizard: choose provider/profile, answer the first-agent
-   questions, and accept or edit the generated `SOUL.md`.
-4. When the wizard finishes, the web page shows the gateway-token step. Click
-   **Copy token**, then **Finished** to open the dashboard.
-5. Future visits open the dashboard directly. HA installs also show a
+2. Open **Onboard**. The wizard verifies the bundled Claude/Codex CLIs, guides
+   you through device login when needed, creates your first agent, and
+   generates its `SOUL.md`.
+3. When the wizard finishes, click **Take the stage**. The setup page stores
+   the gateway token in that browser and opens the dashboard.
+4. Future visits open the dashboard directly. HA installs also show a
    **Terminal** sidebar item for later Claude/Codex re-authentication or
    maintenance shell access.
 
@@ -53,25 +50,38 @@ The token value never appears in the add-on **log**. The CLI can still show it
 with `podiom token show` inside the container, and the HA setup page can show
 it after onboarding has completed.
 
-## CLI logins (web terminal)
+## Web terminal
 
-The `claude`/`codex` CLIs authenticate with their own device-style flows. The
-app exposes onboarding entries behind the same Ingress login, **outside** the
+The app exposes terminal entries behind the same Ingress login, **outside** the
 Podiom UI:
 
 | URL (under the app's Ingress path) | Drops you into |
 | --- | --- |
-| `…/terminal/claude` | `claude /login` |
-| `…/terminal/codex` | `codex login --device-auth` |
-| `…/terminal/<cli>/<profile>` | the same, scoped to a named [profile](configuration.md#profiles) |
 | `…/terminal/onboard` | the shared `podiom onboard` wizard |
 | `…/terminal/shell` | a maintenance shell |
 
-The HA setup page and the later **Terminal** sidebar page have buttons for
-these entries, so you do not need to edit the URL by hand. Each login entry
-runs the right login command, then drops to a shell and prints a link back to
-Podiom. The login prints a URL you open in your own browser and a code to paste
-back — this works fully over the web terminal.
+The HA setup page embeds the Onboard entry. The later **Terminal** sidebar page
+opens Shell for maintenance.
+
+### Re-authenticating later
+
+Use **Terminal** → Shell, then run:
+
+```sh
+claude /login
+codex login --device-auth
+```
+
+For a profile-scoped login, create the directory yourself and prefix the CLI's
+environment variable:
+
+```sh
+mkdir -p /data/home/.claude-work
+CLAUDE_CONFIG_DIR=/data/home/.claude-work claude /login
+
+mkdir -p /data/home/.codex-work
+CODEX_HOME=/data/home/.codex-work codex login --device-auth
+```
 
 > **Honest note:** whoever reaches a terminal entry has shell access to the
 > whole container — `$PODIOM_HOME`, every profile's credentials, and the

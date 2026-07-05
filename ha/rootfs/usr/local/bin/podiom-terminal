@@ -1,146 +1,77 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# podiom-terminal (HA22/HA23): the single command ttyd runs for every
-# /terminal/* session. podiomd's reverse proxy injects the arguments via
-# ttyd's --url-arg mechanism:
+# podiom-terminal: the command ttyd runs for HA /terminal/* sessions.
+# podiomd's reverse proxy injects arguments via ttyd's --url-arg mechanism:
 #
-#   podiom-terminal <flow> [--profile=<name>] [--return-url=<url>]
+#   podiom-terminal <flow> [--return-url=<url>]
 #
-# Contract: NEVER exit — exiting kills the ttyd session and leaves a dead
-# terminal. Every path (success, bad args, unknown profile) ends in
-# `exec bash -il`. No `set -e` for the same reason.
+# Contract: NEVER exit early — exiting kills the ttyd session and leaves a dead
+# terminal. Every path ends in `exec bash -il`. No `set -e` for the same reason.
 # ==============================================================================
 
-CONFIG_FILE="${PODIOM_HOME:-/data/podiom}/config.yaml"
-PROFILE_RE='^[A-Za-z0-9._-]{1,64}$'
-
-cli=""
-profile=""
+flow=""
 return_url=""
 
 for arg in "$@"; do
     case "${arg}" in
-        --profile=*)    profile="${arg#--profile=}" ;;
         --return-url=*) return_url="${arg#--return-url=}" ;;
         --*)            ;; # ignore unknown flags
-        *)              [ -z "${cli}" ] && cli="${arg}" ;;
+        *)              [ -z "${flow}" ] && flow="${arg}" ;;
     esac
 done
 
-list_profiles() {
-    if [ -f "${CONFIG_FILE}" ]; then
-        yq eval '.profiles[].name' "${CONFIG_FILE}" 2>/dev/null | sed 's/^/  - /'
-    fi
-}
-
-# Resolve a profile name to its directory and export the CLI's env var.
-# Returns non-zero (with a message) on unknown profile / missing dir field.
-setup_profile() {
-    local field envvar dir
-    case "${cli}" in
-        claude) field="config_dir"; envvar="CLAUDE_CONFIG_DIR" ;;
-        codex)  field="home_dir";   envvar="CODEX_HOME" ;;
-    esac
-    # strenv() keeps the (already regex-validated) name out of yq expression
-    # syntax entirely.
-    dir="$(PODIOM_PROFILE="${profile}" yq eval \
-        ".profiles[] | select(.name == strenv(PODIOM_PROFILE)) | .${field}" \
-        "${CONFIG_FILE}" 2>/dev/null)"
-    if [ -z "${dir}" ] || [ "${dir}" = "null" ]; then
-        echo "Unknown profile '${profile}' (or it has no ${field}). Known profiles:"
-        list_profiles
-        echo "Continuing without a profile."
-        return 1
-    fi
-    dir="${dir/#\~/$HOME}"   # config may hold unexpanded ~ paths
-    mkdir -p "${dir}"
-    export "${envvar}=${dir}"
-    echo "Profile '${profile}': ${envvar}=${dir}"
-    return 0
-}
-
-run_login() {
-    case "${cli}" in
-        claude)
-            # Claude Code has no `login` subcommand; /login is its in-REPL
-            # command and a leading slash-command argument runs it on launch
-            # (docs: code.claude.com/docs/en/authentication). In a container
-            # the browser can't reach the local OAuth callback, so the flow
-            # falls back to "paste the code shown in your browser" — which
-            # works fine over this web terminal.
-            claude /login
-            ;;
-        codex)
-            # Plain `codex login` redirects OAuth to localhost:1455 inside
-            # this container, which your browser cannot reach. The device-code
-            # flow prints a URL + one-time code instead (verified against
-            # developers.openai.com/codex/auth). Note: device code login must
-            # be enabled in your ChatGPT security/workspace settings.
-            codex login --device-auth
-            ;;
-    esac
-}
-
 run_onboard() {
-    echo "Starting the shared Podiom onboarding wizard."
-    echo "This creates your first agent and marks onboarding complete when it finishes."
+    echo "Starting the Podiom onboarding wizard."
+    echo "It checks the bundled Claude/Codex CLIs, guides login, creates your first agent,"
+    echo "and marks onboarding complete when it finishes."
     echo
     PODIOM_OFFER_AUTOSTART=0 podiom onboard
 }
 
 banner() {
     echo "=================================================="
-    case "${cli}" in
+    case "${flow}" in
         onboard) echo " Podiom onboarding wizard" ;;
         shell)   echo " Podiom maintenance shell" ;;
-        *)       echo " Podiom onboarding terminal — ${cli} login" ;;
+        *)       echo " Podiom terminal" ;;
     esac
-    [ -n "${profile}" ] && echo " Profile: ${profile}"
     echo "=================================================="
 }
 
+shell_help() {
+    echo "For provider re-authentication later, run one of:"
+    echo "  claude /login"
+    echo "  codex login --device-auth"
+    echo
+    echo "For profile-scoped re-authentication, create the directory first and prefix"
+    echo "the CLI's environment variable, for example:"
+    echo "  mkdir -p /data/home/.claude-work && CLAUDE_CONFIG_DIR=/data/home/.claude-work claude /login"
+    echo "  mkdir -p /data/home/.codex-work && CODEX_HOME=/data/home/.codex-work codex login --device-auth"
+}
+
 main() {
-    case "${cli}" in
-        claude|codex|onboard|shell) ;;
+    case "${flow}" in
+        onboard|shell) ;;
         "")
-            echo "Podiom onboarding terminal."
+            echo "Podiom terminal."
             echo "Open one of these:"
-            echo "  .../terminal/claude            log in the claude CLI"
-            echo "  .../terminal/codex             log in the codex CLI"
-            echo "  .../terminal/<cli>/<profile>   log in a specific profile"
             echo "  .../terminal/onboard           run the Podiom onboarding wizard"
             echo "  .../terminal/shell             open a maintenance shell"
             echo "Dropping to a shell."
+            shell_help
             return
             ;;
         *)
-            echo "Unknown flow '${cli}' (expected claude, codex, onboard, or shell). Dropping to a shell."
+            echo "Unknown flow '${flow}' (expected onboard or shell). Dropping to a shell."
+            shell_help
             return
             ;;
     esac
 
-    if [ -n "${profile}" ] && [ "${cli}" != "claude" ] && [ "${cli}" != "codex" ]; then
-        echo "Profiles are only supported for claude and codex login flows. Ignoring profile '${profile}'."
-        profile=""
-    fi
-
-    if [ -n "${profile}" ]; then
-        if ! [[ "${profile}" =~ ${PROFILE_RE} ]]; then
-            echo "Invalid profile name. Dropping to a shell."
-            profile=""
-        elif [ ! -f "${CONFIG_FILE}" ]; then
-            echo "No config file at ${CONFIG_FILE}; cannot resolve profile '${profile}'."
-            profile=""
-        elif ! setup_profile; then
-            profile=""
-        fi
-    fi
-
     banner
-    case "${cli}" in
-        claude|codex) run_login ;;
-        onboard)      run_onboard ;;
-        shell)        ;;
+    case "${flow}" in
+        onboard) run_onboard ;;
+        shell)   shell_help ;;
     esac
     echo
     if [ -n "${return_url}" ]; then
