@@ -287,18 +287,28 @@ func Follow(ctx context.Context, path string, lines int, pollEvery time.Duration
 	out := make(chan FollowEvent, 64)
 	go func() {
 		defer close(out)
-		if tail, err := Tail(path, lines); err == nil {
+		var offset int64
+		var last os.FileInfo
+		if info, err := os.Stat(path); err == nil {
+			last = info
+		}
+		// Read the initial tail and its end offset from a single read so any
+		// append that happens after this point is guaranteed to be past offset.
+		// Capturing offset separately (e.g. via a later Stat) races with writers
+		// and can silently skip lines appended between emit and Stat.
+		if res, err := readFrom(path, 0); err == nil {
+			offset = res.offset
+			tail := res.lines
+			if lines == 0 {
+				tail = nil
+			} else if lines > 0 && len(tail) > lines {
+				tail = tail[len(tail)-lines:]
+			}
 			for _, line := range tail {
 				if !sendFollowEvent(ctx, out, FollowEvent{Type: "line", Line: line}) {
 					return
 				}
 			}
-		}
-		var offset int64
-		var last os.FileInfo
-		if info, err := os.Stat(path); err == nil {
-			offset = info.Size()
-			last = info
 		}
 		ticker := time.NewTicker(pollEvery)
 		defer ticker.Stop()
