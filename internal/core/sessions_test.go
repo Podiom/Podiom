@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -102,6 +103,63 @@ func TestSessionStartIncludesInternalPlanMCP(t *testing.T) {
 	}
 	if !hasMCPServer(req.MCPAllServers, "podiom_plan") {
 		t.Fatalf("initial StartRequest missing plan MCP in all servers: %+v", req.MCPAllServers)
+	}
+}
+
+func TestStreamTurnPersistsErrorAndExcludesItFromReplay(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+	c.noBg = true
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "tester", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "tester", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	fake.SendTurnError = errors.New("provider exploded")
+	events, err := c.StreamTurn(ctx, session.ID, "please fail", TurnOptions{})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	var got []TurnEvent
+	for event := range events {
+		got = append(got, event)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected user, persisted error, control error events, got %+v", got)
+	}
+	if got[0].Kind != "message_stored" || got[0].Message == nil || got[0].Message.Kind != store.KindMessage {
+		t.Fatalf("first event should store user message: %+v", got[0])
+	}
+	if got[1].Kind != "message_stored" || got[1].Message == nil || got[1].Message.Kind != store.KindError {
+		t.Fatalf("second event should store error message: %+v", got[1])
+	}
+	if got[2].Kind != "error" || got[2].Content != "provider exploded" {
+		t.Fatalf("third event should be control error: %+v", got[2])
+	}
+
+	history, err := c.History(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 || history[0].Kind != store.KindMessage || history[1].Kind != store.KindError {
+		t.Fatalf("unexpected persisted history: %+v", history)
+	}
+
+	fake.SendTurnError = nil
+	fake.Responses = []string{"recovered"}
+	if _, err := c.AppendTurn(ctx, session.ID, "try again"); err != nil {
+		t.Fatalf("append recovery turn: %v", err)
+	}
+	last := fake.Requests[len(fake.Requests)-1]
+	for _, msg := range last.History {
+		if msg.Kind == store.KindError || strings.Contains(msg.Content, "provider exploded") {
+			t.Fatalf("error message was replayed to provider: %+v", last.History)
+		}
 	}
 }
 

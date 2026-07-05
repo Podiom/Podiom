@@ -87,6 +87,9 @@ func (c *Core) generateNameWithModel(ctx context.Context, sess store.Session, hi
 func transcript(history []store.Message) string {
 	var b strings.Builder
 	for _, msg := range history {
+		if !isConversationMessage(msg) {
+			continue
+		}
 		fmt.Fprintf(&b, "%s: %s\n", msg.Role, oneLine(msg.Content))
 	}
 	return b.String()
@@ -110,6 +113,9 @@ func parseNamingPayload(raw string) namingPayload {
 func fallbackName(history []store.Message) namingPayload {
 	var user, assistant string
 	for _, msg := range history {
+		if !isConversationMessage(msg) {
+			continue
+		}
 		switch msg.Role {
 		case store.RoleUser:
 			if user == "" {

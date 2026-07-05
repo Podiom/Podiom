@@ -438,7 +438,10 @@
             // broker has no pending entry by the time the decision lands. Nothing
             // failed (the follow-up turn is running) — swallow it silently.
           } else {
-            error = msg.error ?? "Unknown server error";
+            const lastMessage = messages[messages.length - 1];
+            const durableErrorVisible =
+              !!msg.session_id && lastMessage?.Kind === "error" && lastMessage.Content === (msg.error ?? "");
+            if (!durableErrorVisible) error = msg.error ?? "Unknown server error";
             pendingAssistant = "";
             sending = false;
           }
@@ -1259,7 +1262,14 @@
       }}
     >
       {#each messages as m (m.ID)}
-        {#if m.Role === "user"}
+        {#if m.Kind === "error"}
+          <div class="row-start">
+            <div class="bubble-error">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" /></svg>
+              {m.Content}
+            </div>
+          </div>
+        {:else if m.Role === "user"}
           <div class="row-end">
             <div class="bubble-user">{m.Content}</div>
           </div>

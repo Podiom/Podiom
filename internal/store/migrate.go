@@ -245,6 +245,12 @@ var migrations = []migration{
 
 		ALTER TABLE tasks ADD COLUMN plan_required INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		version: 12,
+		name:    "message_kind",
+		sql: `ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'
+			CHECK (kind IN ('message', 'error'));`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

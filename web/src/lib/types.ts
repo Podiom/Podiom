@@ -106,6 +106,7 @@ export interface GlobalConfigPatch {
 }
 export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap";
 export type MessageRole = "user" | "assistant";
+export type MessageKind = "message" | "error";
 export type PlanState = "none" | "pending_submission" | "awaiting_approval";
 
 export interface PlanInfo {
@@ -366,6 +367,7 @@ export interface Message {
   SessionID: string;
   Seq: number;
   Role: MessageRole;
+  Kind?: MessageKind;
   Content: string;
 }
 

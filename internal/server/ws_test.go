@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -410,6 +413,61 @@ func TestWebSocketRejectsSecondTurnInSameSession(t *testing.T) {
 	readWSTestUntil(t, conn, "first turn done", func(msg ServerMessage) bool {
 		return msg.Type == "done" && msg.SessionID == sess.ID
 	})
+}
+
+func TestWebSocketPersistsSessionErrorInHistory(t *testing.T) {
+	ctx := context.Background()
+	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)
+	defer cleanup()
+	fake.SendTurnError = errors.New("provider exploded")
+
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "webber", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := coreSvc.CreateSession(ctx, core.CreateSessionRequest{AgentName: "webber", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	conn := dialWSTest(t, wsURL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "send_turn", RequestID: "req-error", SessionID: sess.ID, Message: "fail"}); err != nil {
+		t.Fatalf("write turn: %v", err)
+	}
+	stored := readWSTestUntil(t, conn, "persisted error message", func(msg ServerMessage) bool {
+		return msg.Type == "message" && msg.SessionID == sess.ID && msg.Message != nil && msg.Message.Kind == store.KindError
+	})
+	if stored.Message.Content != "provider exploded" {
+		t.Fatalf("unexpected persisted error content: %+v", stored.Message)
+	}
+	control := readWSTestUntil(t, conn, "control error", func(msg ServerMessage) bool {
+		return msg.Type == "error" && msg.SessionID == sess.ID && msg.RequestID == "req-error"
+	})
+	if control.Error != "provider exploded" {
+		t.Fatalf("unexpected control error: %q", control.Error)
+	}
+
+	history, err := coreSvc.History(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 || history[1].Kind != store.KindError || history[1].Content != "provider exploded" {
+		t.Fatalf("error was not persisted in history: %+v", history)
+	}
+
+	apiURL := "http" + strings.TrimPrefix(strings.TrimSuffix(wsURL, "/api/ws"), "ws") + "/api/sessions/" + sess.ID
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		t.Fatalf("get session detail: %v", err)
+	}
+	defer resp.Body.Close()
+	var detail sessionDetail
+	if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode session detail: %v", err)
+	}
+	if len(detail.History) != 2 || detail.History[1].Kind != store.KindError {
+		t.Fatalf("session detail did not include durable error: %+v", detail.History)
+	}
 }
 
 func newWSTestHarness(t *testing.T) (*core.Core, *adapter.Fake, string, func()) {

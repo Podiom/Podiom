@@ -316,9 +316,12 @@ func (s *Store) AppendMessages(ctx context.Context, sessionID string, messages [
 	for _, msg := range messages {
 		msg.SessionID = sessionID
 		msg.Seq = next
+		if msg.Kind == "" {
+			msg.Kind = KindMessage
+		}
 		next++
-		res, err := tx.ExecContext(ctx, `INSERT INTO messages (session_id, seq, role, content)
-			VALUES (?, ?, ?, ?)`, msg.SessionID, msg.Seq, msg.Role, msg.Content)
+		res, err := tx.ExecContext(ctx, `INSERT INTO messages (session_id, seq, role, kind, content)
+			VALUES (?, ?, ?, ?, ?)`, msg.SessionID, msg.Seq, msg.Role, msg.Kind, msg.Content)
 		if err != nil {
 			return nil, fmt.Errorf("append message %d to session %q: %w", msg.Seq, sessionID, err)
 		}
@@ -343,7 +346,7 @@ func (s *Store) AppendMessages(ctx context.Context, sessionID string, messages [
 
 // ListMessages returns a session's canonical history in sequence order.
 func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, seq, role, content, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, seq, role, kind, content, created_at
 		FROM messages WHERE session_id = ? ORDER BY seq`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list messages for session %q: %w", sessionID, err)
@@ -353,8 +356,11 @@ func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, 
 	var messages []Message
 	for rows.Next() {
 		var msg Message
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Seq, &msg.Role, &msg.Content, &msg.CreatedAt); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Seq, &msg.Role, &msg.Kind, &msg.Content, &msg.CreatedAt); err != nil {
 			return nil, err
+		}
+		if msg.Kind == "" {
+			msg.Kind = KindMessage
 		}
 		messages = append(messages, msg)
 	}

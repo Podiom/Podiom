@@ -21,6 +21,7 @@ type Fake struct {
 	StartRequests    []StartRequest
 	RateLimitedTurns int
 	ResponseDelay    time.Duration
+	SendTurnError    error
 	// PermissionTool, when set, makes each turn request approval for this tool
 	// name through the turn's PermissionRelay before responding. It models the
 	// unattended preapproved policy (§7.7) so tests can assert allow/deny.
@@ -67,6 +68,13 @@ func (f *Fake) Resume(ctx context.Context, req ResumeRequest) (Handle, error) {
 // SendTurn streams a final assistant message and a turn-done marker.
 func (f *Fake) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.SendTurnError != nil {
+		f.mu.Lock()
+		f.Requests = append(f.Requests, req)
+		err := f.SendTurnError
+		f.mu.Unlock()
 		return nil, err
 	}
 	rateLimited, response := f.nextResult(req)

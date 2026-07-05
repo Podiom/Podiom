@@ -18,6 +18,7 @@ const (
 )
 
 func replayHistory(sess store.Session, history []store.Message) []store.Message {
+	history = conversationMessages(history)
 	if sess.RollingSummary == "" || len(history) <= recentReplayMessages {
 		return history
 	}
@@ -48,6 +49,7 @@ func (c *Core) RefreshRollingSummary(ctx context.Context, sessionID string) (sto
 	if err != nil {
 		return store.Session{}, err
 	}
+	history = conversationMessages(history)
 	if len(history) < rollingSummaryMinMessages {
 		return sess, nil
 	}
@@ -218,6 +220,9 @@ func (c *Core) oneShotCompletionErr(ctx context.Context, agent store.Agent, prom
 func deterministicSummary(history []store.Message) string {
 	var b strings.Builder
 	for _, msg := range history {
+		if !isConversationMessage(msg) {
+			continue
+		}
 		line := oneLine(msg.Content)
 		if line == "" {
 			continue
@@ -225,4 +230,18 @@ func deterministicSummary(history []store.Message) string {
 		fmt.Fprintf(&b, "%s: %s\n", msg.Role, truncateRunes(line, 220))
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func conversationMessages(history []store.Message) []store.Message {
+	out := make([]store.Message, 0, len(history))
+	for _, msg := range history {
+		if isConversationMessage(msg) {
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+func isConversationMessage(msg store.Message) bool {
+	return msg.Kind == "" || msg.Kind == store.KindMessage
 }

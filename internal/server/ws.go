@@ -281,7 +281,7 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	_ = writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, Session: &session})
 	slash, err := s.core.HandleSlashCommand(daemonCtx, session.ID, msg.Message)
 	if err != nil {
-		_ = writer.write(ctx, ServerMessage{Type: "error", RequestID: msg.RequestID, Error: err.Error()})
+		s.writePersistedSessionError(ctx, writer, msg.RequestID, session.ID, err.Error())
 		return
 	}
 	if slash.Handled {
@@ -297,7 +297,7 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	state, err := s.turns.start(session.ID, turnID, msg.RequestID, writer, cancel)
 	if err != nil {
 		cancel()
-		_ = writer.write(ctx, ServerMessage{Type: "error", RequestID: msg.RequestID, SessionID: session.ID, Error: err.Error()})
+		s.writePersistedSessionError(ctx, writer, msg.RequestID, session.ID, err.Error())
 		return
 	}
 	_ = writer.write(ctx, ServerMessage{Type: "turn_state", RequestID: msg.RequestID, SessionID: session.ID, TurnState: &state})
@@ -317,6 +317,12 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 		UserInputRelay:   s.input,
 	})
 	if err != nil {
+		if turnCtx.Err() != nil {
+			return
+		}
+		if persisted, persistErr := s.core.AppendErrorMessage(context.Background(), session.ID, err.Error()); persistErr == nil {
+			s.turns.recordMessage(session.ID, &persisted)
+		}
 		s.turns.fail(session.ID, err.Error())
 		return
 	}
@@ -361,6 +367,23 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	_ = s.writeState(stateCtx, writer)
 }
 
+func (s *Server) writePersistedSessionError(ctx context.Context, writer *wsWriter, requestID, sessionID, content string) {
+	if persisted, err := s.core.AppendErrorMessage(context.Background(), sessionID, content); err == nil {
+		_ = writer.write(ctx, ServerMessage{
+			Type:      "message",
+			RequestID: requestID,
+			SessionID: sessionID,
+			Message:   &persisted,
+		})
+	}
+	_ = writer.write(ctx, ServerMessage{
+		Type:      "error",
+		RequestID: requestID,
+		SessionID: sessionID,
+		Error:     content,
+	})
+}
+
 func (s *Server) runWSPlanDecision(ctx context.Context, writer *wsWriter, msg ClientMessage, action string) {
 	if msg.SessionID == "" {
 		_ = writer.write(ctx, ServerMessage{Type: "error", RequestID: msg.RequestID, Error: "session_id is required"})
@@ -377,7 +400,7 @@ func (s *Server) runWSPlanDecision(ctx context.Context, writer *wsWriter, msg Cl
 		err = errors.New("unknown plan action")
 	}
 	if err != nil {
-		_ = writer.write(ctx, ServerMessage{Type: "error", RequestID: msg.RequestID, SessionID: msg.SessionID, Error: err.Error()})
+		s.writePersistedSessionError(ctx, writer, msg.RequestID, msg.SessionID, err.Error())
 		return
 	}
 	_ = writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, SessionID: decision.Session.ID, Session: &decision.Session, NextMessage: decision.NextMessage})

@@ -51,6 +51,17 @@ const (
 	RoleAssistant MessageRole = "assistant"
 )
 
+// MessageKind identifies whether a canonical history entry is conversation
+// content or a Podiom diagnostic entry rendered only for humans.
+type MessageKind string
+
+const (
+	// KindMessage is normal user/assistant conversation content.
+	KindMessage MessageKind = "message"
+	// KindError is a durable, session-scoped error shown in the chat history.
+	KindError MessageKind = "error"
+)
+
 // Agent is Podiom's durable definition of a named colleague.
 //
 // MCPConfig is treated as sensitive (it may embed server commands, local URLs,
@@ -106,6 +117,7 @@ type Message struct {
 	SessionID string
 	Seq       int
 	Role      MessageRole
+	Kind      MessageKind
 	Content   string
 	CreatedAt string
 }

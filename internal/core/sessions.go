@@ -360,20 +360,20 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			payload, err := c.sessionInstructionPayload(ctx, current)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "compose", "error", err)
-				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
 			projectCtx, err := c.sessionProjectExecutionContext(ctx, current)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "project_context", "error", err)
-				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
 			providerMessage := c.providerMessage(current, projectCtx, userMessage)
 			mcpServers, mcpAll, err := c.sessionMCPServers(ctx, current)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "mcp", "error", err)
-				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
 			workspaceDir := c.sessionWorkspaceDir(current.AgentName, projectCtx)
@@ -381,7 +381,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			events, err := c.adapter.SendTurn(ctx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, mcpServers, mcpAll))
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "dispatch", "provider", string(current.Provider), "error", err)
-				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
 			assistant, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, events)
@@ -394,7 +394,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				next, err := c.nextFallbackSession(ctx, current, tried)
 				if err != nil {
 					runLog.Warn("turn failed", "stage", "fallback", "from", targetLabel(current.Provider, current.Profile), "error", err)
-					_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 					return
 				}
 				runLog.Info("turn fallback",
@@ -418,7 +418,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}})
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "persist", "error", err)
-				_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
 			if !c.noBg {
@@ -437,6 +437,47 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 		}
 	}()
 	return streamOut, nil
+}
+
+// AppendErrorMessage persists a session-scoped diagnostic entry for display in
+// Podiom history. It is not replayed back to providers.
+func (c *Core) AppendErrorMessage(ctx context.Context, sessionID, content string) (store.Message, error) {
+	messages, err := c.appendErrorMessage(ctx, sessionID, content)
+	if err != nil {
+		return store.Message{}, err
+	}
+	if len(messages) == 0 {
+		return store.Message{}, fmt.Errorf("append error message to session %q: no message inserted", sessionID)
+	}
+	return messages[0], nil
+}
+
+func (c *Core) appendErrorMessage(ctx context.Context, sessionID, content string) ([]store.Message, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		content = "Unknown server error"
+	}
+	return c.appendFinalMessages(ctx, sessionID, []store.Message{{
+		Role:    store.RoleAssistant,
+		Kind:    store.KindError,
+		Content: content,
+	}})
+}
+
+func (c *Core) sendPersistedTurnError(ctx context.Context, streamOut chan<- TurnEvent, sessionID, content string) bool {
+	messages, err := c.appendErrorMessage(ctx, sessionID, content)
+	if err == nil {
+		for _, msg := range messages {
+			msg := msg
+			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "message_stored", Message: &msg}) {
+				return false
+			}
+		}
+	}
+	if err != nil && strings.TrimSpace(content) == "" {
+		content = err.Error()
+	}
+	return sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: content})
 }
 
 func (c *Core) appendFinalMessages(ctx context.Context, sessionID string, messages []store.Message) ([]store.Message, error) {
@@ -616,7 +657,7 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 		case adapter.EventHandleUpdated:
 			if event.Handle != nil {
 				if _, err := c.store.UpdateSessionProviderHandle(ctx, sessionID, event.Handle.ID); err != nil {
-					_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: err.Error()})
+					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 					return assistant, false, false
 				}
 				c.log.Info("provider handle stored",
