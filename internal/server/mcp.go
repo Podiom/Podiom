@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,11 +65,24 @@ func (s *Server) handleMCPServers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMCPServer(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/api/mcp/servers/")
+	test := false
+	if strings.HasSuffix(name, "/test") {
+		test = true
+		name = strings.TrimSuffix(name, "/test")
+	}
 	if unescaped, err := url.PathUnescape(name); err == nil {
 		name = unescaped
 	}
 	if name == "" {
 		http.Error(w, "mcp server name is required", http.StatusBadRequest)
+		return
+	}
+	if test {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleMCPServerTest(w, r, name)
 		return
 	}
 	switch r.Method {
@@ -83,6 +97,36 @@ func (s *Server) handleMCPServer(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleMCPServerTest(w http.ResponseWriter, r *http.Request, name string) {
+	cat, err := podiommcp.LoadCatalogue(s.paths.MCPYAML)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	var server *podiommcp.Server
+	for i := range cat.Servers {
+		if cat.Servers[i].Name == name {
+			server = &cat.Servers[i]
+			break
+		}
+	}
+	if server == nil {
+		http.Error(w, fmt.Sprintf("mcp server %q not found", name), http.StatusNotFound)
+		return
+	}
+	result := podiommcp.TestServer(r.Context(), *server)
+	s.log.Info("mcp server tested",
+		"event", "mcp",
+		"server", name,
+		"transport", string(server.Transport),
+		"ok", result.OK,
+		"duration_ms", result.DurationMS,
+		"steps", len(result.Steps),
+		"error_class", mcpTestErrorClass(result.Error),
+	)
+	writeJSON(w, result, nil)
 }
 
 func (s *Server) handleMCPAssignments(w http.ResponseWriter, r *http.Request) {
@@ -178,4 +222,22 @@ func removeString(values []string, value string) []string {
 		}
 	}
 	return out
+}
+
+func mcpTestErrorClass(msg string) string {
+	msg = strings.ToLower(strings.TrimSpace(msg))
+	switch {
+	case msg == "":
+		return ""
+	case strings.Contains(msg, "executable file not found"), strings.Contains(msg, "no such file"):
+		return "command_not_found"
+	case strings.Contains(msg, "deadline exceeded"), strings.Contains(msg, "timeout"):
+		return "timeout"
+	case strings.Contains(msg, "http "):
+		return "http_error"
+	case strings.Contains(msg, "rpc error"):
+		return "rpc_error"
+	default:
+		return "test_error"
+	}
 }

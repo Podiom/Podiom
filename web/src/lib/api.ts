@@ -21,6 +21,7 @@ import type {
   LogStreamEvent,
   MCPSnapshot,
   MCPServer,
+  MCPTestResult,
   MemoryInfo,
   OnboardingState,
   OnboardingToken,
@@ -184,6 +185,10 @@ export async function saveMCPServer(server: MCPServer): Promise<MCPSnapshot> {
 
 export async function removeMCPServer(name: string): Promise<MCPSnapshot> {
   return asJSON(await request(`/api/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" }));
+}
+
+export async function testMCPServer(name: string): Promise<MCPTestResult> {
+  return asJSON(await request(`/api/mcp/servers/${encodeURIComponent(name)}/test`, { method: "POST" }));
 }
 
 export async function setMCPAssignment(agentName: string, serverName: string, assigned: boolean): Promise<MCPSnapshot> {

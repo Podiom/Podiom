@@ -254,6 +254,8 @@ type MCPAssignmentRequest struct {
 	Assigned   bool   `json:"assigned"`
 }
 
+type MCPTestResult = podiommcp.TestResult
+
 func (c *Client) MCPSnapshot(ctx context.Context) (MCPSnapshot, error) {
 	var snapshot MCPSnapshot
 	if err := c.getJSON(ctx, "/api/mcp", &snapshot); err != nil {
@@ -284,6 +286,14 @@ func (c *Client) SetMCPAssignment(ctx context.Context, req MCPAssignmentRequest)
 		return snapshot, err
 	}
 	return snapshot, nil
+}
+
+func (c *Client) TestMCPServer(ctx context.Context, name string) (MCPTestResult, error) {
+	var result MCPTestResult
+	if err := c.postJSON(ctx, "/api/mcp/servers/"+urlPathEscape(name)+"/test", nil, &result); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 // UpdateAgent updates an agent through the daemon.

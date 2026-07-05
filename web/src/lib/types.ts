@@ -293,6 +293,25 @@ export interface MCPServer {
   env_status?: MCPEnvStatus[];
 }
 
+export interface MCPTestStep {
+  name: string;
+  status: "ok" | "error" | string;
+  detail?: string;
+  duration_ms: number;
+}
+
+export interface MCPTestResult {
+  server: string;
+  transport: MCPTransport;
+  ok: boolean;
+  duration_ms: number;
+  steps: MCPTestStep[];
+  logs: string[];
+  error?: string;
+  tool_count: number;
+  stderr_tail?: string;
+}
+
 export interface MCPAgent {
   name: string;
   provider: Provider;

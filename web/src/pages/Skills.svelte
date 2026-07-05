@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getMCP, saveMCPServer, setMCPAssignment } from "../lib/api";
-  import type { MCPAgent, MCPSnapshot, MCPServer, MCPSource, SkillDetail, SkillSummary } from "../lib/types";
+  import { getMCP, saveMCPServer, setMCPAssignment, testMCPServer } from "../lib/api";
+  import type { MCPAgent, MCPSnapshot, MCPServer, MCPSource, MCPTestResult, SkillDetail, SkillSummary } from "../lib/types";
   import Discover from "./skills/Discover.svelte";
   import Installed from "./skills/Installed.svelte";
   import SkillDetailView from "./skills/SkillDetail.svelte";
@@ -37,8 +37,12 @@
   let addName = $state("");
   let addTransport = $state<"http" | "stdio">("stdio");
   let addEndpoint = $state("");
+  let addCommand = $state("");
+  let addArgs = $state("");
   let addEnvVars = $state("");
   let savingServer = $state(false);
+  let testingMCP = $state<Record<string, boolean>>({});
+  let mcpTests = $state<Record<string, MCPTestResult>>({});
 
   onMount(async () => {
     try {
@@ -127,14 +131,15 @@
       if (addTransport === "http") {
         server.url = addEndpoint.trim();
       } else {
-        const parts = splitCommand(addEndpoint.trim());
-        server.command = parts[0] ?? "";
-        server.args = parts.slice(1);
+        server.command = addCommand.trim();
+        server.args = argsFromText(addArgs);
       }
       mcp = await saveMCPServer(server);
       addOpen = false;
       addName = "";
       addEndpoint = "";
+      addCommand = "";
+      addArgs = "";
       addEnvVars = "";
       addTransport = "stdio";
     } catch (e) {
@@ -143,8 +148,44 @@
       savingServer = false;
     }
   }
-  function splitCommand(value: string): string[] {
-    return value.match(/"[^"]+"|'[^']+'|\S+/g)?.map((s) => s.replace(/^['"]|['"]$/g, "")) ?? [];
+  function argsFromText(value: string): string[] {
+    return value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  }
+  function canSaveServer(): boolean {
+    if (!addName.trim()) return false;
+    if (addTransport === "http") return Boolean(addEndpoint.trim());
+    return Boolean(addCommand.trim());
+  }
+  async function runMCPTest(server: MCPServer) {
+    testingMCP = { ...testingMCP, [server.name]: true };
+    loadError = null;
+    try {
+      const result = await testMCPServer(server.name);
+      mcpTests = { ...mcpTests, [server.name]: result };
+      mcpOpen = { ...mcpOpen, [server.name]: true };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      mcpTests = {
+        ...mcpTests,
+        [server.name]: {
+          server: server.name,
+          transport: server.transport,
+          ok: false,
+          duration_ms: 0,
+          steps: [],
+          logs: [message],
+          error: message,
+          tool_count: 0,
+        },
+      };
+    } finally {
+      testingMCP = { ...testingMCP, [server.name]: false };
+    }
+  }
+  function testTitle(result: MCPTestResult | undefined): string {
+    if (!result) return "Not tested";
+    if (result.ok) return `OK · ${result.tool_count} tools · ${result.duration_ms}ms`;
+    return `Failed · ${result.duration_ms}ms`;
   }
   function envText(server: MCPServer): string {
     const envs = server.env_status ?? [];
@@ -222,9 +263,14 @@
               <button class:active={addTransport === "stdio"} onclick={() => (addTransport = "stdio")}>stdio</button>
               <button class:active={addTransport === "http"} onclick={() => (addTransport = "http")}>http</button>
             </div>
-            <input class="wide" bind:value={addEndpoint} placeholder={addTransport === "http" ? "https://..." : "npx -y @scope/mcp-server"} />
+            {#if addTransport === "http"}
+              <input class="wide" bind:value={addEndpoint} placeholder="https://..." />
+            {:else}
+              <input class="wide" bind:value={addCommand} placeholder="/opt/homebrew/bin/mcp-proxy" />
+              <textarea bind:value={addArgs} placeholder={`--transport\nstreamablehttp\nhttp://192.168.1.7:9583/private_...`}></textarea>
+            {/if}
             <input bind:value={addEnvVars} placeholder="ENV_NAMES comma separated" />
-            <button class="primary" disabled={savingServer || !addName.trim() || !addEndpoint.trim()} onclick={addServer}>{savingServer ? "Saving..." : "Save"}</button>
+            <button class="primary" disabled={savingServer || !canSaveServer()} onclick={addServer}>{savingServer ? "Saving..." : "Save"}</button>
           </div>
         {/if}
 
@@ -263,8 +309,41 @@
                 <div class="mcp-detail">
                   <pre>{definition(server)}</pre>
                   <div>
-                    <b>Projection</b>
+                    <div class="detail-head">
+                      <b>Projection</b>
+                      <button class="secondary" disabled={testingMCP[server.name]} onclick={() => runMCPTest(server)}>
+                        {testingMCP[server.name] ? "Testing..." : "Test"}
+                      </button>
+                    </div>
                     <p>Claude: strict --mcp-config. Codex: generated profile with unassigned known servers disabled{server.transport === "http" ? ", HTTP bridged through mcp-proxy when present" : ""}.</p>
+                    {#if mcpTests[server.name]}
+                      {@const result = mcpTests[server.name]}
+                      <div class:ok={Boolean(result.ok)} class:bad={Boolean(!result.ok)} class="test-box">
+                        <div class="test-title">{testTitle(result)}</div>
+                        <div class="steps">
+                          {#each result.steps as step}
+                            <div class="step">
+                              <span>{step.status === "ok" ? "✓" : "!"}</span>
+                              <b>{step.name}</b>
+                              <em>{step.detail || `${step.duration_ms}ms`}</em>
+                            </div>
+                          {/each}
+                        </div>
+                        {#if result.error}
+                          <pre class="test-log">{result.error}</pre>
+                        {/if}
+                        {#if result.stderr_tail}
+                          <pre class="test-log">{result.stderr_tail}</pre>
+                        {/if}
+                        {#if result.logs.length}
+                          <pre class="test-log">{result.logs.join("\n")}</pre>
+                        {/if}
+                      </div>
+                    {:else}
+                      <div class="test-box">
+                        <div class="test-title">{testTitle(undefined)}</div>
+                      </div>
+                    {/if}
                   </div>
                 </div>
               {/if}
@@ -312,8 +391,11 @@
   .mcp-head p { margin: 2px 0 0; font: 400 11.5px "Hanken Grotesk"; color: #8a7f73; }
   .primary { border: 0; border-radius: 11px; background: #3f8f7e; color: #fff; padding: 9px 14px; font: 800 13px "Hanken Grotesk"; cursor: pointer; }
   .primary:disabled { opacity: 0.55; cursor: default; }
+  .secondary { border: 1px solid #d8cab9; border-radius: 10px; background: #fffdfb; color: #4f6f68; padding: 7px 11px; font: 800 12px "Hanken Grotesk"; cursor: pointer; }
+  .secondary:disabled { opacity: 0.55; cursor: default; }
   .add-box { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 20px; background: #fbf7f1; border-bottom: 1px solid #f1eae0; }
   input { padding: 10px 12px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; font: 500 13px "Hanken Grotesk"; color: #2b2520; outline: none; }
+  textarea { flex: 1; min-width: 260px; min-height: 92px; resize: vertical; padding: 10px 12px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; font: 500 12px/1.55 "JetBrains Mono", monospace; color: #2b2520; outline: none; }
   .add-box .wide { flex: 1; min-width: 260px; }
   .transport { display: flex; gap: 4px; padding: 4px; border-radius: 11px; background: #efe7dc; border: 1px solid #e6dbcc; }
   .matrix { overflow-x: auto; padding: 6px 20px 14px; }
@@ -334,7 +416,17 @@
   .mcp-detail { border-top: 1px solid #f1eae0; padding: 16px 22px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .mcp-detail b { font: 700 13px "Hanken Grotesk"; }
   .mcp-detail p { margin: 6px 0 0; font: 400 12.5px/1.55 "Hanken Grotesk"; color: #7a6f62; }
+  .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .test-box { margin-top: 12px; border: 1px solid #efe6db; border-radius: 12px; background: #fbf7f1; padding: 12px; }
+  .test-box.ok { border-color: #bfddd3; background: #eef7f3; }
+  .test-box.bad { border-color: #ecd3c2; background: #f8ebe2; }
+  .test-title { font: 800 12px "Hanken Grotesk"; color: #3a332c; }
+  .steps { display: grid; gap: 6px; margin-top: 10px; }
+  .step { display: grid; grid-template-columns: 18px minmax(92px, max-content) 1fr; gap: 7px; align-items: baseline; font: 600 11.5px "Hanken Grotesk"; color: #4a4138; }
+  .step span { font: 800 12px "JetBrains Mono", monospace; color: #2f6e60; }
+  .step em { min-width: 0; font: 500 11px/1.45 "JetBrains Mono", monospace; color: #7a6f62; word-break: break-word; }
   pre { margin: 0; background: #fbf7f1; border: 1px solid #efe6db; border-radius: 12px; padding: 14px 16px; font: 500 12px/1.65 "JetBrains Mono", monospace; color: #4a4138; white-space: pre-wrap; word-break: break-word; }
+  .test-log { margin-top: 10px; padding: 10px 12px; font-size: 11px; line-height: 1.5; max-height: 180px; overflow: auto; background: rgba(255, 253, 251, 0.78); }
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #2f6e60; color: #fff; padding: 12px 20px; border-radius: 12px; font: 700 13px "Hanken Grotesk"; box-shadow: 0 12px 30px -8px rgba(43, 37, 32, 0.4); z-index: 70; }
   @media (max-width: 768px) {
     .page { padding: 16px 16px 92px; }
