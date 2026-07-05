@@ -19,21 +19,22 @@ const EnvHome = "PODIOM_HOME"
 // Paths holds every well-known location under the storage root. Resolve these
 // once at startup and pass Paths around rather than recomputing strings.
 type Paths struct {
-	Home         string // the storage root itself (e.g. ~/.podiom)
-	ConfigYAML   string // config.yaml
-	MCPYAML      string // mcp.yaml
-	BaseAgents   string // AGENTS.md (Podiom-owned base instructions)
-	DB           string // podiom.db (SQLite)
-	AgentsDir    string // agents/
-	ProjectsDir  string // projects/
-	ProjectsYAML string // projects/projects.yaml
-	SchedulesDir string // schedules/
-	ProfilesDir  string // profiles/
-	LogsDir      string // logs/
-	ArchiveDir   string // archive/ (archived tasks and other exports)
-	PushDir      string // push/ (VAPID keypair for Web Push)
-	GatewayToken string // gateway.token (the API/WS gateway token, HA7/HA8)
-	Onboarding   string // onboarding.json (first-run completion state)
+	Home           string // the storage root itself (e.g. ~/.podiom)
+	ConfigYAML     string // config.yaml
+	MCPYAML        string // mcp.yaml
+	BaseAgents     string // AGENTS.md (Podiom-owned base instructions)
+	DB             string // podiom.db (SQLite)
+	AgentsDir      string // agents/
+	ProjectsDir    string // projects/
+	ProjectsYAML   string // projects/projects.yaml
+	SchedulesDir   string // schedules/
+	ProfilesDir    string // profiles/
+	LogsDir        string // logs/
+	ArchiveDir     string // archive/ (archived tasks and other exports)
+	PushDir        string // push/ (VAPID keypair for Web Push)
+	MarketplaceDir string // marketplace/ (skill-registry secrets + cache state)
+	GatewayToken   string // gateway.token (the API/WS gateway token, HA7/HA8)
+	Onboarding     string // onboarding.json (first-run completion state)
 }
 
 // ResolveHome returns the absolute storage root. Precedence:
@@ -61,21 +62,22 @@ func ResolveHome() (string, error) {
 // NewPaths derives all well-known paths from a resolved storage root.
 func NewPaths(home string) Paths {
 	return Paths{
-		Home:         home,
-		ConfigYAML:   filepath.Join(home, "config.yaml"),
-		MCPYAML:      filepath.Join(home, "mcp.yaml"),
-		BaseAgents:   filepath.Join(home, "AGENTS.md"),
-		DB:           filepath.Join(home, "podiom.db"),
-		AgentsDir:    filepath.Join(home, "agents"),
-		ProjectsDir:  filepath.Join(home, "projects"),
-		ProjectsYAML: filepath.Join(home, "projects", "projects.yaml"),
-		SchedulesDir: filepath.Join(home, "schedules"),
-		ProfilesDir:  filepath.Join(home, "profiles"),
-		LogsDir:      filepath.Join(home, "logs"),
-		ArchiveDir:   filepath.Join(home, "archive"),
-		PushDir:      filepath.Join(home, "push"),
-		GatewayToken: filepath.Join(home, "gateway.token"),
-		Onboarding:   filepath.Join(home, "onboarding.json"),
+		Home:           home,
+		ConfigYAML:     filepath.Join(home, "config.yaml"),
+		MCPYAML:        filepath.Join(home, "mcp.yaml"),
+		BaseAgents:     filepath.Join(home, "AGENTS.md"),
+		DB:             filepath.Join(home, "podiom.db"),
+		AgentsDir:      filepath.Join(home, "agents"),
+		ProjectsDir:    filepath.Join(home, "projects"),
+		ProjectsYAML:   filepath.Join(home, "projects", "projects.yaml"),
+		SchedulesDir:   filepath.Join(home, "schedules"),
+		ProfilesDir:    filepath.Join(home, "profiles"),
+		LogsDir:        filepath.Join(home, "logs"),
+		ArchiveDir:     filepath.Join(home, "archive"),
+		PushDir:        filepath.Join(home, "push"),
+		MarketplaceDir: filepath.Join(home, "marketplace"),
+		GatewayToken:   filepath.Join(home, "gateway.token"),
+		Onboarding:     filepath.Join(home, "onboarding.json"),
 	}
 }
 

@@ -231,6 +231,7 @@ func run() error {
 		Usage:          usageTracker,
 		Paths:          paths,
 		GitHub:         cfg.GitHub,
+		Marketplace:    cfg.Marketplace,
 		Logger:         log,
 		Notifier:       notifier,
 		VAPIDPublicKey: vapidPublic,

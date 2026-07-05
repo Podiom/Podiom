@@ -591,3 +591,102 @@ export interface Skill {
   locations: SkillLocation[];
   contents: SkillContent[];
 }
+
+// Skill marketplace (Spec 07). A `SkillRegistry` is a search source (a registry),
+// distinct from `SkillSource` above which is a local on-disk root. Mirrors the Go
+// DTOs in internal/marketplace.
+export type SkillRegistry = "skillsmp" | "anthropics" | "github";
+
+export interface SkillRef {
+  owner: string;
+  repo: string;
+  path: string;
+  sha?: string;
+}
+
+export interface SkillSummary {
+  id: string;
+  registry: SkillRegistry;
+  name: string;
+  description: string;
+  owner: string;
+  ref: SkillRef;
+  stars?: number;
+  installs?: number;
+  updated_at?: string;
+  has_scripts: boolean;
+  verified: boolean;
+  installed: boolean;
+  update_available: boolean;
+}
+
+export interface FrontmatterField {
+  key: string;
+  value: string;
+}
+
+export interface FileNode {
+  path: string;
+  is_dir: boolean;
+  size: number;
+  executable: boolean;
+}
+
+export interface ScanFinding {
+  file: string;
+  rule: string;
+  severity: string; // "info" | "warn"
+  message: string;
+}
+
+export interface SkillDetail extends SkillSummary {
+  frontmatter: FrontmatterField[];
+  skill_md: string;
+  tree: FileNode[];
+  license?: string;
+  has_executable: boolean;
+  size: number;
+  scan_findings: ScanFinding[];
+}
+
+export interface SkillSearchResult {
+  results: SkillSummary[];
+  warnings: string[];
+}
+
+export interface SkillFileContent {
+  path: string;
+  content: string;
+  binary: boolean;
+}
+
+export interface InstalledSkill {
+  name: string;
+  description: string;
+  managed: boolean;
+  registry?: SkillRegistry;
+  owner?: string;
+  repo?: string;
+  path?: string;
+  sha?: string;
+  installed_at?: string;
+  repo_url?: string;
+  roots: string[];
+  update_available: boolean;
+}
+
+export interface SkillUpdateStatus {
+  name: string;
+  available: boolean;
+  current_sha: string;
+  latest_sha: string;
+  changed?: string[];
+  installed: boolean;
+}
+
+export interface InstallSkillRequest {
+  registry?: SkillRegistry;
+  id?: string;
+  url?: string;
+  acknowledge?: boolean;
+}

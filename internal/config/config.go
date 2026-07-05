@@ -42,12 +42,36 @@ const (
 // files, §7) or projects (shared ledger, §5.3) — only agents, profiles, defaults,
 // and the server bind (R9.2).
 type Config struct {
-	Global   Global    `yaml:"global"`
-	GitHub   GitHub    `yaml:"github"`
-	Profiles []Profile `yaml:"profiles"`
-	Agents   []Agent   `yaml:"agents"`
-	Server   Server    `yaml:"server"`
-	Logging  Logging   `yaml:"logging"`
+	Global      Global      `yaml:"global"`
+	GitHub      GitHub      `yaml:"github"`
+	Marketplace Marketplace `yaml:"marketplace"`
+	Profiles    []Profile   `yaml:"profiles"`
+	Agents      []Agent     `yaml:"agents"`
+	Server      Server      `yaml:"server"`
+	Logging     Logging     `yaml:"logging"`
+}
+
+// Marketplace configures the skill-marketplace search/install feature (Spec 07).
+// Everything here is non-secret and safe to keep in config.yaml. The SkillsMP API
+// key is NOT here — it is loaded from PODIOM_SKILLSMP_API_KEY or the 0600 file
+// ~/.podiom/marketplace/skillsmp.key so a secret never lands in a public struct.
+type Marketplace struct {
+	// Registries optionally toggles individual sources on/off (SRC-5). An empty
+	// list means "all built-in registries enabled".
+	Registries []string `yaml:"registries,omitempty"`
+	// CuratedOnly restricts installs to Verified sources (anthropics/skills) —
+	// the SEC-8 "curated only" posture. Default false.
+	CuratedOnly bool `yaml:"curated_only,omitempty"`
+	// MaxSkillSizeMB caps a downloaded skill's total size (FR-14). 0 = default 50.
+	MaxSkillSizeMB int `yaml:"max_skill_size_mb,omitempty"`
+	// SearchCacheMinutes / DetailCacheHours tune the server-side TTL cache (SRC-4).
+	// 0 selects the defaults (15 min / 24 h).
+	SearchCacheMinutes int `yaml:"search_cache_minutes,omitempty"`
+	DetailCacheHours   int `yaml:"detail_cache_hours,omitempty"`
+	// GitHubToken is an OPTIONAL public passthrough for raising anonymous GitHub
+	// rate limits (API-3). Prefer the connected device-flow token; this exists for
+	// headless setups. It is a coarse fallback, not a secret vault entry.
+	GitHubToken string `yaml:"github_token,omitempty"`
 }
 
 // Global holds defaults applied across agents unless overridden per agent.

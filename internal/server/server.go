@@ -17,6 +17,7 @@ import (
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/gateway"
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
+	"github.com/Podiom/Podiom/internal/marketplace"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/usage"
@@ -31,20 +32,21 @@ type BuildInfo struct {
 
 // Server wraps the HTTP server and its dependencies.
 type Server struct {
-	httpSrv   *http.Server
-	addr      string
-	build     BuildInfo
-	started   time.Time
-	core      *core.Core
-	scheduler *schedule.Scheduler
-	usage     *usage.Tracker
-	github    *podiomgithub.Service
-	broker    *permissionBroker
-	input     *userInputBroker
-	turns     *activeTurnHub
-	paths     config.Paths
-	log       *slog.Logger
-	notifier  *notify.Dispatcher
+	httpSrv     *http.Server
+	addr        string
+	build       BuildInfo
+	started     time.Time
+	core        *core.Core
+	scheduler   *schedule.Scheduler
+	usage       *usage.Tracker
+	github      *podiomgithub.Service
+	marketplace *marketplace.Service
+	broker      *permissionBroker
+	input       *userInputBroker
+	turns       *activeTurnHub
+	paths       config.Paths
+	log         *slog.Logger
+	notifier    *notify.Dispatcher
 	// vapidPublic is the VAPID public key served to browsers so they can create
 	// a Web Push subscription bound to this daemon. Empty disables push.
 	vapidPublic string
@@ -79,6 +81,9 @@ type Options struct {
 	// Tokens enforces the gateway token on the API/WS surface (HA7). Nil
 	// disables enforcement.
 	Tokens *gateway.Keeper
+	// Marketplace configures the skill search/install feature (Spec 07). The
+	// SkillsMP API key is not here — it is loaded from env/file by the service.
+	Marketplace config.Marketplace
 	// HAMode marks a Home Assistant app deployment (see hamode.Detect).
 	HAMode bool
 	// AllowFrom optionally restricts accepted source addresses (IPs/CIDRs);
@@ -115,6 +120,30 @@ func New(opts Options) *Server {
 		vapidPublic: opts.VAPIDPublicKey,
 		tokens:      opts.Tokens,
 		haMode:      opts.HAMode,
+	}
+	// Skill marketplace (Spec 07). Construction can fail only if the skills root
+	// can't be resolved; degrade to a nil service (handlers return 503) rather
+	// than refusing to boot the whole daemon.
+	ghToken := func() string {
+		if t := s.github.AccessToken(); t != "" {
+			return t
+		}
+		return opts.Marketplace.GitHubToken
+	}
+	if mp, err := marketplace.New(marketplace.Options{
+		GitHubToken:    ghToken,
+		MarketplaceDir: opts.Paths.MarketplaceDir,
+		MaxSkillBytes:  int64(opts.Marketplace.MaxSkillSizeMB) * 1024 * 1024,
+		SearchTTL:      time.Duration(opts.Marketplace.SearchCacheMinutes) * time.Minute,
+		DetailTTL:      time.Duration(opts.Marketplace.DetailCacheHours) * time.Hour,
+		CuratedOnly:    opts.Marketplace.CuratedOnly,
+		Registries:     opts.Marketplace.Registries,
+		Version:        opts.Build.Version,
+		Logger:         log,
+	}); err != nil {
+		log.Warn("skill marketplace disabled", "error", err)
+	} else {
+		s.marketplace = mp
 	}
 	// Let the turn hub raise out-of-app notifications when a turn blocks on the
 	// user, resolving the session's agent name for the notification text.
@@ -156,6 +185,15 @@ func New(opts Options) *Server {
 	mux.HandleFunc("/api/tasks/", s.handleTask)
 	mux.HandleFunc("/api/skills", s.handleSkills)
 	mux.HandleFunc("/api/skills/relink", s.handleSkillsRelink)
+	// Skill marketplace (Spec 07). Registered here so the more specific
+	// /api/skills/... patterns win over the /api/skills catalogue route.
+	mux.HandleFunc("/api/skills/search", s.handleSkillSearch)
+	mux.HandleFunc("/api/skills/detail", s.handleSkillDetail)
+	mux.HandleFunc("/api/skills/detail/file", s.handleSkillFile)
+	mux.HandleFunc("/api/skills/resolve", s.handleSkillResolveURL)
+	mux.HandleFunc("/api/skills/install", s.handleSkillInstall)
+	mux.HandleFunc("/api/skills/installed", s.handleSkillsInstalled)
+	mux.HandleFunc("/api/skills/installed/", s.handleSkillInstalledItem)
 	mux.HandleFunc("/api/mcp", s.handleMCP)
 	mux.HandleFunc("/api/mcp/servers", s.handleMCPServers)
 	mux.HandleFunc("/api/mcp/servers/", s.handleMCPServer)

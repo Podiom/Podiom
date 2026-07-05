@@ -34,6 +34,13 @@ import type {
   Session,
   SessionDetail,
   Skill,
+  SkillSearchResult,
+  SkillDetail,
+  SkillSummary,
+  SkillFileContent,
+  InstalledSkill,
+  InstallSkillRequest,
+  SkillUpdateStatus,
   Task,
   TaskStatus,
   UpdateApplyResult,
@@ -92,6 +99,73 @@ export async function getUsage(refresh = false): Promise<UsageSnapshot[]> {
 
 export async function listSkills(): Promise<Skill[]> {
   return (await asJSON<Skill[] | null>(await request("/api/skills"))) ?? [];
+}
+
+// --- Skill marketplace (Spec 07) ------------------------------------------
+// All registry traffic proxies through the daemon (API-2); the frontend never
+// talks to SkillsMP/GitHub directly and never sees registry secrets.
+
+export async function searchSkills(q: string, registry = "", page = 1, sort = ""): Promise<SkillSearchResult> {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (registry && registry !== "all") params.set("registry", registry);
+  if (sort) params.set("sort", sort);
+  params.set("page", String(page));
+  return asJSON(await request(`/api/skills/search?${params.toString()}`));
+}
+
+export async function skillDetail(registry: string, id: string): Promise<SkillDetail> {
+  const params = new URLSearchParams({ registry, id });
+  return asJSON(await request(`/api/skills/detail?${params.toString()}`));
+}
+
+export async function skillFile(registry: string, id: string, path: string): Promise<SkillFileContent> {
+  const params = new URLSearchParams({ registry, id, path });
+  return asJSON(await request(`/api/skills/detail/file?${params.toString()}`));
+}
+
+export async function resolveSkillURL(url: string): Promise<SkillSummary[]> {
+  return (
+    (await asJSON<SkillSummary[] | null>(
+      await request("/api/skills/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      }),
+    )) ?? []
+  );
+}
+
+export async function installSkill(body: InstallSkillRequest): Promise<InstalledSkill> {
+  return asJSON(
+    await request("/api/skills/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function listInstalledSkills(): Promise<InstalledSkill[]> {
+  return (await asJSON<InstalledSkill[] | null>(await request("/api/skills/installed"))) ?? [];
+}
+
+export async function uninstallSkill(name: string): Promise<void> {
+  await asJSON(await request(`/api/skills/installed/${encodeURIComponent(name)}`, { method: "DELETE" }));
+}
+
+export async function checkSkillUpdate(name: string): Promise<SkillUpdateStatus> {
+  return asJSON(await request(`/api/skills/installed/${encodeURIComponent(name)}/update`));
+}
+
+export async function applySkillUpdate(name: string, acknowledge: boolean): Promise<InstalledSkill> {
+  return asJSON(
+    await request(`/api/skills/installed/${encodeURIComponent(name)}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ acknowledge }),
+    }),
+  );
 }
 
 export async function getMCP(): Promise<MCPSnapshot> {

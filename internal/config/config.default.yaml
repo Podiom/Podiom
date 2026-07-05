@@ -36,6 +36,21 @@ github:
   client_id: Iv23liIKvhvRj9FdIaPD  # public GitHub App client ID (defaults to Podiom's official App)
 
 # ---------------------------------------------------------------------------
+# marketplace: OPTIONAL. Configures the skill search & install feature. Every
+# field here is a non-secret setting with a sane default — omit the block to
+# accept them all. The SkillsMP API key is a SECRET and is NEVER read from here:
+# set PODIOM_SKILLSMP_API_KEY or write it to a 0600 file at
+# ~/.podiom/marketplace/skillsmp.key. Anonymous access works without a key.
+# ---------------------------------------------------------------------------
+# marketplace:
+#   registries: [skillsmp, anthropics, github]  # which sources are enabled (empty = all)
+#   curated_only: false          # restrict installs to Verified (anthropics) sources
+#   max_skill_size_mb: 50        # per-skill download cap
+#   search_cache_minutes: 15     # server-side search cache TTL
+#   detail_cache_hours: 24       # server-side detail cache TTL
+#   github_token: ""             # optional PUBLIC token to raise anonymous GitHub rate limits
+
+# ---------------------------------------------------------------------------
 # profiles: OPTIONAL named auth contexts, each 1:1 with one underlying account.
 # A profile is just a directory + a name that Podiom owns — Podiom never handles
 # credentials. You log in yourself against the profile dir using the CLI's own

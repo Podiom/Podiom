@@ -343,6 +343,17 @@ func (s *Service) SyncProject(ctx context.Context, req SyncRequest) (SyncResult,
 	return SyncResult{Repo: repo, Path: repoRoot}, nil
 }
 
+// AccessToken returns the connected GitHub access token, or "" when GitHub is not
+// connected. The skills marketplace uses it to raise anonymous rate limits
+// (API-3) while still working without a token.
+func (s *Service) AccessToken() string {
+	token, err := s.loadToken()
+	if err != nil {
+		return ""
+	}
+	return token.AccessToken
+}
+
 func (s *Service) installURL() string {
 	if s.cfg.AppSlug == "" {
 		return ""
