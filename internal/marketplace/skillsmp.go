@@ -58,18 +58,22 @@ func (s *skillsMPSource) warn(msg string) {
 }
 
 type skillsMPResult struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Owner       string `json:"owner"`
-	Repo        string `json:"repo"`
-	Path        string `json:"path"`
-	GitHubURL   string `json:"github_url"`
-	Stars       int    `json:"stars"`
-	Installs    int    `json:"installs"`
-	UpdatedAt   string `json:"updated_at"`
-	HasScripts  bool   `json:"has_scripts"`
-	Verified    bool   `json:"verified"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Owner           string `json:"owner"`
+	Author          string `json:"author"`
+	Repo            string `json:"repo"`
+	Path            string `json:"path"`
+	GitHubURL       string `json:"github_url"`
+	GitHubURLCamel  string `json:"githubUrl"`
+	Stars           int    `json:"stars"`
+	Installs        int    `json:"installs"`
+	UpdatedAt       string `json:"updated_at"`
+	UpdatedAtCamel  string `json:"updatedAt"`
+	HasScripts      bool   `json:"has_scripts"`
+	HasScriptsCamel bool   `json:"hasScripts"`
+	Verified        bool   `json:"verified"`
 }
 
 func (s *skillsMPSource) Search(ctx context.Context, q string, page int) ([]SkillSummary, error) {
@@ -88,7 +92,7 @@ func (s *skillsMPSource) Search(ctx context.Context, q string, page int) ([]Skil
 	}
 	req.Header.Set("Accept", "application/json")
 	if s.apiKey != "" {
-		req.Header.Set("X-API-Key", s.apiKey)
+		req.Header.Set("Authorization", "Bearer "+s.apiKey)
 	}
 	res, err := s.client.Do(req)
 	if err != nil {
@@ -108,12 +112,19 @@ func (s *skillsMPSource) Search(ctx context.Context, q string, page int) ([]Skil
 
 	var payload struct {
 		Results []skillsMPResult `json:"results"`
+		Data    struct {
+			Skills []skillsMPResult `json:"skills"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("skillsmp decode: %w", err)
 	}
+	results := payload.Results
+	if len(results) == 0 {
+		results = payload.Data.Skills
+	}
 	var out []SkillSummary
-	for _, r := range payload.Results {
+	for _, r := range results {
 		if sum, ok := s.toSummary(r); ok {
 			out = append(out, sum)
 		}
@@ -122,12 +133,13 @@ func (s *skillsMPSource) Search(ctx context.Context, q string, page int) ([]Skil
 }
 
 func (s *skillsMPSource) toSummary(r skillsMPResult) (SkillSummary, bool) {
-	owner, repo, path := r.Owner, r.Repo, strings.Trim(r.Path, "/")
-	if (owner == "" || repo == "") && r.GitHubURL != "" {
-		if o, rp, _, sub, err := parseGitHubURL(r.GitHubURL); err == nil {
+	owner, repo, skillPath := firstNonEmpty(r.Owner, r.Author), r.Repo, strings.Trim(r.Path, "/")
+	githubURL := firstNonEmpty(r.GitHubURL, r.GitHubURLCamel)
+	if (owner == "" || repo == "" || skillPath == "") && githubURL != "" {
+		if o, rp, _, sub, err := parseGitHubURL(githubURL); err == nil {
 			owner, repo = o, rp
-			if path == "" {
-				path = strings.Trim(sub, "/")
+			if skillPath == "" {
+				skillPath = strings.Trim(sub, "/")
 			}
 		}
 	}
@@ -135,22 +147,33 @@ func (s *skillsMPSource) toSummary(r skillsMPResult) (SkillSummary, bool) {
 		return SkillSummary{}, false // unusable without a canonical GitHub location
 	}
 	id := owner + "/" + repo
-	if path != "" {
-		id += "/" + path
+	if skillPath != "" {
+		id += "/" + skillPath
 	}
 	return SkillSummary{
 		ID:          id,
 		Registry:    RegistrySkillsMP,
-		Name:        firstNonEmpty(r.Name, kebab(lastSegment(path)), repo),
+		Name:        firstNonEmpty(r.Name, kebab(lastSegment(skillPath)), repo),
 		Description: r.Description,
 		Owner:       owner,
-		Ref:         SkillRef{Owner: owner, Repo: repo, Path: path},
+		Ref:         SkillRef{Owner: owner, Repo: repo, Path: skillPath},
 		Stars:       r.Stars,
 		Installs:    r.Installs,
-		UpdatedAt:   r.UpdatedAt,
-		HasScripts:  r.HasScripts,
+		UpdatedAt:   normalizeSkillsMPUpdatedAt(firstNonEmpty(r.UpdatedAt, r.UpdatedAtCamel)),
+		HasScripts:  r.HasScripts || r.HasScriptsCamel,
 		Verified:    r.Verified,
 	}, true
+}
+
+func normalizeSkillsMPUpdatedAt(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Unix(n, 0).UTC().Format(time.RFC3339)
+	}
+	return v
 }
 
 func (s *skillsMPSource) Fetch(ctx context.Context, id string) (SkillDetail, error) {

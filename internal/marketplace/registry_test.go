@@ -112,10 +112,71 @@ func TestSkillsMP_RateLimitWarning(t *testing.T) {
 	}
 }
 
+func TestSkillsMP_LiveResponseShapeAndBearerAuth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer sk_test" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"data": {
+				"skills": [{
+					"id": "nexu-io-open-design-skills-pdf-skill-md",
+					"name": "pdf",
+					"author": "nexu-io",
+					"description": "Extract text, create PDFs, and handle forms.",
+					"githubUrl": "https://github.com/nexu-io/open-design/tree/main/skills/pdf",
+					"stars": 73412,
+					"updatedAt": "1780545507"
+				}]
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	src := newSkillsMPSource(nil, "sk_test", nil)
+	src.base = srv.URL
+	rows, err := src.Search(context.Background(), "pdf", 1)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	if row.ID != "nexu-io/open-design/skills/pdf" || row.Owner != "nexu-io" || row.Ref.Path != "skills/pdf" {
+		t.Fatalf("bad github mapping: %+v", row)
+	}
+	if row.UpdatedAt != "2026-06-04T03:58:27Z" {
+		t.Fatalf("updated_at = %q", row.UpdatedAt)
+	}
+}
+
 func TestSkillsMP_EmptyQueryReturnsNothing(t *testing.T) {
 	src := newSkillsMPSource(nil, "", nil)
 	rows, err := src.Search(context.Background(), "  ", 1)
 	if err != nil || rows != nil {
 		t.Fatalf("empty query should return nil,nil; got %v %v", rows, err)
+	}
+}
+
+func TestGitHubFetcher_FallsBackToAnonymousOnBadToken(t *testing.T) {
+	gh := newMockGitHub(t, helloRepo())
+	svc, err := New(Options{
+		GitHubAPIBase: gh.URL,
+		GitHubRawBase: gh.URL,
+		GitHubToken:   func() string { return "bad-token" },
+		Version:       "test",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	rows, err := svc.ResolveURL(context.Background(), "https://github.com/acme/skills/tree/main/skills/hello")
+	if err != nil {
+		t.Fatalf("resolve should retry anonymously after bad token: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Ref.SHA != "deadbeef" {
+		t.Fatalf("unexpected rows: %+v", rows)
 	}
 }

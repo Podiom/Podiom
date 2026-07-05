@@ -62,6 +62,9 @@ func (g *githubURLSource) Resolve(ctx context.Context, raw string) ([]SkillSumma
 	if err != nil {
 		return nil, err
 	}
+	if hasRootSkillMD(nodes) {
+		return []SkillSummary{g.summaryAt(ctx, owner, repo, sub, sha)}, nil
+	}
 	dirs := skillDirsFromTree(nodes)
 	if len(dirs) == 0 {
 		return nil, fmt.Errorf("no SKILL.md found at %s", raw)
@@ -153,6 +156,15 @@ func splitPath(p string) []string {
 		}
 	}
 	return out
+}
+
+func hasRootSkillMD(nodes []FileNode) bool {
+	for _, n := range nodes {
+		if !n.IsDir && strings.EqualFold(strings.Trim(n.Path, "/"), "SKILL.md") {
+			return true
+		}
+	}
+	return false
 }
 
 func joinRel(base, sub string) string {

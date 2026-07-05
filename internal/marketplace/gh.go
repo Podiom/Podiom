@@ -52,18 +52,17 @@ func newGHFetcher(client *http.Client, token tokenSource, maxSize int64) *ghFetc
 }
 
 func (g *ghFetcher) do(ctx context.Context, method, endpoint string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+	tok := g.token()
+	res, err := g.githubRequest(ctx, method, endpoint, tok)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if tok := g.token(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	res, err := g.client.Do(req)
-	if err != nil {
-		return err
+	if res.StatusCode == http.StatusUnauthorized && tok != "" {
+		res.Body.Close()
+		res, err = g.githubRequest(ctx, method, endpoint, "")
+		if err != nil {
+			return err
+		}
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusNotFound {
@@ -77,6 +76,19 @@ func (g *ghFetcher) do(ctx context.Context, method, endpoint string, out any) er
 		return nil
 	}
 	return json.NewDecoder(res.Body).Decode(out)
+}
+
+func (g *ghFetcher) githubRequest(ctx context.Context, method, endpoint, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return g.client.Do(req)
 }
 
 // resolveSHA pins a ref (branch/tag/SHA) to a concrete commit SHA (SEC-3).
@@ -172,22 +184,34 @@ func (g *ghFetcher) file(ctx context.Context, ref SkillRef, relPath string) ([]b
 	}
 	u := fmt.Sprintf("%s/%s/%s/%s/%s", g.rawBase,
 		url.PathEscape(ref.Owner), url.PathEscape(ref.Repo), url.PathEscape(sha), encodePath(full))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	tok := g.token()
+	res, err := g.rawRequest(ctx, u, tok)
 	if err != nil {
 		return nil, err
 	}
-	if tok := g.token(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	res, err := g.client.Do(req)
-	if err != nil {
-		return nil, err
+	if res.StatusCode == http.StatusUnauthorized && tok != "" {
+		res.Body.Close()
+		res, err = g.rawRequest(ctx, u, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, fmt.Errorf("github raw fetch failed: %s", res.Status)
 	}
 	return io.ReadAll(io.LimitReader(res.Body, g.maxSize))
+}
+
+func (g *ghFetcher) rawRequest(ctx context.Context, endpoint, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return g.client.Do(req)
 }
 
 // downloadZip fetches the repo zipball at the pinned SHA (SEC-3), capped by
@@ -199,18 +223,17 @@ func (g *ghFetcher) downloadZip(ctx context.Context, ref SkillRef) ([]byte, erro
 	}
 	u := fmt.Sprintf("%s/repos/%s/%s/zipball/%s", g.apiBase,
 		url.PathEscape(ref.Owner), url.PathEscape(ref.Repo), url.PathEscape(sha))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	tok := g.token()
+	res, err := g.githubRequest(ctx, http.MethodGet, u, tok)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if tok := g.token(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	res, err := g.client.Do(req)
-	if err != nil {
-		return nil, err
+	if res.StatusCode == http.StatusUnauthorized && tok != "" {
+		res.Body.Close()
+		res, err = g.githubRequest(ctx, http.MethodGet, u, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {

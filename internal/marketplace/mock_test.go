@@ -28,6 +28,11 @@ func newMockGitHub(t *testing.T, repos ...*mockRepo) *httptest.Server {
 	srv := httptest.NewServer(mux)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("Authorization") == "Bearer bad-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSONTest(w, map[string]any{"message": "Bad credentials"})
+			return
+		}
 		p := strings.Trim(req.URL.Path, "/")
 		segs := strings.Split(p, "/")
 		// API: /repos/{owner}/{repo}/...
