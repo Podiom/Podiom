@@ -26,13 +26,13 @@ global:
 
 # ---------------------------------------------------------------------------
 # github: OPTIONAL. Omit this block entirely and Podiom uses its official
-# GitHub App (podiom-llm-orchestrator) to connect and sync project repos — no
+# GitHub App (podiom) to connect and sync project repos — no
 # setup needed. Only set these fields if you want to register and use your OWN
 # GitHub App instead. Values are public identifiers and safe to ship; do NOT
 # put private keys or client secrets here.
 # ---------------------------------------------------------------------------
 github:
-  app_slug: podiom-llm-orchestrator  # GitHub App slug (defaults to Podiom's official App)
+  app_slug: podiom  # GitHub App slug (defaults to Podiom's official App)
   client_id: Iv23liIKvhvRj9FdIaPD  # public GitHub App client ID (defaults to Podiom's official App)
 
 # ---------------------------------------------------------------------------

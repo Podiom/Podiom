@@ -65,7 +65,7 @@ type Global struct {
 }
 
 // GitHub is optional. Omitted, it defaults to Podiom's official GitHub App
-// (podiom-llm-orchestrator) for repo connect + sync; set it only to use your own
+// (podiom) for repo connect + sync; set it only to use your own
 // GitHub App instead. These values are public identifiers, not secrets; do not
 // add private keys or client secrets here.
 type GitHub struct {

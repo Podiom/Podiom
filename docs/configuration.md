@@ -24,7 +24,7 @@ Defaults applied across all agents unless overridden per agent.
 ## `github`
 
 **Entirely optional.** Omit this block and Podiom uses its **official GitHub App**
-(`podiom-llm-orchestrator`) to connect and sync project repositories — nothing to
+(`podiom`) to connect and sync project repositories — nothing to
 configure, it works out of the box for every user.
 
 The block exists purely so that, if you want, you can register and point at your
