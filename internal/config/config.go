@@ -31,7 +31,7 @@ const (
 )
 
 const (
-	DefaultGitHubAppSlug     = "podiom-llm-orchestrator"
+	DefaultGitHubAppSlug     = "podiom"
 	DefaultGitHubClientID    = "Iv23liIKvhvRj9FdIaPD"
 	DefaultPermissionTimeout = "3m"
 	// DefaultDreamTime is the local time the nightly memory dream runs by default.
