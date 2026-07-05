@@ -721,7 +721,7 @@ func (c *Client) postJSON(ctx context.Context, path string, in any, out any) err
 }
 
 func (c *Client) postLongJSON(ctx context.Context, path string, in any, out any) error {
-	return c.postWithClient(ctx, &http.Client{}, path, in, out)
+	return c.postWithClient(ctx, c.bespokeClient(0), path, in, out)
 }
 
 func (c *Client) postWithClient(ctx context.Context, hc *http.Client, path string, in any, out any) error {
