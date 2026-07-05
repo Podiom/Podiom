@@ -7,6 +7,7 @@
     loadProviderCapabilities,
     modelOptions as capabilityModelOptions,
   } from "../lib/capabilities";
+  import { randomID } from "../lib/id";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
@@ -475,7 +476,7 @@
 
   function attachActiveSession() {
     if (activeSession?.ID && live.status === "live") {
-      live.send({ type: "attach_session", request_id: crypto.randomUUID(), session_id: activeSession.ID });
+      live.send({ type: "attach_session", request_id: randomID(), session_id: activeSession.ID });
     }
   }
 
@@ -616,7 +617,7 @@
     pendingUserInput = null;
     if (!send({
       type: "send_turn",
-      request_id: crypto.randomUUID(),
+      request_id: randomID(),
       agent_name: activeSession ? undefined : selectedAgent,
       session_id: activeSession?.ID,
       message: text,
@@ -726,7 +727,7 @@
     if (!activeSession) return;
     send({
       type: "update_session_settings",
-      request_id: crypto.randomUUID(),
+      request_id: randomID(),
       session_id: activeSession.ID,
       ...patch,
     });
@@ -734,7 +735,7 @@
 
   function stopActiveTurn() {
     if (!activeSession) return;
-    send({ type: "stop_turn", request_id: crypto.randomUUID(), session_id: activeSession.ID });
+    send({ type: "stop_turn", request_id: randomID(), session_id: activeSession.ID });
   }
 
   function resetPlanReview() {
@@ -753,7 +754,7 @@
     resetPlanReview();
     send({
       type: "plan_approve",
-      request_id: crypto.randomUUID(),
+      request_id: randomID(),
       session_id: activeSession.ID,
     });
   }
@@ -768,7 +769,7 @@
     pendingAssistant = "";
     send({
       type: "plan_feedback",
-      request_id: crypto.randomUUID(),
+      request_id: randomID(),
       session_id: activeSession.ID,
       feedback,
     });
@@ -783,7 +784,7 @@
     notice = null;
     send({
       type: "plan_reject",
-      request_id: crypto.randomUUID(),
+      request_id: randomID(),
       session_id: activeSession.ID,
     });
     resetPlanReview();

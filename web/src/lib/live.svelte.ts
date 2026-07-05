@@ -12,6 +12,7 @@ import { getUsage, getVapidKey, subscribePush } from "./api";
 import { auth, WS_PROTOCOL, wsTokenProtocol } from "./auth.svelte";
 import { appBase, wsUrl } from "./base";
 import { request } from "./http";
+import { randomID } from "./id";
 import type {
   ActiveTurnSummary,
   ClientMessage,
@@ -171,7 +172,7 @@ class LiveStore {
   // back as "dream_state" messages page components observe via subscribe().
   // Returns the request_id so a component can match its own dream's events.
   dream(agentName: string): string {
-    const requestId = crypto.randomUUID();
+    const requestId = randomID();
     this.send({ type: "dream", request_id: requestId, agent_name: agentName });
     return requestId;
   }
@@ -300,7 +301,7 @@ class LiveStore {
   private pushToast(sessionId: string, kind: "permission" | "question") {
     const agent = this.sessions.find((s) => s.ID === sessionId)?.AgentName ?? "An agent";
     const toast: Toast = {
-      id: crypto.randomUUID(),
+      id: randomID(),
       kind,
       sessionId,
       title: kind === "permission" ? `${agent} needs approval` : `${agent} has a question`,
@@ -320,7 +321,7 @@ class LiveStore {
       if (this.lastPending[key] === "question") continue;
       this.lastPending[key] = "question";
       const toast: Toast = {
-        id: crypto.randomUUID(),
+        id: randomID(),
         kind: "plan",
         sessionId: session.ID,
         title: `${session.AgentName} submitted a plan`,
