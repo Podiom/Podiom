@@ -39,7 +39,7 @@
   let addTransport = $state<"http" | "stdio">("stdio");
   let addEndpoint = $state("");
   let addCommand = $state("");
-  let addArgs = $state("");
+  let addArgs = $state<string[]>([]);
   let addEnvVars = $state("");
   let savingServer = $state(false);
   // When set, the add form is editing this existing (podiom-owned) server rather
@@ -144,7 +144,7 @@
         server.url = addEndpoint.trim();
       } else {
         server.command = addCommand.trim();
-        server.args = argsFromText(addArgs);
+        server.args = addArgs.map((a) => a.trim()).filter(Boolean);
       }
       mcp = await saveMCPServer(server);
       resetServerForm();
@@ -160,7 +160,7 @@
     addName = "";
     addEndpoint = "";
     addCommand = "";
-    addArgs = "";
+    addArgs = [];
     addEnvVars = "";
     addTransport = "stdio";
   }
@@ -178,7 +178,7 @@
     addTransport = server.transport === "http" ? "http" : "stdio";
     addEndpoint = server.url ?? "";
     addCommand = server.command ?? "";
-    addArgs = (server.args ?? []).join("\n");
+    addArgs = [...(server.args ?? [])];
     addEnvVars = (server.env_vars ?? []).join(", ");
     addOpen = true;
     mcpOpen = { ...mcpOpen, [server.name]: false };
@@ -196,8 +196,17 @@
       removingServer = false;
     }
   }
-  function argsFromText(value: string): string[] {
-    return value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  // Each arg is a separate value, edited in its own field so users can add/remove
+  // one at a time. mcp-proxy and friends expect one token per arg (never a whole
+  // command line packed into a single arg).
+  function addArg() {
+    addArgs = [...addArgs, ""];
+  }
+  function removeArg(index: number) {
+    addArgs = addArgs.filter((_, i) => i !== index);
+  }
+  function updateArg(index: number, value: string) {
+    addArgs = addArgs.map((a, i) => (i === index ? value : a));
   }
   function canSaveServer(): boolean {
     if (!addName.trim()) return false;
@@ -316,7 +325,19 @@
               <input class="wide" bind:value={addEndpoint} placeholder="https://..." />
             {:else}
               <input class="wide" bind:value={addCommand} placeholder="/opt/homebrew/bin/mcp-proxy" />
-              <textarea bind:value={addArgs} placeholder={`--transport\nstreamablehttp\nhttp://192.168.1.7:9583/private_...`}></textarea>
+              <div class="args-list">
+                {#each addArgs as arg, i (i)}
+                  <div class="arg-row">
+                    <input
+                      value={arg}
+                      oninput={(e) => updateArg(i, e.currentTarget.value)}
+                      placeholder={i === 0 ? "--transport" : "arg"}
+                    />
+                    <button type="button" class="arg-remove" title="Remove argument" onclick={() => removeArg(i)}>×</button>
+                  </div>
+                {/each}
+                <button type="button" class="arg-add" onclick={addArg}>+ Add argument</button>
+              </div>
             {/if}
             <input bind:value={addEnvVars} placeholder="ENV_NAMES comma separated" />
             <button class="primary" disabled={savingServer || !canSaveServer()} onclick={addServer}>
@@ -466,8 +487,14 @@
   .add-editing { flex-basis: 100%; font: 600 12px "JetBrains Mono", monospace; color: #7a6f62; }
   .add-box input[readonly] { background: #f1eae0; color: #7a6f62; cursor: not-allowed; }
   input { padding: 10px 12px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; font: 500 13px "Hanken Grotesk"; color: #2b2520; outline: none; }
-  textarea { flex: 1; min-width: 260px; min-height: 92px; resize: vertical; padding: 10px 12px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; font: 500 12px/1.55 "JetBrains Mono", monospace; color: #2b2520; outline: none; }
   .add-box .wide { flex: 1; min-width: 260px; }
+  .args-list { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; }
+  .arg-row { display: flex; gap: 6px; align-items: center; }
+  .arg-row input { flex: 1; font: 500 12px "JetBrains Mono", monospace; }
+  .arg-remove { flex: none; width: 34px; height: 34px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; color: #b4472f; font-size: 18px; line-height: 1; cursor: pointer; }
+  .arg-remove:hover { border-color: #d9663d; background: #fdf2ee; }
+  .arg-add { align-self: flex-start; padding: 7px 12px; border: 1px dashed #d9cdba; border-radius: 11px; background: transparent; color: #7a6f62; font: 600 12px "JetBrains Mono", monospace; cursor: pointer; }
+  .arg-add:hover { border-color: #c8a878; color: #2b2520; }
   .transport { display: flex; gap: 4px; padding: 4px; border-radius: 11px; background: #efe7dc; border: 1px solid #e6dbcc; }
   .matrix { overflow-x: auto; padding: 6px 20px 14px; }
   .matrix-row { display: flex; align-items: center; gap: 6px; min-width: max-content; border-bottom: 1px solid #f5eee4; }
