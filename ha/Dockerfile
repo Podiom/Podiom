@@ -17,6 +17,7 @@ ARG NODE_MAJOR
 ARG CLAUDE_CODE_VERSION
 ARG CODEX_VERSION
 ARG MCP_PROXY_VERSION
+ARG UV_VERSION
 ARG TTYD_VERSION
 ARG TTYD_SHA256_AMD64
 ARG TTYD_SHA256_ARM64
@@ -34,7 +35,7 @@ ENV PODIOM_HOME=/data/podiom \
 # Fail early if the pins were not passed (versions.env is the source of truth).
 RUN set -eu; \
     for v in "$NODE_MAJOR" "$CLAUDE_CODE_VERSION" "$CODEX_VERSION" \
-             "$MCP_PROXY_VERSION" "$TTYD_VERSION"; do \
+             "$MCP_PROXY_VERSION" "$UV_VERSION" "$TTYD_VERSION"; do \
       [ -n "$v" ] || { echo "missing build-arg; source ha/versions.env" >&2; exit 1; }; \
     done
 
@@ -55,6 +56,12 @@ RUN npm install -g \
 
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
     pipx install "mcp-proxy==${MCP_PROXY_VERSION}"
+
+# uv ships both `uv` and `uvx`; uvx runs MCP servers distributed as Python
+# packages (e.g. unifi-mcp) without a persistent install. pipx exposes both
+# entry points into /usr/local/bin.
+RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
+    pipx install "uv==${UV_VERSION}"
 
 # ttyd: SHA256-verified static release binary.
 RUN set -eu; \

@@ -12,6 +12,7 @@ Nabu Casa) without opening a single port yourself.
 - **podiom** — the Podiom CLI
 - **claude** (`@anthropic-ai/claude-code`) and **codex** (`@openai/codex`)
 - **mcp-proxy** — bridges remote MCP servers for the CLIs
+- **uv / uvx** — runs MCP servers distributed as Python packages (e.g. `uvx some-mcp`)
 - **ttyd** — the web terminal behind the `/terminal/...` onboarding links
 
 Exact bundled versions are listed in the changelog for every release.
@@ -115,7 +116,7 @@ dependable way to run them.
 
 ## Bundled CLI versions and updates
 
-The image **pins** exact versions of `claude`, `codex`, `mcp-proxy`, and
+The image **pins** exact versions of `claude`, `codex`, `mcp-proxy`, `uv`, and
 `ttyd`, and disables the CLIs' self-updaters — you always run the combination
 we tested. New versions ship as add-on updates; the changelog lists the
 bundled versions of each release and calls out CLI version changes, since CLI

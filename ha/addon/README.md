@@ -6,7 +6,7 @@ UI for chat, permissions, plans, schedules, and memory.
 ## About
 
 This add-on runs the full Podiom stack (daemon, web UI, both CLIs,
-`mcp-proxy`, and a web terminal for CLI logins) inside Home Assistant:
+`mcp-proxy`, `uv`/`uvx`, and a web terminal for CLI logins) inside Home Assistant:
 
 - **Safe remote access**: reach Podiom from your phone through HA / Nabu Casa
   with HA handling TLS and login — Podiom opens no ports.

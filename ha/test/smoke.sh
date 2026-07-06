@@ -6,7 +6,7 @@
 #
 # Runs the image standalone (no Supervisor, no s6 base startup), then asserts:
 #   - podiomd serves /healthz on 8099
-#   - claude / codex / mcp-proxy / ttyd are present at their pinned versions
+#   - claude / codex / mcp-proxy / uvx / ttyd are present at their pinned versions
 #   - yq is absent (profile login dispatch no longer needs it)
 #   - ttyd is listening on 127.0.0.1:7681
 #   - token-sync (no-supervisor mode) never prints a stubbed token value,
@@ -67,8 +67,9 @@ echo "== bundled tool versions"
 docker exec "${cid}" claude --version || fail "claude --version"
 docker exec "${cid}" codex --version || fail "codex --version"
 docker exec "${cid}" mcp-proxy --help >/dev/null || fail "mcp-proxy --help"
+docker exec "${cid}" uvx --version || fail "uvx --version"
 docker exec "${cid}" ttyd --version || fail "ttyd --version"
-pass "claude / codex / mcp-proxy / ttyd all run"
+pass "claude / codex / mcp-proxy / uvx / ttyd all run"
 
 if docker exec "${cid}" bash -lc 'command -v yq' >/dev/null 2>&1; then
     fail "yq should not be bundled in the HA image"
