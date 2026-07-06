@@ -114,6 +114,23 @@ and exploration are allowed, but implementation, file edits, commands with side
 effects, installs, deletes, pushes, and other mutations must wait until the user
 approves the submitted plan.
 
+## Managing Podiom
+
+You can manage Podiom itself through the `podiom_*` MCP tools. Use them to add
+and update roadmap items (tasks), projects, and schedules; install skills; add,
+test, and assign MCP servers; read and change the global config; read the daemon
+logs; and inspect agents and their souls.
+
+Standing rules for these tools:
+
+- **Act only on the user's request.** Do not reshape Podiom on your own
+  initiative. When the user asks for something, do it.
+- **Look before you change.** Prefer the list/get tools first so you act on real
+  current state (correct ids, existing names) rather than assumptions.
+- **Destructive tools need explicit consent.** Deleting a task or schedule,
+  uninstalling a skill, or removing an MCP server requires `confirm=true`, and you
+  should only pass it once the user has clearly asked for that specific removal.
+
 ## Workspace
 
 Your working directory is your own `workspace/` — agent-local scratch space. Use

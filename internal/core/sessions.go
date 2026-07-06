@@ -94,7 +94,7 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	if err != nil {
 		return store.Session{}, err
 	}
-	mcpServers, mcpAll = c.withInternalPlanMCP(created, created.ID, mcpServers, mcpAll)
+	mcpServers, mcpAll = c.withInternalMCPServers(created, created.ID, mcpServers, mcpAll)
 	workspaceDir := c.sessionWorkspaceDir(agent.Name, projectCtx)
 	extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(agent.Name).Workspace, projectCtx)
 	handle, err := c.adapter.Start(ctx, adapter.StartRequest{
@@ -542,7 +542,7 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 	// profile-scoped process; changing the internal plan MCP args between
 	// StartRequest and the first TurnRequest forces a different app-server and
 	// makes Codex unable to resume the new thread.
-	mcpServers, mcpAll = c.withInternalPlanMCP(sess, sess.ID, mcpServers, mcpAll)
+	mcpServers, mcpAll = c.withInternalMCPServers(sess, sess.ID, mcpServers, mcpAll)
 	return adapter.TurnRequest{
 		SessionID: sess.ID,
 		Handle: adapter.Handle{
@@ -573,7 +573,16 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 	}
 }
 
-func (c *Core) withInternalPlanMCP(sess store.Session, turnID string, assigned, all []podiommcp.Server) ([]podiommcp.Server, []podiommcp.Server) {
+// withInternalMCPServers appends Podiom's built-in stdio MCP servers to a
+// session's assigned set: the plan-submission helper and the self-management
+// helper (roadmap/projects/schedules/skills/mcp/config/logs/agents). Both are
+// appended unconditionally after catalogue resolution, so an agent cannot
+// un-inject them by changing its own MCP assignments.
+//
+// Every arg here must be session-stable (never per-turn): Codex stores freshly
+// created thread rollouts in the profile-scoped app-server, so a profile that
+// changes between StartRequest and the first TurnRequest breaks resume.
+func (c *Core) withInternalMCPServers(sess store.Session, turnID string, assigned, all []podiommcp.Server) ([]podiommcp.Server, []podiommcp.Server) {
 	if c.daemonAddr == "" {
 		return assigned, all
 	}
@@ -584,7 +593,7 @@ func (c *Core) withInternalPlanMCP(sess store.Session, turnID string, assigned, 
 	if turnID == "" {
 		turnID = sess.ID
 	}
-	server := podiommcp.Server{
+	plan := podiommcp.Server{
 		Name:      "podiom_plan",
 		Transport: podiommcp.TransportStdio,
 		Command:   exe,
@@ -596,7 +605,19 @@ func (c *Core) withInternalPlanMCP(sess store.Session, turnID string, assigned, 
 		},
 		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
 	}
-	return append(assigned, server), append(all, server)
+	manage := podiommcp.Server{
+		Name:      "podiom_manage",
+		Transport: podiommcp.TransportStdio,
+		Command:   exe,
+		Args: []string{
+			"manage-mcp",
+			"--addr", c.daemonAddr,
+			"--session", sess.ID,
+			"--agent", sess.AgentName,
+		},
+		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
+	}
+	return append(assigned, plan, manage), append(all, plan, manage)
 }
 
 func (c *Core) permissionTimeout() time.Duration {

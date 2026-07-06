@@ -208,7 +208,7 @@ func newUpdateApplyCmd(addr *string) *cobra.Command {
 
 			if installDir == "" {
 				if resolved, err := resolveAddr(*addr); err == nil {
-					c := client.New(resolved)
+					c := client.New(resolved, client.WithToken(gatewayTokenFromDisk()))
 					if _, err := c.Health(cmd.Context()); err == nil {
 						result, err := c.ApplyUpdate(cmd.Context(), client.UpdateApplyRequest{Version: version, Force: force})
 						if err == nil {

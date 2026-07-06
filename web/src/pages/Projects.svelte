@@ -5,6 +5,7 @@
     connectProjectRepo,
     createProject,
     createProjectFromGitHub,
+    deleteProject,
     describeProject,
     disconnectProjectRepo,
     githubDevicePoll,
@@ -16,6 +17,7 @@
     syncProjectRepo,
     updateProject,
   } from "../lib/api";
+  import ConfirmModal from "../lib/ConfirmModal.svelte";
   import { PROJECT_COLORS, projectColor } from "../lib/theme";
   import type { Agent, GitHubDeviceStart, GitHubRepo, GitHubStatus, Project, Task } from "../lib/types";
 
@@ -39,6 +41,22 @@
   let savingDesc = $state<string>("");
   // Which agent's engine drafts descriptions.
   let writerAgent = $state("");
+  // Delete-project confirmation.
+  let deleteTarget = $state<Project | null>(null);
+  let deleting = $state(false);
+
+  const deleteMessage = $derived(
+    deleteTarget
+      ? (() => {
+          const n = taskCount(deleteTarget.id);
+          const tail =
+            n > 0
+              ? `Its ${n} task${n === 1 ? "" : "s"} and any sessions are kept but orphaned (they stay in history without a project).`
+              : "Any tasks or sessions are kept but orphaned (they stay in history without a project).";
+          return `Removes “${deleteTarget.name}” from the project list. Files on disk are left untouched. ${tail}`;
+        })()
+      : "",
+  );
 
   $effect(() => {
     if (!agents.length) {
@@ -413,6 +431,22 @@
       ghBusy = "";
     }
   }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    deleting = true;
+    error = null;
+    try {
+      const id = deleteTarget.id;
+      await deleteProject(id);
+      projects = projects.filter((x) => x.id !== id);
+      deleteTarget = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      deleting = false;
+    }
+  }
 </script>
 
 <div class="page">
@@ -508,6 +542,7 @@
 
         <div class="pc-foot">
           <span class="pc-meta mono">{meta(p)}</span>
+          <button class="pc-delete" onclick={() => (deleteTarget = p)}>Delete</button>
           <button class="pc-view" onclick={() => onOpenChat({})}>View sessions →</button>
         </div>
       </article>
@@ -517,6 +552,17 @@
     {/if}
   </div>
 </div>
+
+{#if deleteTarget}
+  <ConfirmModal
+    title="Delete project?"
+    message={deleteMessage}
+    confirmLabel="Delete project"
+    busy={deleting}
+    onConfirm={confirmDelete}
+    onCancel={() => (deleteTarget = null)}
+  />
+{/if}
 
 {#if creating}
   <div class="modal-backdrop" role="presentation" onclick={() => (creating = false)}>
@@ -1124,6 +1170,21 @@
     font: 600 11.5px "Hanken Grotesk";
     color: var(--teal-deep);
     cursor: pointer;
+  }
+
+  .pc-delete {
+    border: 1px solid var(--field-line);
+    background: #fff;
+    border-radius: 9px;
+    padding: 6px 11px;
+    font: 600 11.5px "Hanken Grotesk";
+    color: #b4472f;
+    cursor: pointer;
+  }
+
+  .pc-delete:hover {
+    border-color: #d9663d;
+    background: #fdf2ee;
   }
 
   .np-modal {

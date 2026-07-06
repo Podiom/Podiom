@@ -205,6 +205,31 @@ func (l *Ledger) Update(id string, patch ProjectPatch) (Project, error) {
 	return *p, nil
 }
 
+// Delete removes a project from the ledger and rewrites it. The on-disk project
+// directory is intentionally left untouched — deletion only forgets the record,
+// so any code checked out under the project path is preserved. It errors if the
+// id does not exist.
+func (l *Ledger) Delete(id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	file, err := l.read()
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i := range file.Projects {
+		if file.Projects[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("project %q not found", id)
+	}
+	file.Projects = append(file.Projects[:idx], file.Projects[idx+1:]...)
+	return l.write(file)
+}
+
 // SyncRoadmaps replaces each project's derived roadmap with the ordered task
 // ids currently known for that project. Unknown project IDs in byProject are
 // ignored; projects without tasks get an empty roadmap.

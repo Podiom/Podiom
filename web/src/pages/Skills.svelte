@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getMCP, saveMCPServer, setMCPAssignment, testMCPServer } from "../lib/api";
+  import { getMCP, removeMCPServer, saveMCPServer, setMCPAssignment, testMCPServer } from "../lib/api";
   import type { MCPAgent, MCPSnapshot, MCPServer, MCPSource, MCPTestResult, SkillDetail, SkillSummary } from "../lib/types";
+  import ConfirmModal from "../lib/ConfirmModal.svelte";
   import Discover from "./skills/Discover.svelte";
   import Installed from "./skills/Installed.svelte";
   import SkillDetailView from "./skills/SkillDetail.svelte";
@@ -41,8 +42,19 @@
   let addArgs = $state("");
   let addEnvVars = $state("");
   let savingServer = $state(false);
+  // When set, the add form is editing this existing (podiom-owned) server rather
+  // than creating a new one; the name field is locked so save upserts in place.
+  let editing = $state<string | null>(null);
+  let removeTarget = $state<MCPServer | null>(null);
+  let removingServer = $state(false);
   let testingMCP = $state<Record<string, boolean>>({});
   let mcpTests = $state<Record<string, MCPTestResult>>({});
+
+  // A server is user-managed (editable/removable) when it lives in Podiom's own
+  // MCP catalogue; claude/codex-only servers are imported and read-only here.
+  function isUserServer(server: MCPServer): boolean {
+    return (server.sources ?? []).includes("podiom");
+  }
 
   onMount(async () => {
     try {
@@ -135,17 +147,53 @@
         server.args = argsFromText(addArgs);
       }
       mcp = await saveMCPServer(server);
+      resetServerForm();
       addOpen = false;
-      addName = "";
-      addEndpoint = "";
-      addCommand = "";
-      addArgs = "";
-      addEnvVars = "";
-      addTransport = "stdio";
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
     } finally {
       savingServer = false;
+    }
+  }
+  function resetServerForm() {
+    editing = null;
+    addName = "";
+    addEndpoint = "";
+    addCommand = "";
+    addArgs = "";
+    addEnvVars = "";
+    addTransport = "stdio";
+  }
+  function toggleAdd() {
+    if (addOpen) {
+      addOpen = false;
+      return;
+    }
+    resetServerForm();
+    addOpen = true;
+  }
+  function startEdit(server: MCPServer) {
+    editing = server.name;
+    addName = server.name;
+    addTransport = server.transport === "http" ? "http" : "stdio";
+    addEndpoint = server.url ?? "";
+    addCommand = server.command ?? "";
+    addArgs = (server.args ?? []).join("\n");
+    addEnvVars = (server.env_vars ?? []).join(", ");
+    addOpen = true;
+    mcpOpen = { ...mcpOpen, [server.name]: false };
+  }
+  async function removeServer() {
+    if (!removeTarget) return;
+    removingServer = true;
+    loadError = null;
+    try {
+      mcp = await removeMCPServer(removeTarget.name);
+      removeTarget = null;
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+    } finally {
+      removingServer = false;
     }
   }
   function argsFromText(value: string): string[] {
@@ -253,12 +301,13 @@
       <section class="mcp-card">
         <div class="mcp-head">
           <div><b>Assignment matrix</b><p>Each assigned set is projected into Claude and Codex at launch.</p></div>
-          <button class="primary" onclick={() => (addOpen = !addOpen)}>+ Add server</button>
+          <button class="primary" onclick={toggleAdd}>+ Add server</button>
         </div>
 
         {#if addOpen}
           <div class="add-box">
-            <input bind:value={addName} placeholder="server name" />
+            {#if editing}<div class="add-editing">Editing <b>{editing}</b></div>{/if}
+            <input bind:value={addName} placeholder="server name" readonly={editing !== null} />
             <div class="transport">
               <button class:active={addTransport === "stdio"} onclick={() => (addTransport = "stdio")}>stdio</button>
               <button class:active={addTransport === "http"} onclick={() => (addTransport = "http")}>http</button>
@@ -270,7 +319,9 @@
               <textarea bind:value={addArgs} placeholder={`--transport\nstreamablehttp\nhttp://192.168.1.7:9583/private_...`}></textarea>
             {/if}
             <input bind:value={addEnvVars} placeholder="ENV_NAMES comma separated" />
-            <button class="primary" disabled={savingServer || !canSaveServer()} onclick={addServer}>{savingServer ? "Saving..." : "Save"}</button>
+            <button class="primary" disabled={savingServer || !canSaveServer()} onclick={addServer}>
+              {savingServer ? "Saving..." : editing ? "Save changes" : "Save"}
+            </button>
           </div>
         {/if}
 
@@ -311,9 +362,15 @@
                   <div>
                     <div class="detail-head">
                       <b>Projection</b>
-                      <button class="secondary" disabled={testingMCP[server.name]} onclick={() => runMCPTest(server)}>
-                        {testingMCP[server.name] ? "Testing..." : "Test"}
-                      </button>
+                      <div class="detail-actions">
+                        {#if isUserServer(server)}
+                          <button class="secondary" onclick={() => startEdit(server)}>Edit</button>
+                          <button class="secondary danger" onclick={() => (removeTarget = server)}>Remove</button>
+                        {/if}
+                        <button class="secondary" disabled={testingMCP[server.name]} onclick={() => runMCPTest(server)}>
+                          {testingMCP[server.name] ? "Testing..." : "Test"}
+                        </button>
+                      </div>
                     </div>
                     <p>Claude: strict --mcp-config. Codex: generated profile with unassigned known servers disabled{server.transport === "http" ? ", HTTP bridged through mcp-proxy when present" : ""}.</p>
                     {#if mcpTests[server.name]}
@@ -367,6 +424,16 @@
     }}
   />
 {/if}
+{#if removeTarget}
+  <ConfirmModal
+    title="Remove MCP server?"
+    message={`Removes “${removeTarget.name}” from Podiom's MCP catalogue and unassigns it from all agents. Servers imported from Claude or Codex are not affected.`}
+    confirmLabel="Remove server"
+    busy={removingServer}
+    onConfirm={removeServer}
+    onCancel={() => (removeTarget = null)}
+  />
+{/if}
 {#if toast}
   <div class="toast">{toast}</div>
 {/if}
@@ -393,7 +460,11 @@
   .primary:disabled { opacity: 0.55; cursor: default; }
   .secondary { border: 1px solid #d8cab9; border-radius: 10px; background: #fffdfb; color: #4f6f68; padding: 7px 11px; font: 800 12px "Hanken Grotesk"; cursor: pointer; }
   .secondary:disabled { opacity: 0.55; cursor: default; }
+  .secondary.danger { color: #b4472f; border-color: #e6cabd; }
+  .secondary.danger:hover { border-color: #d9663d; background: #fdf2ee; }
   .add-box { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 20px; background: #fbf7f1; border-bottom: 1px solid #f1eae0; }
+  .add-editing { flex-basis: 100%; font: 600 12px "JetBrains Mono", monospace; color: #7a6f62; }
+  .add-box input[readonly] { background: #f1eae0; color: #7a6f62; cursor: not-allowed; }
   input { padding: 10px 12px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; font: 500 13px "Hanken Grotesk"; color: #2b2520; outline: none; }
   textarea { flex: 1; min-width: 260px; min-height: 92px; resize: vertical; padding: 10px 12px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; font: 500 12px/1.55 "JetBrains Mono", monospace; color: #2b2520; outline: none; }
   .add-box .wide { flex: 1; min-width: 260px; }
@@ -417,6 +488,7 @@
   .mcp-detail b { font: 700 13px "Hanken Grotesk"; }
   .mcp-detail p { margin: 6px 0 0; font: 400 12.5px/1.55 "Hanken Grotesk"; color: #7a6f62; }
   .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .detail-actions { display: flex; align-items: center; gap: 8px; }
   .test-box { margin-top: 12px; border: 1px solid #efe6db; border-radius: 12px; background: #fbf7f1; padding: 12px; }
   .test-box.ok { border-color: #bfddd3; background: #eef7f3; }
   .test-box.bad { border-color: #ecd3c2; background: #f8ebe2; }

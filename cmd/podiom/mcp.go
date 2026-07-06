@@ -219,7 +219,7 @@ func mcpClient(addr *string) (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(resolved), nil
+	return client.New(resolved, client.WithToken(gatewayTokenFromDisk())), nil
 }
 
 func sourceList(sources []podiommcp.Source) string {

@@ -474,6 +474,18 @@ export async function updateProject(id: string, patch: ProjectPatch): Promise<Pr
   );
 }
 
+export interface DeleteProjectResult {
+  deleted: string;
+  orphaned_tasks: number;
+  orphaned_sessions: number;
+}
+
+export async function deleteProject(id: string): Promise<DeleteProjectResult> {
+  return asJSON(
+    await request(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  );
+}
+
 export async function describeProject(id: string, agent: string): Promise<string> {
   const res = await asJSON<{ description: string }>(
     await request(`/api/projects/${encodeURIComponent(id)}/describe`, {

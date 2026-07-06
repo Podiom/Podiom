@@ -153,6 +153,9 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 			Notes:       req.Notes,
 		})
 		writeJSON(w, updated, err)
+	case http.MethodDelete:
+		result, err := s.core.DeleteProject(r.Context(), id)
+		writeJSON(w, result, err)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

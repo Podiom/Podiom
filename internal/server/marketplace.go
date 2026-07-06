@@ -12,8 +12,10 @@ import (
 )
 
 // Skill-marketplace HTTP handlers (Spec 07 §6). All are behind the gateway token
-// and source guard already applied by the middleware stack (SEC-1): installs are
-// a dashboard-authenticated user action, never an agent-tool surface.
+// and source guard already applied by the middleware stack (SEC-1). Installs are
+// a gateway-token-authenticated action: reached from the dashboard, and also from
+// agents via the manage-mcp `podiom_install_skill` tool, which calls this same
+// endpoint with the daemon's gateway token.
 
 // marketplaceReady guards every handler: a nil service (skills root unresolved)
 // degrades to 503 rather than a panic.

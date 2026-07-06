@@ -110,6 +110,53 @@ func (c *Core) UpdateProject(ctx context.Context, id string, patch projects.Proj
 	return project, nil
 }
 
+// DeleteProjectResult reports what deleting a project left behind. Tasks and
+// sessions are never deleted with the project; they are orphaned (their
+// ProjectID now points at a project that no longer exists) so any history is
+// preserved. The counts let callers warn the user about that side effect.
+type DeleteProjectResult struct {
+	Deleted          string `json:"deleted"`
+	OrphanedTasks    int    `json:"orphaned_tasks"`
+	OrphanedSessions int    `json:"orphaned_sessions"`
+}
+
+// DeleteProject removes a project record from the shared ledger. It is
+// intentionally non-cascading: the on-disk project directory is kept, and any
+// tasks or sessions that referenced the project are left in place (orphaned)
+// rather than deleted. The returned result reports how many of each were
+// orphaned so the caller can surface a warning.
+func (c *Core) DeleteProject(ctx context.Context, id string) (DeleteProjectResult, error) {
+	project, err := c.ledger.Get(id)
+	if err != nil {
+		return DeleteProjectResult{}, err
+	}
+	result := DeleteProjectResult{Deleted: project.ID}
+	if tasks, err := c.ListTasks(ctx); err == nil {
+		for _, t := range tasks {
+			if t.ProjectID == id {
+				result.OrphanedTasks++
+			}
+		}
+	}
+	if sessions, err := c.ListSessions(ctx); err == nil {
+		for _, s := range sessions {
+			if s.ProjectID == id {
+				result.OrphanedSessions++
+			}
+		}
+	}
+	if err := c.ledger.Delete(id); err != nil {
+		return DeleteProjectResult{}, err
+	}
+	c.log.Info("project deleted",
+		"event", "project",
+		"project", project.ID,
+		"orphaned_tasks", result.OrphanedTasks,
+		"orphaned_sessions", result.OrphanedSessions,
+	)
+	return result, nil
+}
+
 // DescribeProject asks an agent's engine to draft a one-sentence project
 // description. It borrows the named agent's provider/profile/model (its working
 // auth context) for a single unattended completion and returns the text. The

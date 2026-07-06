@@ -34,20 +34,6 @@ func newPermissionMCPCmd() *cobra.Command {
 	return cmd
 }
 
-type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type rpcResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      any    `json:"id,omitempty"`
-	Result  any    `json:"result,omitempty"`
-	Error   any    `json:"error,omitempty"`
-}
-
 func runPermissionMCP(ctx context.Context, addr, turnID string, timeout time.Duration, in io.Reader, out io.Writer) error {
 	scanner := bufio.NewScanner(in)
 	enc := json.NewEncoder(out)

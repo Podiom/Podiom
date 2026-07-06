@@ -106,6 +106,48 @@ func TestSessionStartIncludesInternalPlanMCP(t *testing.T) {
 	}
 }
 
+func TestSessionStartIncludesInternalManageMCP(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapterWithDaemon(t)
+	defer cleanup()
+
+	agent, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "manager", Provider: config.ProviderCodex})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: agent.Name,
+		Origin:    store.OriginWeb,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := startRequestFor(t, fake, session.ID)
+	if !hasMCPServer(req.MCPServers, "podiom_manage") {
+		t.Fatalf("initial StartRequest missing internal manage MCP server: %+v", req.MCPServers)
+	}
+	if !hasMCPServer(req.MCPAllServers, "podiom_manage") {
+		t.Fatalf("initial StartRequest missing manage MCP in all servers: %+v", req.MCPAllServers)
+	}
+	var manage *podiommcp.Server
+	for i := range req.MCPServers {
+		if req.MCPServers[i].Name == "podiom_manage" {
+			manage = &req.MCPServers[i]
+			break
+		}
+	}
+	if manage == nil {
+		t.Fatalf("manage server not found")
+	}
+	args := strings.Join(manage.Args, " ")
+	for _, want := range []string{"manage-mcp", "--session " + session.ID, "--agent " + agent.Name} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("manage MCP args missing %q: %v", want, manage.Args)
+		}
+	}
+}
+
 func TestStreamTurnPersistsErrorAndExcludesItFromReplay(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newTestCoreAdapter(t)

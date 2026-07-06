@@ -55,6 +55,7 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newPermissionMCPCmd())
 	cmd.AddCommand(newPlanMCPCmd())
+	cmd.AddCommand(newManageMCPCmd())
 	return cmd
 }
 
