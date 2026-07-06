@@ -45,6 +45,37 @@ func TestLoadUserFileReadsLegacyAuthEnvAndWritesEnvVars(t *testing.T) {
 	}
 }
 
+func TestEnvVarsPreserveOrderAndDedupe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.yaml")
+	if err := os.WriteFile(path, []byte(`mcp_servers:
+  - name: home-assistant
+    transport: stdio
+    command: mcp-proxy
+    env_vars: [HASS_TOKEN, HASS_TOKEN, HASS_URL, ANTHROPIC_API_KEY]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := LoadUserFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := []string{"HASS_TOKEN", "HASS_URL", "ANTHROPIC_API_KEY"}
+	if got := servers[0].EnvVars; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("env_vars order/dedupe = %v, want %v", got, want)
+	}
+	if err := SaveUserFile(path, servers); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	reloaded, err := LoadUserFile(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded[0].EnvVars; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("env_vars order not preserved after save/reload = %v, want %v", got, want)
+	}
+}
+
 func TestImportNativeConfigsAndEnvStatus(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "present")
 	dir := t.TempDir()

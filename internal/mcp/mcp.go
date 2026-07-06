@@ -119,7 +119,7 @@ func LoadUserFile(path string) ([]Server, error) {
 			URL:       strings.TrimSpace(r.URL),
 			Command:   strings.TrimSpace(r.Command),
 			Args:      cleanArgs(r.Args),
-			EnvVars:   cleanStrings(append(r.EnvVars, envVarsFromLegacy(r.AuthEnv)...)),
+			EnvVars:   cleanEnvVars(append(r.EnvVars, envVarsFromLegacy(r.AuthEnv)...)),
 			Sources:   []Source{SourcePodiom},
 		}
 		if err := ValidateServer(s); err != nil {
@@ -137,7 +137,7 @@ func SaveUserFile(path string, servers []Server) error {
 			s.Sources = nil
 			s.EnvStatus = nil
 			s.CodexTablePath = ""
-			s.EnvVars = cleanStrings(s.EnvVars)
+			s.EnvVars = cleanEnvVars(s.EnvVars)
 			if err := ValidateServer(s); err != nil {
 				return err
 			}
@@ -442,7 +442,7 @@ func dedupe(in []Server) []Server {
 		if s.Name == "" {
 			continue
 		}
-		s.EnvVars = cleanStrings(s.EnvVars)
+		s.EnvVars = cleanEnvVars(s.EnvVars)
 		s.EnvStatus = envStatus(s.EnvVars)
 		if s.Transport == "" {
 			if s.URL != "" {
@@ -465,7 +465,7 @@ func dedupe(in []Server) []Server {
 			if len(existing.Args) == 0 {
 				existing.Args = append([]string(nil), s.Args...)
 			}
-			existing.EnvVars = cleanStrings(append(existing.EnvVars, s.EnvVars...))
+			existing.EnvVars = cleanEnvVars(append(existing.EnvVars, s.EnvVars...))
 			existing.EnvStatus = envStatus(existing.EnvVars)
 			if existing.CodexTablePath == "" {
 				existing.CodexTablePath = s.CodexTablePath
@@ -758,7 +758,7 @@ func envVarsFromLegacy(v any) []string {
 }
 
 func envStatus(names []string) []EnvStatus {
-	names = cleanStrings(names)
+	names = cleanEnvVars(names)
 	out := make([]EnvStatus, 0, len(names))
 	for _, name := range names {
 		_, ok := os.LookupEnv(name)
@@ -780,7 +780,9 @@ func cleanArgs(values []string) []string {
 	return out
 }
 
-func cleanStrings(values []string) []string {
+// cleanEnvVars trims, drops empties, and dedupes while preserving first-seen
+// order — env var names are user-ordered like args, so they must never sort.
+func cleanEnvVars(values []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, v := range values {
@@ -791,7 +793,6 @@ func cleanStrings(values []string) []string {
 		seen[v] = true
 		out = append(out, v)
 	}
-	sort.Strings(out)
 	return out
 }
 

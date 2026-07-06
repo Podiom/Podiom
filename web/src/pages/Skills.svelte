@@ -40,7 +40,7 @@
   let addEndpoint = $state("");
   let addCommand = $state("");
   let addArgs = $state<string[]>([]);
-  let addEnvVars = $state("");
+  let addEnvVars = $state<string[]>([]);
   let savingServer = $state(false);
   // When set, the add form is editing this existing (podiom-owned) server rather
   // than creating a new one; the name field is locked so save upserts in place.
@@ -138,7 +138,7 @@
     savingServer = true;
     loadError = null;
     try {
-      const env_vars = addEnvVars.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+      const env_vars = addEnvVars.map((v) => v.trim()).filter(Boolean);
       const server: MCPServer = { name: addName.trim(), transport: addTransport, env_vars };
       if (addTransport === "http") {
         server.url = addEndpoint.trim();
@@ -161,7 +161,7 @@
     addEndpoint = "";
     addCommand = "";
     addArgs = [];
-    addEnvVars = "";
+    addEnvVars = [];
     addTransport = "stdio";
   }
   function toggleAdd() {
@@ -179,7 +179,7 @@
     addEndpoint = server.url ?? "";
     addCommand = server.command ?? "";
     addArgs = [...(server.args ?? [])];
-    addEnvVars = (server.env_vars ?? []).join(", ");
+    addEnvVars = [...(server.env_vars ?? [])];
     addOpen = true;
     mcpOpen = { ...mcpOpen, [server.name]: false };
   }
@@ -207,6 +207,17 @@
   }
   function updateArg(index: number, value: string) {
     addArgs = addArgs.map((a, i) => (i === index ? value : a));
+  }
+  // Env var names, edited one at a time like args, so the order the user
+  // enters them survives; the backend dedupes but never sorts them.
+  function addEnvVar() {
+    addEnvVars = [...addEnvVars, ""];
+  }
+  function removeEnvVar(index: number) {
+    addEnvVars = addEnvVars.filter((_, i) => i !== index);
+  }
+  function updateEnvVar(index: number, value: string) {
+    addEnvVars = addEnvVars.map((v, i) => (i === index ? value : v));
   }
   function canSaveServer(): boolean {
     if (!addName.trim()) return false;
@@ -339,7 +350,19 @@
                 <button type="button" class="arg-add" onclick={addArg}>+ Add argument</button>
               </div>
             {/if}
-            <input bind:value={addEnvVars} placeholder="ENV_NAMES comma separated" />
+            <div class="args-list">
+              {#each addEnvVars as envVar, i (i)}
+                <div class="arg-row">
+                  <input
+                    value={envVar}
+                    oninput={(e) => updateEnvVar(i, e.currentTarget.value)}
+                    placeholder="ENV_VAR_NAME"
+                  />
+                  <button type="button" class="arg-remove" title="Remove env var" onclick={() => removeEnvVar(i)}>×</button>
+                </div>
+              {/each}
+              <button type="button" class="arg-add" onclick={addEnvVar}>+ Add env var</button>
+            </div>
             <button class="primary" disabled={savingServer || !canSaveServer()} onclick={addServer}>
               {savingServer ? "Saving..." : editing ? "Save changes" : "Save"}
             </button>
