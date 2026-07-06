@@ -118,7 +118,7 @@ func LoadUserFile(path string) ([]Server, error) {
 			Transport: r.Transport,
 			URL:       strings.TrimSpace(r.URL),
 			Command:   strings.TrimSpace(r.Command),
-			Args:      cleanStrings(r.Args),
+			Args:      cleanArgs(r.Args),
 			EnvVars:   cleanStrings(append(r.EnvVars, envVarsFromLegacy(r.AuthEnv)...)),
 			Sources:   []Source{SourcePodiom},
 		}
@@ -763,6 +763,19 @@ func envStatus(names []string) []EnvStatus {
 	for _, name := range names {
 		_, ok := os.LookupEnv(name)
 		out = append(out, EnvStatus{Name: name, Set: ok})
+	}
+	return out
+}
+
+// cleanArgs trims and drops empty entries but preserves order and duplicates.
+// Command-line args are positional (e.g. `--transport streamablehttp <url>`), so
+// unlike cleanStrings it must never sort or dedupe them.
+func cleanArgs(values []string) []string {
+	var out []string
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
 	}
 	return out
 }
