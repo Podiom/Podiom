@@ -258,6 +258,14 @@ func (h *activeTurnHub) recordDelta(sessionID, delta string) {
 	h.broadcast(writers, ServerMessage{Type: "delta", RequestID: requestID, SessionID: sessionID, Delta: delta})
 }
 
+// recordContext broadcasts the latest context-window utilization to the session's
+// subscribers so the composer ring updates live mid-turn. The value is also
+// persisted on the session (in core), so idle sessions restore it from state.
+func (h *activeTurnHub) recordContext(sessionID string, used, max int64) {
+	writers, requestID := h.turnWriters(sessionID)
+	h.broadcast(writers, ServerMessage{Type: "context", RequestID: requestID, SessionID: sessionID, Context: &ContextUsage{Used: used, Max: max}})
+}
+
 func (h *activeTurnHub) recordAssistant(sessionID, text string) {
 	h.mu.Lock()
 	turn := h.turns[sessionID]

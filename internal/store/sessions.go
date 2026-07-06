@@ -58,7 +58,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE id = ?`, id)
 	sess, err := scanSession(row)
 	if err != nil {
@@ -76,7 +76,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -101,7 +101,7 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE agent_name = ? ORDER BY created_at, id`, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for agent %q: %w", agentName, err)
@@ -126,7 +126,7 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE schedule_id = ? ORDER BY created_at DESC, id DESC`, scheduleName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for schedule %q: %w", scheduleName, err)
@@ -150,7 +150,7 @@ func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Sessio
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE task_id = ? ORDER BY created_at DESC, id DESC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for task %q: %w", taskID, err)
@@ -241,6 +241,26 @@ func (s *Store) UpdateSessionProviderHandle(ctx context.Context, id, handle stri
 		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
 	}
 	return s.GetSession(ctx, id)
+}
+
+// UpdateSessionContext stores the latest context-window utilization observed for
+// a session. Called once per turn from the provider stream; it avoids a re-fetch
+// (returns error only) since callers just persist the numbers for later reads.
+func (s *Store) UpdateSessionContext(ctx context.Context, id string, tokens, limit int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET context_tokens = ?, context_limit = ?, updated_at = datetime('now')
+		WHERE id = ?`, tokens, limit, id)
+	if err != nil {
+		return fmt.Errorf("update session %q context: %w", id, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update session %q rows affected: %w", id, err)
+	}
+	if changed == 0 {
+		return fmt.Errorf("session %q: %w", id, ErrNotFound)
+	}
+	return nil
 }
 
 // UpdateSessionPlanState stores the current plan gate state and displayable
@@ -439,6 +459,8 @@ func scanSession(row scanner) (Session, error) {
 		&sess.PlanInfo.SubmittedAt,
 		&sess.PlanInfo.UpdatedAt,
 		&sess.DreamedAt,
+		&sess.ContextTokens,
+		&sess.ContextLimit,
 		&sess.CreatedAt,
 		&sess.UpdatedAt,
 	); err != nil {

@@ -16,6 +16,7 @@ import { randomID } from "./id";
 import type {
   ActiveTurnSummary,
   ClientMessage,
+  ContextUsage,
   ServerMessage,
   Session,
   UsageSnapshot,
@@ -44,6 +45,11 @@ class LiveStore {
   usageRefreshing = $state(false);
   usageRefreshError = $state<string | null>(null);
   toasts = $state<Toast[]>([]);
+
+  // Per-session context-window utilization keyed by session ID. Updated live from
+  // "context" messages mid-turn and seeded from the persisted session fields so
+  // the composer ring restores on load/reconnect. Drives the composer context ring.
+  contextBySession = $state<Record<string, ContextUsage>>({});
 
   // Per-profile usage snapshots keyed by profile key ("claude"/"codex" for the
   // implicit defaults, else the profile name). Drives the composer usage chip.
@@ -205,13 +211,20 @@ class LiveStore {
         this.sessions = msg.sessions ?? [];
         this.applyTurnSummaries(msg.active_turns ?? []);
         if (msg.usage) this.usage = msg.usage;
+        this.seedContext(this.sessions);
         this.edgePlanAttention();
         break;
       case "session":
         if (msg.session) {
           const s = msg.session;
           this.sessions = [s, ...this.sessions.filter((e) => e.ID !== s.ID)];
+          this.seedContext([s]);
           this.edgePlanAttention();
+        }
+        break;
+      case "context":
+        if (msg.session_id && msg.context) {
+          this.contextBySession = { ...this.contextBySession, [msg.session_id]: msg.context };
         }
         break;
       case "turn_state":
@@ -244,6 +257,22 @@ class LiveStore {
     }
     // …then hand the raw message to page-level subscribers (chat rendering).
     for (const fn of this.subscribers) fn(msg);
+  }
+
+  // seedContext refreshes contextBySession from the persisted session fields.
+  // A session with an active turn is skipped so the periodic state refresh does
+  // not clobber a fresher live "context" value mid-turn.
+  private seedContext(sessions: Session[]) {
+    let next: Record<string, ContextUsage> | null = null;
+    for (const s of sessions) {
+      if (!s.ContextLimit || s.ContextLimit <= 0) continue;
+      if (this.activeTurns[s.ID]) continue;
+      const cur = this.contextBySession[s.ID];
+      if (cur && cur.used === s.ContextTokens && cur.max === s.ContextLimit) continue;
+      next = next ?? { ...this.contextBySession };
+      next[s.ID] = { used: s.ContextTokens, max: s.ContextLimit };
+    }
+    if (next) this.contextBySession = next;
   }
 
   private applyTurnSummaries(turns: ActiveTurnSummary[]) {

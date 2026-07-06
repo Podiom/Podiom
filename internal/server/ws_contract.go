@@ -47,6 +47,7 @@ type ServerMessage struct {
 	Request     *adapter.PermissionRequest `json:"request,omitempty"`
 	Input       *adapter.UserInputRequest  `json:"input,omitempty"`
 	TurnState   *TurnState                 `json:"turn_state,omitempty"`
+	Context     *ContextUsage              `json:"context,omitempty"`
 	Error       string                     `json:"error,omitempty"`
 	// Dream fields carry a "dream_state" message: AgentName identifies the agent,
 	// DreamPhase is the current phase (gathering|distilling|integrating|done|
@@ -54,6 +55,14 @@ type ServerMessage struct {
 	AgentName  string       `json:"agent_name,omitempty"`
 	DreamPhase string       `json:"dream_phase,omitempty"`
 	Dream      *store.Dream `json:"dream,omitempty"`
+}
+
+// ContextUsage is the live context-window utilization for a session: how many
+// tokens the last request used versus the model's window. Drives the composer's
+// context ring. Max is 0 when the provider hasn't reported a window yet.
+type ContextUsage struct {
+	Used int64 `json:"used"`
+	Max  int64 `json:"max"`
 }
 
 func decodeClientMessage(data []byte) (ClientMessage, error) {

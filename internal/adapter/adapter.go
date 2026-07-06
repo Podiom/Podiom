@@ -100,6 +100,15 @@ type RateWindow struct {
 	WindowSeconds int64
 }
 
+// ContextStatus reports how full the model's context window is for the active
+// session, derived deterministically from the provider stream. UsedTokens is the
+// size of the last request's prompt; MaxTokens is the model's context window (0
+// when the provider does not report it and no limit could be inferred).
+type ContextStatus struct {
+	UsedTokens int64
+	MaxTokens  int64
+}
+
 // EventKind classifies streamed adapter output.
 type EventKind string
 
@@ -116,6 +125,9 @@ const (
 	EventHandleUpdated EventKind = "handle_updated"
 	// EventRateStatus carries provider rate-limit utilization.
 	EventRateStatus EventKind = "rate_status"
+	// EventContextStatus carries the active turn's context-window utilization:
+	// how many tokens the last request consumed versus the model's window.
+	EventContextStatus EventKind = "context_status"
 	// EventRateLimited reports that the active turn cannot continue on this
 	// backing target because the provider rate-limited it.
 	EventRateLimited EventKind = "rate_limited"
@@ -131,6 +143,7 @@ type Event struct {
 	PermissionRequest *PermissionRequest
 	UserInputRequest  *UserInputRequest
 	RateStatus        *RateStatus
+	ContextStatus     *ContextStatus
 }
 
 // Adapter abstracts over provider process models: per-turn Claude processes and

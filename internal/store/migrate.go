@@ -251,6 +251,16 @@ var migrations = []migration{
 		sql: `ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'
 			CHECK (kind IN ('message', 'error'));`,
 	},
+	{
+		version: 13,
+		name:    "session_context_window",
+		// Per-session context-window utilization, refreshed each turn from the
+		// provider stream. context_tokens is the last request's prompt size;
+		// context_limit is the model's window (0 until first observed). Persisted so
+		// the composer's context ring restores on reload/reconnect.
+		sql: `ALTER TABLE sessions ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE sessions ADD COLUMN context_limit INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

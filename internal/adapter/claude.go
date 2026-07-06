@@ -198,6 +198,12 @@ func (c *Claude) trackClaudeStream(ctx context.Context, req TurnRequest, in <-ch
 		if event.Kind == EventHandleUpdated && event.Handle != nil {
 			c.providerLog(req).Info("provider handle updated", "event", "provider", "stage", "stream", "provider_handle_set", event.Handle.ID != "")
 		}
+		// The Claude CLI reports prompt token usage but not the model's window,
+		// so stamp the deterministic per-model limit here where the request
+		// (and thus the model) is in scope.
+		if event.Kind == EventContextStatus && event.ContextStatus != nil && event.ContextStatus.MaxTokens == 0 {
+			event.ContextStatus.MaxTokens = claudeContextWindow(req.Settings.Model)
+		}
 		if !sendAdapterEvent(ctx, out, event) {
 			break
 		}
@@ -458,6 +464,9 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 		} else if text := extractText(raw); text != "" {
 			events = append(events, Event{Kind: EventAssistantMessage, Content: text})
 		}
+		if ctxEvent, ok := claudeContextEvent(raw); ok {
+			events = append(events, ctxEvent)
+		}
 	case "result":
 		if text := firstString(raw, "result", "content"); text != "" {
 			if req, ok := claudeUserInputRequestFromText(text, line); ok {
@@ -465,6 +474,9 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 			} else {
 				events = append(events, Event{Kind: EventAssistantMessage, Content: text})
 			}
+		}
+		if ctxEvent, ok := claudeContextEvent(raw); ok {
+			events = append(events, ctxEvent)
 		}
 	case "api_retry":
 		if claudeRateLimited(raw) {
@@ -730,6 +742,56 @@ func int64FromAny(value any) int64 {
 	default:
 		return 0
 	}
+}
+
+// claudeDefaultContextWindow is the context window shared by every current
+// Claude model. Specific 1M-context model ids override it in claudeContextWindow.
+const claudeDefaultContextWindow int64 = 200_000
+
+// claudeContextWindow returns the model's context-window size in tokens. The
+// Claude CLI never reports it, so the limit is looked up per model — a
+// deterministic table that defaults to the shared 200k window.
+func claudeContextWindow(model string) int64 {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m != "" {
+		// 1M-context models (e.g. the Sonnet long-context tier) advertise the
+		// larger window via a "[1m]" suffix on the model id.
+		if strings.Contains(m, "[1m]") || strings.Contains(m, "-1m") {
+			return 1_000_000
+		}
+	}
+	return claudeDefaultContextWindow
+}
+
+// claudeContextEvent extracts a context-window usage event from a Claude
+// stream-json line. The token usage lives at top-level `usage` (result events)
+// or nested under `message.usage` (assistant/message events). Current context
+// size is the last request's whole prompt: input + both cache-token classes.
+// MaxTokens is left 0 here and stamped per-model in trackClaudeStream.
+func claudeContextEvent(raw map[string]any) (Event, bool) {
+	usage := claudeUsageMap(raw)
+	if usage == nil {
+		return Event{}, false
+	}
+	used := int64FromAny(firstValue(usage, "input_tokens", "inputTokens")) +
+		int64FromAny(firstValue(usage, "cache_creation_input_tokens", "cacheCreationInputTokens")) +
+		int64FromAny(firstValue(usage, "cache_read_input_tokens", "cacheReadInputTokens"))
+	if used <= 0 {
+		return Event{}, false
+	}
+	return Event{Kind: EventContextStatus, ContextStatus: &ContextStatus{UsedTokens: used}}, true
+}
+
+func claudeUsageMap(raw map[string]any) map[string]any {
+	if usage, ok := raw["usage"].(map[string]any); ok {
+		return usage
+	}
+	if message, ok := raw["message"].(map[string]any); ok {
+		if usage, ok := message["usage"].(map[string]any); ok {
+			return usage
+		}
+	}
+	return nil
 }
 
 type stderrResult struct {

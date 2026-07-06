@@ -899,6 +899,9 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 						return
 					}
 				}
+				if status, ok := codexContextStatus(event.params); ok {
+					sendAdapterEvent(ctx, out, Event{Kind: EventContextStatus, ContextStatus: &status})
+				}
 				c.log.Info("provider turn stream completed", "event", "provider", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 				return
@@ -916,6 +919,11 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 			case "token_count", "account/updated":
 				if status, ok := codexRateStatus(event.params); ok {
 					if !sendAdapterEvent(ctx, out, Event{Kind: EventRateStatus, RateStatus: &status}) {
+						return
+					}
+				}
+				if status, ok := codexContextStatus(event.params); ok {
+					if !sendAdapterEvent(ctx, out, Event{Kind: EventContextStatus, ContextStatus: &status}) {
 						return
 					}
 				}
@@ -1364,6 +1372,108 @@ func codexWindowFromNode(value any, key string) (RateWindow, bool) {
 		w.ResetsAt = time.Unix(int64(at), 0)
 	}
 	return w, true
+}
+
+// codexContextStatus extracts context-window utilization from a token_count or
+// turn/completed payload. Codex reports both the tokens the last exchange left
+// in the window (last_token_usage) and the model's window (model_context_window),
+// so the gauge is fully deterministic — no per-model lookup table needed.
+func codexContextStatus(params json.RawMessage) (ContextStatus, bool) {
+	var value any
+	if err := json.Unmarshal(params, &value); err != nil {
+		return ContextStatus{}, false
+	}
+	max, ok := findNumberByKey(value, "model_context_window", "modelContextWindow")
+	if !ok || max <= 0 {
+		return ContextStatus{}, false
+	}
+	// last_token_usage reflects the tokens occupying the window after the latest
+	// turn; total_token_usage (cumulative) is the fallback if it is absent.
+	usage := findMapByKey(value, "last_token_usage", "lastTokenUsage")
+	if usage == nil {
+		usage = findMapByKey(value, "total_token_usage", "totalTokenUsage")
+	}
+	used := codexTokenUsageTotal(usage)
+	if used <= 0 {
+		return ContextStatus{}, false
+	}
+	return ContextStatus{UsedTokens: used, MaxTokens: int64(max)}, true
+}
+
+// codexTokenUsageTotal totals a Codex token-usage node: total_tokens when the
+// provider supplies it, else the sum of the component token classes.
+func codexTokenUsageTotal(m map[string]any) int64 {
+	if m == nil {
+		return 0
+	}
+	if total, ok := numFromMap(m, "total_tokens", "totalTokens"); ok && total > 0 {
+		return int64(total)
+	}
+	var sum float64
+	for _, key := range []string{"input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"} {
+		if v, ok := numFromMap(m, key); ok {
+			sum += v
+		}
+	}
+	return int64(sum)
+}
+
+// findMapByKey returns the first map value stored under any of the given keys,
+// searching the tree recursively (resilient to the payload's nesting).
+func findMapByKey(value any, keys ...string) map[string]any {
+	switch v := value.(type) {
+	case map[string]any:
+		for k, child := range v {
+			for _, want := range keys {
+				if strings.EqualFold(k, want) {
+					if m, ok := child.(map[string]any); ok {
+						return m
+					}
+				}
+			}
+		}
+		for _, child := range v {
+			if m := findMapByKey(child, keys...); m != nil {
+				return m
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if m := findMapByKey(child, keys...); m != nil {
+				return m
+			}
+		}
+	}
+	return nil
+}
+
+// findNumberByKey returns the first numeric value stored under any of the given
+// keys, searching the tree recursively.
+func findNumberByKey(value any, keys ...string) (float64, bool) {
+	switch v := value.(type) {
+	case map[string]any:
+		for k, child := range v {
+			for _, want := range keys {
+				if strings.EqualFold(k, want) {
+					if f, ok := child.(float64); ok {
+						return f, true
+					}
+				}
+			}
+		}
+		for _, child := range v {
+			if f, ok := findNumberByKey(child, keys...); ok {
+				return f, true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if f, ok := findNumberByKey(child, keys...); ok {
+				return f, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func numFromMap(m map[string]any, keys ...string) (float64, bool) {

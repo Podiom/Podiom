@@ -11,6 +11,7 @@
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import ContextRing from "../lib/ContextRing.svelte";
   import UsageChip from "../lib/UsageChip.svelte";
   import {
     agentGradient,
@@ -235,6 +236,7 @@
   const providerProfiles = $derived(profiles.filter((p) => p.Provider === usageProvider));
   const showSlash = $derived(messageText.startsWith("/"));
   const activeTurn = $derived(activeSession ? activeTurns[activeSession.ID] : undefined);
+  const contextUsage = $derived(activeSession ? live.contextBySession[activeSession.ID] : undefined);
   const approvalHistory = $derived(activeSession ? approvalHistoryBySession[activeSession.ID] ?? [] : []);
   const currentApproval = $derived(
     pendingPermission
@@ -1477,6 +1479,9 @@
           placeholder={`Message ${activeAgent?.Name ?? "agent"}…   / for commands`}
           onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendTurn(); } }}
         />
+        {#if contextUsage}
+          <ContextRing used={contextUsage.used} max={contextUsage.max} />
+        {/if}
         {#if activeTurn}
           <button class="composer-stop" title="Stop active turn" onclick={stopActiveTurn}>■</button>
         {:else}

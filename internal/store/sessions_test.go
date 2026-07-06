@@ -40,6 +40,42 @@ func TestCreateSessionStoresProjectID(t *testing.T) {
 	}
 }
 
+func TestUpdateSessionContextRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.CreateAgent(ctx, Agent{Name: "jared", Provider: "claude", PermissionMode: "approve"}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	created, err := db.CreateSession(ctx, Session{
+		AgentName:      "jared",
+		Provider:       "claude",
+		PermissionMode: "approve",
+		Origin:         OriginWeb,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	// New sessions start un-observed (0/0) so the ring stays hidden until a turn.
+	if created.ContextTokens != 0 || created.ContextLimit != 0 {
+		t.Fatalf("new session context = %d/%d, want 0/0", created.ContextTokens, created.ContextLimit)
+	}
+	if err := db.UpdateSessionContext(ctx, created.ID, 81000, 200000); err != nil {
+		t.Fatalf("update context: %v", err)
+	}
+	got, err := db.GetSession(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.ContextTokens != 81000 || got.ContextLimit != 200000 {
+		t.Fatalf("stored context = %d/%d, want 81000/200000", got.ContextTokens, got.ContextLimit)
+	}
+}
+
 func TestAppendMessagesStoresMessageKind(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))

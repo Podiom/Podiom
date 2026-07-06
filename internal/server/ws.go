@@ -497,6 +497,10 @@ func (s *Server) recordWSTurnEvent(ctx context.Context, sessionID string, event 
 			s.markRoadmapQuestionPending(ctx, sessionID, event.UserInputRequest.ID)
 		}
 		s.turns.recordUserInput(sessionID, event.UserInputRequest)
+	case adapter.EventContextStatus:
+		if event.ContextStatus != nil {
+			s.turns.recordContext(sessionID, event.ContextStatus.UsedTokens, event.ContextStatus.MaxTokens)
+		}
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		s.turns.finish(sessionID)
@@ -526,6 +530,11 @@ func (s *Server) writeTurnEvent(ctx context.Context, writer *wsWriter, requestID
 			s.markRoadmapQuestionPending(ctx, sessionID, event.UserInputRequest.ID)
 		}
 		return writer.write(ctx, ServerMessage{Type: "user_input_request", RequestID: requestID, Input: event.UserInputRequest})
+	case adapter.EventContextStatus:
+		if event.ContextStatus == nil {
+			return nil
+		}
+		return writer.write(ctx, ServerMessage{Type: "context", RequestID: requestID, SessionID: sessionID, Context: &ContextUsage{Used: event.ContextStatus.UsedTokens, Max: event.ContextStatus.MaxTokens}})
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		return writer.write(ctx, ServerMessage{Type: "done", RequestID: requestID})

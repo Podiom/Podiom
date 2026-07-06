@@ -290,6 +290,7 @@ type TurnEvent struct {
 	PermissionRequest *adapter.PermissionRequest
 	UserInputRequest  *adapter.UserInputRequest
 	Message           *store.Message
+	ContextStatus     *adapter.ContextStatus
 }
 
 // AppendTurn persists the user turn, drives the adapter, persists the assistant
@@ -699,6 +700,17 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				}
 				if event.RateStatus.UsedPercent >= 80 {
 					go c.refreshRollingSummaryBackground(sessionID)
+				}
+			}
+		case adapter.EventContextStatus:
+			if event.ContextStatus != nil {
+				// Persist the latest utilization so the composer ring restores on
+				// reload; a failed write is non-fatal to the turn (best effort).
+				if err := c.store.UpdateSessionContext(ctx, sessionID, event.ContextStatus.UsedTokens, event.ContextStatus.MaxTokens); err != nil {
+					c.log.Warn("persist session context failed", "event", "provider", "session", sessionID, "error", err)
+				}
+				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ContextStatus: event.ContextStatus}) {
+					return assistant, false, false
 				}
 			}
 		case adapter.EventRateLimited:

@@ -161,6 +161,17 @@ export interface Session {
   // Set once a session has been consolidated into the agent's memory. Empty
   // means the session is un-dreamed (pending consolidation).
   DreamedAt?: string;
+  // Context-window utilization persisted per session: last request's prompt size
+  // and the model's window. 0 means un-observed. Drives the composer context ring.
+  ContextTokens: number;
+  ContextLimit: number;
+}
+
+// ContextUsage mirrors server.ContextUsage: live context-window utilization for a
+// session pushed over the WebSocket during a turn.
+export interface ContextUsage {
+  used: number;
+  max: number;
 }
 
 // DreamTrigger and DreamStatus mirror store.Dream* enums.
@@ -551,6 +562,7 @@ export interface ServerMessage {
     | "permission_request"
     | "user_input_request"
     | "turn_state"
+    | "context"
     | "notice"
     | "done"
     | "dream_state"
@@ -571,6 +583,7 @@ export interface ServerMessage {
   request?: PermissionRequest;
   input?: UserInputRequest;
   turn_state?: TurnState;
+  context?: ContextUsage;
   error?: string;
   // dream_state fields.
   agent_name?: string;

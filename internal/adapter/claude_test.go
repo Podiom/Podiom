@@ -296,3 +296,47 @@ func indexOf(values []string, want string) int {
 	}
 	return -1
 }
+
+func TestClaudeContextEventAndWindow(t *testing.T) {
+	// result event: usage lives at the top level.
+	var result map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"result","result":"done","usage":{"input_tokens":50000,"cache_creation_input_tokens":1000,"cache_read_input_tokens":30000,"output_tokens":400}}`), &result); err != nil {
+		t.Fatal(err)
+	}
+	event, ok := claudeContextEvent(result)
+	if !ok || event.Kind != EventContextStatus {
+		t.Fatalf("expected context event, got %+v ok=%v", event, ok)
+	}
+	// Context size is the whole prompt: input + both cache classes (output excluded).
+	if event.ContextStatus.UsedTokens != 81000 {
+		t.Errorf("used tokens = %d, want 81000", event.ContextStatus.UsedTokens)
+	}
+	if event.ContextStatus.MaxTokens != 0 {
+		t.Errorf("max tokens should be stamped later, got %d", event.ContextStatus.MaxTokens)
+	}
+
+	// assistant event: usage is nested under message.usage.
+	var assistant map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":5}}}`), &assistant); err != nil {
+		t.Fatal(err)
+	}
+	if event, ok := claudeContextEvent(assistant); !ok || event.ContextStatus.UsedTokens != 15 {
+		t.Errorf("nested usage event = %+v ok=%v", event, ok)
+	}
+
+	// No usage → no event.
+	var bare map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"result","result":"hi"}`), &bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := claudeContextEvent(bare); ok {
+		t.Error("expected no context event without usage")
+	}
+
+	if got := claudeContextWindow("claude-sonnet-4-5"); got != claudeDefaultContextWindow {
+		t.Errorf("default window = %d, want %d", got, claudeDefaultContextWindow)
+	}
+	if got := claudeContextWindow("claude-sonnet-4-5[1m]"); got != 1_000_000 {
+		t.Errorf("1M window = %d, want 1000000", got)
+	}
+}

@@ -109,6 +109,11 @@ type Session struct {
 	// DreamedAt is set once a session has been consolidated into the agent's
 	// MEMORY.md. Empty means the session is un-dreamed (pending consolidation).
 	DreamedAt string
+	// ContextTokens is the last request's prompt size in tokens; ContextLimit is
+	// the model's context window. Both are refreshed each turn from the provider
+	// stream and drive the composer's context-window ring. 0 means un-observed.
+	ContextTokens int64
+	ContextLimit  int64
 }
 
 // Message is one ordered entry in a session's canonical history.

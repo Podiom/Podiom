@@ -180,6 +180,34 @@ func TestCodexRateStatusAndLimitParsing(t *testing.T) {
 	}
 }
 
+func TestCodexContextStatusParsing(t *testing.T) {
+	// A token_count payload nests token usage and the window under "info".
+	params := json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":150000},"last_token_usage":{"input_tokens":80000,"cached_input_tokens":10000,"output_tokens":2000},"model_context_window":200000}}`)
+	status, ok := codexContextStatus(params)
+	if !ok {
+		t.Fatal("expected context status to parse")
+	}
+	// Prefers last_token_usage (the tokens occupying the window after the turn).
+	if status.UsedTokens != 92000 {
+		t.Errorf("used tokens = %d, want 92000", status.UsedTokens)
+	}
+	if status.MaxTokens != 200000 {
+		t.Errorf("max tokens = %d, want 200000", status.MaxTokens)
+	}
+
+	// Falls back to total_token_usage.total_tokens when last_token_usage is absent.
+	fallback := json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":120000},"model_context_window":272000}}`)
+	status, ok = codexContextStatus(fallback)
+	if !ok || status.UsedTokens != 120000 || status.MaxTokens != 272000 {
+		t.Errorf("fallback status = %+v ok=%v", status, ok)
+	}
+
+	// No window reported → no context status (nothing to fill the ring against).
+	if _, ok := codexContextStatus(json.RawMessage(`{"info":{"last_token_usage":{"total_tokens":10}}}`)); ok {
+		t.Error("expected no context status without model_context_window")
+	}
+}
+
 func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "approval")
 	codex := newTestCodex(t)
