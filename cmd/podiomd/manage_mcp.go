@@ -33,8 +33,6 @@ func newManageMCPCmd() *cobra.Command {
 }
 
 func runManageMCP(ctx context.Context, addr, sessionID, agentName string, in io.Reader, out io.Writer) error {
-	_ = sessionID
-	_ = agentName
 	c := newManageClient(addr)
-	return serveStdioMCP(ctx, "podiom-manage", manageTools(c), in, out)
+	return serveStdioMCP(ctx, "podiom-manage", manageTools(c, sessionID, agentName), in, out)
 }

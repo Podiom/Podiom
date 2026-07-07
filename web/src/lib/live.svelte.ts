@@ -8,7 +8,7 @@
 // notifications (Web Push, future native) are handled by the daemon; this module
 // only registers the browser for push and routes taps back to a session.
 
-import { getUsage, getVapidKey, subscribePush } from "./api";
+import { getUsage, getVapidKey, listAccessRequests, listGoals, subscribePush } from "./api";
 import { auth, WS_PROTOCOL, wsTokenProtocol } from "./auth.svelte";
 import { appBase, wsUrl } from "./base";
 import { request } from "./http";
@@ -17,6 +17,7 @@ import type {
   ActiveTurnSummary,
   ClientMessage,
   ContextUsage,
+  GoalEvent,
   ServerMessage,
   Session,
   UsageSnapshot,
@@ -29,8 +30,10 @@ export interface Toast {
   id: string;
   title: string;
   body: string;
-  kind: "permission" | "question" | "plan";
+  kind: "permission" | "question" | "plan" | "goal_access_request" | "goal_review";
   sessionId: string;
+  // goalId routes goal-scoped toasts to the Goals page instead of a session.
+  goalId?: string;
 }
 
 type Pending = "permission" | "question" | "assistant" | "";
@@ -45,6 +48,11 @@ class LiveStore {
   usageRefreshing = $state(false);
   usageRefreshError = $state<string | null>(null);
   toasts = $state<Toast[]>([]);
+
+  // Goal IDs currently needing the user (pending/failed access requests, or
+  // status review). Drives the Goals nav badge; refreshed from REST on connect
+  // and on every goal_event broadcast.
+  goalAttention = $state<Set<string>>(new Set());
 
   // Per-session context-window utilization keyed by session ID. Updated live from
   // "context" messages mid-turn and seeded from the persisted session fields so
@@ -78,6 +86,7 @@ class LiveStore {
   private lastPending: Record<string, Pending> = {};
   private subscribers = new Set<(msg: ServerMessage) => void>();
   private navigator: ((sessionId: string) => void) | null = null;
+  private goalNavigator: ((goalId: string) => void) | null = null;
   private usageRefreshPromise: Promise<void> | null = null;
 
   // connect is idempotent: the first caller (App.svelte, once the token gate
@@ -92,6 +101,7 @@ class LiveStore {
     this.open();
     window.setInterval(() => this.send({ type: "list" }), 4000);
     this.listenForServiceWorker();
+    void this.refreshGoalAttention();
   }
 
   private open() {
@@ -200,6 +210,34 @@ class LiveStore {
     this.navigator?.(sessionId);
   }
 
+  // setGoalNavigator lets App.svelte wire "open this goal" so goal toasts and
+  // push notification taps land on the Goals page.
+  setGoalNavigator(fn: (goalId: string) => void) {
+    this.goalNavigator = fn;
+  }
+
+  navigateToGoal(goalId: string) {
+    this.goalNavigator?.(goalId);
+  }
+
+  // refreshGoalAttention recomputes which goals need the user: any goal in
+  // review status, plus any goal with a pending or failed access request.
+  async refreshGoalAttention(): Promise<void> {
+    try {
+      const [goals, pending, failed] = await Promise.all([
+        listGoals("review"),
+        listAccessRequests("", "pending"),
+        listAccessRequests("", "failed"),
+      ]);
+      const ids = new Set<string>();
+      for (const g of goals) ids.add(g.ID);
+      for (const r of [...pending, ...failed]) ids.add(r.GoalID);
+      this.goalAttention = ids;
+    } catch {
+      // Offline or gated: keep the previous badge state.
+    }
+  }
+
   dismissToast(id: string) {
     this.toasts = this.toasts.filter((t) => t.id !== id);
   }
@@ -253,6 +291,9 @@ class LiveStore {
       case "done":
       case "error":
         if (msg.session_id) this.clearTurn(msg.session_id);
+        break;
+      case "goal_event":
+        if (msg.goal_event) this.handleGoalEvent(msg.goal_event);
         break;
     }
     // …then hand the raw message to page-level subscribers (chat rendering).
@@ -340,6 +381,28 @@ class LiveStore {
     window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
   }
 
+  // handleGoalEvent refreshes the Goals attention badge and raises a toast for
+  // the two returning-user moments: an access request was filed, or the agent
+  // proposed completion. Everything else just updates the badge silently; the
+  // Goals page itself subscribes for live timeline refresh.
+  private handleGoalEvent(ev: GoalEvent) {
+    void this.refreshGoalAttention();
+    if (ev.Kind !== "access_requested" && ev.Kind !== "completion_proposed") return;
+    const isRequest = ev.Kind === "access_requested";
+    const toast: Toast = {
+      id: randomID(),
+      kind: isRequest ? "goal_access_request" : "goal_review",
+      sessionId: ev.SessionID,
+      goalId: ev.GoalID,
+      title: isRequest ? "An agent requests access" : "Goal completion proposed",
+      body: isRequest
+        ? ev.Body || "Approve or deny it on the Goals page."
+        : "Review the closing report to confirm or reopen.",
+    };
+    this.toasts = [...this.toasts, toast];
+    window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
+  }
+
   private edgePlanAttention() {
     for (const session of this.sessions) {
       const key = `${session.ID}:plan`;
@@ -417,8 +480,11 @@ class LiveStore {
   private listenForServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker.addEventListener("message", (event) => {
-      const data = event.data as { type?: string; session_id?: string } | undefined;
-      if (data?.type === "notification-click" && data.session_id) {
+      const data = event.data as { type?: string; session_id?: string; goal_id?: string } | undefined;
+      if (data?.type !== "notification-click") return;
+      if (data.goal_id) {
+        this.navigateToGoal(data.goal_id);
+      } else if (data.session_id) {
         this.navigateToSession(data.session_id);
       }
     });

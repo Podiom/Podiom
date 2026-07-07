@@ -349,6 +349,123 @@ export interface Task {
   UpdatedAt: string;
 }
 
+// --- Goals -----------------------------------------------------------------
+
+export type GoalStatus = "active" | "paused" | "review" | "done" | "abandoned";
+
+// GoalMetric mirrors store.GoalMetric (explicit json tags, lowercase).
+export interface GoalMetric {
+  name: string;
+  target: number;
+  current: number;
+  unit?: string;
+}
+
+// Goal mirrors store.Goal (Go-exported field names, no json tags).
+export interface Goal {
+  ID: string;
+  Title: string;
+  Description: string;
+  SuccessCriteria: string;
+  Metrics: GoalMetric[];
+  ReviewEvery: string;
+  LeadAgent: string;
+  ProjectID: string;
+  Status: GoalStatus;
+  NextReviewAt: string;
+  ClosingReport: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
+export type GoalEventKind =
+  | "created"
+  | "planning_started"
+  | "review_started"
+  | "progress"
+  | "metric_update"
+  | "plan_change"
+  | "access_requested"
+  | "access_decided"
+  | "status_change"
+  | "completion_proposed";
+
+// GoalEvent mirrors store.GoalEvent: one append-only audit timeline entry.
+export interface GoalEvent {
+  ID: number;
+  GoalID: string;
+  SessionID: string;
+  Kind: GoalEventKind;
+  Body: string;
+  Payload: string;
+  CreatedAt: string;
+}
+
+export type AccessRequestKind = "mcp_server" | "skill" | "cli_tool" | "env_var" | "permission_mode";
+export type AccessRequestStatus = "pending" | "approved" | "denied" | "executed" | "failed";
+
+// AccessRequest mirrors store.AccessRequest.
+export interface AccessRequest {
+  ID: string;
+  GoalID: string;
+  AgentName: string;
+  SessionID: string;
+  Kind: AccessRequestKind;
+  Payload: string;
+  Reason: string;
+  Status: AccessRequestStatus;
+  DecisionNote: string;
+  ExecutionError: string;
+  CreatedAt: string;
+  DecidedAt: string;
+  ExecutedAt: string;
+}
+
+// GoalDetail is the GET /api/goals/<id> response.
+export interface GoalDetail {
+  goal: Goal;
+  events: GoalEvent[];
+  access_requests: AccessRequest[];
+}
+
+export interface GoalCreateRequest {
+  title: string;
+  description: string;
+  success_criteria: string;
+  metrics: GoalMetric[];
+  review_every: string;
+  lead_agent: string;
+  project_id: string;
+}
+
+export interface GoalPatchRequest {
+  title?: string;
+  description?: string;
+  success_criteria?: string;
+  metrics?: GoalMetric[];
+  review_every?: string;
+  lead_agent?: string;
+  project_id?: string;
+  status?: GoalStatus;
+  status_note?: string;
+}
+
+// WorkspaceTool mirrors tools.ToolStatus: one workspace-installed tool with
+// its manifest provenance and live on-disk health.
+export interface WorkspaceTool {
+  tool: string;
+  installer: "npm" | "uv" | "go" | "binary";
+  package?: string;
+  version?: string;
+  url?: string;
+  sha256?: string;
+  request_id?: string;
+  goal_id?: string;
+  installed_at: string;
+  version_output?: string;
+  broken: boolean;
+}
+
 // SessionDetail is the GET /api/sessions/<id> response, including roadmap
 // provenance when the session was started from a task.
 export interface SessionDetail {
@@ -566,6 +683,7 @@ export interface ServerMessage {
     | "notice"
     | "done"
     | "dream_state"
+    | "goal_event"
     | "error";
   request_id?: string;
   session_id?: string;
@@ -589,6 +707,8 @@ export interface ServerMessage {
   agent_name?: string;
   dream_phase?: DreamPhase;
   dream?: Dream;
+  // goal_event: one appended goal-timeline entry, broadcast to every client.
+  goal_event?: GoalEvent;
 }
 
 // DreamPhase is the lifecycle a manual dream streams over the WebSocket so the

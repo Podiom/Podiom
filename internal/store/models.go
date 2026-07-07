@@ -18,6 +18,8 @@ const (
 	OriginSchedule SessionOrigin = "schedule"
 	// OriginRoadmap marks a session created from a roadmap task.
 	OriginRoadmap SessionOrigin = "roadmap"
+	// OriginGoal marks a session created by a goal's planning or review loop.
+	OriginGoal SessionOrigin = "goal"
 )
 
 // PlanState records whether a session is mechanically gated for plan mode.
@@ -98,6 +100,7 @@ type Session struct {
 	ScheduleID     string
 	RunID          string
 	TaskID         string
+	GoalID         string
 	RollingSummary string
 	ProviderHandle string
 	CreatedAt      string
@@ -240,6 +243,154 @@ const (
 	// TaskDone is completed work.
 	TaskDone TaskStatus = "done"
 )
+
+// GoalStatus is a goal's lifecycle state.
+type GoalStatus string
+
+const (
+	// GoalActive means the goal's autonomy loop is running; reviews fire on cadence.
+	GoalActive GoalStatus = "active"
+	// GoalPaused means the user suspended the goal; no reviews fire.
+	GoalPaused GoalStatus = "paused"
+	// GoalReview means the agent proposed completion and awaits the user's verdict.
+	GoalReview GoalStatus = "review"
+	// GoalDone means the user confirmed completion. Terminal but reopenable.
+	GoalDone GoalStatus = "done"
+	// GoalAbandoned means the user gave up on the goal. Terminal but reopenable.
+	GoalAbandoned GoalStatus = "abandoned"
+)
+
+// GoalMetric is one measurable indicator on a goal. The lead agent moves
+// Current over time with evidence; Target is the user-set finish line. Stored
+// as JSON on the goal; history is derivable from metric_update events.
+type GoalMetric struct {
+	Name    string  `json:"name"`
+	Target  float64 `json:"target"`
+	Current float64 `json:"current"`
+	Unit    string  `json:"unit,omitempty"`
+}
+
+// Goal is a user-stated outcome owned by one lead agent, which autonomously
+// plans and drives the work (tasks, schedules, periodic reviews) until the
+// success criteria are met. The user approves grants and completion; the goal's
+// timeline (goal_events) is the audit trail.
+type Goal struct {
+	ID              string
+	Title           string
+	Description     string
+	SuccessCriteria string
+	Metrics         []GoalMetric
+	// ReviewEvery is a Go duration string (e.g. "24h"); empty disables automatic
+	// reviews. The API enforces a 15m floor.
+	ReviewEvery string
+	LeadAgent   string
+	ProjectID   string
+	Status      GoalStatus
+	// NextReviewAt is when the scheduler should fire the next unattended review.
+	// Empty when paused/terminal or when automatic reviews are disabled.
+	NextReviewAt string
+	// ClosingReport is the agent-written markdown set when it proposes completion.
+	ClosingReport string
+	CreatedAt     string
+	UpdatedAt     string
+}
+
+// GoalEventKind classifies one entry in a goal's append-only timeline.
+type GoalEventKind string
+
+const (
+	// GoalEventCreated marks goal creation.
+	GoalEventCreated GoalEventKind = "created"
+	// GoalEventPlanningStarted marks the start of the initial planning session.
+	GoalEventPlanningStarted GoalEventKind = "planning_started"
+	// GoalEventReviewStarted marks the start of a periodic or manual review session.
+	GoalEventReviewStarted GoalEventKind = "review_started"
+	// GoalEventProgress is an agent-written progress entry with evidence.
+	GoalEventProgress GoalEventKind = "progress"
+	// GoalEventMetricUpdate records metric value changes (old → new in payload).
+	GoalEventMetricUpdate GoalEventKind = "metric_update"
+	// GoalEventPlanChange records tasks/schedules being created or adjusted.
+	GoalEventPlanChange GoalEventKind = "plan_change"
+	// GoalEventAccessRequested records an access request being filed.
+	GoalEventAccessRequested GoalEventKind = "access_requested"
+	// GoalEventAccessDecided records the user's decision on an access request.
+	GoalEventAccessDecided GoalEventKind = "access_decided"
+	// GoalEventStatusChange records any goal status transition.
+	GoalEventStatusChange GoalEventKind = "status_change"
+	// GoalEventCompletionProposed records the agent proposing the goal is done.
+	GoalEventCompletionProposed GoalEventKind = "completion_proposed"
+)
+
+// GoalEvent is one append-only timeline entry — the goal's audit trail. Updates
+// are rejected at the schema level; rows are removed only by goal cascade.
+// SessionID links the event to the session that produced it ("" for user
+// actions from the UI), so every autonomous claim is attributable (§8).
+type GoalEvent struct {
+	ID        int64
+	GoalID    string
+	SessionID string
+	Kind      GoalEventKind
+	// Body is human-readable markdown.
+	Body string
+	// Payload is kind-specific JSON (metric deltas, request id, old/new status…).
+	Payload   string
+	CreatedAt string
+}
+
+// AccessRequestKind is what capability the agent asked for.
+type AccessRequestKind string
+
+const (
+	// AccessMCPServer requests assignment of a catalogue MCP server (automatable).
+	AccessMCPServer AccessRequestKind = "mcp_server"
+	// AccessSkill requests a marketplace skill install (automatable).
+	AccessSkill AccessRequestKind = "skill"
+	// AccessCLITool requests a host CLI tool install (acknowledge-only).
+	AccessCLITool AccessRequestKind = "cli_tool"
+	// AccessEnvVar requests a credential/env var by NAME — never by value
+	// (acknowledge-only).
+	AccessEnvVar AccessRequestKind = "env_var"
+	// AccessPermissionMode requests an agent permission-mode change (automatable).
+	AccessPermissionMode AccessRequestKind = "permission_mode"
+)
+
+// AccessRequestStatus is the lifecycle of an access request.
+type AccessRequestStatus string
+
+const (
+	// AccessPending awaits the user's decision.
+	AccessPending AccessRequestStatus = "pending"
+	// AccessApproved is the user's yes. Terminal for acknowledge-only kinds;
+	// automatable kinds continue to executed/failed.
+	AccessApproved AccessRequestStatus = "approved"
+	// AccessDenied is the user's no. Terminal.
+	AccessDenied AccessRequestStatus = "denied"
+	// AccessExecuted means the automatic grant ran successfully.
+	AccessExecuted AccessRequestStatus = "executed"
+	// AccessFailed means the automatic grant errored; the request stays
+	// actionable (retryable approve).
+	AccessFailed AccessRequestStatus = "failed"
+)
+
+// AccessRequest is a durable, typed capability request filed by a goal's lead
+// agent. Decisions are human-only; DecisionNote is relayed back to the agent at
+// its next review — it is how the user talks back.
+type AccessRequest struct {
+	ID        string
+	GoalID    string
+	AgentName string
+	SessionID string
+	Kind      AccessRequestKind
+	// Payload is kind-specific JSON (see the goals spec §6). Never a secret value.
+	Payload        string
+	Reason         string
+	Status         AccessRequestStatus
+	DecisionNote   string
+	ExecutionError string
+	CreatedAt      string
+	DecidedAt      string
+	ExecutedAt     string
+}
 
 // Task is a roadmap item: a unit of work on a shared project, assignable to an
 // agent and startable on demand (origin=roadmap) or at a scheduled pickup time.

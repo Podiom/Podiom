@@ -139,38 +139,52 @@ func (s *Server) handleMCPAssignments(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	agent, err := s.core.GetAgent(r.Context(), req.AgentName)
-	if err != nil {
-		writeJSON(w, nil, err)
-		return
-	}
-	cat, err := podiommcp.LoadCatalogue(s.paths.MCPYAML)
-	if err != nil {
-		writeJSON(w, nil, err)
-		return
-	}
 	if req.Assigned {
-		if _, err := podiommcp.Assigned(cat, []string{req.ServerName}); err != nil {
+		if err := s.assignMCPServer(r.Context(), req.AgentName, req.ServerName); err != nil {
 			writeJSON(w, nil, err)
 			return
 		}
-		agent.MCPServers = addString(agent.MCPServers, req.ServerName)
 	} else {
+		agent, err := s.core.GetAgent(r.Context(), req.AgentName)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
 		agent.MCPServers = removeString(agent.MCPServers, req.ServerName)
-	}
-	if _, err := s.core.UpdateAgent(r.Context(), agent); err != nil {
-		writeJSON(w, nil, err)
-		return
+		if _, err := s.core.UpdateAgent(r.Context(), agent); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
 	}
 	s.log.Info("mcp assignment updated",
 		"event", "mcp",
 		"agent", req.AgentName,
 		"server", req.ServerName,
 		"assigned", req.Assigned,
-		"mcp_servers", len(agent.MCPServers),
 	)
 	snapshot, err := s.mcpSnapshot(r.Context())
 	writeJSON(w, snapshot, err)
+}
+
+// assignMCPServer validates the server against the catalogue and adds it to
+// the agent's assignment list. Shared by the manual assignment handler and
+// access-request grant execution, so a goal grant takes exactly the same
+// validated path as a hand-made assignment.
+func (s *Server) assignMCPServer(ctx context.Context, agentName, serverName string) error {
+	agent, err := s.core.GetAgent(ctx, agentName)
+	if err != nil {
+		return err
+	}
+	cat, err := podiommcp.LoadCatalogue(s.paths.MCPYAML)
+	if err != nil {
+		return err
+	}
+	if _, err := podiommcp.Assigned(cat, []string{serverName}); err != nil {
+		return err
+	}
+	agent.MCPServers = addString(agent.MCPServers, serverName)
+	_, err = s.core.UpdateAgent(ctx, agent)
+	return err
 }
 
 func (s *Server) mcpSnapshot(ctx context.Context) (mcpSnapshot, error) {

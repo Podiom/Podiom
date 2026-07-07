@@ -19,9 +19,9 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 		sess.PlanState = PlanNone
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions
-		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, project_id, rolling_summary, provider_handle,
+		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, goal_id, project_id, rolling_summary, provider_handle,
 		 plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
 		sess.AgentName,
 		sess.Name,
@@ -36,6 +36,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 		sess.ScheduleID,
 		sess.RunID,
 		sess.TaskID,
+		sess.GoalID,
 		sess.ProjectID,
 		sess.RollingSummary,
 		sess.ProviderHandle,
@@ -56,7 +57,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE id = ?`, id)
@@ -74,7 +75,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions ORDER BY created_at DESC, id DESC`)
@@ -99,7 +100,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE agent_name = ? ORDER BY created_at, id`, agentName)
@@ -124,7 +125,7 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE schedule_id = ? ORDER BY created_at DESC, id DESC`, scheduleName)
@@ -148,7 +149,7 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
 		FROM sessions WHERE task_id = ? ORDER BY created_at DESC, id DESC`, taskID)
@@ -449,6 +450,7 @@ func scanSession(row scanner) (Session, error) {
 		&sess.ScheduleID,
 		&sess.RunID,
 		&sess.TaskID,
+		&sess.GoalID,
 		&sess.ProjectID,
 		&sess.RollingSummary,
 		&sess.ProviderHandle,

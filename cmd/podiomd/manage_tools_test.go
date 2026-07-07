@@ -45,7 +45,7 @@ func newRecordingServer(t *testing.T) (*recordingServer, *manageClient) {
 }
 
 func toolByName(c *manageClient, name string) (mcpTool, bool) {
-	for _, tl := range manageTools(c) {
+	for _, tl := range manageTools(c, "sess-1", "atlas") {
 		if tl.Name == name {
 			return tl, true
 		}
@@ -64,10 +64,10 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 }
 
 func TestManageToolRegistryInvariants(t *testing.T) {
-	tools := manageTools(newManageClient("127.0.0.1:8787"))
-	// tasks 6 + projects 5 + schedules 4 + skills 4 + mcp 5 + platform 5.
-	if len(tools) != 29 {
-		t.Fatalf("expected 29 tools, got %d", len(tools))
+	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
+	// tasks 6 + projects 5 + schedules 4 + skills 4 + mcp 5 + goals 9 + platform 5.
+	if len(tools) != 38 {
+		t.Fatalf("expected 38 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{

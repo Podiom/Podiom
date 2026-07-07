@@ -1777,6 +1777,10 @@ func codexIDKey(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
+// codexEnv builds the app-server environment. Note: the server is one
+// long-lived process per profile, so per-agent ToolPathDirs (workspace tool
+// installs §2.2) cannot be injected here — a documented v1 limitation; tools
+// are on disk but not on PATH for Codex-backed turns.
 func codexEnv(profileDir string) []string {
 	env := os.Environ()
 	if profileDir == "" {

@@ -6,9 +6,16 @@
 
 import { request } from "./http";
 import type {
+  AccessRequest,
   Agent,
   AgentDetail,
   Dream,
+  Goal,
+  GoalCreateRequest,
+  GoalDetail,
+  GoalEvent,
+  GoalPatchRequest,
+  WorkspaceTool,
   DreamResult,
   GitHubDevicePoll,
   GitHubDeviceStart,
@@ -741,6 +748,101 @@ export async function unsubscribePush(subscription: unknown): Promise<void> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(subscription),
+    }),
+  );
+}
+
+// --- Goals -------------------------------------------------------------------
+
+export async function listGoals(status = ""): Promise<Goal[]> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return asJSON(await request(`/api/goals${q}`));
+}
+
+export async function createGoal(body: GoalCreateRequest): Promise<Goal> {
+  return asJSON(
+    await request("/api/goals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+// getGoal returns the goal plus its recent timeline and access requests.
+export async function getGoal(id: string): Promise<GoalDetail> {
+  return asJSON(await request(`/api/goals/${id}`));
+}
+
+export async function patchGoal(id: string, patch: GoalPatchRequest): Promise<Goal> {
+  return asJSON(
+    await request(`/api/goals/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  );
+}
+
+export async function deleteGoal(id: string): Promise<void> {
+  await asJSON(await request(`/api/goals/${id}`, { method: "DELETE" }));
+}
+
+// listGoalEvents pages the audit timeline: entries older than `before`.
+export async function listGoalEvents(id: string, limit = 50, before = 0): Promise<GoalEvent[]> {
+  const params = new URLSearchParams();
+  if (limit > 0) params.set("limit", String(limit));
+  if (before > 0) params.set("before", String(before));
+  const q = params.size > 0 ? `?${params.toString()}` : "";
+  return asJSON(await request(`/api/goals/${id}/events${q}`));
+}
+
+// runGoalReview triggers an unattended review session now; it returns as soon
+// as the review is started (results land on the timeline).
+export async function runGoalReview(id: string): Promise<{ status: string; goal_id: string }> {
+  return asJSON(await request(`/api/goals/${id}/review`, { method: "POST" }));
+}
+
+export async function listAccessRequests(goalId = "", status = ""): Promise<AccessRequest[]> {
+  const params = new URLSearchParams();
+  if (goalId) params.set("goal_id", goalId);
+  if (status) params.set("status", status);
+  const q = params.size > 0 ? `?${params.toString()}` : "";
+  return asJSON(await request(`/api/access-requests${q}`));
+}
+
+// approveAccessRequest approves and — for automatable kinds — executes the
+// grant; the returned request carries the outcome (executed/failed).
+export async function approveAccessRequest(id: string, note = ""): Promise<AccessRequest> {
+  return asJSON(
+    await request(`/api/access-requests/${id}/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    }),
+  );
+}
+
+export async function denyAccessRequest(id: string, note = ""): Promise<AccessRequest> {
+  return asJSON(
+    await request(`/api/access-requests/${id}/deny`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    }),
+  );
+}
+
+// --- Workspace tools -----------------------------------------------------------
+
+export async function listAgentTools(name: string): Promise<WorkspaceTool[]> {
+  return asJSON(await request(`/api/agents/${encodeURIComponent(name)}/tools`));
+}
+
+export async function removeAgentTool(name: string, tool: string): Promise<void> {
+  await asJSON(
+    await request(`/api/agents/${encodeURIComponent(name)}/tools/${encodeURIComponent(tool)}`, {
+      method: "DELETE",
     }),
   );
 }

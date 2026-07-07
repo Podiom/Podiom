@@ -37,7 +37,7 @@ async function handlePush(event) {
   const visible = windows.find((c) => c.visibilityState === "visible");
   if (visible) {
     // A dashboard tab is in front; let the in-app toast handle it.
-    visible.postMessage({ type: "push-preview", session_id: data.session_id, kind: data.kind });
+    visible.postMessage({ type: "push-preview", session_id: data.session_id, goal_id: data.goal_id, kind: data.kind });
     return;
   }
 
@@ -47,7 +47,7 @@ async function handlePush(event) {
 
   await self.registration.showNotification(data.title || "Podiom", {
     body: data.body || "",
-    tag: data.session_id || "podiom",
+    tag: data.goal_id || data.session_id || "podiom",
     renotify: true,
     icon: new URL("favicon.svg", BASE()).href,
     badge: new URL("favicon.svg", BASE()).href,
@@ -68,11 +68,12 @@ self.addEventListener("notificationclick", (event) => {
 
 async function focusSession(data) {
   const sessionId = data.session_id;
+  const goalId = data.goal_id;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   for (const client of windows) {
     if ("focus" in client) {
       await client.focus();
-      client.postMessage({ type: "notification-click", session_id: sessionId });
+      client.postMessage({ type: "notification-click", session_id: sessionId, goal_id: goalId });
       return;
     }
   }

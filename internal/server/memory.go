@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/store"
@@ -48,7 +49,14 @@ func (s *Server) handleAgentSubresource(w http.ResponseWriter, r *http.Request, 
 		s.handleAgentDreams(w, r, name)
 	case "dream":
 		s.handleAgentDream(w, r, name)
+	case "tools":
+		s.handleAgentTools(w, r, name, "")
 	default:
+		// /{name}/tools/{tool} carries the tool name as a further segment.
+		if tool, ok := strings.CutPrefix(sub, "tools/"); ok && tool != "" {
+			s.handleAgentTools(w, r, name, tool)
+			return
+		}
 		http.Error(w, "unknown agent sub-resource", http.StatusNotFound)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/store"
+	podiomtools "github.com/Podiom/Podiom/internal/tools"
 )
 
 // CreateSessionRequest creates a durable session bound to an agent. Empty
@@ -27,6 +28,7 @@ type CreateSessionRequest struct {
 	ScheduleID                     string
 	RunID                          string
 	TaskID                         string
+	GoalID                         string
 	ProjectID                      string
 	CreatePlanBeforeImplementation bool
 }
@@ -63,6 +65,7 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		ScheduleID:     req.ScheduleID,
 		RunID:          req.RunID,
 		TaskID:         req.TaskID,
+		GoalID:         req.GoalID,
 		ProjectID:      projectID,
 		PlanState:      store.PlanNone,
 	}
@@ -108,6 +111,7 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		PermissionMode:     created.PermissionMode,
 		WorkspaceDir:       workspaceDir,
 		ExtraWorkspaceDirs: extraWorkspaceDirs,
+		ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(agent.Name).Tools),
 		InstructionPath:    payload.Path,
 		Instructions:       payload.Bytes,
 		MCPServers:         mcpServers,
@@ -561,6 +565,7 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			PermissionMode:     effectivePermission,
 			WorkspaceDir:       workspaceDir,
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
+			ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(sess.AgentName).Tools),
 			InstructionPath:    instructionPath,
 			PermissionTurnID:   firstNonEmpty(opts.PermissionTurnID, fmt.Sprintf("%s-%d", sess.ID, time.Now().UnixNano())),
 			PermissionTimeout:  c.permissionTimeout(),

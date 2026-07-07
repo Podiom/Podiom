@@ -55,6 +55,10 @@ type ServerMessage struct {
 	AgentName  string       `json:"agent_name,omitempty"`
 	DreamPhase string       `json:"dream_phase,omitempty"`
 	Dream      *store.Dream `json:"dream,omitempty"`
+	// GoalEvent carries a "goal_event" broadcast: one appended goal-timeline
+	// entry, fanned out to every live connection so open Goals views refresh
+	// and attention badges update without polling.
+	GoalEvent *store.GoalEvent `json:"goal_event,omitempty"`
 }
 
 // ContextUsage is the live context-window utilization for a session: how many

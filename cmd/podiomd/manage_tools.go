@@ -13,14 +13,20 @@ import (
 // forwards to an existing daemon REST endpoint via the manageClient, so the tools
 // inherit the API's validation, persistence, and live-apply behavior. Tools are
 // grouped by domain: roadmap tasks, projects, schedules, skills, MCP servers,
-// then config / logs / agents.
-func manageTools(c *manageClient) []mcpTool {
+// goals, then config / logs / agents.
+//
+// sessionID/agentName are the calling session's identity (the --session/--agent
+// flags Podiom injects per session). Goal tools stamp them into request bodies
+// server-side of the model, so provenance never depends on the model
+// remembering to pass its own identity.
+func manageTools(c *manageClient, sessionID, agentName string) []mcpTool {
 	var tools []mcpTool
 	tools = append(tools, taskTools(c)...)
 	tools = append(tools, projectTools(c)...)
 	tools = append(tools, scheduleTools(c)...)
 	tools = append(tools, skillTools(c)...)
 	tools = append(tools, mcpServerTools(c)...)
+	tools = append(tools, goalTools(c, sessionID, agentName)...)
 	tools = append(tools, platformTools(c)...)
 	return tools
 }

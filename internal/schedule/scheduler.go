@@ -100,6 +100,7 @@ func (s *Scheduler) resyncLoop() {
 		case <-ticker.C:
 			s.Sync()
 			s.pickupDueTasks(s.ctx)
+			s.pickupDueGoalReviews(s.ctx)
 		}
 	}
 }
@@ -127,6 +128,37 @@ func (s *Scheduler) pickupDueTasks(ctx context.Context) {
 		s.log.Info("task picked up", "event", "schedule", "task", task.ID, "project", task.ProjectID, "agent", task.AssignedAgent, "session", sess.ID, "unattended", true)
 	}
 	s.log.Info("due task check finished", "event", "schedule", "due_tasks", len(due), podiomlog.DurationMS("duration_ms", time.Since(started)))
+}
+
+// pickupDueGoalReviews fires an unattended review session for every active goal
+// whose next_review_at has arrived. The clock is advanced BEFORE the review
+// runs, so a long or crashed review can neither double-fire nor stall the
+// cadence; pausing or closing a goal stops reviews atomically because the due
+// query filters on live status.
+func (s *Scheduler) pickupDueGoalReviews(ctx context.Context) {
+	started := time.Now()
+	now := time.Now().UTC().Format(time.RFC3339)
+	due, err := s.store.ListDueGoalReviews(ctx, now)
+	if err != nil {
+		s.log.Warn("due goal check failed", "event", "goal", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
+		return
+	}
+	for _, goal := range due {
+		s.log.Info("due goal review found", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent, "next_review_at", goal.NextReviewAt)
+		if err := s.core.AdvanceGoalReviewClock(ctx, goal.ID); err != nil {
+			s.log.Warn("goal review clock advance failed", "event", "goal", "goal", goal.ID, podiomlog.ErrorAttr(err))
+			continue
+		}
+		sess, err := s.core.RunGoalReview(ctx, goal.ID)
+		if err != nil {
+			s.log.Warn("goal review failed", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent, podiomlog.ErrorAttr(err))
+			continue
+		}
+		s.log.Info("goal review finished", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent, "session", sess.ID)
+	}
+	if len(due) > 0 {
+		s.log.Info("due goal check finished", "event", "goal", "due_goals", len(due), podiomlog.DurationMS("duration_ms", time.Since(started)))
+	}
 }
 
 // Sync reconciles registered cron jobs with the current contents of the

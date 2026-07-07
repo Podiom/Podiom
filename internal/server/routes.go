@@ -46,6 +46,10 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/github/repos", s.handleGitHubRepos},
 		{"/api/tasks", s.handleTasks},
 		{"/api/tasks/", s.handleTask},
+		{"/api/goals", s.handleGoals},
+		{"/api/goals/", s.handleGoal},
+		{"/api/access-requests", s.handleAccessRequests},
+		{"/api/access-requests/", s.handleAccessRequest},
 		{"/api/skills", s.handleSkills},
 		{"/api/skills/relink", s.handleSkillsRelink},
 		// Skill marketplace (Spec 07). Registered so the more specific

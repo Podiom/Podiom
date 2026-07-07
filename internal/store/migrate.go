@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // migration is one forward-only schema change. Migrations run in order and each
 // runs at most once; their cumulative effect is recorded in schema_migrations.
@@ -261,11 +264,157 @@ var migrations = []migration{
 		sql: `ALTER TABLE sessions ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0;
 			ALTER TABLE sessions ADD COLUMN context_limit INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		version: 14,
+		name:    "goals",
+		// Goals: user-stated outcomes driven autonomously by one lead agent.
+		// goal_events is the append-only audit timeline (UPDATE rejected by
+		// trigger; rows removed only via the goal's ON DELETE CASCADE — no
+		// BEFORE DELETE trigger, which would break that cascade). The sessions
+		// table is rebuilt (v6 pattern) to extend the origin CHECK with 'goal'
+		// and add goal_id; the rebuild is only safe because migrations run with
+		// foreign_keys OFF — with them ON, DROP TABLE sessions would cascade-
+		// delete every row in messages.
+		sql: `CREATE TABLE goals (
+			id               TEXT PRIMARY KEY,
+			title            TEXT NOT NULL,
+			description      TEXT NOT NULL DEFAULT '',
+			success_criteria TEXT NOT NULL DEFAULT '',
+			metrics_json     TEXT NOT NULL DEFAULT '[]',
+			review_every     TEXT NOT NULL DEFAULT '',
+			lead_agent       TEXT NOT NULL,
+			project_id       TEXT NOT NULL DEFAULT '',
+			status           TEXT NOT NULL DEFAULT 'active'
+				CHECK (status IN ('active', 'paused', 'review', 'done', 'abandoned')),
+			next_review_at   TEXT,
+			closing_report   TEXT NOT NULL DEFAULT '',
+			created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		CREATE INDEX idx_goals_status ON goals(status);
+		CREATE INDEX idx_goals_due_review ON goals(status, next_review_at);
+
+		CREATE TABLE goal_events (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;
+
+		CREATE TABLE access_requests (
+			id              TEXT PRIMARY KEY,
+			goal_id         TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			agent_name      TEXT NOT NULL,
+			session_id      TEXT,
+			kind            TEXT NOT NULL CHECK (kind IN ('mcp_server', 'skill', 'cli_tool', 'env_var', 'permission_mode')),
+			payload_json    TEXT NOT NULL DEFAULT '{}',
+			reason          TEXT NOT NULL DEFAULT '',
+			status          TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending', 'approved', 'denied', 'executed', 'failed')),
+			decision_note   TEXT NOT NULL DEFAULT '',
+			execution_error TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+			decided_at      TEXT,
+			executed_at     TEXT
+		);
+
+		CREATE INDEX idx_access_requests_goal ON access_requests(goal_id, created_at DESC);
+		CREATE INDEX idx_access_requests_status ON access_requests(status);
+
+		DROP TRIGGER IF EXISTS sessions_origin_immutable;
+
+		CREATE TABLE sessions_new (
+			id                TEXT PRIMARY KEY,
+			agent_name        TEXT NOT NULL REFERENCES agents(name) ON UPDATE CASCADE ON DELETE RESTRICT,
+			provider          TEXT NOT NULL CHECK (provider IN ('claude', 'codex')),
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			permission_mode   TEXT NOT NULL CHECK (permission_mode IN ('approve', 'yolo')),
+			origin            TEXT NOT NULL CHECK (origin IN ('web', 'cli', 'onboarding', 'schedule', 'roadmap', 'goal')),
+			schedule_id       TEXT,
+			run_id            TEXT,
+			rolling_summary   TEXT NOT NULL DEFAULT '',
+			provider_handle   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			name              TEXT NOT NULL DEFAULT '',
+			description       TEXT NOT NULL DEFAULT '',
+			auto_named        INTEGER NOT NULL DEFAULT 0,
+			task_id           TEXT,
+			project_id        TEXT NOT NULL DEFAULT '',
+			dreamed_at        TEXT,
+			plan_state        TEXT NOT NULL DEFAULT 'none'
+				CHECK (plan_state IN ('none', 'pending_submission', 'awaiting_approval')),
+			plan_explicit     INTEGER NOT NULL DEFAULT 0,
+			plan_file_path    TEXT NOT NULL DEFAULT '',
+			plan_markdown     TEXT NOT NULL DEFAULT '',
+			plan_submitted_at TEXT NOT NULL DEFAULT '',
+			plan_updated_at   TEXT NOT NULL DEFAULT '',
+			context_tokens    INTEGER NOT NULL DEFAULT 0,
+			context_limit     INTEGER NOT NULL DEFAULT 0,
+			goal_id           TEXT
+		);
+
+		INSERT INTO sessions_new (
+			id, agent_name, provider, profile, model, effort, permission_mode, origin,
+			schedule_id, run_id, rolling_summary, provider_handle, created_at, updated_at,
+			name, description, auto_named, task_id, project_id, dreamed_at,
+			plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+			context_tokens, context_limit
+		)
+		SELECT
+			id, agent_name, provider, profile, model, effort, permission_mode, origin,
+			schedule_id, run_id, rolling_summary, provider_handle, created_at, updated_at,
+			name, description, auto_named, task_id, project_id, dreamed_at,
+			plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+			context_tokens, context_limit
+		FROM sessions;
+
+		DROP TABLE sessions;
+		ALTER TABLE sessions_new RENAME TO sessions;
+
+		CREATE TRIGGER sessions_origin_immutable
+		BEFORE UPDATE OF origin ON sessions
+		BEGIN
+			SELECT RAISE(ABORT, 'session origin is immutable');
+		END;
+
+		CREATE INDEX idx_sessions_agent_name ON sessions(agent_name);
+		CREATE INDEX idx_sessions_origin ON sessions(origin);
+		CREATE INDEX idx_sessions_schedule_id ON sessions(schedule_id);
+		CREATE INDEX idx_sessions_task_id ON sessions(task_id);
+		CREATE INDEX idx_sessions_project_id ON sessions(project_id);
+		CREATE INDEX idx_sessions_dreamed ON sessions(agent_name, dreamed_at);
+		CREATE INDEX idx_sessions_plan_state ON sessions(plan_state);
+		CREATE INDEX idx_sessions_goal_id ON sessions(goal_id);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each
 // migration plus its bookkeeping insert runs in a single transaction, so a crash
 // mid-migration leaves the schema consistent (no half-applied versions).
+//
+// Migrations run on one dedicated connection with foreign_keys OFF — SQLite's
+// documented table-rebuild procedure. With enforcement ON, DROP TABLE on a
+// parent performs an implicit DELETE FROM that fires ON DELETE CASCADE actions
+// (e.g. rebuilding sessions would wipe messages). A foreign_key_check afterwards
+// guarantees no migration left orphaned child rows; every other pooled
+// connection keeps enforcement ON via the DSN pragma.
 func (s *Store) migrate() error {
 	// Ensure the bookkeeping table exists before we query it (the first migration
 	// creates it; running its DDL up front is harmless and idempotent).
@@ -278,11 +427,26 @@ func (s *Store) migrate() error {
 		return err
 	}
 
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys for migration: %w", err)
+	}
+	// Restore enforcement before the connection returns to the pool.
+	defer func() { _, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys=ON`) }()
+
+	ran := false
 	for _, m := range migrations {
 		if applied[m.version] {
 			continue
 		}
-		tx, err := s.db.Begin()
+		ran = true
+		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration %d: %w", m.version, err)
 		}
@@ -299,6 +463,23 @@ func (s *Store) migrate() error {
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit migration %d: %w", m.version, err)
+		}
+	}
+
+	if ran {
+		rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			return fmt.Errorf("post-migration foreign_key_check: %w", err)
+		}
+		defer rows.Close()
+		if rows.Next() {
+			var table, parent string
+			var rowid, fkid any
+			_ = rows.Scan(&table, &rowid, &parent, &fkid)
+			return fmt.Errorf("post-migration foreign_key_check: table %q has rows violating its foreign key to %q", table, parent)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("post-migration foreign_key_check: %w", err)
 		}
 	}
 	return nil

@@ -217,3 +217,81 @@ Summarise the calendar.
 		t.Fatal("expected error deleting a missing schedule")
 	}
 }
+
+func TestPickupDueGoalReviews(t *testing.T) {
+	ctx := context.Background()
+	s, coreSvc, _, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	goal, err := coreSvc.CreateGoal(ctx, store.Goal{Title: "Ship docs", LeadAgent: "jared", ReviewEvery: "24h"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+
+	// Not yet due: the fresh next_review_at is a day away.
+	s.pickupDueGoalReviews(ctx)
+	events, err := coreSvc.ListGoalEvents(ctx, goal.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	for _, ev := range events {
+		if ev.Kind == store.GoalEventReviewStarted {
+			t.Fatalf("review fired before it was due")
+		}
+	}
+
+	// Make it overdue and tick: exactly one review fires, and the clock has
+	// advanced BEFORE the run so an immediate second tick is a no-op.
+	if err := s.store.SetGoalNextReview(ctx, goal.ID, "2000-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	s.pickupDueGoalReviews(ctx)
+	s.pickupDueGoalReviews(ctx)
+
+	events, err = coreSvc.ListGoalEvents(ctx, goal.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	reviews := 0
+	for _, ev := range events {
+		if ev.Kind == store.GoalEventReviewStarted {
+			reviews++
+			sess, err := coreSvc.GetSession(ctx, ev.SessionID)
+			if err != nil {
+				t.Fatalf("get review session: %v", err)
+			}
+			if sess.Origin != store.OriginGoal || sess.GoalID != goal.ID {
+				t.Fatalf("review session = %+v, want origin goal", sess)
+			}
+		}
+	}
+	if reviews != 1 {
+		t.Fatalf("review sessions = %d, want exactly 1", reviews)
+	}
+	after, err := coreSvc.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if after.NextReviewAt <= "2000-01-01T00:00:00Z" {
+		t.Fatalf("next_review_at did not advance: %q", after.NextReviewAt)
+	}
+
+	// A paused goal never fires even when overdue.
+	if _, err := coreSvc.TransitionGoal(ctx, goal.ID, store.GoalPaused, ""); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if err := s.store.SetGoalNextReview(ctx, goal.ID, "2000-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	s.pickupDueGoalReviews(ctx)
+	events, _ = coreSvc.ListGoalEvents(ctx, goal.ID, 0, 0)
+	reviews = 0
+	for _, ev := range events {
+		if ev.Kind == store.GoalEventReviewStarted {
+			reviews++
+		}
+	}
+	if reviews != 1 {
+		t.Fatalf("paused goal fired a review (total %d)", reviews)
+	}
+}

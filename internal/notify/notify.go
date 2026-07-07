@@ -16,14 +16,17 @@ import (
 )
 
 // Notification is a provider-neutral "attention required" event. Kind is the
-// underlying trigger ("permission" or "question"); Title/Body are the rendered
-// human strings a Channel presents.
+// underlying trigger ("permission", "question", "goal_access_request", or
+// "goal_review"); Title/Body are the rendered human strings a Channel presents.
+// GoalID is set for goal-scoped kinds so a notification tap can deep-link to
+// the goal instead of a session.
 type Notification struct {
 	SessionID string
 	AgentName string
+	GoalID    string
 	Title     string
 	Body      string
-	Kind      string // "permission" | "question"
+	Kind      string // "permission" | "question" | "goal_access_request" | "goal_review"
 	Approval  *ApprovalAction
 }
 

@@ -97,7 +97,7 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 	}
 	cmd := podiomexec.Command(ctx, c.bin, args...)
 	cmd.Dir = req.Settings.WorkspaceDir
-	cmd.Env = c.env(req.Settings.ProfileDir)
+	cmd.Env = c.env(req.Settings.ProfileDir, req.Settings.ToolPathDirs)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -250,7 +250,7 @@ func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (ca
 	helpCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := podiomexec.Command(helpCtx, c.bin, "--help")
-	cmd.Env = c.env(req.ProfileDir)
+	cmd.Env = c.env(req.ProfileDir, nil)
 	raw, err := cmd.CombinedOutput()
 	if helpCtx.Err() != nil {
 		err = helpCtx.Err()
@@ -369,12 +369,30 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 	return path, nil
 }
 
-func (c *Claude) env(profileDir string) []string {
-	env := os.Environ()
+func (c *Claude) env(profileDir string, toolPathDirs []string) []string {
+	env := prependPath(os.Environ(), toolPathDirs)
 	if profileDir == "" {
 		return unsetEnv(env, "CLAUDE_CONFIG_DIR")
 	}
 	return append(unsetEnv(env, "CLAUDE_CONFIG_DIR"), "CLAUDE_CONFIG_DIR="+profileDir)
+}
+
+// prependPath puts the agent's tool directories ahead of the inherited PATH so
+// a workspace-installed tool wins over a same-named host tool for this agent
+// only. No-op without dirs.
+func prependPath(env, dirs []string) []string {
+	if len(dirs) == 0 {
+		return env
+	}
+	prefix := strings.Join(dirs, string(os.PathListSeparator))
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			out := append([]string(nil), env...)
+			out[i] = "PATH=" + prefix + string(os.PathListSeparator) + kv[len("PATH="):]
+			return out
+		}
+	}
+	return append(append([]string(nil), env...), "PATH="+prefix)
 }
 
 func writeClaudeInput(stdin io.WriteCloser, message string, history []store.Message, resumed bool) error {

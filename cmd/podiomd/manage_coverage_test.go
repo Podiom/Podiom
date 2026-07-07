@@ -47,12 +47,13 @@ var notManageable = map[string]string{
 	"/api/push/vapid":            "web push transport",
 	"/api/push/subscribe":        "web push transport",
 	"/api/push/unsubscribe":      "web push transport",
+	"/api/access-requests/":      "approve/deny decisions are human-only; an agent must never grant its own request",
 }
 
 // coveredRoutes is the union of every route the manage tools declare they hit.
 func coveredRoutes() map[string]bool {
 	covered := map[string]bool{}
-	for _, tl := range manageTools(newManageClient("127.0.0.1:8787")) {
+	for _, tl := range manageTools(newManageClient("127.0.0.1:8787"), "", "") {
 		for _, r := range tl.APIRoutes {
 			covered[r] = true
 		}
@@ -89,7 +90,7 @@ func TestManageToolRoutesExist(t *testing.T) {
 	for _, pattern := range server.APIRoutePatterns() {
 		real[pattern] = true
 	}
-	for _, tl := range manageTools(newManageClient("127.0.0.1:8787")) {
+	for _, tl := range manageTools(newManageClient("127.0.0.1:8787"), "", "") {
 		if len(tl.APIRoutes) == 0 {
 			t.Errorf("tool %q declares no APIRoutes; every management tool must map to at least one route", tl.Name)
 			continue

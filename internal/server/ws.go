@@ -36,12 +36,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
-	// Track the live connection so a token rotation can force-close it (HA12).
-	s.registerWS(conn)
+	writer := &wsWriter{conn: conn}
+	// Track the live connection so a token rotation can force-close it (HA12)
+	// and goal-event broadcasts can reach it.
+	s.registerWS(conn, writer)
 	defer s.unregisterWS(conn)
 
 	ctx := r.Context()
-	writer := &wsWriter{conn: conn}
 	defer s.turns.detach(writer)
 	_ = writer.write(ctx, ServerMessage{Type: "hello"})
 	_ = s.writeState(ctx, writer)
@@ -74,13 +75,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) registerWS(conn *websocket.Conn) {
+func (s *Server) registerWS(conn *websocket.Conn, writer *wsWriter) {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
 	if s.wsConns == nil {
-		s.wsConns = map[*websocket.Conn]struct{}{}
+		s.wsConns = map[*websocket.Conn]*wsWriter{}
 	}
-	s.wsConns[conn] = struct{}{}
+	s.wsConns[conn] = writer
 }
 
 func (s *Server) unregisterWS(conn *websocket.Conn) {
@@ -103,6 +104,27 @@ func (s *Server) closeAllWS(code websocket.StatusCode, reason string) {
 	s.wsMu.Unlock()
 	for _, c := range conns {
 		go func(c *websocket.Conn) { _ = c.Close(code, reason) }(c)
+	}
+}
+
+// broadcastWS fans one message out to every live WebSocket connection. Writes
+// run concurrently with their own timeout so one dead or slow client can never
+// stall the caller or the other clients; connection cleanup stays with the
+// per-connection read loop (unregisterWS). Used for goal events only — turn
+// traffic keeps its per-turn subscriber fanout.
+func (s *Server) broadcastWS(msg ServerMessage) {
+	s.wsMu.Lock()
+	writers := make([]*wsWriter, 0, len(s.wsConns))
+	for _, w := range s.wsConns {
+		writers = append(writers, w)
+	}
+	s.wsMu.Unlock()
+	for _, w := range writers {
+		go func(w *wsWriter) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = w.write(ctx, msg)
+		}(w)
 	}
 }
 

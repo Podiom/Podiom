@@ -151,6 +151,9 @@ type AgentPaths struct {
 	Agents    string
 	Memory    string
 	Workspace string
+	// Tools is the per-agent workspace-tool directory (installs, manifest);
+	// see docs/requirements/workspace-tool-installs.md.
+	Tools string
 }
 
 func validateAgentName(name string) error {

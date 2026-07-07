@@ -5,8 +5,10 @@
     getAgent,
     getMCP,
     getMemory,
+    listAgentTools,
     listDreams,
     listProfiles,
+    removeAgentTool,
     updateAgent,
   } from "../lib/api";
   import {
@@ -21,7 +23,8 @@
   import MemoryPanel from "../lib/MemoryPanel.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { agentGradient, avatarStyle, initial, modeChip, providerChip } from "../lib/theme";
-  import type { Agent, Dream, MCPServer, MemoryInfo, ProfileInfo, ProviderCapabilities } from "../lib/types";
+  import type { Agent, Dream, MCPServer, MemoryInfo, ProfileInfo, ProviderCapabilities, WorkspaceTool } from "../lib/types";
+  import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   // A fallback chain row: a provider plus an optional profile. Encodes to a
   // single token (profile name when set, otherwise the bare provider).
@@ -53,12 +56,44 @@
   let detailSoul = $state("");
   let dreamOverlayOpen = $state(false);
 
+  // Workspace tools (installed via approved cli_tool access requests).
+  let workspaceTools = $state<WorkspaceTool[]>([]);
+  let pendingToolRemove = $state<WorkspaceTool | null>(null);
+  let toolRemoveBusy = $state(false);
+  let toolRemoveError = $state<string | null>(null);
+
+  async function loadWorkspaceTools(name: string) {
+    try {
+      const tools = await listAgentTools(name);
+      if (selected?.Name === name) workspaceTools = tools;
+    } catch {
+      // Optional surface; the panel simply stays empty.
+    }
+  }
+
+  async function confirmToolRemove() {
+    if (!selected || !pendingToolRemove) return;
+    toolRemoveBusy = true;
+    toolRemoveError = null;
+    try {
+      await removeAgentTool(selected.Name, pendingToolRemove.tool);
+      pendingToolRemove = null;
+      await loadWorkspaceTools(selected.Name);
+    } catch (e) {
+      toolRemoveError = e instanceof Error ? e.message : "Remove failed.";
+    } finally {
+      toolRemoveBusy = false;
+    }
+  }
+
   async function openAgent(a: Agent) {
     selected = a;
     memoryInfo = null;
     dreams = [];
     detailSoul = "";
+    workspaceTools = [];
     void loadMemory(a.Name);
+    void loadWorkspaceTools(a.Name);
     try {
       const detail = await getAgent(a.Name);
       if (selected?.Name === a.Name) detailSoul = detail.Soul;
@@ -454,11 +489,45 @@
           <div class="ad-spec"><span>Permission</span><span class="mono">{a.PermissionMode}</span></div>
           <div class="ad-spec"><span>Workspace</span><span class="mono">~/.podiom/agents/{a.Name}</span></div>
         </div>
+
+        {#if workspaceTools.length > 0}
+          <div class="ad-panel">
+            <div class="label-mono" style="margin-bottom:6px">workspace tools</div>
+            <div class="ad-tools-note">Installed by Podiom on approved goal requests; only {a.Name} sees them on PATH.</div>
+            {#each workspaceTools as t (t.tool)}
+              <div class="ad-tool">
+                <div class="ad-tool-main">
+                  <span class="ad-tool-name mono">{t.tool}</span>
+                  <span class="ad-tool-meta mono">{t.installer}{t.version ? ` · ${t.version}` : ""}</span>
+                  {#if t.broken}<span class="ad-tool-broken mono" title="The manifest lists this tool but its executable is missing on disk.">broken</span>{/if}
+                </div>
+                {#if t.version_output}
+                  <div class="ad-tool-version mono">{t.version_output}</div>
+                {/if}
+                <button class="ad-tool-remove" title="Remove this tool" onclick={() => { toolRemoveError = null; pendingToolRemove = t; }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
 
     <DreamJournal agentName={a.Name} {dreams} />
   </div>
+
+  {#if pendingToolRemove}
+    <ConfirmModal
+      title={`Remove ${pendingToolRemove.tool}?`}
+      message={`This uninstalls ${pendingToolRemove.tool} from ${a.Name}'s workspace and removes it from the manifest. The agent can request it again if it still needs it.`}
+      confirmLabel="Remove tool"
+      busy={toolRemoveBusy}
+      error={toolRemoveError}
+      onConfirm={confirmToolRemove}
+      onCancel={() => (pendingToolRemove = null)}
+    />
+  {/if}
 
   {#if dreamOverlayOpen}
     <DreamOverlay
@@ -1138,5 +1207,64 @@
     .ed-key {
       width: auto;
     }
+  }
+  .ad-tools-note {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted-2);
+    margin-bottom: 12px;
+  }
+  .ad-tool {
+    position: relative;
+    padding: 9px 34px 9px 0;
+    border-top: 1px solid var(--line-3);
+  }
+  .ad-tool-main {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .ad-tool-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .ad-tool-meta {
+    font-size: 11px;
+    color: var(--faint);
+  }
+  .ad-tool-broken {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #fbeae0;
+    color: #b14e2a;
+    border: 1px solid #f2d6c5;
+  }
+  .ad-tool-version {
+    font-size: 11px;
+    color: var(--faint);
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+  }
+  .ad-tool-remove {
+    position: absolute;
+    right: 0;
+    top: 10px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--field-line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--muted-2);
+  }
+  .ad-tool-remove:hover {
+    color: #a23e22;
+    border-color: #e7c3b5;
   }
 </style>

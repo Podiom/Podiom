@@ -10,6 +10,7 @@
   import type { Agent, Health, PermissionMode, ProfileInfo, Provider, UpdateStatus } from "./lib/types";
   import Chat from "./pages/Chat.svelte";
   import Roadmap from "./pages/Roadmap.svelte";
+  import Goals from "./pages/Goals.svelte";
   import Agents from "./pages/Agents.svelte";
   import Schedules from "./pages/Schedules.svelte";
   import Projects from "./pages/Projects.svelte";
@@ -18,7 +19,7 @@
   import Terminal from "./pages/Terminal.svelte";
   import type { PushState } from "./lib/live.svelte";
 
-  type Route = "chat" | "roadmap" | "projects" | "agents" | "schedules" | "skills" | "terminal" | "settings";
+  type Route = "chat" | "roadmap" | "goals" | "projects" | "agents" | "schedules" | "skills" | "terminal" | "settings";
   type SettingsTab = "global" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
@@ -37,6 +38,11 @@
       key: "roadmap",
       label: "Roadmap",
       icon: '<rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="10.5" y="3" width="6" height="11" rx="1.5"/><rect x="18" y="3" width="3" height="7" rx="1.5"/>',
+    },
+    {
+      key: "goals",
+      label: "Goals",
+      icon: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.6"/>',
     },
     {
       key: "projects",
@@ -80,6 +86,7 @@
   let daemonStatus = $state<"connecting" | "live" | "offline">("connecting");
   let agents = $state<Agent[]>([]);
   let chatTarget = $state<ChatTarget | null>(null);
+  let goalTarget = $state<string | null>(null);
   let releaseNotesFocusToken = $state(0);
   let settingsFocusTab = $state<SettingsTab>("global");
   let settingsFocusToken = $state(0);
@@ -122,6 +129,10 @@
     // push taps to open the relevant chat session.
     live.connect();
     live.setNavigator((sessionId) => openChat({ sessionId }));
+    live.setGoalNavigator((goalId) => {
+      goalTarget = goalId;
+      route = "goals";
+    });
     await refreshPushStatus();
     await refreshHealth();
     await refreshAgents();
@@ -393,6 +404,9 @@
           {#if item.key === "chat" && live.attention.size > 0}
             <span class="nav-badge" title="A session needs your attention">{live.attention.size}</span>
           {/if}
+          {#if item.key === "goals" && live.goalAttention.size > 0}
+            <span class="nav-badge" title="A goal needs your attention">{live.goalAttention.size}</span>
+          {/if}
         </button>
       {/each}
     </nav>
@@ -454,6 +468,8 @@
       <Chat {agents} target={chatTarget} onConsumeTarget={() => (chatTarget = null)} />
     {:else if route === "roadmap"}
       <Roadmap {agents} onOpenChat={openChat} />
+    {:else if route === "goals"}
+      <Goals {agents} target={goalTarget} onConsumeTarget={() => (goalTarget = null)} onOpenChat={openChat} />
     {:else if route === "projects"}
       <Projects {agents} onOpenChat={openChat} />
     {:else if route === "agents"}
@@ -545,10 +561,14 @@
     {#each live.toasts as t (t.id)}
       <button
         class="toast"
-        class:permission={t.kind === "permission"}
-        class:plan={t.kind === "plan"}
+        class:permission={t.kind === "permission" || t.kind === "goal_access_request"}
+        class:plan={t.kind === "plan" || t.kind === "goal_review"}
         onclick={() => {
-          live.navigateToSession(t.sessionId);
+          if (t.goalId) {
+            live.navigateToGoal(t.goalId);
+          } else {
+            live.navigateToSession(t.sessionId);
+          }
           live.dismissToast(t.id);
         }}>
         <span class="toast-dot"></span>

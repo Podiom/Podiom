@@ -56,10 +56,11 @@ type Server struct {
 	// haMode is true when running as a Home Assistant app: self-update is
 	// refused (HA26) and the SPA gets the "ha" deployment hint (HA10).
 	haMode bool
-	// wsConns tracks live WebSocket connections so a token rotation can
-	// force-close them (HA12).
+	// wsConns tracks live WebSocket connections (with their serialized writers)
+	// so a token rotation can force-close them (HA12) and goal events can be
+	// broadcast to every open dashboard.
 	wsMu    sync.Mutex
-	wsConns map[*websocket.Conn]struct{}
+	wsConns map[*websocket.Conn]*wsWriter
 }
 
 // Options configures the server.

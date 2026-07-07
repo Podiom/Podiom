@@ -27,6 +27,7 @@ type webPushPayload struct {
 	Title     string          `json:"title"`
 	Body      string          `json:"body"`
 	SessionID string          `json:"session_id"`
+	GoalID    string          `json:"goal_id,omitempty"`
 	Kind      string          `json:"kind"`
 	Approval  *ApprovalAction `json:"approval,omitempty"`
 }
@@ -87,6 +88,7 @@ func webPushPayloadForNotification(n Notification) webPushPayload {
 		Title:     n.Title,
 		Body:      n.Body,
 		SessionID: n.SessionID,
+		GoalID:    n.GoalID,
 		Kind:      n.Kind,
 		Approval:  n.Approval,
 	}
