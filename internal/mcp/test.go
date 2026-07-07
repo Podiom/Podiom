@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -129,6 +130,13 @@ func (r *testRun) fail(format string, args ...any) {
 
 func (r *testRun) testStdio(ctx context.Context, server Server) {
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
+	if resolved := resolveEnvPairs(server.EnvVars); len(resolved) > 0 {
+		env := append([]string(nil), os.Environ()...)
+		for _, kv := range resolved {
+			env = append(env, kv.Name+"="+kv.Value)
+		}
+		cmd.Env = env
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		r.fail("open stdin: %v", err)

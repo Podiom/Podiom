@@ -293,13 +293,20 @@ export interface MCPEnvStatus {
   set: boolean;
 }
 
+export interface MCPEnvVar {
+  name: string;
+  // Value is optional: omit/blank it to pass the var through from the
+  // daemon's own OS environment instead of storing a value in Podiom.
+  value?: string;
+}
+
 export interface MCPServer {
   name: string;
   transport: MCPTransport;
   url?: string;
   command?: string;
   args?: string[];
-  env_vars?: string[];
+  env_vars?: MCPEnvVar[];
   sources?: MCPSource[];
   env_status?: MCPEnvStatus[];
 }

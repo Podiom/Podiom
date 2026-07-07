@@ -30,7 +30,7 @@ func TestLoadUserFileReadsLegacyAuthEnvAndWritesEnvVars(t *testing.T) {
 	if len(servers) != 2 {
 		t.Fatalf("servers len = %d", len(servers))
 	}
-	if got := strings.Join(servers[0].EnvVars, ","); got != "GITHUB_TOKEN" {
+	if got := envNames(servers[0].EnvVars); got != "GITHUB_TOKEN" {
 		t.Fatalf("legacy auth_env not mapped to env_vars: %q", got)
 	}
 	if err := SaveUserFile(path, servers); err != nil {
@@ -60,9 +60,9 @@ func TestEnvVarsPreserveOrderAndDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	want := []string{"HASS_TOKEN", "HASS_URL", "ANTHROPIC_API_KEY"}
-	if got := servers[0].EnvVars; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("env_vars order/dedupe = %v, want %v", got, want)
+	want := "HASS_TOKEN,HASS_URL,ANTHROPIC_API_KEY"
+	if got := envNames(servers[0].EnvVars); got != want {
+		t.Fatalf("env_vars order/dedupe = %q, want %q", got, want)
 	}
 	if err := SaveUserFile(path, servers); err != nil {
 		t.Fatalf("save: %v", err)
@@ -71,8 +71,153 @@ func TestEnvVarsPreserveOrderAndDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := reloaded[0].EnvVars; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("env_vars order not preserved after save/reload = %v, want %v", got, want)
+	if got := envNames(reloaded[0].EnvVars); got != want {
+		t.Fatalf("env_vars order not preserved after save/reload = %q, want %q", got, want)
+	}
+}
+
+func envNames(vars EnvVars) string {
+	names := make([]string, len(vars))
+	for i, kv := range vars {
+		names[i] = kv.Name
+	}
+	return strings.Join(names, ",")
+}
+
+func TestEnvVarsStoreValuesAndRoundTripAsYAMLMapping(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.yaml")
+	server := Server{
+		Name:      "unifi-network",
+		Transport: TransportStdio,
+		Command:   "/usr/local/bin/uvx",
+		Args:      []string{"unifi-network-mcp@latest"},
+		EnvVars: EnvVars{
+			{Name: "UNIFI_NETWORK_HOST", Value: "192.168.1.7"},
+			{Name: "UNIFI_NETWORK_PORT", Value: "8443"},
+			{Name: "UNIFI_NETWORK_USERNAME", Value: "mar-schmidt"},
+			{Name: "UNIFI_NETWORK_PASSWORD", Value: "D69H3rmgY7"},
+		},
+	}
+	if err := UpsertUserServer(path, server); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	text := mustRead(t, path)
+	if strings.Contains(text, "[") && strings.Contains(text, "=") {
+		t.Fatalf("expected a real YAML mapping, not a flow-style KEY=value list:\n%s", text)
+	}
+	if !strings.Contains(text, `UNIFI_NETWORK_HOST: "192.168.1.7"`) {
+		t.Fatalf("expected env_vars written as a YAML mapping with real values:\n%s", text)
+	}
+
+	servers, err := LoadUserFile(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("servers len = %d", len(servers))
+	}
+	if got := envNames(servers[0].EnvVars); got != "UNIFI_NETWORK_HOST,UNIFI_NETWORK_PORT,UNIFI_NETWORK_USERNAME,UNIFI_NETWORK_PASSWORD" {
+		t.Fatalf("order not preserved: %q", got)
+	}
+	for _, want := range server.EnvVars {
+		var got string
+		for _, kv := range servers[0].EnvVars {
+			if kv.Name == want.Name {
+				got = kv.Value
+			}
+		}
+		if got != want.Value {
+			t.Fatalf("env var %s value = %q, want %q", want.Name, got, want.Value)
+		}
+	}
+}
+
+func TestEnvVarsMigrateLegacyKeyEqualsValueString(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.yaml")
+	if err := os.WriteFile(path, []byte(`mcp_servers:
+  - name: unifi-network
+    transport: stdio
+    command: /usr/local/bin/uvx
+    args: ["unifi-network-mcp@latest"]
+    env_vars: [UNIFI_NETWORK_HOST="192.168.1.7", UNIFI_NETWORK_PORT="8443", BARE_NAME]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := LoadUserFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("servers len = %d", len(servers))
+	}
+	got := servers[0].EnvVars
+	want := EnvVars{
+		{Name: "UNIFI_NETWORK_HOST", Value: "192.168.1.7"},
+		{Name: "UNIFI_NETWORK_PORT", Value: "8443"},
+		{Name: "BARE_NAME", Value: ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("migrated env_vars = %+v, want %+v", got, want)
+	}
+	for i, kv := range want {
+		if got[i] != kv {
+			t.Fatalf("migrated env_vars[%d] = %+v, want %+v", i, got[i], kv)
+		}
+	}
+}
+
+func TestValidateServerRejectsMalformedEnvVarName(t *testing.T) {
+	s := Server{
+		Name:      "bad",
+		Transport: TransportStdio,
+		Command:   "echo",
+		EnvVars:   EnvVars{{Name: `FOO="bar"`, Value: ""}},
+	}
+	if err := ValidateServer(s); err == nil {
+		t.Fatal("expected validation error for malformed env var name")
+	}
+}
+
+func TestClaudeAndCodexConfigsInjectResolvedEnvValues(t *testing.T) {
+	t.Setenv("FROM_OS_ENV", "os-value")
+	server := Server{
+		Name:      "unifi-network",
+		Transport: TransportStdio,
+		Command:   "/usr/local/bin/uvx",
+		Args:      []string{"unifi-network-mcp@latest"},
+		EnvVars: EnvVars{
+			{Name: "UNIFI_NETWORK_PASSWORD", Value: "D69H3rmgY7"},
+			{Name: "FROM_OS_ENV"},
+		},
+	}
+	claudeCfg := ClaudeConfig([]Server{server}, nil)
+	mcpServers, ok := claudeCfg["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatalf("claude config missing mcpServers: %+v", claudeCfg)
+	}
+	entry, ok := mcpServers["unifi-network"].(map[string]any)
+	if !ok {
+		t.Fatalf("claude config missing server entry: %+v", mcpServers)
+	}
+	env, ok := entry["env"].(map[string]string)
+	if !ok {
+		t.Fatalf("claude config server entry missing env map: %+v", entry)
+	}
+	if env["UNIFI_NETWORK_PASSWORD"] != "D69H3rmgY7" {
+		t.Fatalf("claude config env stored value = %q", env["UNIFI_NETWORK_PASSWORD"])
+	}
+	if env["FROM_OS_ENV"] != "os-value" {
+		t.Fatalf("claude config env os-fallback value = %q", env["FROM_OS_ENV"])
+	}
+
+	profile, _ := CodexProfile([]Server{server}, nil)
+	if !strings.Contains(profile, `UNIFI_NETWORK_PASSWORD = "D69H3rmgY7"`) {
+		t.Fatalf("codex profile missing stored env value:\n%s", profile)
+	}
+	if !strings.Contains(profile, `FROM_OS_ENV = "os-value"`) {
+		t.Fatalf("codex profile missing os-fallback env value:\n%s", profile)
 	}
 }
 

@@ -107,7 +107,7 @@ func newMCPAddCmd(addr *string) *cobra.Command {
 				URL:       url,
 				Command:   command,
 				Args:      args,
-				EnvVars:   envs,
+				EnvVars:   parseEnvFlags(envs),
 			}
 			c, err := mcpClient(addr)
 			if err != nil {
@@ -125,8 +125,20 @@ func newMCPAddCmd(addr *string) *cobra.Command {
 	cmd.Flags().StringVar(&url, "url", "", "HTTP MCP URL")
 	cmd.Flags().StringVar(&command, "command", "", "stdio command")
 	cmd.Flags().StringArrayVar(&args, "arg", nil, "stdio command arg (repeatable)")
-	cmd.Flags().StringArrayVar(&envs, "env", nil, "environment variable name to track (repeatable)")
+	cmd.Flags().StringArrayVar(&envs, "env", nil, "env var, NAME or NAME=VALUE (repeatable); bare NAME tracks/passes through the daemon's own environment")
 	return cmd
+}
+
+// parseEnvFlags turns repeated --env flags into EnvVars. "NAME=VALUE" stores
+// that value; a bare "NAME" leaves the value blank so Podiom falls back to
+// whatever the daemon's own OS environment has under that name.
+func parseEnvFlags(envs []string) podiommcp.EnvVars {
+	var out podiommcp.EnvVars
+	for _, e := range envs {
+		name, value, _ := strings.Cut(e, "=")
+		out = append(out, podiommcp.EnvVar{Name: strings.TrimSpace(name), Value: value})
+	}
+	return out
 }
 
 func newMCPRemoveCmd(addr *string) *cobra.Command {

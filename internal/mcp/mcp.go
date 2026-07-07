@@ -45,10 +45,78 @@ type Server struct {
 	URL            string      `json:"url,omitempty" yaml:"url,omitempty"`
 	Command        string      `json:"command,omitempty" yaml:"command,omitempty"`
 	Args           []string    `json:"args,omitempty" yaml:"args,omitempty"`
-	EnvVars        []string    `json:"env_vars,omitempty" yaml:"env_vars,omitempty"`
+	EnvVars        EnvVars     `json:"env_vars,omitempty" yaml:"env_vars,omitempty"`
 	Sources        []Source    `json:"sources,omitempty" yaml:"-"`
 	EnvStatus      []EnvStatus `json:"env_status,omitempty" yaml:"-"`
 	CodexTablePath string      `json:"-" yaml:"-"`
+}
+
+// EnvVar is one environment variable an MCP stdio server needs. Value is
+// optional: leave it blank to fall back to whatever the daemon's own OS
+// environment already has under Name (the original pass-through model),
+// or set it to have Podiom store and inject that value itself.
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+}
+
+// EnvVars is an ordered list of EnvVar. It marshals to/from YAML as a real
+// mapping (`env_vars:\n  KEY: "value"`), preserving insertion order rather
+// than the alphabetical order a plain Go map would produce, and it accepts
+// older catalogue files that stored env_vars as a flow-style list of bare
+// names (or, from before validation existed, a stray `KEY="value"` string
+// typed into a names-only field) by migrating them into Name/Value pairs.
+type EnvVars []EnvVar
+
+func (e EnvVars) MarshalYAML() (any, error) {
+	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, kv := range e {
+		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: kv.Name}
+		valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: kv.Value, Style: yaml.DoubleQuotedStyle}
+		node.Content = append(node.Content, keyNode, valNode)
+	}
+	return node, nil
+}
+
+func (e *EnvVars) UnmarshalYAML(value *yaml.Node) error {
+	*e = nil
+	switch value.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			var name, val string
+			if err := value.Content[i].Decode(&name); err != nil {
+				return err
+			}
+			if err := value.Content[i+1].Decode(&val); err != nil {
+				return err
+			}
+			*e = append(*e, EnvVar{Name: name, Value: val})
+		}
+	case yaml.SequenceNode:
+		for _, item := range value.Content {
+			var s string
+			if err := item.Decode(&s); err != nil {
+				return err
+			}
+			*e = append(*e, parseLegacyEnvVar(s))
+		}
+	}
+	return nil
+}
+
+// parseLegacyEnvVar interprets one entry from the pre-value catalogue format:
+// a bare name ("FOO") or, from the confusing single-field UI this replaces, a
+// name someone typed a value into by hand ("FOO=bar" or `FOO="bar"`).
+func parseLegacyEnvVar(s string) EnvVar {
+	name, val, ok := strings.Cut(s, "=")
+	if !ok {
+		return EnvVar{Name: strings.TrimSpace(s)}
+	}
+	val = strings.TrimSpace(val)
+	if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+		val = val[1 : len(val)-1]
+	}
+	return EnvVar{Name: strings.TrimSpace(name), Value: val}
 }
 
 type Catalogue struct {
@@ -73,7 +141,7 @@ type rawYAMLServer struct {
 	URL       string    `yaml:"url"`
 	Command   string    `yaml:"command"`
 	Args      []string  `yaml:"args"`
-	EnvVars   []string  `yaml:"env_vars"`
+	EnvVars   EnvVars   `yaml:"env_vars"`
 	AuthEnv   any       `yaml:"auth_env"`
 }
 
@@ -211,10 +279,16 @@ func ValidateServer(s Server) error {
 	default:
 		return fmt.Errorf("mcp server %q: transport must be http or stdio", s.Name)
 	}
+	for _, kv := range s.EnvVars {
+		if !envVarName.MatchString(kv.Name) {
+			return fmt.Errorf("mcp server %q: invalid env var name %q (expected a bare NAME like UNIFI_NETWORK_HOST, not a NAME=value pair)", s.Name, kv.Name)
+		}
+	}
 	return nil
 }
 
 var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var envVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func ImportClaude(path string) ([]Server, error) {
 	raw, err := os.ReadFile(path)
@@ -318,6 +392,25 @@ func Checks(cat Catalogue, assigned []string) []Check {
 	return out
 }
 
+// resolveEnvPairs turns a server's declared env vars into the pairs that
+// should actually be injected into its subprocess: a stored Value wins,
+// otherwise it falls back to the daemon's own OS environment (the original
+// pass-through model). Entries that resolve to nothing (no stored value and
+// unset in the OS environment) are dropped rather than injected as empty.
+func resolveEnvPairs(vars EnvVars) EnvVars {
+	var out EnvVars
+	for _, kv := range vars {
+		val := kv.Value
+		if val == "" {
+			val = os.Getenv(kv.Name)
+		}
+		if val != "" {
+			out = append(out, EnvVar{Name: kv.Name, Value: val})
+		}
+	}
+	return out
+}
+
 func ClaudeConfig(servers []Server, permission map[string]any) map[string]any {
 	mcpServers := map[string]any{}
 	for _, s := range servers {
@@ -337,10 +430,10 @@ func CodexProfile(assigned []Server, all []Server) (string, []string) {
 		assignedSet[s.Name] = true
 		switch s.Transport {
 		case TransportStdio:
-			writeCodexServer(&b, tablePath(s), s.Name, s.Command, s.Args, true)
+			writeCodexServer(&b, tablePath(s), s.Name, s.Command, s.Args, s.EnvVars, true)
 		case TransportHTTP:
 			if HasMCPProxy() {
-				writeCodexServer(&b, tablePath(s), s.Name, "mcp-proxy", []string{s.URL}, true)
+				writeCodexServer(&b, tablePath(s), s.Name, "mcp-proxy", []string{s.URL}, s.EnvVars, true)
 			} else {
 				unavailable = append(unavailable, s.Name)
 			}
@@ -356,11 +449,11 @@ func CodexProfile(assigned []Server, all []Server) (string, []string) {
 		}
 		switch s.Transport {
 		case TransportStdio:
-			writeCodexServer(&b, path, s.Name, s.Command, s.Args, false)
+			writeCodexServer(&b, path, s.Name, s.Command, s.Args, nil, false)
 			b.WriteString("enabled = false\n")
 		case TransportHTTP:
 			if HasMCPProxy() {
-				writeCodexServer(&b, path, s.Name, "mcp-proxy", []string{s.URL}, false)
+				writeCodexServer(&b, path, s.Name, "mcp-proxy", []string{s.URL}, nil, false)
 				b.WriteString("enabled = false\n")
 			}
 		}
@@ -493,11 +586,13 @@ func serverFromMap(name string, cfg map[string]any, src Source) Server {
 	s.URL = firstNonEmpty(stringValue(cfg["url"]), stringValue(cfg["server_url"]))
 	s.Args = stringSlice(cfg["args"])
 	if envMap, ok := cfg["env"].(map[string]any); ok {
-		for k := range envMap {
-			s.EnvVars = append(s.EnvVars, k)
+		for k, v := range envMap {
+			s.EnvVars = append(s.EnvVars, EnvVar{Name: k, Value: stringValue(v)})
 		}
 	}
-	s.EnvVars = append(s.EnvVars, stringSlice(cfg["env_vars"])...)
+	for _, name := range stringSlice(cfg["env_vars"]) {
+		s.EnvVars = append(s.EnvVars, EnvVar{Name: name})
+	}
 	s.EnvVars = append(s.EnvVars, envVarsFromLegacy(cfg["auth_env"])...)
 	if transport := stringValue(cfg["transport"]); transport != "" {
 		s.Transport = Transport(strings.ToLower(transport))
@@ -520,10 +615,17 @@ func claudeServerConfig(s Server) map[string]any {
 	if len(s.Args) > 0 {
 		out["args"] = s.Args
 	}
+	if resolved := resolveEnvPairs(s.EnvVars); len(resolved) > 0 {
+		env := make(map[string]string, len(resolved))
+		for _, kv := range resolved {
+			env[kv.Name] = kv.Value
+		}
+		out["env"] = env
+	}
 	return out
 }
 
-func writeCodexServer(b *strings.Builder, path, name, command string, args []string, approve bool) {
+func writeCodexServer(b *strings.Builder, path, name, command string, args []string, env EnvVars, approve bool) {
 	if path == "" {
 		path = "mcp_servers." + tomlKey(name)
 	}
@@ -531,6 +633,13 @@ func writeCodexServer(b *strings.Builder, path, name, command string, args []str
 	fmt.Fprintf(b, "command = %s\n", tomlString(command))
 	if len(args) > 0 {
 		fmt.Fprintf(b, "args = %s\n", tomlStringArray(args))
+	}
+	if resolved := resolveEnvPairs(env); len(resolved) > 0 {
+		parts := make([]string, 0, len(resolved))
+		for _, kv := range resolved {
+			parts = append(parts, fmt.Sprintf("%s = %s", tomlKey(kv.Name), tomlString(kv.Value)))
+		}
+		fmt.Fprintf(b, "env = { %s }\n", strings.Join(parts, ", "))
 	}
 	if approve {
 		b.WriteString("default_tools_approval_mode = \"approve\"\n")
@@ -736,33 +845,40 @@ func tomlValue(v any) string {
 	}
 }
 
-func envVarsFromLegacy(v any) []string {
+func envVarsFromLegacy(v any) EnvVars {
 	switch x := v.(type) {
 	case nil:
 		return nil
 	case string:
-		return []string{x}
+		return EnvVars{{Name: x}}
 	case []any:
-		var out []string
+		var out EnvVars
 		for _, item := range x {
 			if s, ok := item.(string); ok {
-				out = append(out, s)
+				out = append(out, EnvVar{Name: s})
 			}
 		}
 		return out
 	case []string:
-		return x
+		var out EnvVars
+		for _, s := range x {
+			out = append(out, EnvVar{Name: s})
+		}
+		return out
 	default:
 		return nil
 	}
 }
 
-func envStatus(names []string) []EnvStatus {
-	names = cleanEnvVars(names)
-	out := make([]EnvStatus, 0, len(names))
-	for _, name := range names {
-		_, ok := os.LookupEnv(name)
-		out = append(out, EnvStatus{Name: name, Set: ok})
+func envStatus(vars EnvVars) []EnvStatus {
+	vars = cleanEnvVars(vars)
+	out := make([]EnvStatus, 0, len(vars))
+	for _, kv := range vars {
+		set := kv.Value != ""
+		if !set {
+			_, set = os.LookupEnv(kv.Name)
+		}
+		out = append(out, EnvStatus{Name: kv.Name, Set: set})
 	}
 	return out
 }
@@ -780,18 +896,28 @@ func cleanArgs(values []string) []string {
 	return out
 }
 
-// cleanEnvVars trims, drops empties, and dedupes while preserving first-seen
-// order — env var names are user-ordered like args, so they must never sort.
-func cleanEnvVars(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, v := range values {
-		v = strings.TrimSpace(v)
-		if v == "" || seen[v] {
+// cleanEnvVars trims, drops entries without a name, and dedupes by name while
+// preserving first-seen order — env vars are user-ordered like args, so they
+// must never sort. A later duplicate's value fills in a still-blank value
+// from an earlier occurrence (e.g. merging a name-only import with a
+// user-supplied value) rather than being silently dropped.
+func cleanEnvVars(values EnvVars) EnvVars {
+	seen := map[string]int{}
+	var out EnvVars
+	for _, kv := range values {
+		kv.Name = strings.TrimSpace(kv.Name)
+		kv.Value = strings.TrimSpace(kv.Value)
+		if kv.Name == "" {
 			continue
 		}
-		seen[v] = true
-		out = append(out, v)
+		if i, ok := seen[kv.Name]; ok {
+			if out[i].Value == "" && kv.Value != "" {
+				out[i].Value = kv.Value
+			}
+			continue
+		}
+		seen[kv.Name] = len(out)
+		out = append(out, kv)
 	}
 	return out
 }

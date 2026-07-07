@@ -51,6 +51,24 @@ func strArrProp(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }
 
+// envVarArrProp describes an array of {name, value} env var objects. value is
+// optional: omit it to pass the var through from the daemon's own OS
+// environment instead of storing a value in Podiom.
+func envVarArrProp(desc string) map[string]any {
+	return map[string]any{
+		"type": "array",
+		"items": map[string]any{
+			"type":     "object",
+			"required": []string{"name"},
+			"properties": map[string]any{
+				"name":  strProp("Env var name, e.g. UNIFI_NETWORK_PASSWORD."),
+				"value": strProp("Value to store for this server. Omit to pass the var through from the daemon's own environment instead."),
+			},
+		},
+		"description": desc,
+	}
+}
+
 // confirmProp is the guard shared by every destructive tool.
 var confirmProp = boolProp("Must be true to proceed. Only pass true after the user has explicitly asked for this destructive action.")
 
@@ -582,7 +600,7 @@ func mcpServerTools(c *manageClient) []mcpTool {
 				"url":       strProp("HTTP endpoint (for transport=http)."),
 				"command":   strProp("Command to launch (for transport=stdio)."),
 				"args":      strArrProp("Command arguments (for transport=stdio)."),
-				"env_vars":  strArrProp("Environment variable names to pass through."),
+				"env_vars":  envVarArrProp("Environment variables for the launched process, e.g. [{\"name\":\"UNIFI_NETWORK_PASSWORD\",\"value\":\"...\"}]."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)

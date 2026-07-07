@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getMCP, removeMCPServer, saveMCPServer, setMCPAssignment, testMCPServer } from "../lib/api";
-  import type { MCPAgent, MCPSnapshot, MCPServer, MCPSource, MCPTestResult, SkillDetail, SkillSummary } from "../lib/types";
+  import type { MCPAgent, MCPEnvVar, MCPSnapshot, MCPServer, MCPSource, MCPTestResult, SkillDetail, SkillSummary } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import Discover from "./skills/Discover.svelte";
   import Installed from "./skills/Installed.svelte";
@@ -40,7 +40,8 @@
   let addEndpoint = $state("");
   let addCommand = $state("");
   let addArgs = $state<string[]>([]);
-  let addEnvVars = $state<string[]>([]);
+  let addEnvVars = $state<MCPEnvVar[]>([]);
+  let revealEnvVar = $state<Record<number, boolean>>({});
   let savingServer = $state(false);
   // When set, the add form is editing this existing (podiom-owned) server rather
   // than creating a new one; the name field is locked so save upserts in place.
@@ -138,7 +139,9 @@
     savingServer = true;
     loadError = null;
     try {
-      const env_vars = addEnvVars.map((v) => v.trim()).filter(Boolean);
+      const env_vars = addEnvVars
+        .map((v) => ({ name: v.name.trim(), value: (v.value ?? "").trim() }))
+        .filter((v) => v.name);
       const server: MCPServer = { name: addName.trim(), transport: addTransport, env_vars };
       if (addTransport === "http") {
         server.url = addEndpoint.trim();
@@ -162,6 +165,7 @@
     addCommand = "";
     addArgs = [];
     addEnvVars = [];
+    revealEnvVar = {};
     addTransport = "stdio";
   }
   function toggleAdd() {
@@ -179,7 +183,8 @@
     addEndpoint = server.url ?? "";
     addCommand = server.command ?? "";
     addArgs = [...(server.args ?? [])];
-    addEnvVars = [...(server.env_vars ?? [])];
+    addEnvVars = (server.env_vars ?? []).map((v) => ({ name: v.name, value: v.value ?? "" }));
+    revealEnvVar = {};
     addOpen = true;
     mcpOpen = { ...mcpOpen, [server.name]: false };
   }
@@ -208,16 +213,24 @@
   function updateArg(index: number, value: string) {
     addArgs = addArgs.map((a, i) => (i === index ? value : a));
   }
-  // Env var names, edited one at a time like args, so the order the user
-  // enters them survives; the backend dedupes but never sorts them.
+  // Env vars are name+value pairs, edited one row at a time like args, so the
+  // order the user enters them survives; the backend dedupes by name but
+  // never sorts them. Value is optional: leaving it blank passes the var
+  // through from Podiom's own environment instead of storing a value.
   function addEnvVar() {
-    addEnvVars = [...addEnvVars, ""];
+    addEnvVars = [...addEnvVars, { name: "", value: "" }];
   }
   function removeEnvVar(index: number) {
     addEnvVars = addEnvVars.filter((_, i) => i !== index);
   }
-  function updateEnvVar(index: number, value: string) {
-    addEnvVars = addEnvVars.map((v, i) => (i === index ? value : v));
+  function updateEnvVarName(index: number, name: string) {
+    addEnvVars = addEnvVars.map((v, i) => (i === index ? { ...v, name } : v));
+  }
+  function updateEnvVarValue(index: number, value: string) {
+    addEnvVars = addEnvVars.map((v, i) => (i === index ? { ...v, value } : v));
+  }
+  function toggleRevealEnvVar(index: number) {
+    revealEnvVar = { ...revealEnvVar, [index]: !revealEnvVar[index] };
   }
   function canSaveServer(): boolean {
     if (!addName.trim()) return false;
@@ -267,7 +280,12 @@
       lines.push(`  command: ${server.command ?? ""}`);
       if (server.args?.length) lines.push(`  args: [${server.args.map((a) => JSON.stringify(a)).join(", ")}]`);
     }
-    if (server.env_vars?.length) lines.push(`  env_vars: [${server.env_vars.join(", ")}]`);
+    if (server.env_vars?.length) {
+      lines.push("  env_vars:");
+      for (const v of server.env_vars) {
+        lines.push(v.value ? `    ${v.name}: ${JSON.stringify(v.value)}` : `    ${v.name}: (from environment)`);
+      }
+    }
     return lines.join("\n");
   }
 </script>
@@ -351,13 +369,29 @@
               </div>
             {/if}
             <div class="args-list">
+              <div class="env-hint">Environment variables, name and value. Leave value blank to pass the var through from Podiom's own environment instead.</div>
               {#each addEnvVars as envVar, i (i)}
-                <div class="arg-row">
+                <div class="env-row">
                   <input
-                    value={envVar}
-                    oninput={(e) => updateEnvVar(i, e.currentTarget.value)}
-                    placeholder="ENV_VAR_NAME"
+                    class="env-name"
+                    value={envVar.name}
+                    oninput={(e) => updateEnvVarName(i, e.currentTarget.value)}
+                    placeholder="UNIFI_NETWORK_PASSWORD"
                   />
+                  <input
+                    class="env-value"
+                    type={revealEnvVar[i] ? "text" : "password"}
+                    autocomplete="off"
+                    value={envVar.value}
+                    oninput={(e) => updateEnvVarValue(i, e.currentTarget.value)}
+                    placeholder="value (optional)"
+                  />
+                  <button
+                    type="button"
+                    class="env-reveal"
+                    title={revealEnvVar[i] ? "Hide value" : "Show value"}
+                    onclick={() => toggleRevealEnvVar(i)}
+                  >{revealEnvVar[i] ? "hide" : "show"}</button>
                   <button type="button" class="arg-remove" title="Remove env var" onclick={() => removeEnvVar(i)}>×</button>
                 </div>
               {/each}
@@ -518,6 +552,12 @@
   .arg-remove:hover { border-color: #d9663d; background: #fdf2ee; }
   .arg-add { align-self: flex-start; padding: 7px 12px; border: 1px dashed #d9cdba; border-radius: 11px; background: transparent; color: #7a6f62; font: 600 12px "JetBrains Mono", monospace; cursor: pointer; }
   .arg-add:hover { border-color: #c8a878; color: #2b2520; }
+  .env-hint { font: 500 11px "Hanken Grotesk"; color: #8a7f73; }
+  .env-row { display: flex; gap: 6px; align-items: center; }
+  .env-row .env-name { flex: 1 1 40%; font: 500 12px "JetBrains Mono", monospace; }
+  .env-row .env-value { flex: 1 1 40%; font: 500 12px "JetBrains Mono", monospace; }
+  .env-reveal { flex: none; padding: 0 10px; height: 34px; border: 1px solid #eae0d4; border-radius: 11px; background: #fffdfb; color: #7a6f62; font: 600 11px "Hanken Grotesk"; cursor: pointer; }
+  .env-reveal:hover { border-color: #c8a878; color: #2b2520; }
   .transport { display: flex; gap: 4px; padding: 4px; border-radius: 11px; background: #efe7dc; border: 1px solid #e6dbcc; }
   .matrix { overflow-x: auto; padding: 6px 20px 14px; }
   .matrix-row { display: flex; align-items: center; gap: 6px; min-width: max-content; border-bottom: 1px solid #f5eee4; }

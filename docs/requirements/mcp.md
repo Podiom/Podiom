@@ -25,9 +25,15 @@ Guiding principles:
 1. **Podiom owns a canonical definition, not the native configs.** Podiom never
    edits the user's `~/.claude.json` or `~/.codex/config.toml`. It holds its own
    canonical MCP catalogue and *projects* it into each backend per invocation.
-2. **Podiom never handles credentials.** The canonical definition references
-   secrets by **environment-variable name**, never by value. Actual secrets live
-   in the user's environment / keychain, exactly as both CLIs already require.
+2. **Env values are optional, stored per-server.** Each env var has a name and
+   an *optional* value. A blank value falls back to the daemon's own OS
+   environment (the original pass-through model — actual secret lives outside
+   Podiom). A stored value is kept in the user's own `~/.podiom/mcp.yaml` (a
+   private, single-user file the daemon already treats as sensitive) and
+   injected directly into that server's subprocess/config at launch — this
+   lets a server-specific credential (e.g. a stdio server's own username/
+   password) live with the server definition instead of requiring a
+   daemon-wide env var. See §3.1.
 3. **Per-agent assignment (deliberately unlike skills).** Skills are a shared
    union with no per-agent mapping. MCP servers are the opposite: **each agent is
    explicitly assigned which servers it may use.** This asymmetry is intentional
@@ -65,31 +71,44 @@ assignment** of MCP servers.
 
 ### 3.1 Canonical MCP catalogue (`~/.podiom/mcp.yaml`)
 
-Podiom holds a provider-neutral definition of every known MCP server. Secrets are
-referenced by env-var **name** only (Principle 2).
+Podiom holds a provider-neutral definition of every known MCP server. Each
+stdio server's `env_vars` is an ordered **name → value mapping**; the value is
+optional per entry (Principle 2).
 
 ```yaml
 mcp_servers:
   - name: github
     transport: http                 # http | stdio
     url: https://api.githubcopilot.com/mcp/
-    auth_env: GITHUB_PAT            # NAME of the env var, never the value
   - name: filesystem
     transport: stdio
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "~/projects"]
+  - name: unifi-network
+    transport: stdio
+    command: /usr/local/bin/uvx
+    args: ["unifi-network-mcp@latest"]
+    env_vars:
+      UNIFI_NETWORK_HOST: "192.168.1.7"
+      UNIFI_NETWORK_PORT: "8443"
+      UNIFI_NETWORK_USERNAME: "mar-schmidt"
+      UNIFI_NETWORK_PASSWORD: "D69H3rmgY7"   # stored value, injected at launch
   - name: google-calendar
     transport: stdio
     command: npx
     args: ["-y", "@some/gcal-mcp"]
-    auth_env: GCAL_TOKEN
+    env_vars:
+      GCAL_TOKEN: ""                # blank = pass through from the daemon's OS env
 ```
 
 - **M1** The catalogue is the single canonical, provider-neutral definition of
   known MCP servers.
-- **M2** Secrets are referenced by env-var name only. Podiom MUST NOT store,
-  read, or write secret values. Missing env vars are a user/runtime concern,
-  surfaced (§8) but never resolved by Podiom storing a value.
+- **M2** Each env var has a name and an optional value. A blank value is a
+  pass-through reference (resolved from the daemon's own OS environment at
+  projection time, §5); a non-blank value is stored by Podiom in
+  `~/.podiom/mcp.yaml` and injected directly into that server's
+  command/config at projection time. Podiom never sends stored values
+  anywhere except the server's own subprocess env / generated config entry.
 
 ### 3.2 Catalogue population (read from natives, add via Podiom)
 
@@ -146,6 +165,12 @@ mechanisms:
   supplied servers and ignores all other MCP config sources. This gives strict
   parity (Principle 5) declaratively. Both flags work in non-interactive `-p`
   mode.
+- **M33** Each generated stdio server entry includes an `env` object with the
+  server's resolved env vars (stored value if set, else the daemon's own
+  `os.Getenv(name)`; entries that resolve to nothing are omitted). This is the
+  only place a stored value ever leaves `~/.podiom/mcp.yaml` — written to a
+  per-turn `0600` temp file alongside `command`/`args`, never to
+  `~/.claude.json`.
 
 ### 5.2 Codex — generated profile overlay (test-verified, §9)
 
@@ -199,6 +224,11 @@ working mechanism is a **generated profile file**:
 
   **(Verified: the strict profile above yielded only the assigned server, with
   the assigned tool still working — §9 Step 3.)**
+
+- **M34** An assigned server's table gets the same resolved-env treatment as
+  M33, rendered as an inline TOML table: `env = { KEY = "value", ... }`.
+  Disabled base-server tables (the `enabled = false` stanzas above) never get
+  an `env` line — they exist only to shut the native server off.
 
 - **M13 — Verify via `codex exec`, not `codex mcp list`.** In testing,
   `codex --profile <p> mcp list` did **not** show the profile-injected server,
@@ -270,15 +300,18 @@ underlying data.
   `podiom` (user-added) — mirroring the skills source-badge pattern.
 - **M24** Per server, which agents are assigned it (server-centric view) and, per
   agent, which servers it has (agent-centric view).
-- **M25** **Credential status, by name only.** For a server with `auth_env`,
-  show whether that env var is *present in the environment* (set / unset) — never
-  the value. This helps the user see "GITHUB_PAT is not set" without Podiom ever
-  reading the secret.
+- **M25** **Credential status, by name.** For each env var, show whether it's
+  *resolved* (set / unset) — a stored value counts as set, otherwise it falls
+  back to presence in the daemon's own OS environment. The status indicator
+  never displays the value itself.
 - **M26** **Provider-availability / bridge indicator.** Show whether an assigned
   server is native, bridged (`mcp-proxy`), or unavailable per provider (§6/§7).
 - **M27** Adding a server: a form writing to `~/.podiom/mcp.yaml` (name,
-  transport, command/args or url, `auth_env` name). Podiom instructs that the
-  secret itself goes in the environment, not here.
+  transport, command/args or url, and one row per env var with a name field
+  and an optional value field). A blank value field is a pass-through
+  reference to the daemon's own environment, exactly as before; a filled-in
+  value is stored with the server. Value inputs are masked (type=password)
+  with a per-row reveal toggle, not shown in plaintext by default.
 
 ### 8.3 CLI
 
@@ -335,8 +368,12 @@ The Codex mechanism (§5.2) rests on these observed results, not assumption:
 
 - Editing/enabling MCP servers *inside* the user's native configs (Podiom only
   ever projects; it never writes natives).
-- Automatic secret management (Podiom never handles secret values; env-var name
-  references only).
+- Encryption at rest for stored env var values — `~/.podiom/mcp.yaml` is
+  `0600`, single-user, same trust boundary as `~/.claude.json`/`~/.codex/`
+  today; revisit if Podiom ever becomes multi-user.
+- Secret values for **HTTP-transport** servers — only stdio servers' env vars
+  are ever injected anywhere (§5); an HTTP server's `env_vars` still only
+  drives the credential-status indicator (M25).
 - Project-scoped MCP servers (`.mcp.json` / project `.codex/config.toml`) — v1
   concerns the global/personal level and Podiom's own catalogue.
 - Discipline around **Codex remote-HTTP native support**: if a future Codex gains
@@ -363,8 +400,10 @@ A correct implementation satisfies all of:
    sets `default_tools_approval_mode` appropriately (M11).
 5. Podiom never modifies `~/.claude.json` or `~/.codex/config.toml`, and never
    sets `CLAUDE_CONFIG_DIR` / `CODEX_HOME` for MCP purposes (M4/M14).
-6. Podiom stores no secret values; `mcp.yaml` contains only env-var names, and
-   the UI shows credential status as set/unset by name (M2/M25).
+6. A stdio server's stored env var values are injected into its actual
+   Claude/Codex config projection (M33/M34), not just tracked as a status
+   indicator — a server whose credential Podiom stores connects successfully
+   without that credential being present in the daemon's own OS environment.
 7. An assigned HTTP server reaches a Codex turn via a generated `mcp-proxy` stdio
    bridge (M16), or is honestly surfaced as unavailable if no bridge is possible
    (M15/M19).
