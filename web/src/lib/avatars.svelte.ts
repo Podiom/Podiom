@@ -10,6 +10,7 @@
 //     object URL, cached by name+version so all ~15 render sites share one blob
 //     and a re-upload (new version) transparently cache-busts.
 
+import { untrack } from "svelte";
 import { fetchAgentAvatar } from "./api";
 import type { Agent } from "./types";
 
@@ -26,10 +27,28 @@ class AvatarStore {
   syncFromAgents(agents: Agent[]) {
     const next: Record<string, string> = {};
     for (const a of agents) next[a.Name] = a.AvatarUpdatedAt ?? "";
-    for (const [name, prev] of Object.entries(this.versions)) {
-      if (next[name] !== prev) this.revoke(name, prev);
+    // Read the current map without subscribing: callers run this inside an
+    // $effect keyed on the agents list, so if diffing tracked `versions` too,
+    // our own write below would re-trigger that effect forever
+    // (effect_update_depth_exceeded).
+    const prevVersions = untrack(() => this.versions);
+    let changed = false;
+    for (const [name, prev] of Object.entries(prevVersions)) {
+      if (next[name] !== prev) {
+        this.revoke(name, prev);
+        changed = true;
+      }
     }
-    this.versions = next;
+    // Also treat newly-added agents as a change so the map actually updates.
+    if (!changed) {
+      for (const name of Object.keys(next)) {
+        if (!(name in prevVersions)) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (changed) this.versions = next;
   }
 
   // setVersion updates one agent's stamp directly, for immediate feedback right
