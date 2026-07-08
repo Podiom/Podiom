@@ -244,6 +244,7 @@ type Status struct {
 	RunPermission RunPermission       `json:"run_permission"`
 	AllowedTools  []string            `json:"allowed_tools"`
 	Enabled       bool                `json:"enabled"`
+	GoalID        string              `json:"goal_id,omitempty"`
 	NextRun       *time.Time          `json:"next_run,omitempty"`
 	ParseError    string              `json:"parse_error,omitempty"`
 	Runs          []store.ScheduleRun `json:"runs"`
@@ -271,6 +272,7 @@ func (s *Scheduler) List(ctx context.Context) ([]Status, error) {
 			RunPermission: sc.RunPermission,
 			AllowedTools:  sc.AllowedTools,
 			Enabled:       sc.Enabled,
+			GoalID:        sc.GoalID,
 		}
 		if next := s.nextRun(sc.Name); next != nil {
 			status.NextRun = next
@@ -434,6 +436,7 @@ type CreateParams struct {
 	Every         string
 	RunPermission RunPermission
 	AllowedTools  []string
+	GoalID        string
 	Body          string
 }
 

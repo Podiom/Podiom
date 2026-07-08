@@ -430,6 +430,7 @@ func scheduleTools(c *manageClient) []mcpTool {
 				"effort":         strProp("Effort override (optional)."),
 				"run_permission": strProp("preapproved (default) or yolo."),
 				"allowed_tools":  strArrProp("Tools permitted under preapproved runs."),
+				"goal_id":        strProp("Goal id, if this schedule is part of a goal's plan (optional). Pass the id from your goal brief so this schedule shows up as linked to the goal."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -441,7 +442,7 @@ func scheduleTools(c *manageClient) []mcpTool {
 						return "", err
 					}
 				}
-				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "model", "effort", "run_permission", "allowed_tools")
+				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "model", "effort", "run_permission", "allowed_tools", "goal_id")
 				return c.post(ctx, "/api/schedules", body)
 			},
 		},

@@ -32,7 +32,7 @@ func GoalPlanningPrompt(goal store.Goal) string {
 
 1. Decompose the goal into concrete work:
    - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable).
-   - Create recurring schedules with podiom_create_schedule for work that must repeat.
+   - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id (this goal's ID, above) so it shows up linked to this goal.
 2. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
 3. If you are missing a capability (an MCP server, a skill, a host CLI tool, a credential, or a permission level), file podiom_request_access with a reason the user can act on. Do not work around a missing capability silently.
 4. Do not attempt the work itself in this session — this session only plans and requests.

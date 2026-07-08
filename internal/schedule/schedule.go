@@ -39,6 +39,7 @@ type Schedule struct {
 	RunPermission RunPermission // preapproved (default) | yolo
 	AllowedTools  []string      // preapproved allow-list
 	Enabled       bool          // off switch: a disabled file stays but does not fire
+	GoalID        string        // optional id of the goal whose plan created this schedule
 	Body          string        // the task prompt
 }
 
@@ -52,6 +53,7 @@ type frontmatter struct {
 	RunPermission string   `yaml:"run_permission"`
 	AllowedTools  []string `yaml:"allowed_tools"`
 	Enabled       bool     `yaml:"enabled"`
+	GoalID        string   `yaml:"goal_id"`
 }
 
 // CronSpec returns the robfig/cron spec for this schedule. `every: 6h` maps to
@@ -97,6 +99,7 @@ func parseBytes(path string, raw []byte) (Schedule, error) {
 		RunPermission: RunPermission(strings.TrimSpace(meta.RunPermission)),
 		AllowedTools:  meta.AllowedTools,
 		Enabled:       meta.Enabled,
+		GoalID:        strings.TrimSpace(meta.GoalID),
 		Body:          strings.TrimSpace(string(body)),
 	}
 	if sched.RunPermission == "" {
@@ -148,6 +151,9 @@ func Render(p CreateParams) string {
 	var b strings.Builder
 	b.WriteString("---\n")
 	b.WriteString("agent: " + p.Agent + "\n")
+	if p.GoalID != "" {
+		b.WriteString("goal_id: " + p.GoalID + "\n")
+	}
 	if p.Model != "" {
 		b.WriteString("model: " + p.Model + "\n")
 	}

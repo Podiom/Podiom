@@ -19,6 +19,7 @@ cron: "0 7 * * *"         # 5-field cron OR `every: 6h` (exactly one)
 run_permission: preapproved   # preapproved (default) | yolo
 allowed_tools: []         # preapproved allow-list (empty = deny all side effects)
 enabled: true             # off switch — a disabled file stays but does not fire
+goal_id: ""               # optional — set when a goal's plan created this schedule
 ---
 
 Summarise today's calendar and add a short note to the "daily-briefs" project.
@@ -30,6 +31,10 @@ Keep it to three lines.
   like `6h`, `30m`, `90s`), not both.
 - `enabled` defaults to `false` when omitted — set `enabled: true` to let a
   routine fire. A disabled file is kept and listed but never fires automatically.
+- `goal_id` links this schedule back to a goal (see `goals.md`): the lead
+  agent sets it when creating a schedule as part of a goal's plan, and the
+  Schedules page highlights and links any schedule that carries one. Leave it
+  unset for schedules you create yourself.
 
 ## Each run is a normal session
 

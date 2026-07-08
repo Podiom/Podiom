@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { createSchedule, deleteSchedule, listSchedules, runSchedule } from "../lib/api";
+  import { createSchedule, deleteSchedule, listGoals, listSchedules, runSchedule } from "../lib/api";
   import {
     capabilityKey,
     effortOptions as capabilityEffortOptions,
     loadProviderCapabilities,
   } from "../lib/capabilities";
   import { agentGradient, avatarStyle, initial, modeChip } from "../lib/theme";
-  import type { Agent, ProviderCapabilities, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
+  import type { Agent, Goal, ProviderCapabilities, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -19,9 +19,11 @@
   let {
     agents = [],
     onOpenChat = (_t: ChatTarget) => {},
-  }: { agents?: Agent[]; onOpenChat?: (t: ChatTarget) => void } = $props();
+    onOpenGoal = (_id: string) => {},
+  }: { agents?: Agent[]; onOpenChat?: (t: ChatTarget) => void; onOpenGoal?: (goalId: string) => void } = $props();
 
   let schedules = $state<ScheduleStatus[]>([]);
+  let goals = $state<Goal[]>([]);
   let error = $state<string | null>(null);
   let busy = $state<string>("");
   let hoverRun = $state<string>("");
@@ -143,11 +145,20 @@
 
   async function load() {
     try {
-      schedules = await listSchedules();
+      const [scheduleList, goalList] = await Promise.all([listSchedules(), listGoals()]);
+      schedules = scheduleList;
+      goals = goalList;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
   }
+
+  function goalFor(s: ScheduleStatus): Goal | null {
+    if (!s.goal_id) return null;
+    return goals.find((g) => g.ID === s.goal_id) ?? null;
+  }
+
+  const hasGoalLinkedSchedule = $derived(schedules.some((s) => !!goalFor(s)));
 
   async function runNow(name: string) {
     busy = name;
@@ -206,6 +217,7 @@
     if (s.model) fm.push({ k: "model", v: s.model });
     if (s.effort) fm.push({ k: "effort", v: s.effort });
     fm.push({ k: "mode", v: s.run_permission });
+    if (s.goal_id) fm.push({ k: "origin", v: "goal plan" });
     return fm;
   }
 
@@ -221,21 +233,35 @@
   <header class="page-head" style="max-width:820px">
     <div>
       <h1>Schedules</h1>
-      <p>Each job is a markdown file under <span class="mono" style="color:#8A7560">~/.podiom/schedules</span> — frontmatter sets the engine, the body is the prompt. Every run spawns a durable session.</p>
+      <p>Every recurring job on this machine, one markdown file per job under <span class="mono" style="color:#8A7560">~/.podiom/schedules</span>. Some are part of a goal's plan — the agent created them on its own to work toward an outcome — others are schedules you set up directly.</p>
     </div>
     <span class="spacer"></span>
     <button class="head-cta" onclick={openNew}>+ New schedule</button>
   </header>
 
+  {#if hasGoalLinkedSchedule}
+    <div class="goal-legend mono" style="max-width:820px">
+      <span class="goal-legend-dot"></span>violet marker = created by a goal's plan, not by you
+    </div>
+  {/if}
+
   {#if error}<div class="error-banner" style="margin-bottom:14px;max-width:820px">{error}</div>{/if}
 
   <div class="sched-stack">
     {#each schedules as s}
-      <article class="sched-card">
+      {@const goal = goalFor(s)}
+      <article class="sched-card" class:goal-linked={!!goal}>
+        {#if goal}<span class="goal-accent"></span>{/if}
         <div class="sched-top">
           <span style={avatarStyle(agentGradient(s.agent), 34, 11, 14)}>{initial(s.agent)}</span>
           <div class="sched-id">
             <div class="sched-title">{s.name}</div>
+            {#if goal}
+              <button class="goal-chip" onclick={() => onOpenGoal(goal.ID)} title="Open goal">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
+                {goal.Title}
+              </button>
+            {/if}
             <div class="sched-file mono">{s.path}</div>
           </div>
           {#if s.parse_error}
@@ -405,6 +431,28 @@
     max-height: 200px;
   }
 
+  .goal-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 13px;
+    margin-bottom: 14px;
+    border-radius: 999px;
+    border: 1px solid #D8CFF3;
+    background: #EEEAFB;
+    color: #5847B8;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+
+  .goal-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #7C6FE0, #5847B8);
+    flex: none;
+  }
+
   .sched-stack {
     display: flex;
     flex-direction: column;
@@ -413,11 +461,27 @@
   }
 
   .sched-card {
+    position: relative;
+    overflow: hidden;
     background: var(--surface);
     border: 1px solid var(--line-2);
     border-radius: 18px;
     padding: 20px;
     box-shadow: 0 1px 2px rgba(43, 37, 32, 0.04), 0 14px 36px -26px rgba(43, 37, 32, 0.2);
+  }
+
+  .sched-card.goal-linked {
+    border-color: #D8CFF3;
+    padding-left: 23px;
+  }
+
+  .goal-accent {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(180deg, #7C6FE0, #5847B8);
   }
 
   .sched-top {
@@ -433,6 +497,24 @@
 
   .sched-title {
     font: 700 16px "Hanken Grotesk";
+  }
+
+  .goal-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 11px 3px 9px;
+    margin-top: 5px;
+    border-radius: 999px;
+    border: 1px solid #D8CFF3;
+    background: #EEEAFB;
+    color: #5847B8;
+    font: 600 11.5px "Hanken Grotesk";
+    cursor: pointer;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sched-file {

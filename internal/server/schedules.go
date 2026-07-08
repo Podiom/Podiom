@@ -17,6 +17,7 @@ type scheduleCreateRequest struct {
 	Every         string   `json:"every"`
 	RunPermission string   `json:"run_permission"`
 	AllowedTools  []string `json:"allowed_tools"`
+	GoalID        string   `json:"goal_id"`
 	Body          string   `json:"body"`
 }
 
@@ -46,6 +47,7 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			Every:         strings.TrimSpace(req.Every),
 			RunPermission: schedule.RunPermission(strings.TrimSpace(req.RunPermission)),
 			AllowedTools:  req.AllowedTools,
+			GoalID:        strings.TrimSpace(req.GoalID),
 			Body:          req.Body,
 		})
 		writeJSON(w, status, err)

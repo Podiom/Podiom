@@ -475,7 +475,7 @@
     {:else if route === "agents"}
       <Agents {agents} onHire={openHire} onOpenChat={openChat} onChanged={refreshAgents} />
     {:else if route === "schedules"}
-      <Schedules {agents} onOpenChat={openChat} />
+      <Schedules {agents} onOpenChat={openChat} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
     {:else if route === "skills"}
       <Skills />
     {:else if route === "terminal" && mode === "ha"}

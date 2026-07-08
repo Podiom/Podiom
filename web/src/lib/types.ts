@@ -511,6 +511,7 @@ export interface ScheduleStatus {
   run_permission: RunPermission;
   allowed_tools: string[];
   enabled: boolean;
+  goal_id?: string;
   next_run?: string;
   parse_error?: string;
   runs: ScheduleRun[];
