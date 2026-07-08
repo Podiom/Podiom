@@ -25,6 +25,8 @@
   import type {
     Agent,
     ClientMessage,
+    FallbackRequest,
+    FallbackTarget,
     Message,
     PermissionMode,
     PermissionRequest,
@@ -91,6 +93,8 @@
   let denyText = $state("");
   let pendingUserInput = $state<UserInputRequest | null>(null);
   let userInputAnswers = $state<Record<string, string[]>>({});
+  let pendingFallback = $state<FallbackRequest | null>(null);
+  let fallbackTargetKey = $state("");
   let permissionRemaining = $state(0);
   let messageText = $state("");
   let selectedAgent = $state("");
@@ -371,6 +375,7 @@
         pendingPermission = null;
         resetApprovalForm();
         pendingUserInput = null;
+        setPendingFallback(null);
         break;
       case "message":
         if (!messageForActiveSession(msg)) break;
@@ -411,6 +416,11 @@
         userInputAnswers = initialUserInputAnswers(pendingUserInput);
         if (pendingUserInput) forceScrollToBottom();
         break;
+      case "fallback_request":
+        if (!messageForActiveSession(msg)) break;
+        setPendingFallback(msg.fallback ?? null);
+        if (pendingFallback) forceScrollToBottom();
+        break;
       case "notice":
         notice = msg.notice ?? null;
         sending = false;
@@ -421,6 +431,7 @@
           pendingPermission = null;
           resetApprovalForm();
           if (pendingUserInput?.provider !== "claude") pendingUserInput = null;
+          setPendingFallback(null);
           sending = false;
         }
         window.setTimeout(() => live.send({ type: "list" }), 1200);
@@ -446,6 +457,7 @@
               !!msg.session_id && lastMessage?.Kind === "error" && lastMessage.Content === (msg.error ?? "");
             if (!durableErrorVisible) error = msg.error ?? "Unknown server error";
             pendingAssistant = "";
+            setPendingFallback(null);
             sending = false;
           }
         }
@@ -464,6 +476,36 @@
     permissionRemaining = 0;
     resetApprovalForm();
     if (pendingUserInput?.provider !== "claude") pendingUserInput = null;
+    setPendingFallback(null);
+  }
+
+  // setPendingFallback swaps the session-limit prompt and seeds the target picker
+  // with the configured next fallback (when present) or the first available one.
+  function setPendingFallback(req: FallbackRequest | null) {
+    pendingFallback = req;
+    fallbackTargetKey = req && req.targets.length > 0 ? targetKey(req.targets[0]) : "";
+  }
+
+  function targetKey(t: FallbackTarget): string {
+    return `${t.provider}:${t.profile}`;
+  }
+
+  function useConfiguredFallback() {
+    if (!pendingFallback) return;
+    live.sendFallbackDecision(pendingFallback.id, { action: "use_configured" });
+    setPendingFallback(null);
+  }
+
+  function switchFallbackTarget() {
+    if (!pendingFallback) return;
+    const target = pendingFallback.targets.find((t) => targetKey(t) === fallbackTargetKey);
+    if (!target) return;
+    live.sendFallbackDecision(pendingFallback.id, {
+      action: "switch",
+      provider: target.provider,
+      profile: target.profile,
+    });
+    setPendingFallback(null);
   }
 
   function rememberSession(id: string) {
@@ -502,6 +544,7 @@
     if (!state.pending_permission) resetApprovalForm();
     pendingUserInput = state.pending_user_input ?? null;
     if (pendingUserInput) userInputAnswers = initialUserInputAnswers(pendingUserInput);
+    setPendingFallback(state.pending_fallback ?? null);
     if (state.error) error = state.error;
     updatePermissionRemaining();
   }
@@ -1342,6 +1385,41 @@
               <div class="approve-actions">
                 <button class="approve-yes" disabled={!userInputReady(pendingUserInput)} onclick={submitUserInput}>Send answer</button>
               </div>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if pendingFallback}
+        <div class="row-start question-wrap">
+          <div style={avatarStyle(activeGrad, 30, 10, 13)}>{activeMono}</div>
+          <div class="question-card fallback-card">
+            <div class="question-head">
+              <span class="approve-tag mono">session limit · {pendingFallback.label}</span>
+            </div>
+            <div class="question-body">
+              <div class="fallback-text">
+                <strong>{pendingFallback.label}</strong> hit its session limit and can't continue this turn.
+                Continuing recreates the conversation history on the provider or profile you pick.
+              </div>
+              {#if pendingFallback.has_fallback && pendingFallback.next_label}
+                <button class="approve-yes fallback-primary" onclick={useConfiguredFallback}>
+                  Use configured fallback → {pendingFallback.next_label}
+                </button>
+              {/if}
+              {#if pendingFallback.targets.length > 0}
+                <div class="fallback-switch">
+                  <label class="fallback-switch-label mono" for="fallback-target">Or switch to</label>
+                  <div class="fallback-switch-row">
+                    <select id="fallback-target" class="fallback-select" bind:value={fallbackTargetKey}>
+                      {#each pendingFallback.targets as t}
+                        <option value={targetKey(t)}>{t.label}</option>
+                      {/each}
+                    </select>
+                    <button class="approve-yes" disabled={!fallbackTargetKey} onclick={switchFallbackTarget}>Switch</button>
+                  </div>
+                </div>
+              {/if}
             </div>
           </div>
         </div>
@@ -2872,6 +2950,69 @@
     opacity: 0.45;
     cursor: default;
     box-shadow: none;
+  }
+
+  /* Session-limit prompt: an amber-accented variant of the question card so a
+     reached rate limit reads distinctly from a provider question. */
+  .fallback-card {
+    border-color: #eacf9e;
+    box-shadow: 0 8px 22px -14px rgba(180, 128, 40, 0.34);
+  }
+
+  .fallback-card .question-head {
+    background: #fdf3e0;
+    border-bottom-color: #eacf9e;
+  }
+
+  .fallback-card .approve-tag {
+    color: #b57414;
+  }
+
+  .fallback-text {
+    font: 500 13.5px/1.45 "Hanken Grotesk";
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+
+  .fallback-text strong {
+    font-weight: 700;
+  }
+
+  .fallback-primary {
+    display: block;
+    width: 100%;
+    margin-bottom: 12px;
+  }
+
+  .fallback-switch-label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .fallback-switch-row {
+    display: flex;
+    gap: 9px;
+    align-items: center;
+  }
+
+  .fallback-switch-row .approve-yes {
+    flex: none;
+    padding: 9px 16px;
+  }
+
+  .fallback-select {
+    flex: 1;
+    min-width: 0;
+    min-height: 40px;
+    border: 1px solid var(--field-line);
+    border-radius: 10px;
+    padding: 9px 11px;
+    font: 500 13.5px "Hanken Grotesk";
+    color: var(--ink);
+    background: #fff;
   }
 
   .notice {

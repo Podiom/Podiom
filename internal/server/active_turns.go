@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 )
@@ -34,6 +35,7 @@ type TurnState struct {
 	PendingAssistant  string                     `json:"pending_assistant,omitempty"`
 	PendingPermission *adapter.PermissionRequest `json:"pending_permission,omitempty"`
 	PendingUserInput  *adapter.UserInputRequest  `json:"pending_user_input,omitempty"`
+	PendingFallback   *core.FallbackRequest      `json:"pending_fallback,omitempty"`
 	Error             string                     `json:"error,omitempty"`
 }
 
@@ -45,6 +47,7 @@ type activeTurn struct {
 	pendingAssistant  string
 	pendingPermission *adapter.PermissionRequest
 	pendingUserInput  *adapter.UserInputRequest
+	pendingFallback   *core.FallbackRequest
 	err               string
 	cancel            context.CancelFunc
 	subscribers       map[*wsWriter]bool
@@ -116,6 +119,8 @@ func attentionText(agent, kind string) (title, body string) {
 		return agent + " needs approval", "A tool action is waiting for your decision."
 	case "question":
 		return agent + " has a question", "Answer to let the agent continue."
+	case "fallback":
+		return agent + " hit a session limit", "Choose how to continue after the rate limit."
 	default:
 		return agent + " needs your attention", ""
 	}
@@ -218,6 +223,7 @@ func (h *activeTurnHub) stop(sessionID string) bool {
 	turn.status = turnStatusStopped
 	turn.pendingPermission = nil
 	turn.pendingUserInput = nil
+	turn.pendingFallback = nil
 	cancel := turn.cancel
 	state := activeTurnStateLocked(turn)
 	writers := activeTurnWritersLocked(turn)
@@ -252,6 +258,7 @@ func (h *activeTurnHub) recordDelta(sessionID, delta string) {
 	// user — clear any pending request that attention indicators keyed off.
 	turn.pendingPermission = nil
 	turn.pendingUserInput = nil
+	turn.pendingFallback = nil
 	writers := activeTurnWritersLocked(turn)
 	requestID := turn.requestID
 	h.mu.Unlock()
@@ -280,6 +287,7 @@ func (h *activeTurnHub) recordAssistant(sessionID, text string) {
 	// user; clear pending request state that attention indicators keyed off.
 	turn.pendingPermission = nil
 	turn.pendingUserInput = nil
+	turn.pendingFallback = nil
 	writers := activeTurnWritersLocked(turn)
 	requestID := turn.requestID
 	h.mu.Unlock()
@@ -295,6 +303,7 @@ func (h *activeTurnHub) recordPermission(sessionID string, req *adapter.Permissi
 	}
 	turn.pendingPermission = clonePermissionRequest(req)
 	turn.pendingUserInput = nil
+	turn.pendingFallback = nil
 	writers := activeTurnWritersLocked(turn)
 	requestID := turn.requestID
 	h.mu.Unlock()
@@ -311,11 +320,29 @@ func (h *activeTurnHub) recordUserInput(sessionID string, req *adapter.UserInput
 	}
 	turn.pendingUserInput = cloneUserInputRequest(req)
 	turn.pendingPermission = nil
+	turn.pendingFallback = nil
 	writers := activeTurnWritersLocked(turn)
 	requestID := turn.requestID
 	h.mu.Unlock()
 	h.broadcast(writers, ServerMessage{Type: "user_input_request", RequestID: requestID, SessionID: sessionID, Input: req})
 	h.notifyAttention(sessionID, "question", nil)
+}
+
+func (h *activeTurnHub) recordFallback(sessionID string, req *core.FallbackRequest) {
+	h.mu.Lock()
+	turn := h.turns[sessionID]
+	if turn == nil {
+		h.mu.Unlock()
+		return
+	}
+	turn.pendingFallback = cloneFallbackRequest(req)
+	turn.pendingPermission = nil
+	turn.pendingUserInput = nil
+	writers := activeTurnWritersLocked(turn)
+	requestID := turn.requestID
+	h.mu.Unlock()
+	h.broadcast(writers, ServerMessage{Type: "fallback_request", RequestID: requestID, SessionID: sessionID, Fallback: req})
+	h.notifyAttention(sessionID, "fallback", nil)
 }
 
 func (h *activeTurnHub) finish(sessionID string) {
@@ -333,6 +360,7 @@ func (h *activeTurnHub) finish(sessionID string) {
 	turn.status = turnStatusDone
 	turn.pendingPermission = nil
 	turn.pendingUserInput = nil
+	turn.pendingFallback = nil
 	writers := activeTurnWritersLocked(turn)
 	requestID := turn.requestID
 	delete(h.turns, sessionID)
@@ -398,6 +426,7 @@ func activeTurnStateLocked(turn *activeTurn) TurnState {
 		PendingAssistant:  turn.pendingAssistant,
 		PendingPermission: clonePermissionRequest(turn.pendingPermission),
 		PendingUserInput:  cloneUserInputRequest(turn.pendingUserInput),
+		PendingFallback:   cloneFallbackRequest(turn.pendingFallback),
 		Error:             turn.err,
 	}
 }
@@ -408,6 +437,8 @@ func activeTurnPendingLocked(turn *activeTurn) string {
 		return "permission"
 	case turn.pendingUserInput != nil:
 		return "question"
+	case turn.pendingFallback != nil:
+		return "fallback"
 	case turn.pendingAssistant != "":
 		return "assistant"
 	default:
@@ -435,5 +466,14 @@ func cloneUserInputRequest(req *adapter.UserInputRequest) *adapter.UserInputRequ
 	for i := range cp.Questions {
 		cp.Questions[i].Options = append([]adapter.UserInputOption(nil), req.Questions[i].Options...)
 	}
+	return &cp
+}
+
+func cloneFallbackRequest(req *core.FallbackRequest) *core.FallbackRequest {
+	if req == nil {
+		return nil
+	}
+	cp := *req
+	cp.Targets = append([]core.FallbackTarget(nil), req.Targets...)
 	return &cp
 }

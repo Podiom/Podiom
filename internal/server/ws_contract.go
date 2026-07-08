@@ -5,6 +5,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/store"
 	"github.com/Podiom/Podiom/internal/usage"
 )
@@ -26,6 +27,7 @@ type ClientMessage struct {
 	Feedback                       string                      `json:"feedback,omitempty"`
 	Decision                       *adapter.PermissionDecision `json:"decision,omitempty"`
 	Input                          *adapter.UserInputDecision  `json:"input,omitempty"`
+	FallbackDecision               *core.FallbackDecision      `json:"fallback_decision,omitempty"`
 }
 
 // ServerMessage is the daemon-to-browser WebSocket contract.
@@ -46,6 +48,7 @@ type ServerMessage struct {
 	Notice      string                     `json:"notice,omitempty"`
 	Request     *adapter.PermissionRequest `json:"request,omitempty"`
 	Input       *adapter.UserInputRequest  `json:"input,omitempty"`
+	Fallback    *core.FallbackRequest      `json:"fallback,omitempty"`
 	TurnState   *TurnState                 `json:"turn_state,omitempty"`
 	Context     *ContextUsage              `json:"context,omitempty"`
 	Error       string                     `json:"error,omitempty"`

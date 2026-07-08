@@ -17,6 +17,7 @@ import type {
   ActiveTurnSummary,
   ClientMessage,
   ContextUsage,
+  FallbackDecision,
   GoalEvent,
   ServerMessage,
   Session,
@@ -30,13 +31,13 @@ export interface Toast {
   id: string;
   title: string;
   body: string;
-  kind: "permission" | "question" | "plan" | "goal_access_request" | "goal_review";
+  kind: "permission" | "question" | "fallback" | "plan" | "goal_access_request" | "goal_review";
   sessionId: string;
   // goalId routes goal-scoped toasts to the Goals page instead of a session.
   goalId?: string;
 }
 
-type Pending = "permission" | "question" | "assistant" | "";
+type Pending = "permission" | "question" | "fallback" | "assistant" | "";
 
 const TOAST_TTL_MS = 8000;
 
@@ -193,6 +194,13 @@ class LiveStore {
     return requestId;
   }
 
+  // sendFallbackDecision answers a session-limit prompt: either advance the
+  // configured fallback chain or switch to a chosen provider/profile. The turn
+  // resumes on the selected target, replaying history there.
+  sendFallbackDecision(requestId: string, decision: FallbackDecision) {
+    this.send({ type: "fallback_decision", request_id: requestId, fallback_decision: decision });
+  }
+
   // subscribe registers a raw-message handler (Chat.svelte uses it for its own
   // rendering). Returns an unsubscribe function.
   subscribe(fn: (msg: ServerMessage) => void): () => void {
@@ -273,9 +281,11 @@ class LiveStore {
               ? "permission"
               : ts.pending_user_input
                 ? "question"
-                : ts.pending_assistant
-                  ? "assistant"
-                  : "";
+                : ts.pending_fallback
+                  ? "fallback"
+                  : ts.pending_assistant
+                    ? "assistant"
+                    : "";
             this.setTurn({ session_id: ts.session_id, turn_id: ts.turn_id, status: ts.status, pending });
           } else {
             this.clearTurn(ts.session_id);
@@ -287,6 +297,9 @@ class LiveStore {
         break;
       case "user_input_request":
         if (msg.session_id) this.markPending(msg.session_id, "question");
+        break;
+      case "fallback_request":
+        if (msg.session_id) this.markPending(msg.session_id, "fallback");
         break;
       case "done":
       case "error":
@@ -338,7 +351,7 @@ class LiveStore {
     this.edge(summary.session_id, (summary.pending ?? "") as Pending);
   }
 
-  private markPending(sessionId: string, pending: "permission" | "question") {
+  private markPending(sessionId: string, pending: "permission" | "question" | "fallback") {
     const existing = this.activeTurns[sessionId];
     this.activeTurns = {
       ...this.activeTurns,
@@ -363,19 +376,31 @@ class LiveStore {
     const prev = this.lastPending[sessionId] ?? "";
     this.lastPending[sessionId] = pending;
     if (prev === pending) return;
-    if (pending === "permission" || pending === "question") {
+    if (pending === "permission" || pending === "question" || pending === "fallback") {
       this.pushToast(sessionId, pending);
     }
   }
 
-  private pushToast(sessionId: string, kind: "permission" | "question") {
+  private pushToast(sessionId: string, kind: "permission" | "question" | "fallback") {
     const agent = this.sessions.find((s) => s.ID === sessionId)?.AgentName ?? "An agent";
+    const title =
+      kind === "permission"
+        ? `${agent} needs approval`
+        : kind === "question"
+          ? `${agent} has a question`
+          : `${agent} hit a session limit`;
+    const body =
+      kind === "permission"
+        ? "A tool action is waiting for your decision."
+        : kind === "question"
+          ? "Answer to let the agent continue."
+          : "Choose how to continue after the rate limit.";
     const toast: Toast = {
       id: randomID(),
       kind,
       sessionId,
-      title: kind === "permission" ? `${agent} needs approval` : `${agent} has a question`,
-      body: kind === "permission" ? "A tool action is waiting for your decision." : "Answer to let the agent continue.",
+      title,
+      body,
     };
     this.toasts = [...this.toasts, toast];
     window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);

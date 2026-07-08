@@ -76,7 +76,7 @@ present, after archiving its sessions into the preserved agent workspace.
 | `profile` | profile name | Auth context (omit for global login). |
 | `model` / `effort` | string | Per-agent overrides. |
 | `permission_mode` | `approve` \| `yolo` | Per-agent override. |
-| `fallback` | list of profile names or `default` | Ordered rate-limit fallback (may cross providers). |
+| `fallback` | list of profile names or `default` | Ordered rate-limit fallback (may cross providers). Applied automatically for non-interactive runs; interactive turns prompt the user to confirm or override it. |
 | `mcp_config` | path | Opt-in per-agent MCP config, additive to native tools. |
 
 ## `server`

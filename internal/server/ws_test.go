@@ -169,6 +169,74 @@ func TestWebSocketActiveTurnSurvivesReconnectWithPermission(t *testing.T) {
 	}
 }
 
+func TestWebSocketSessionLimitPromptsFallbackDecision(t *testing.T) {
+	ctx := context.Background()
+	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)
+	defer cleanup()
+	fake.RateLimitedTurns = 1
+	fake.Responses = []string{"reply after fallback"}
+
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{
+		Name:     "webber",
+		Provider: config.ProviderClaude,
+		Fallback: []string{"codex"},
+	}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	conn := dialWSTest(t, wsURL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if err := wsjson.Write(ctx, conn, ClientMessage{
+		Type:      "send_turn",
+		RequestID: "req-1",
+		AgentName: "webber",
+		Message:   "keep going",
+	}); err != nil {
+		t.Fatalf("write send_turn: %v", err)
+	}
+
+	var sessionID string
+	req := readWSTestUntil(t, conn, "fallback request", func(msg ServerMessage) bool {
+		if msg.Type == "session" && msg.Session != nil {
+			sessionID = msg.Session.ID
+		}
+		return msg.Type == "fallback_request" && msg.Fallback != nil
+	})
+	if req.Fallback.Label != "claude/default" {
+		t.Fatalf("fallback current label = %q, want claude/default", req.Fallback.Label)
+	}
+	if !req.Fallback.HasFallback || req.Fallback.NextLabel != "codex/default" {
+		t.Fatalf("fallback configured-next = %q (has=%v), want codex/default", req.Fallback.NextLabel, req.Fallback.HasFallback)
+	}
+
+	if err := wsjson.Write(ctx, conn, ClientMessage{
+		Type:             "fallback_decision",
+		RequestID:        req.Fallback.ID,
+		FallbackDecision: &core.FallbackDecision{Action: "use_configured"},
+	}); err != nil {
+		t.Fatalf("write fallback decision: %v", err)
+	}
+
+	readWSTestUntil(t, conn, "done", func(msg ServerMessage) bool {
+		return msg.Type == "done" && msg.SessionID == sessionID
+	})
+
+	updated, err := coreSvc.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if updated.Provider != config.ProviderCodex {
+		t.Fatalf("session did not fall back to codex: %+v", updated)
+	}
+	history, err := coreSvc.History(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) == 0 || history[len(history)-1].Content != "reply after fallback" {
+		t.Fatalf("turn did not complete on the fallback provider: %+v", history)
+	}
+}
+
 func TestWebSocketRoadmapPermissionMovesReviewRestoresAndFinishesReview(t *testing.T) {
 	ctx := context.Background()
 	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)

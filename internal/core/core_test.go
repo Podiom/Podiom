@@ -545,6 +545,124 @@ func TestRateLimitFallbackSwitchesProviderWithReplayHistory(t *testing.T) {
 	}
 }
 
+// recordingFallbackRelay captures the FallbackRequest it is asked to resolve and
+// replies with a canned decision, standing in for the interactive user.
+type recordingFallbackRelay struct {
+	decision FallbackDecision
+	req      FallbackRequest
+	called   bool
+}
+
+func (r *recordingFallbackRelay) RequestFallback(_ context.Context, req FallbackRequest, _ time.Duration) (FallbackDecision, error) {
+	r.req = req
+	r.called = true
+	return r.decision, nil
+}
+
+func TestRateLimitFallbackRelayPromptsUserAndSwitches(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	fake := adapter.NewFake()
+	fake.RateLimitedTurns = 1
+	fake.Responses = []string{"switched ok"}
+	c, err := New(Options{
+		Paths:                 paths,
+		Store:                 db,
+		Adapter:               fake,
+		DisableBackgroundWork: true,
+		Profiles: []config.Profile{
+			{Name: "work", Provider: config.ProviderClaude, ConfigDir: "/tmp/claude-work"},
+			{Name: "codex-main", Provider: config.ProviderCodex, HomeDir: "/tmp/codex-main"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{
+		Name:     "fallbacker",
+		Provider: config.ProviderClaude,
+		Profile:  "work",
+		Fallback: []string{"work", "codex-main"},
+	}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "fallbacker", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := db.UpdateSessionMetadata(ctx, session.ID, "Manual", "", false); err != nil {
+		t.Fatalf("avoid auto-name: %v", err)
+	}
+	if _, err := db.AppendMessages(ctx, session.ID, []store.Message{
+		{Role: store.RoleUser, Content: "remember alpha"},
+		{Role: store.RoleAssistant, Content: "alpha remembered"},
+	}); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
+
+	relay := &recordingFallbackRelay{decision: FallbackDecision{Action: "switch", Provider: string(config.ProviderCodex), Profile: "codex-main"}}
+	events, err := c.StreamTurn(ctx, session.ID, "continue after limit", TurnOptions{
+		PermissionTurnID: "ws-turn-fallback",
+		FallbackRelay:    relay,
+	})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	for range events {
+	}
+
+	if !relay.called {
+		t.Fatal("expected the relay to be asked for a fallback decision")
+	}
+	if relay.req.Label != "claude/work" {
+		t.Fatalf("relay request current label = %q, want claude/work", relay.req.Label)
+	}
+	if !relay.req.HasFallback || relay.req.NextLabel != "codex/codex-main" {
+		t.Fatalf("relay request configured-next = %q (has=%v), want codex/codex-main", relay.req.NextLabel, relay.req.HasFallback)
+	}
+	if relay.req.TurnID != "ws-turn-fallback" {
+		t.Fatalf("relay request turn id = %q, want ws-turn-fallback", relay.req.TurnID)
+	}
+	if !hasFallbackTarget(relay.req.Targets, "codex", "codex-main") {
+		t.Fatalf("relay request targets missing codex/codex-main: %+v", relay.req.Targets)
+	}
+
+	updated, err := c.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get updated session: %v", err)
+	}
+	if updated.Provider != config.ProviderCodex || updated.Profile != "codex-main" {
+		t.Fatalf("chosen switch did not apply: %+v", updated)
+	}
+	if len(fake.Requests) < 2 {
+		t.Fatalf("expected original and switched requests, got %d", len(fake.Requests))
+	}
+	if len(fake.Requests[1].History) != 2 || fake.Requests[1].History[0].Content != "remember alpha" {
+		t.Fatalf("switched request did not replay prior history: %+v", fake.Requests[1].History)
+	}
+}
+
+func hasFallbackTarget(targets []FallbackTarget, provider, profile string) bool {
+	for _, t := range targets {
+		if t.Provider == provider && t.Profile == profile {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreateAgentValidatesFallbackTargets(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()

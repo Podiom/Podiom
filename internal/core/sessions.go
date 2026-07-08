@@ -281,6 +281,12 @@ type TurnOptions struct {
 	PermissionTurnID string
 	PermissionRelay  adapter.PermissionRelay
 	UserInputRelay   adapter.UserInputRelay
+	// FallbackRelay, when set, turns a reached session limit into an interactive
+	// decision instead of a silent auto-fallback: on EventRateLimited the turn
+	// blocks and asks the user whether to use the configured fallback or switch to
+	// a chosen provider/profile. A nil relay (all non-interactive runs) keeps the
+	// automatic fallback-chain behavior.
+	FallbackRelay FallbackRelay
 	// Unattended marks a turn with no human approver (a scheduled run). It and
 	// AllowedTools select the provider's preapproved policy (§7.7).
 	Unattended   bool
@@ -396,7 +402,16 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}
 			if rateLimited {
 				fallbacks++
-				next, err := c.nextFallbackSession(ctx, current, tried)
+				var next store.Session
+				var err error
+				if opts.FallbackRelay != nil {
+					// Interactive turn: ask the user whether to use the configured
+					// fallback or switch to a chosen provider/profile.
+					next, err = c.interactiveFallbackSession(ctx, current, tried, opts.FallbackRelay, opts.PermissionTurnID)
+				} else {
+					// Non-interactive run: keep the silent auto-fallback behavior.
+					next, err = c.nextFallbackSession(ctx, current, tried)
+				}
 				if err != nil {
 					runLog.Warn("turn failed", "stage", "fallback", "from", targetLabel(current.Provider, current.Profile), "error", err)
 					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())

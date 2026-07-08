@@ -574,7 +574,36 @@ export interface ActiveTurnSummary {
   session_id: string;
   turn_id: string;
   status: "running" | "done" | "error" | "stopped";
-  pending?: "permission" | "question" | "assistant" | "";
+  pending?: "permission" | "question" | "fallback" | "assistant" | "";
+}
+
+// FallbackTarget is one selectable provider/profile in a session-limit prompt.
+export interface FallbackTarget {
+  provider: Provider;
+  profile: string;
+  label: string;
+}
+
+// FallbackRequest is surfaced when a session hits a provider rate limit and the
+// user must choose how to continue. Switching recreates the conversation history
+// on the new provider/profile.
+export interface FallbackRequest {
+  id: string;
+  turn_id: string;
+  session_id: string;
+  provider: Provider;
+  profile: string;
+  label: string;
+  next_label?: string;
+  has_fallback: boolean;
+  targets: FallbackTarget[];
+  expires_at?: string;
+}
+
+export interface FallbackDecision {
+  action: "use_configured" | "switch";
+  provider?: Provider;
+  profile?: string;
 }
 
 // Usage mirrors internal/usage.Snapshot (snake_case JSON). Per-profile provider
@@ -627,6 +656,7 @@ export interface TurnState {
   pending_assistant?: string;
   pending_permission?: PermissionRequest;
   pending_user_input?: UserInputRequest;
+  pending_fallback?: FallbackRequest;
   error?: string;
 }
 
@@ -673,6 +703,7 @@ export type ClientMessage =
   | { type: "plan_reject"; request_id: string; session_id: string }
   | { type: "permission_decision"; request_id: string; decision: PermissionDecision }
   | { type: "user_input_decision"; request_id: string; input: UserInputDecision }
+  | { type: "fallback_decision"; request_id: string; fallback_decision: FallbackDecision }
   | { type: "dream"; request_id: string; agent_name: string };
 
 export interface ServerMessage {
@@ -686,6 +717,7 @@ export interface ServerMessage {
     | "assistant"
     | "permission_request"
     | "user_input_request"
+    | "fallback_request"
     | "turn_state"
     | "context"
     | "notice"
@@ -708,6 +740,7 @@ export interface ServerMessage {
   notice?: string;
   request?: PermissionRequest;
   input?: UserInputRequest;
+  fallback?: FallbackRequest;
   turn_state?: TurnState;
   context?: ContextUsage;
   error?: string;

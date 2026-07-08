@@ -35,6 +35,14 @@ provider handle, starts a fresh backing session/thread on the next live turn, an
 replays canonical history. If a rolling summary is available, replay sends the
 summary plus the most recent turns verbatim instead of the full transcript.
 
+When an **interactive** turn hits a provider session limit, Podiom does not fall
+back silently: it blocks the turn and prompts the user (a `fallback_request` over
+the WebSocket) to either advance their configured fallback chain or switch to a
+specific provider/profile. The prompt makes clear that continuing recreates the
+history on the new target via the replay described above. **Non-interactive** runs
+(schedules, goals, dreams) have no user to prompt and keep falling back
+automatically along the configured chain.
+
 ## Naming
 
 After the first user/assistant exchange, Podiom starts a non-blocking naming job.

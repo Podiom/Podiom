@@ -252,6 +252,14 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 			return errors.New("user input request not found")
 		}
 		return nil
+	case "fallback_decision":
+		if msg.FallbackDecision == nil {
+			return errors.New("fallback decision is required")
+		}
+		if !s.fallback.decide(msg.RequestID, *msg.FallbackDecision) {
+			return errors.New("fallback request not found")
+		}
+		return nil
 	default:
 		return errors.New("unknown websocket message type")
 	}
@@ -327,9 +335,11 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 
 	requests, unsubscribePermissions := s.broker.subscribe(turnID)
 	inputs, unsubscribeInputs := s.input.subscribe(turnID)
+	fallbacks, unsubscribeFallbacks := s.fallback.subscribe(turnID)
 	s.broker.attachTurn(turnID, session.ID)
 	defer unsubscribePermissions()
 	defer unsubscribeInputs()
+	defer unsubscribeFallbacks()
 	defer s.broker.detachTurn(turnID)
 	defer cancel()
 
@@ -337,6 +347,7 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 		PermissionTurnID: turnID,
 		PermissionRelay:  s.broker,
 		UserInputRelay:   s.input,
+		FallbackRelay:    s.fallback,
 	})
 	if err != nil {
 		if turnCtx.Err() != nil {
@@ -350,7 +361,7 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	}
 
 	var sawDone, sawError bool
-	for events != nil || requests != nil || inputs != nil {
+	for events != nil || requests != nil || inputs != nil || fallbacks != nil {
 		select {
 		case <-turnCtx.Done():
 			return
@@ -368,11 +379,18 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 			}
 			s.markRoadmapQuestionPending(turnCtx, session.ID, input.ID)
 			s.turns.recordUserInput(session.ID, &input)
+		case fallback, ok := <-fallbacks:
+			if !ok {
+				fallbacks = nil
+				continue
+			}
+			s.turns.recordFallback(session.ID, &fallback)
 		case event, ok := <-events:
 			if !ok {
 				events = nil
 				requests = nil
 				inputs = nil
+				fallbacks = nil
 				continue
 			}
 			done, failed := s.recordWSTurnEvent(turnCtx, session.ID, event)

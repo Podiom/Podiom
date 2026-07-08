@@ -84,6 +84,24 @@ Answer an inline permission request. Denies use:
 {"behavior":"deny","message":"Denied from web"}
 ```
 
+When an interactive turn reaches a provider session limit, the daemon blocks the
+turn and emits a `fallback_request`. Resolve it with:
+
+```json
+{
+  "type": "fallback_decision",
+  "request_id": "<fallback request id>",
+  "fallback_decision": {"action":"use_configured"}
+}
+```
+
+`action` is either `use_configured` (advance the agent's configured fallback
+chain) or `switch` (move to a specific target, with `provider` and `profile`
+naming one of the request's offered `targets`). Either way the turn resumes on
+the new target and the canonical history is replayed there. Non-interactive runs
+(schedules, goals, dreams) never receive this prompt — they fall back
+automatically along the configured chain.
+
 ## Server Messages
 
 | Type | Payload |
@@ -97,6 +115,7 @@ Answer an inline permission request. Denies use:
 | `assistant` | Final assistant text fallback. |
 | `permission_request` | Tool approval request. |
 | `user_input_request` | Provider/user clarification request. |
+| `fallback_request` | Session limit reached; the user must pick how to continue. Carries the rate-limited target, the configured next fallback, and the selectable `targets`. |
 | `turn_state` | Current active-turn snapshot for a session. |
 | `notice` | Non-history UI notice, usually from slash commands. |
 | `done` | Turn complete. |
