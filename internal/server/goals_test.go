@@ -8,13 +8,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/store"
 	podiomtools "github.com/Podiom/Podiom/internal/tools"
 )
@@ -479,5 +483,107 @@ func TestHostOnlyCLIToolStaysAcknowledgeOnly(t *testing.T) {
 	}
 	if list, _ := podiomtools.List(srv.core.AgentPaths("atlas").Tools); len(list) != 0 {
 		t.Fatalf("host-only request must not install anything: %+v", list)
+	}
+}
+
+// newGoalSchedulerTestServer wires a real Scheduler alongside the goal API so
+// the goal→schedule cascade can be exercised end to end.
+func newGoalSchedulerTestServer(t *testing.T) (config.Paths, *Server, *schedule.Scheduler, func()) {
+	t.Helper()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: adapter.NewFake()})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	sched := schedule.New(schedule.Options{Dir: paths.SchedulesDir, Core: coreSvc, Store: db})
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, Core: coreSvc, Scheduler: sched, Paths: paths})
+	if _, err := coreSvc.CreateAgent(context.Background(), core.CreateAgentRequest{Name: "atlas", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	return paths, srv, sched, func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}
+}
+
+func goalLinkedSchedule(t *testing.T, sched *schedule.Scheduler, name, goalID string) {
+	t.Helper()
+	if _, err := sched.Create(context.Background(), schedule.CreateParams{
+		Name:   name,
+		Agent:  "atlas",
+		Cron:   "0 0 * * *",
+		GoalID: goalID,
+		Body:   "do the goal's recurring work",
+	}); err != nil {
+		t.Fatalf("create schedule %q: %v", name, err)
+	}
+}
+
+func schedulesForGoal(t *testing.T, sched *schedule.Scheduler, goalID string) []string {
+	t.Helper()
+	statuses, err := sched.List(context.Background())
+	if err != nil {
+		t.Fatalf("list schedules: %v", err)
+	}
+	var names []string
+	for _, st := range statuses {
+		if st.GoalID == goalID {
+			names = append(names, st.Name)
+		}
+	}
+	return names
+}
+
+// TestGoalTerminalDeletesLinkedSchedules verifies that abandoning a goal (and
+// deleting another) tears down only that goal's schedules, leaving unrelated
+// ones untouched.
+func TestGoalTerminalDeletesLinkedSchedules(t *testing.T) {
+	paths, srv, sched, cleanup := newGoalSchedulerTestServer(t)
+	defer cleanup()
+
+	goalA := createGoalViaCore(t, srv, store.Goal{Title: "Goal A"})
+	goalB := createGoalViaCore(t, srv, store.Goal{Title: "Goal B"})
+	goalLinkedSchedule(t, sched, "a-daily", goalA.ID)
+	goalLinkedSchedule(t, sched, "b-daily", goalB.ID)
+
+	if got := schedulesForGoal(t, sched, goalA.ID); len(got) != 1 {
+		t.Fatalf("goal A schedules before abandon = %v, want 1", got)
+	}
+
+	// Abandon goal A — its schedule must go, goal B's must stay.
+	req := httptest.NewRequest(http.MethodPatch, "/api/goals/"+goalA.ID, bytes.NewBufferString(`{"status":"abandoned"}`))
+	rr := httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("abandon: %d %s", rr.Code, rr.Body.String())
+	}
+	if got := schedulesForGoal(t, sched, goalA.ID); len(got) != 0 {
+		t.Fatalf("goal A schedules after abandon = %v, want none", got)
+	}
+	if got := schedulesForGoal(t, sched, goalB.ID); len(got) != 1 {
+		t.Fatalf("goal B schedules after A abandoned = %v, want 1 (untouched)", got)
+	}
+
+	// Deleting goal B must remove its schedule too.
+	req = httptest.NewRequest(http.MethodDelete, "/api/goals/"+goalB.ID, nil)
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rr.Code, rr.Body.String())
+	}
+	if got := schedulesForGoal(t, sched, goalB.ID); len(got) != 0 {
+		t.Fatalf("goal B schedules after delete = %v, want none", got)
+	}
+	if _, err := os.Stat(filepath.Join(paths.SchedulesDir, "b-daily.md")); !os.IsNotExist(err) {
+		t.Fatalf("goal B schedule file should be gone, stat err = %v", err)
 	}
 }

@@ -1233,7 +1233,8 @@
     border-color: #e7c9a8;
   }
   .card.dim {
-    opacity: 0.86;
+    opacity: 0.62;
+    filter: saturate(0.7);
   }
   .card-top {
     display: flex;

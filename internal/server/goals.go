@@ -238,6 +238,11 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 				writeJSON(w, nil, err)
 				return
 			}
+			// A goal that is done or abandoned no longer drives its plan, so the
+			// schedules that plan created are torn down (sessions are kept).
+			if goal.Status == store.GoalDone || goal.Status == store.GoalAbandoned {
+				s.deleteGoalSchedules(r.Context(), goal.ID)
+			}
 			s.broadcastGoalPing(r.Context(), goal.ID)
 			writeJSON(w, goal, nil)
 			return
@@ -263,6 +268,9 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 			writeJSON(w, nil, err)
 			return
 		}
+		// The goal is gone; tear down the schedules its plan created so they
+		// don't keep firing against a goal that no longer exists.
+		s.deleteGoalSchedules(r.Context(), id)
 		writeJSON(w, map[string]string{"status": "deleted", "id": id}, nil)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

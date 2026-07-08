@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -89,5 +90,32 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, run, err)
 	default:
 		http.Error(w, "unknown schedule action", http.StatusNotFound)
+	}
+}
+
+// deleteGoalSchedules removes every schedule file linked to a goal. Goal-linked
+// schedules are authored by the goal's plan; once the goal is no longer active
+// (done, abandoned, or deleted) they have nothing left to serve, so they are
+// unregistered and their files removed. The sessions those schedules produced
+// are preserved for audit. Failures are logged, never fatal: cleaning up
+// schedules must not block the goal state change that triggered it.
+func (s *Server) deleteGoalSchedules(ctx context.Context, goalID string) {
+	if s.scheduler == nil || strings.TrimSpace(goalID) == "" {
+		return
+	}
+	statuses, err := s.scheduler.List(ctx)
+	if err != nil {
+		s.log.Warn("goal schedule cleanup failed", "event", "goal", "goal", goalID, "stage", "list", "err", err)
+		return
+	}
+	for _, st := range statuses {
+		if st.GoalID != goalID {
+			continue
+		}
+		if err := s.scheduler.Delete(ctx, st.Name); err != nil {
+			s.log.Warn("goal schedule cleanup failed", "event", "goal", "goal", goalID, "schedule", st.Name, "err", err)
+			continue
+		}
+		s.log.Info("goal schedule removed", "event", "goal", "goal", goalID, "schedule", st.Name)
 	}
 }
