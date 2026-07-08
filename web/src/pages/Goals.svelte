@@ -862,7 +862,7 @@
                       <div class="event-delta mono">{metricDelta(ev)}</div>
                     {/if}
                     {#if eventBody(ev)}
-                      <div class="event-body">{eventBody(ev)}</div>
+                      <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
                     {/if}
                     {#if ev.SessionID}
                       <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
@@ -1936,8 +1936,12 @@
     line-height: 1.55;
     color: var(--muted);
     margin-top: 5px;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  /* markdown paragraphs shouldn't add trailing margin inside a compact event */
+  .event-body :global(p:last-child),
+  .event-body :global(ul:last-child) {
+    margin-bottom: 0;
   }
   .event-session {
     display: inline-flex;
