@@ -1636,6 +1636,15 @@
             {/if}
           </div>
           <span class="chip-divider"></span>
+        {:else}
+          <!-- Read-only account chip for a live chat: provider/profile can't change
+               mid-session, but we still surface which one the chat is running with. -->
+          <span class="chip-btn readonly" title="Provider & profile for this session">
+            <span class="prov-glyph" class:diamond={usageProvider === "codex"}
+              style={`background:${usageProvider === "codex" ? "#4B5560" : "#B0572F"}`}></span>
+            {accountLabel}
+          </span>
+          <span class="chip-divider"></span>
         {/if}
 
         <!-- Model chip -->
@@ -3139,6 +3148,10 @@
     font: 500 12px "JetBrains Mono", monospace;
     color: #6f5b45;
     cursor: pointer;
+  }
+
+  .chip-btn.readonly {
+    cursor: default;
   }
 
   .plan-chip.plan-on,
