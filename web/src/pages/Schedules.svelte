@@ -241,7 +241,7 @@
 
   {#if hasGoalLinkedSchedule}
     <div class="goal-legend mono" style="max-width:820px">
-      <span class="goal-legend-dot"></span>violet marker = created by a goal's plan, not by you
+      <span class="goal-legend-dot"></span>goal marker
     </div>
   {/if}
 
