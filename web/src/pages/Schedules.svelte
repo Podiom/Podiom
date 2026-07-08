@@ -6,7 +6,8 @@
     effortOptions as capabilityEffortOptions,
     loadProviderCapabilities,
   } from "../lib/capabilities";
-  import { agentGradient, avatarStyle, initial, modeChip } from "../lib/theme";
+  import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import { modeChip } from "../lib/theme";
   import type { Agent, Goal, ProviderCapabilities, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
@@ -253,7 +254,7 @@
       <article class="sched-card" class:goal-linked={!!goal}>
         {#if goal}<span class="goal-accent"></span>{/if}
         <div class="sched-top">
-          <span style={avatarStyle(agentGradient(s.agent), 34, 11, 14)}>{initial(s.agent)}</span>
+          <AgentAvatar name={s.agent} size={34} radius={11} fontSize={14} />
           <div class="sched-id">
             <div class="sched-title">{s.name}</div>
             {#if goal}
@@ -343,7 +344,7 @@
         <div class="ns-chips">
           {#each agents as a}
             <button style={agentChip(nsAgent === a.Name)} onclick={() => (nsAgent = a.Name)}>
-              <span style={avatarStyle(agentGradient(a.Name), 20, 6, 9)}>{initial(a.Name)}</span>{a.Name}
+              <AgentAvatar name={a.Name} size={20} radius={6} fontSize={9} />{a.Name}
             </button>
           {/each}
         </div>

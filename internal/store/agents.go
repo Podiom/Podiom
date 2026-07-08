@@ -36,7 +36,7 @@ func (s *Store) CreateAgent(ctx context.Context, a Agent) (Agent, error) {
 // GetAgent fetches an agent by name.
 func (s *Store) GetAgent(ctx context.Context, name string) (Agent, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
-		name, provider, profile, model, effort, permission_mode, fallback_json, mcp_servers_json, mcp_config, created_at, updated_at
+		name, provider, profile, model, effort, permission_mode, fallback_json, mcp_servers_json, mcp_config, avatar_updated_at, created_at, updated_at
 		FROM agents WHERE name = ?`, name)
 	a, err := scanAgent(row)
 	if err != nil {
@@ -51,7 +51,7 @@ func (s *Store) GetAgent(ctx context.Context, name string) (Agent, error) {
 // ListAgents returns every agent ordered by name.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		name, provider, profile, model, effort, permission_mode, fallback_json, mcp_servers_json, mcp_config, created_at, updated_at
+		name, provider, profile, model, effort, permission_mode, fallback_json, mcp_servers_json, mcp_config, avatar_updated_at, created_at, updated_at
 		FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
@@ -99,6 +99,25 @@ func (s *Store) UpdateAgent(ctx context.Context, a Agent) (Agent, error) {
 	return s.GetAgent(ctx, a.Name)
 }
 
+// SetAgentAvatarUpdatedAt stamps (or clears, with ts == "") the version of an
+// agent's uploaded profile picture. It is intentionally separate from
+// UpdateAgent so generic edits to an agent's defaults never clobber the avatar.
+func (s *Store) SetAgentAvatarUpdatedAt(ctx context.Context, name, ts string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET avatar_updated_at = ? WHERE name = ?`, ts, name)
+	if err != nil {
+		return fmt.Errorf("set avatar stamp for agent %q: %w", name, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set avatar stamp for agent %q rows affected: %w", name, err)
+	}
+	if changed == 0 {
+		return fmt.Errorf("agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
 // DeleteAgent removes an agent when no sessions still reference it.
 func (s *Store) DeleteAgent(ctx context.Context, name string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE name = ?`, name)
@@ -135,6 +154,7 @@ func scanAgent(row scanner) (Agent, error) {
 		&fallback,
 		&mcpServers,
 		&a.MCPConfig,
+		&a.AvatarUpdatedAt,
 		&a.CreatedAt,
 		&a.UpdatedAt,
 	); err != nil {

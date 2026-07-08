@@ -12,7 +12,8 @@
     taskSession,
     updateTask,
   } from "../lib/api";
-  import { agentGradient, avatarStyle, initial, projectColor } from "../lib/theme";
+  import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import { projectColor } from "../lib/theme";
   import type { Agent, Project, Session, Task, TaskStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
@@ -435,7 +436,7 @@
               </div>
               <div class="tc-title">{task.Title}</div>
               <div class="tc-foot">
-                <span style={avatarStyle(agentGradient(task.AssignedAgent || "?"), 22, 7, 10)}>{initial(task.AssignedAgent || "?")}</span>
+                <AgentAvatar name={task.AssignedAgent || "?"} size={22} radius={7} fontSize={10} />
                 <span class="tc-agent">{task.AssignedAgent || "unassigned"}</span>
                 <span style={chipStyle(task)}>{chip(task).label}</span>
               </div>
@@ -473,7 +474,7 @@
           <div class="cm-prompt">{openCard.Body}</div>
         {/if}
         <div class="cm-assignee">
-          <span style={avatarStyle(agentGradient(openCard.AssignedAgent || "?"), 34, 11, 14)}>{initial(openCard.AssignedAgent || "?")}</span>
+          <AgentAvatar name={openCard.AssignedAgent || "?"} size={34} radius={11} fontSize={14} />
           <div style="flex:1">
             <div class="cm-agent-name">{openCard.AssignedAgent || "unassigned"}</div>
             <div class="mono cm-agent-sub">assignee · {openCard.Status.replace("_", " ")}</div>
@@ -575,7 +576,7 @@
         <div class="chip-wrap">
           {#each agents as a}
             <button style={agentChipStyle(ntAgent === a.Name)} onclick={() => (ntAgent = a.Name)}>
-              <span style={avatarStyle(agentGradient(a.Name), 20, 6, 9)}>{initial(a.Name)}</span>{a.Name}
+              <AgentAvatar name={a.Name} size={20} radius={6} fontSize={9} />{a.Name}
             </button>
           {/each}
         </div>
@@ -636,7 +637,7 @@
         <div class="chip-wrap">
           {#each agents as a}
             <button style={agentChipStyle(etAgent === a.Name)} onclick={() => (etAgent = a.Name)}>
-              <span style={avatarStyle(agentGradient(a.Name), 20, 6, 9)}>{initial(a.Name)}</span>{a.Name}
+              <AgentAvatar name={a.Name} size={20} radius={6} fontSize={9} />{a.Name}
             </button>
           {/each}
         </div>

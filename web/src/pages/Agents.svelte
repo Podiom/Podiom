@@ -2,6 +2,7 @@
   import {
     createProfile,
     deleteAgent,
+    deleteAgentAvatar,
     getAgent,
     getMCP,
     getMemory,
@@ -10,6 +11,7 @@
     listProfiles,
     removeAgentTool,
     updateAgent,
+    uploadAgentAvatar,
   } from "../lib/api";
   import {
     capabilityKey,
@@ -22,7 +24,9 @@
   import { renderMarkdown } from "../lib/markdown";
   import MemoryPanel from "../lib/MemoryPanel.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
-  import { agentGradient, avatarStyle, initial, modeChip, providerChip } from "../lib/theme";
+  import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import { avatars } from "../lib/avatars.svelte";
+  import { modeChip, providerChip } from "../lib/theme";
   import type { Agent, Dream, MCPServer, MemoryInfo, ProfileInfo, ProviderCapabilities, WorkspaceTool } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
@@ -118,6 +122,68 @@
     // Refresh memory + journal once the dream settles so the panel updates.
     if (selected) void loadMemory(selected.Name);
     onChanged();
+  }
+
+  // --- Profile picture (avatar) ---
+  let avatarInput = $state<HTMLInputElement | null>(null);
+  let avatarBusy = $state(false);
+  let avatarError = $state<string | null>(null);
+
+  // normalizeToSquarePng cover-crops the chosen image to a small square PNG in
+  // the browser, so the daemon only ever stores a tiny normalized file and the
+  // backend needs no image library.
+  async function normalizeToSquarePng(file: File, size: number): Promise<Blob> {
+    const bitmap = await createImageBitmap(file);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas unavailable");
+      const scale = Math.max(size / bitmap.width, size / bitmap.height);
+      const w = bitmap.width * scale;
+      const h = bitmap.height * scale;
+      ctx.drawImage(bitmap, (size - w) / 2, (size - h) / 2, w, h);
+      return await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/png"),
+      );
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  async function onAvatarPick(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ""; // allow re-picking the same file later
+    if (!file || !selected) return;
+    avatarBusy = true;
+    avatarError = null;
+    try {
+      const png = await normalizeToSquarePng(file, 256);
+      const { AvatarUpdatedAt } = await uploadAgentAvatar(selected.Name, png);
+      avatars.setVersion(selected.Name, AvatarUpdatedAt);
+      onChanged();
+    } catch (err) {
+      avatarError = err instanceof Error ? err.message : "Upload failed.";
+    } finally {
+      avatarBusy = false;
+    }
+  }
+
+  async function removeAvatar() {
+    if (!selected) return;
+    avatarBusy = true;
+    avatarError = null;
+    try {
+      const { AvatarUpdatedAt } = await deleteAgentAvatar(selected.Name);
+      avatars.setVersion(selected.Name, AvatarUpdatedAt);
+      onChanged();
+    } catch (err) {
+      avatarError = err instanceof Error ? err.message : "Remove failed.";
+    } finally {
+      avatarBusy = false;
+    }
   }
 
   // Edit modal state.
@@ -406,7 +472,7 @@
     <div class="roster">
       {#each agents as a}
         <button class="agent-card" onclick={() => openAgent(a)}>
-          <span style={avatarStyle(agentGradient(a.Name), 56, 17, 23)}>{initial(a.Name)}</span>
+          <AgentAvatar name={a.Name} size={56} radius={17} fontSize={23} />
           <div class="ac-body">
             <div class="ac-head">
               <span class="ac-name">{a.Name}</span>
@@ -427,7 +493,25 @@
   <div class="page">
     <button class="back-btn" onclick={() => { selected = null; memoryInfo = null; dreams = []; }}>← All agents</button>
     <div class="ad-top">
-      <span style={avatarStyle(agentGradient(a.Name), 80, 24, 32)}>{initial(a.Name)}</span>
+      <div class="ad-avatar">
+        <button
+          type="button"
+          class="ad-avatar-btn"
+          onclick={() => avatarInput?.click()}
+          disabled={avatarBusy}
+          title="Upload a profile picture"
+        >
+          <AgentAvatar name={a.Name} size={80} radius={24} fontSize={32} />
+          <span class="ad-avatar-edit" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
+          </span>
+        </button>
+        {#if avatars.version(a.Name)}
+          <button type="button" class="ad-avatar-remove" onclick={removeAvatar} disabled={avatarBusy}>Remove</button>
+        {/if}
+        <input bind:this={avatarInput} type="file" accept="image/*" hidden onchange={onAvatarPick} />
+        {#if avatarError}<span class="ad-avatar-err">{avatarError}</span>{/if}
+      </div>
       <div style="flex:1">
         <div class="ad-headrow">
           <span class="ad-name">{a.Name}</span>
@@ -800,6 +884,70 @@
     gap: 20px;
     align-items: flex-start;
     max-width: 880px;
+  }
+
+  .ad-avatar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+  }
+
+  .ad-avatar-btn {
+    position: relative;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 24px;
+    line-height: 0;
+  }
+
+  .ad-avatar-btn:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  .ad-avatar-edit {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid var(--field-line);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 10px -4px rgba(80, 40, 20, 0.4);
+  }
+
+  .ad-avatar-btn:hover .ad-avatar-edit {
+    color: var(--teal-deep);
+  }
+
+  .ad-avatar-remove {
+    border: none;
+    background: none;
+    color: var(--muted);
+    font: 600 12px "Hanken Grotesk";
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .ad-avatar-remove:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  .ad-avatar-err {
+    color: #a23e22;
+    font: 500 11.5px "Hanken Grotesk";
+    max-width: 90px;
+    text-align: center;
   }
 
   .ad-headrow {

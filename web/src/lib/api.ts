@@ -358,6 +358,34 @@ export async function deleteAgent(name: string, confirmation: string): Promise<A
   );
 }
 
+// --- Agent avatar (profile picture) ---
+
+// fetchAgentAvatar returns the raw image bytes for an agent's uploaded picture.
+// /api is token-gated, so the bytes must be fetched through request() (which
+// attaches the token) rather than referenced from a plain <img src>. Throws if
+// the agent has no picture (404).
+export async function fetchAgentAvatar(name: string): Promise<Blob> {
+  const res = await request(`/api/agents/${encodeURIComponent(name)}/avatar`);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.blob();
+}
+
+export async function uploadAgentAvatar(name: string, image: Blob): Promise<{ AvatarUpdatedAt: string }> {
+  return asJSON(
+    await request(`/api/agents/${encodeURIComponent(name)}/avatar`, {
+      method: "POST",
+      headers: { "Content-Type": image.type || "image/png" },
+      body: image,
+    }),
+  );
+}
+
+export async function deleteAgentAvatar(name: string): Promise<{ AvatarUpdatedAt: string }> {
+  return asJSON(
+    await request(`/api/agents/${encodeURIComponent(name)}/avatar`, { method: "DELETE" }),
+  );
+}
+
 // --- Memory & dreaming ---
 
 export async function getMemory(name: string): Promise<MemoryInfo> {

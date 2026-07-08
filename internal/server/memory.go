@@ -36,7 +36,8 @@ type memoryStatusRow struct {
 	LastDream       *store.Dream `json:"last_dream"`
 }
 
-// handleAgentSubresource routes /api/agents/{name}/{sub}: memory, dreams, dream.
+// handleAgentSubresource routes /api/agents/{name}/{sub}: memory, dreams, dream,
+// tools, avatar.
 func (s *Server) handleAgentSubresource(w http.ResponseWriter, r *http.Request, name, sub string) {
 	if s.core == nil {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
@@ -51,6 +52,8 @@ func (s *Server) handleAgentSubresource(w http.ResponseWriter, r *http.Request, 
 		s.handleAgentDream(w, r, name)
 	case "tools":
 		s.handleAgentTools(w, r, name, "")
+	case "avatar":
+		s.handleAgentAvatar(w, r, name)
 	default:
 		// /{name}/tools/{tool} carries the tool name as a further segment.
 		if tool, ok := strings.CutPrefix(sub, "tools/"); ok && tool != "" {

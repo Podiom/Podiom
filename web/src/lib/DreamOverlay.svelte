@@ -2,7 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { dreamAgent } from "./api";
   import { live } from "./live.svelte";
-  import { agentGradient, avatarStyle, initial } from "./theme";
+  import AgentAvatar from "./AgentAvatar.svelte";
   import type { Dream, DreamPhase, ServerMessage } from "./types";
 
   let {
@@ -135,7 +135,7 @@
       <div class="dream-moon-glow"></div>
       <div class="dream-moon-shadow"></div>
     </div>
-    <div style={avatarStyle(agentGradient(agentName), 44, 14, 18)}>{initial(agentName)}</div>
+    <AgentAvatar name={agentName} size={44} radius={14} fontSize={18} />
   </div>
 
   <div class="dream-core" class:active={visual === "distill" || visual === "gather"}></div>

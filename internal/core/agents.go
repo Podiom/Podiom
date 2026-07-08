@@ -418,6 +418,52 @@ func (c *Core) ClearAgentMemory(name string) error {
 	return c.WriteAgentMemory(name, "")
 }
 
+// ReadAgentAvatar returns the bytes of an agent's uploaded profile picture, or
+// os.ErrNotExist if the agent has no picture. Callers should map the not-exist
+// case to a 404.
+func (c *Core) ReadAgentAvatar(name string) ([]byte, error) {
+	if err := validateAgentName(name); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(c.AgentPaths(name).Avatar)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, os.ErrNotExist
+		}
+		return nil, fmt.Errorf("read avatar for agent %q: %w", name, err)
+	}
+	return data, nil
+}
+
+// SetAgentAvatar writes (normalized PNG) bytes as the agent's profile picture
+// and stamps the version so clients cache-bust. The write is atomic.
+func (c *Core) SetAgentAvatar(ctx context.Context, name string, data []byte) error {
+	if err := validateAgentName(name); err != nil {
+		return err
+	}
+	paths := c.AgentPaths(name)
+	if err := os.MkdirAll(paths.Root, 0o755); err != nil {
+		return fmt.Errorf("create agent dir: %w", err)
+	}
+	if err := writeFileAtomic(paths.Avatar, data, 0o644); err != nil {
+		return err
+	}
+	return c.store.SetAgentAvatarUpdatedAt(ctx, name, time.Now().UTC().Format(time.RFC3339Nano))
+}
+
+// DeleteAgentAvatar removes an agent's uploaded profile picture and clears the
+// version stamp, reverting the UI to the derived gradient monogram. Removing a
+// picture that does not exist is not an error.
+func (c *Core) DeleteAgentAvatar(ctx context.Context, name string) error {
+	if err := validateAgentName(name); err != nil {
+		return err
+	}
+	if err := os.Remove(c.AgentPaths(name).Avatar); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove avatar for agent %q: %w", name, err)
+	}
+	return c.store.SetAgentAvatarUpdatedAt(ctx, name, "")
+}
+
 // writeFileAtomic writes data to a temp file in the same directory and renames it
 // into place, so a concurrent reader sees either the old or the new file whole.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

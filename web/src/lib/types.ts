@@ -127,6 +127,9 @@ export interface Agent {
   // ("claude"/"codex", no profile), or "default" (the agent's own provider).
   Fallback: string[];
   MCPServers?: string[];
+  // Version stamp of the agent's uploaded profile picture (empty/absent = none).
+  // Changes whenever a new picture is uploaded, so the client cache-busts.
+  AvatarUpdatedAt?: string;
 }
 
 // ProfileInfo mirrors the GET /api/profiles response: configured auth profiles

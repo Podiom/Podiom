@@ -15,7 +15,7 @@
   } from "../lib/api";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
-  import { agentGradient, initial } from "../lib/theme";
+  import AgentAvatar from "../lib/AgentAvatar.svelte";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import type {
     AccessRequest,
@@ -593,7 +593,7 @@
                             {lbl}
                           </span>
                           <span class="agent-chip">
-                            <span class="avatar" style="background:{agentGradient(g.LeadAgent)}">{initial(g.LeadAgent)}</span>
+                            <AgentAvatar name={g.LeadAgent} size={20} radius={6} fontSize={9} />
                             {g.LeadAgent}
                           </span>
                           {#if g.ProjectID}<span class="proj mono">◆ {g.ProjectID}</span>{/if}
@@ -667,7 +667,7 @@
               {isPlanning ? "planning" : lbl}
             </span>
             <span class="agent-chip lg">
-              <span class="avatar lg" style="background:{agentGradient(g.LeadAgent)}">{initial(g.LeadAgent)}</span>
+              <AgentAvatar name={g.LeadAgent} size={22} radius={7} fontSize={10} />
               {g.LeadAgent}
             </span>
             {#if g.ProjectID}<span class="proj mono">◆ {g.ProjectID}</span>{/if}
@@ -928,7 +928,7 @@
         <div class="chips">
           {#each agents as a (a.Name)}
             <button class="agent-pick" class:on={cAgent === a.Name} onclick={() => (cAgent = a.Name)}>
-              <span class="avatar" style="background:{agentGradient(a.Name)}">{initial(a.Name)}</span>{a.Name}
+              <AgentAvatar name={a.Name} size={22} radius={7} fontSize={10} />{a.Name}
             </button>
           {/each}
           {#if agents.length === 0}
@@ -1288,24 +1288,6 @@
   }
   .agent-chip.lg {
     font-size: 12.5px;
-  }
-  .avatar {
-    width: 20px;
-    height: 20px;
-    flex: none;
-    border-radius: 6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 9px;
-    font-weight: 800;
-    color: #fff;
-  }
-  .avatar.lg {
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
-    font-size: 10px;
   }
   .proj {
     font-size: 11px;
@@ -2096,12 +2078,6 @@
     border-color: #bfe0d6;
     background: #e3f1ec;
     color: var(--teal-deep);
-  }
-  .agent-pick .avatar {
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
-    font-size: 10px;
   }
   .muted-note {
     font-size: 13px;

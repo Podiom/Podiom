@@ -154,6 +154,9 @@ type AgentPaths struct {
 	// Tools is the per-agent workspace-tool directory (installs, manifest);
 	// see docs/requirements/workspace-tool-installs.md.
 	Tools string
+	// Avatar is the agent's uploaded profile picture (always normalized to PNG),
+	// or the path where one would live if none has been uploaded.
+	Avatar string
 }
 
 func validateAgentName(name string) error {

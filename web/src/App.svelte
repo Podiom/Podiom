@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { applyUpdate, checkUpdate, createProfile, getHealth, hireAgent, listAgents, listProfiles } from "./lib/api";
   import { auth } from "./lib/auth.svelte";
+  import { avatars } from "./lib/avatars.svelte";
   import { deployment } from "./lib/base";
   import { live } from "./lib/live.svelte";
   import TokenGate from "./pages/TokenGate.svelte";
@@ -85,6 +86,12 @@
   let updateError = $state<string | null>(null);
   let daemonStatus = $state<"connecting" | "live" | "offline">("connecting");
   let agents = $state<Agent[]>([]);
+  // Keep the shared avatar registry in step with the canonical agents list, so
+  // every <AgentAvatar> (which only knows an agent's name) learns when a picture
+  // is uploaded, changed, or removed.
+  $effect(() => {
+    avatars.syncFromAgents(agents);
+  });
   let chatTarget = $state<ChatTarget | null>(null);
   let goalTarget = $state<string | null>(null);
   let releaseNotesFocusToken = $state(0);

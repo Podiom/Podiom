@@ -80,8 +80,12 @@ type Agent struct {
 	Fallback       []string
 	MCPServers     []string `json:"-"`
 	MCPConfig      string   `json:"-"`
-	CreatedAt      string
-	UpdatedAt      string
+	// AvatarUpdatedAt versions the agent's uploaded profile picture (empty = none).
+	// The bytes live on disk (agents/<name>/avatar.png); this stamp drives
+	// client-side cache-busting and tells the UI a picture exists.
+	AvatarUpdatedAt string
+	CreatedAt       string
+	UpdatedAt       string
 }
 
 // Session is Podiom's durable conversation unit and current provider settings.

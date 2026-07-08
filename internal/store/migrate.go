@@ -403,6 +403,15 @@ var migrations = []migration{
 		CREATE INDEX idx_sessions_plan_state ON sessions(plan_state);
 		CREATE INDEX idx_sessions_goal_id ON sessions(goal_id);`,
 	},
+	{
+		version: 15,
+		name:    "agent_avatar",
+		// avatar_updated_at is the version stamp for an agent's uploaded profile
+		// picture (empty = no picture). The image bytes live on disk in the
+		// per-agent dir (agents/<name>/avatar.png); this column only records
+		// existence and drives client-side cache-busting.
+		sql: `ALTER TABLE agents ADD COLUMN avatar_updated_at TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

@@ -13,10 +13,8 @@
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import ContextRing from "../lib/ContextRing.svelte";
   import UsageChip from "../lib/UsageChip.svelte";
+  import AgentAvatar from "../lib/AgentAvatar.svelte";
   import {
-    agentGradient,
-    avatarStyle,
-    initial,
     modeChip,
     originLabel,
     originStyle,
@@ -180,8 +178,7 @@
   const activeAgent = $derived(
     agents.find((a) => a.Name === activeSession?.AgentName || a.Name === selectedAgent),
   );
-  const activeGrad = $derived(agentGradient(activeAgent?.Name ?? selectedAgent ?? "?"));
-  const activeMono = $derived(initial(activeAgent?.Name ?? selectedAgent ?? "?"));
+  const activeName = $derived(activeAgent?.Name ?? selectedAgent ?? "?");
   const filteredSessions = $derived(
     sessions.filter((s) => {
       if (originFilter !== "all" && s.Origin !== originFilter) return false;
@@ -1213,7 +1210,7 @@
           <div class="sess-row-wrap">
             <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
               <span class="sess-avatar-wrap">
-                <span style={avatarStyle(agentGradient(s.AgentName), 32, 10, 13)}>{initial(s.AgentName)}</span>
+                <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
                 {#if live.attention.has(s.ID)}
                   <span class="attn-dot" title="Needs your attention"></span>
                 {/if}
@@ -1321,7 +1318,7 @@
           </div>
         {:else}
           <div class="row-start">
-            <div style={avatarStyle(activeGrad, 30, 10, 13)}>{activeMono}</div>
+            <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
             <div class="bubble-assistant">{@html renderMarkdown(m.Content)}</div>
           </div>
         {/if}
@@ -1329,14 +1326,14 @@
 
       {#if pendingAssistant}
         <div class="row-start">
-          <div style={avatarStyle(activeGrad, 30, 10, 13)}>{activeMono}</div>
+          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <div class="bubble-assistant">{@html renderMarkdown(pendingAssistant)}<span class="cursor"></span></div>
         </div>
       {/if}
 
       {#if sending && !pendingAssistant && !pendingPermission && !pendingUserInput}
         <div class="row-start" style="align-items:center">
-          <div style={avatarStyle(activeGrad, 30, 10, 13)}>{activeMono}</div>
+          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <span class="thinking">
             <span class="tdot"></span><span class="tdot d2"></span><span class="tdot d3"></span>
           </span>
@@ -1345,7 +1342,7 @@
 
       {#if pendingUserInput}
         <div class="row-start question-wrap">
-          <div style={avatarStyle(activeGrad, 30, 10, 13)}>{activeMono}</div>
+          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <div class="question-card">
             <div class="question-head">
               <span class="approve-tag mono">question · {pendingUserInput.provider ?? "provider"}</span>
@@ -1392,7 +1389,7 @@
 
       {#if pendingFallback}
         <div class="row-start question-wrap">
-          <div style={avatarStyle(activeGrad, 30, 10, 13)}>{activeMono}</div>
+          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <div class="question-card fallback-card">
             <div class="question-head">
               <span class="approve-tag mono">session limit · {pendingFallback.label}</span>
@@ -1740,7 +1737,7 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
         </button>
       </div>
-      <div style={avatarStyle(activeGrad, 64, 20, 26) + ";animation:floaty 5s ease-in-out infinite"}>{activeMono}</div>
+      <AgentAvatar name={activeName} size={64} radius={20} fontSize={26} style="animation:floaty 5s ease-in-out infinite" />
       <div class="ctx-name">{activeAgent?.Name ?? selectedAgent ?? "—"}</div>
       <div class="ctx-chips">
         {#if activeAgent}<span style={providerChip(activeAgent.Provider)}>{activeAgent.Provider}</span>{/if}
@@ -1805,7 +1802,7 @@
       <div class="ns-list">
         {#each agents as a}
           <button class="ns-row" onclick={() => startSessionWith(a.Name)}>
-            <span style={avatarStyle(agentGradient(a.Name), 46, 14, 19)}>{initial(a.Name)}</span>
+            <AgentAvatar name={a.Name} size={46} radius={14} fontSize={19} />
             <span class="ns-row-text">
               <span class="ns-row-head">
                 <b>{a.Name}</b>
