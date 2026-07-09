@@ -301,6 +301,9 @@ type TurnEvent struct {
 	UserInputRequest  *adapter.UserInputRequest
 	Message           *store.Message
 	ContextStatus     *adapter.ContextStatus
+	// Usage carries the session's updated cumulative billed-token totals after a
+	// turn completes, so the client can refresh its usage bar live.
+	Usage *store.SessionUsage
 }
 
 // AppendTurn persists the user turn, drives the adapter, persists the assistant
@@ -731,6 +734,33 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				}
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ContextStatus: event.ContextStatus}) {
 					return assistant, false, false
+				}
+			}
+		case adapter.EventTurnUsage:
+			if event.TurnUsage != nil {
+				delta := store.SessionUsage{
+					InputTokens:      event.TurnUsage.Input,
+					OutputTokens:     event.TurnUsage.Output,
+					CacheReadTokens:  event.TurnUsage.CacheRead,
+					CacheWriteTokens: event.TurnUsage.CacheWrite,
+				}
+				// Accumulate into the session's lifetime total (best effort — a
+				// failed write must not abort the turn) and feed the calibrator.
+				total, err := c.store.AddSessionUsage(ctx, sessionID, delta)
+				if err != nil {
+					c.log.Warn("persist session usage failed", "event", "provider", "session", sessionID, "error", err)
+				} else {
+					if c.onTurnUsage != nil {
+						profileKey := profile
+						if profileKey == "" {
+							profileKey = string(provider)
+						}
+						c.onTurnUsage(profileKey, provider, delta.Total())
+					}
+					usage := total
+					if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Usage: &usage}) {
+						return assistant, false, false
+					}
 				}
 			}
 		case adapter.EventRateLimited:

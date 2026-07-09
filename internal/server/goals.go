@@ -11,6 +11,7 @@ import (
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 )
 
 type goalCreateRequest struct {
@@ -72,6 +73,43 @@ type GoalDetail struct {
 	Goal           store.Goal            `json:"goal"`
 	Events         []store.GoalEvent     `json:"events"`
 	AccessRequests []store.AccessRequest `json:"access_requests"`
+	Usage          *tokenmeter.Estimate  `json:"usage,omitempty"`
+}
+
+// goalListItem is a goal in the list response with its rolled-up usage estimate.
+// The embedded Goal flattens into the JSON object (preserving its PascalCase
+// fields), and Usage is appended alongside.
+type goalListItem struct {
+	store.Goal
+	Usage *tokenmeter.Estimate `json:"Usage,omitempty"`
+}
+
+// goalUsageEstimate aggregates a goal's per-(provider,profile) token totals into
+// one limit-share estimate. Percentages sum across providers; a goal is reported
+// calibrated only when every contributing group is. Returns nil when there is no
+// measured usage or no meter is wired.
+func (s *Server) goalUsageEstimate(ctx context.Context, goalID string) *tokenmeter.Estimate {
+	if s.tokenMeter == nil {
+		return nil
+	}
+	groups, err := s.core.SumGoalUsage(ctx, goalID)
+	if err != nil || len(groups) == 0 {
+		return nil
+	}
+	agg := tokenmeter.Estimate{Calibrated: true}
+	for _, g := range groups {
+		e := s.tokenMeter.Estimate(g.Provider, g.Profile, g.Usage.Total())
+		agg.Tokens += e.Tokens
+		agg.FiveHourPercent += e.FiveHourPercent
+		agg.WeeklyPercent += e.WeeklyPercent
+		if !e.Calibrated {
+			agg.Calibrated = false
+		}
+	}
+	if agg.Tokens == 0 {
+		return nil
+	}
+	return &agg
 }
 
 // goalDetailEvents is how much timeline the detail endpoint returns up front;
@@ -86,10 +124,15 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		goals, err := s.core.ListGoals(r.Context(), strings.TrimSpace(r.URL.Query().Get("status")))
-		if goals == nil {
-			goals = []store.Goal{}
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
 		}
-		writeJSON(w, goals, err)
+		items := make([]goalListItem, 0, len(goals))
+		for _, g := range goals {
+			items = append(items, goalListItem{Goal: g, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
+		}
+		writeJSON(w, items, nil)
 	case http.MethodPost:
 		var req goalCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -218,7 +261,7 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 		if requests == nil {
 			requests = []store.AccessRequest{}
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests}, nil)
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, Usage: s.goalUsageEstimate(r.Context(), id)}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

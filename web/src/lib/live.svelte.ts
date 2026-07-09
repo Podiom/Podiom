@@ -21,6 +21,7 @@ import type {
   GoalEvent,
   ServerMessage,
   Session,
+  UsageEstimate,
   UsageSnapshot,
 } from "./types";
 
@@ -59,6 +60,11 @@ class LiveStore {
   // "context" messages mid-turn and seeded from the persisted session fields so
   // the composer ring restores on load/reconnect. Drives the composer context ring.
   contextBySession = $state<Record<string, ContextUsage>>({});
+
+  // Per-session token-usage estimate (share of 5-hour/weekly limits) keyed by
+  // session ID. Updated live from "session_usage" messages after each turn and
+  // seeded from the session detail on open. Drives the chat usage bar.
+  usageBySession = $state<Record<string, UsageEstimate>>({});
 
   // Per-profile usage snapshots keyed by profile key ("claude"/"codex" for the
   // implicit defaults, else the profile name). Drives the composer usage chip.
@@ -273,6 +279,11 @@ class LiveStore {
           this.contextBySession = { ...this.contextBySession, [msg.session_id]: msg.context };
         }
         break;
+      case "session_usage":
+        if (msg.session_id && msg.session_usage) {
+          this.usageBySession = { ...this.usageBySession, [msg.session_id]: msg.session_usage };
+        }
+        break;
       case "turn_state":
         if (msg.turn_state) {
           const ts = msg.turn_state;
@@ -311,6 +322,15 @@ class LiveStore {
     }
     // …then hand the raw message to page-level subscribers (chat rendering).
     for (const fn of this.subscribers) fn(msg);
+  }
+
+  // setSessionUsage seeds the usage estimate for a session from its detail
+  // response on open (the percent share isn't derivable from the persisted
+  // session fields, so it must be supplied by the caller). A later live
+  // "session_usage" message overwrites it after each turn.
+  setSessionUsage(sessionID: string, usage: UsageEstimate | undefined | null) {
+    if (!sessionID || !usage) return;
+    this.usageBySession = { ...this.usageBySession, [sessionID]: usage };
   }
 
   // seedContext refreshes contextBySession from the persisted session fields.

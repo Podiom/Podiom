@@ -51,6 +51,12 @@ func (c *Core) GetGoal(ctx context.Context, id string) (store.Goal, error) {
 	return c.store.GetGoal(ctx, id)
 }
 
+// SumGoalUsage rolls up cumulative billed tokens across a goal's sessions,
+// grouped by (provider, profile) so each group can be converted to a limit share.
+func (c *Core) SumGoalUsage(ctx context.Context, goalID string) ([]store.GoalUsageGroup, error) {
+	return c.store.SumGoalUsage(ctx, goalID)
+}
+
 // CreateGoal creates a goal, appends its `created` timeline event, and computes
 // the first review time from the cadence. The caller kicks off planning
 // separately (StartGoalPlanning) so goal creation itself stays fast.

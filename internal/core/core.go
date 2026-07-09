@@ -59,6 +59,10 @@ type Core struct {
 	// mid-turn (attributed to the session's profile/provider). The usage tracker
 	// wires this to IngestPassive; nil disables passive enrichment.
 	onRateStatus func(profile string, provider config.Provider, rs adapter.RateStatus)
+	// onTurnUsage, when set, receives the billed tokens of a completed turn
+	// (attributed to the session's profile/provider) so the token meter can
+	// calibrate its token→limit-% estimates. nil disables calibration feeding.
+	onTurnUsage func(profile string, provider config.Provider, delta int64)
 
 	// dreamMu guards dreaming map below and serializes dreams per agent so a
 	// second concurrent dream for the same agent fails fast (ErrDreamInProgress).
@@ -88,6 +92,12 @@ func (c *Core) SetActiveTurnChecker(fn func(sessionID string) bool) {
 // during a turn. Safe to call once during daemon wiring, before turns run.
 func (c *Core) SetRateStatusHandler(fn func(profile string, provider config.Provider, rs adapter.RateStatus)) {
 	c.onRateStatus = fn
+}
+
+// SetTurnUsageHandler registers a callback for the billed-token total of each
+// completed turn. Safe to call once during daemon wiring, before turns run.
+func (c *Core) SetTurnUsageHandler(fn func(profile string, provider config.Provider, delta int64)) {
+	c.onTurnUsage = fn
 }
 
 // New creates a Core service.

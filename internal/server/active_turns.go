@@ -10,6 +10,7 @@ import (
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 )
 
 var errActiveTurnExists = errors.New("session already has an active turn")
@@ -271,6 +272,17 @@ func (h *activeTurnHub) recordDelta(sessionID, delta string) {
 func (h *activeTurnHub) recordContext(sessionID string, used, max int64) {
 	writers, requestID := h.turnWriters(sessionID)
 	h.broadcast(writers, ServerMessage{Type: "context", RequestID: requestID, SessionID: sessionID, Context: &ContextUsage{Used: used, Max: max}})
+}
+
+// recordSessionUsage broadcasts a session's updated token-usage estimate to its
+// subscribers so the chat usage bar updates live after a turn completes. A nil
+// estimate (no meter wired) is a no-op.
+func (h *activeTurnHub) recordSessionUsage(sessionID string, est *tokenmeter.Estimate) {
+	if est == nil {
+		return
+	}
+	writers, requestID := h.turnWriters(sessionID)
+	h.broadcast(writers, ServerMessage{Type: "session_usage", RequestID: requestID, SessionID: sessionID, SessionUsage: est})
 }
 
 func (h *activeTurnHub) recordAssistant(sessionID, text string) {

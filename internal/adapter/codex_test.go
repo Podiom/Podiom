@@ -208,6 +208,27 @@ func TestCodexContextStatusParsing(t *testing.T) {
 	}
 }
 
+func TestCodexTurnUsageParsing(t *testing.T) {
+	// last_token_usage is the per-turn breakdown: reasoning output folds into output,
+	// cached input maps to cache-read, and Codex reports no cache-write class.
+	params := json.RawMessage(`{"info":{"last_token_usage":{"input_tokens":80000,"cached_input_tokens":10000,"output_tokens":2000,"reasoning_output_tokens":500},"model_context_window":200000}}`)
+	tu, ok := codexTurnUsage(params)
+	if !ok {
+		t.Fatal("expected turn usage to parse")
+	}
+	if tu.Input != 80000 || tu.CacheRead != 10000 || tu.Output != 2500 || tu.CacheWrite != 0 {
+		t.Errorf("breakdown = %+v", tu)
+	}
+	if tu.Total() != 92500 {
+		t.Errorf("total = %d, want 92500", tu.Total())
+	}
+
+	// No last_token_usage → no event (avoids counting turn/completed twice).
+	if _, ok := codexTurnUsage(json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":10},"model_context_window":200000}}`)); ok {
+		t.Error("expected no turn usage without last_token_usage")
+	}
+}
+
 func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "approval")
 	codex := newTestCodex(t)

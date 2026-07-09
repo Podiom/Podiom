@@ -13,6 +13,7 @@
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import ContextRing from "../lib/ContextRing.svelte";
   import UsageChip from "../lib/UsageChip.svelte";
+  import UsageBar from "../lib/UsageBar.svelte";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import {
     modeChip,
@@ -238,6 +239,7 @@
   const showSlash = $derived(messageText.startsWith("/"));
   const activeTurn = $derived(activeSession ? activeTurns[activeSession.ID] : undefined);
   const contextUsage = $derived(activeSession ? live.contextBySession[activeSession.ID] : undefined);
+  const sessionUsage = $derived(activeSession ? live.usageBySession[activeSession.ID] : undefined);
   const approvalHistory = $derived(activeSession ? approvalHistoryBySession[activeSession.ID] ?? [] : []);
   const currentApproval = $derived(
     pendingPermission
@@ -591,6 +593,7 @@
       const detail = await getSession(session.ID);
       activeSession = detail.session;
       selectedAgent = detail.session.AgentName;
+      live.setSessionUsage(detail.session.ID, detail.usage);
       rememberSession(detail.session.ID);
       messages = detail.history ?? [];
       projectName = detail.project_name ?? (detail.session.ProjectID ? projectLabel(detail.session.ProjectID) : "");
@@ -1286,6 +1289,13 @@
       <div class="plan-banner awaiting">
         <span class="plan-banner-dot"></span>
         <span>Plan ready for review - approve it, send feedback, or reject it.</span>
+      </div>
+    {/if}
+
+    {#if sessionUsage}
+      <div class="usage-strip">
+        <span class="usage-strip-label">session usage</span>
+        <div class="usage-strip-bars"><UsageBar usage={sessionUsage} /></div>
       </div>
     {/if}
 
@@ -2197,6 +2207,29 @@
     padding: 6px 24px;
     background: rgba(63, 143, 126, 0.06);
     border-bottom: 1px solid #e6efe9;
+  }
+
+  .usage-strip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 24px;
+    background: #fbf6ef;
+    border-bottom: 1px solid #efe6da;
+  }
+
+  .usage-strip-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #a2937c;
+    flex: none;
+  }
+
+  .usage-strip-bars {
+    flex: 1;
+    max-width: 360px;
   }
 
   .proj-dot-sm {

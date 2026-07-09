@@ -121,6 +121,33 @@ type Session struct {
 	// stream and drive the composer's context-window ring. 0 means un-observed.
 	ContextTokens int64
 	ContextLimit  int64
+	// Usage* are cumulative billed-token totals accumulated across every turn of
+	// the session (each turn's provider usage is added). Unlike ContextTokens
+	// (a snapshot), these only grow. SessionUsage.Total() is the billable metric.
+	Usage SessionUsage
+}
+
+// SessionUsage is a session's cumulative billed-token total, broken out by class.
+type SessionUsage struct {
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
+
+// Total sums all token classes into the billable metric.
+func (u SessionUsage) Total() int64 {
+	return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheWriteTokens
+}
+
+// Add returns u with a per-turn delta added to every class.
+func (u SessionUsage) Add(d SessionUsage) SessionUsage {
+	return SessionUsage{
+		InputTokens:      u.InputTokens + d.InputTokens,
+		OutputTokens:     u.OutputTokens + d.OutputTokens,
+		CacheReadTokens:  u.CacheReadTokens + d.CacheReadTokens,
+		CacheWriteTokens: u.CacheWriteTokens + d.CacheWriteTokens,
+	}
 }
 
 // Message is one ordered entry in a session's canonical history.

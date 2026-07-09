@@ -59,7 +59,9 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
+		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
+		created_at, updated_at
 		FROM sessions WHERE id = ?`, id)
 	sess, err := scanSession(row)
 	if err != nil {
@@ -77,7 +79,9 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
+		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
+		created_at, updated_at
 		FROM sessions ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -102,7 +106,9 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
+		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
+		created_at, updated_at
 		FROM sessions WHERE agent_name = ? ORDER BY created_at, id`, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for agent %q: %w", agentName, err)
@@ -127,7 +133,9 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
+		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
+		created_at, updated_at
 		FROM sessions WHERE schedule_id = ? ORDER BY created_at DESC, id DESC`, scheduleName)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for schedule %q: %w", scheduleName, err)
@@ -151,7 +159,9 @@ func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Sessio
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0), created_at, updated_at
+		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
+		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
+		created_at, updated_at
 		FROM sessions WHERE task_id = ? ORDER BY created_at DESC, id DESC`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for task %q: %w", taskID, err)
@@ -262,6 +272,38 @@ func (s *Store) UpdateSessionContext(ctx context.Context, id string, tokens, lim
 		return fmt.Errorf("session %q: %w", id, ErrNotFound)
 	}
 	return nil
+}
+
+// AddSessionUsage increments a session's cumulative billed-token totals by one
+// turn's delta and returns the new lifetime totals. Called once per completed
+// turn from the provider stream. Unlike UpdateSessionContext (a snapshot
+// overwrite) these accumulate over the session's lifetime. A zero delta is a
+// no-op that returns the current totals unchanged.
+func (s *Store) AddSessionUsage(ctx context.Context, id string, delta SessionUsage) (SessionUsage, error) {
+	if delta.Total() == 0 {
+		sess, err := s.GetSession(ctx, id)
+		if err != nil {
+			return SessionUsage{}, err
+		}
+		return sess.Usage, nil
+	}
+	row := s.db.QueryRowContext(ctx, `UPDATE sessions
+		SET usage_input_tokens = usage_input_tokens + ?,
+			usage_output_tokens = usage_output_tokens + ?,
+			usage_cache_read_tokens = usage_cache_read_tokens + ?,
+			usage_cache_write_tokens = usage_cache_write_tokens + ?,
+			updated_at = datetime('now')
+		WHERE id = ?
+		RETURNING usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens`,
+		delta.InputTokens, delta.OutputTokens, delta.CacheReadTokens, delta.CacheWriteTokens, id)
+	var total SessionUsage
+	if err := row.Scan(&total.InputTokens, &total.OutputTokens, &total.CacheReadTokens, &total.CacheWriteTokens); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionUsage{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
+		}
+		return SessionUsage{}, fmt.Errorf("add session %q usage: %w", id, err)
+	}
+	return total, nil
 }
 
 // UpdateSessionPlanState stores the current plan gate state and displayable
@@ -463,6 +505,10 @@ func scanSession(row scanner) (Session, error) {
 		&sess.DreamedAt,
 		&sess.ContextTokens,
 		&sess.ContextLimit,
+		&sess.Usage.InputTokens,
+		&sess.Usage.OutputTokens,
+		&sess.Usage.CacheReadTokens,
+		&sess.Usage.CacheWriteTokens,
 		&sess.CreatedAt,
 		&sess.UpdatedAt,
 	); err != nil {

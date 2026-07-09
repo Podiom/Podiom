@@ -7,6 +7,7 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/Podiom/Podiom/internal/usage"
 )
 
@@ -51,7 +52,11 @@ type ServerMessage struct {
 	Fallback    *core.FallbackRequest      `json:"fallback,omitempty"`
 	TurnState   *TurnState                 `json:"turn_state,omitempty"`
 	Context     *ContextUsage              `json:"context,omitempty"`
-	Error       string                     `json:"error,omitempty"`
+	// SessionUsage is a session's cumulative billed-token total expressed as an
+	// estimated share of the 5-hour and weekly limits. Sent with a "session"
+	// message (on open) and pushed as a "session_usage" message after each turn.
+	SessionUsage *tokenmeter.Estimate `json:"session_usage,omitempty"`
+	Error        string               `json:"error,omitempty"`
 	// Dream fields carry a "dream_state" message: AgentName identifies the agent,
 	// DreamPhase is the current phase (gathering|distilling|integrating|done|
 	// noop|error), and Dream is the finished journal row on the terminal "done".

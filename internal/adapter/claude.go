@@ -496,6 +496,9 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 		if ctxEvent, ok := claudeContextEvent(raw); ok {
 			events = append(events, ctxEvent)
 		}
+		if usageEvent, ok := claudeTurnUsageEvent(raw); ok {
+			events = append(events, usageEvent)
+		}
 	case "api_retry":
 		if claudeRateLimited(raw) {
 			events = append(events, Event{Kind: EventRateLimited, Content: "claude rate limited"})
@@ -798,6 +801,27 @@ func claudeContextEvent(raw map[string]any) (Event, bool) {
 		return Event{}, false
 	}
 	return Event{Kind: EventContextStatus, ContextStatus: &ContextStatus{UsedTokens: used}}, true
+}
+
+// claudeTurnUsageEvent extracts the billed-token breakdown for a completed turn.
+// It is emitted only from the terminal `result` event, whose `usage` is the
+// turn's cumulative total (input + output + both cache classes) — emitting from
+// the per-message events instead would double-count across the tool loop.
+func claudeTurnUsageEvent(raw map[string]any) (Event, bool) {
+	usage := claudeUsageMap(raw)
+	if usage == nil {
+		return Event{}, false
+	}
+	tu := TurnUsage{
+		Input:      int64FromAny(firstValue(usage, "input_tokens", "inputTokens")),
+		Output:     int64FromAny(firstValue(usage, "output_tokens", "outputTokens")),
+		CacheRead:  int64FromAny(firstValue(usage, "cache_read_input_tokens", "cacheReadInputTokens")),
+		CacheWrite: int64FromAny(firstValue(usage, "cache_creation_input_tokens", "cacheCreationInputTokens")),
+	}
+	if tu.Total() <= 0 {
+		return Event{}, false
+	}
+	return Event{Kind: EventTurnUsage, TurnUsage: &tu}, true
 }
 
 func claudeUsageMap(raw map[string]any) map[string]any {

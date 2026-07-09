@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/google/uuid"
 )
 
@@ -186,6 +187,42 @@ func scanGoal(row scanner) (Goal, error) {
 		return Goal{}, fmt.Errorf("goal %q metrics: %w", goal.ID, err)
 	}
 	return goal, nil
+}
+
+// GoalUsageGroup is a goal's summed session usage for one (provider, profile)
+// pair. Grouped this way because token→% conversion is calibrated per profile,
+// so a goal spanning profiles must convert each group separately.
+type GoalUsageGroup struct {
+	Provider config.Provider
+	Profile  string
+	Usage    SessionUsage
+}
+
+// SumGoalUsage rolls up cumulative billed tokens across all of a goal's sessions,
+// grouped by (provider, profile). Groups with zero usage are omitted. An empty
+// result means the goal has no measured usage yet.
+func (s *Store) SumGoalUsage(ctx context.Context, goalID string) ([]GoalUsageGroup, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT provider, profile,
+		COALESCE(SUM(usage_input_tokens), 0), COALESCE(SUM(usage_output_tokens), 0),
+		COALESCE(SUM(usage_cache_read_tokens), 0), COALESCE(SUM(usage_cache_write_tokens), 0)
+		FROM sessions WHERE goal_id = ? GROUP BY provider, profile`, goalID)
+	if err != nil {
+		return nil, fmt.Errorf("sum goal %q usage: %w", goalID, err)
+	}
+	defer rows.Close()
+
+	var groups []GoalUsageGroup
+	for rows.Next() {
+		var g GoalUsageGroup
+		if err := rows.Scan(&g.Provider, &g.Profile,
+			&g.Usage.InputTokens, &g.Usage.OutputTokens, &g.Usage.CacheReadTokens, &g.Usage.CacheWriteTokens); err != nil {
+			return nil, fmt.Errorf("scan goal %q usage: %w", goalID, err)
+		}
+		if g.Usage.Total() > 0 {
+			groups = append(groups, g)
+		}
+	}
+	return groups, rows.Err()
 }
 
 func marshalMetrics(metrics []GoalMetric) (string, error) {

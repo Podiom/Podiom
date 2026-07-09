@@ -17,6 +17,7 @@
   import { renderMarkdown } from "../lib/markdown";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import UsageBar from "../lib/UsageBar.svelte";
   import type {
     AccessRequest,
     AccessRequestKind,
@@ -602,6 +603,10 @@
                       </div>
                       <div class="card-title">{g.Title}</div>
 
+                      {#if g.Usage}
+                        <div class="card-usage"><UsageBar usage={g.Usage} compact /></div>
+                      {/if}
+
                       {#if g.Status === "review" || pend.length > 0}
                         <div class="card-attn" class:hot={g.Status === "review"}>
                           <span class="attn-dot" class:hot={g.Status === "review"}></span>
@@ -680,6 +685,12 @@
             </span>
             <span class="meta-item next">next review <b>{nextLabel(g)}</b></span>
           </div>
+          {#if detail.usage}
+            <div class="detail-usage">
+              <span class="detail-usage-label">token usage</span>
+              <div class="detail-usage-bars"><UsageBar usage={detail.usage} /></div>
+            </div>
+          {/if}
         </div>
         <div class="detail-actions">
           {#if g.Status === "active"}
@@ -1327,6 +1338,9 @@
   .attn-dot.hot {
     background: #d9663d;
   }
+  .card-usage {
+    margin-top: 11px;
+  }
   .card-metric {
     margin-top: 14px;
   }
@@ -1455,6 +1469,24 @@
     font-weight: 500;
     color: var(--muted-2);
     flex-wrap: wrap;
+  }
+  .detail-usage {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 13px;
+    max-width: 380px;
+  }
+  .detail-usage-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--faint);
+    flex: none;
+  }
+  .detail-usage-bars {
+    flex: 1;
   }
   .meta-item {
     display: inline-flex;

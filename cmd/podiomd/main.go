@@ -29,6 +29,7 @@ import (
 	"github.com/Podiom/Podiom/internal/server"
 	"github.com/Podiom/Podiom/internal/skills"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/Podiom/Podiom/internal/usage"
 	"github.com/spf13/cobra"
 )
@@ -207,6 +208,14 @@ func run() error {
 	// Passive enrichment: feed mid-turn provider rate data into the usage cache.
 	coreSvc.SetRateStatusHandler(usageTracker.IngestPassive)
 
+	// Token meter estimates each session/goal's share of the 5-hour and weekly
+	// limits by calibrating Podiom's token throughput against the tracker's
+	// reported %-movement. Feed it each turn's billed tokens.
+	tokenMeter := tokenmeter.New(usageTracker.Snapshots)
+	coreSvc.SetTurnUsageHandler(func(profile string, provider config.Provider, delta int64) {
+		tokenMeter.RecordTokens(provider, profile, delta)
+	})
+
 	// Web Push: load (or first-time generate) the VAPID keypair and build the
 	// notification dispatcher. Failure here is non-fatal — the daemon still runs,
 	// just without out-of-app push (in-app toasts/red dots are unaffected).
@@ -230,6 +239,7 @@ func run() error {
 		Core:           coreSvc,
 		Scheduler:      scheduler,
 		Usage:          usageTracker,
+		TokenMeter:     tokenMeter,
 		Paths:          paths,
 		GitHub:         cfg.GitHub,
 		Marketplace:    cfg.Marketplace,

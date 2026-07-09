@@ -305,9 +305,16 @@ func TestGoalsMigrationPreservesSessions(t *testing.T) {
 		t.Fatalf("fk off: %v", err)
 	}
 	var rebuild string
+	var postRebuild []string
 	for _, m := range migrations {
 		if m.version == 14 {
 			rebuild = m.sql
+		}
+		// Migrations after v14 that ALTER the sessions table must be re-applied
+		// after this isolated v14 replay so GetSession (which selects their columns)
+		// still works — mirroring the real forward order where they run after v14.
+		if m.version == 16 {
+			postRebuild = append(postRebuild, m.sql)
 		}
 	}
 	// Strip the CREATE TABLE/INDEX parts that already exist; re-run only the
@@ -322,6 +329,11 @@ func TestGoalsMigrationPreservesSessions(t *testing.T) {
 	}
 	if _, err := conn.ExecContext(ctx, rebuild); err != nil {
 		t.Fatalf("replay v14 rebuild: %v", err)
+	}
+	for _, sql := range postRebuild {
+		if _, err := conn.ExecContext(ctx, sql); err != nil {
+			t.Fatalf("re-apply post-v14 sessions migration: %v", err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
 		t.Fatalf("fk on: %v", err)

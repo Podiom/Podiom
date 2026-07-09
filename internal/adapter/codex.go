@@ -902,6 +902,9 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 				if status, ok := codexContextStatus(event.params); ok {
 					sendAdapterEvent(ctx, out, Event{Kind: EventContextStatus, ContextStatus: &status})
 				}
+				if usage, ok := codexTurnUsage(event.params); ok {
+					sendAdapterEvent(ctx, out, Event{Kind: EventTurnUsage, TurnUsage: &usage})
+				}
 				c.log.Info("provider turn stream completed", "event", "provider", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 				return
@@ -1398,6 +1401,36 @@ func codexContextStatus(params json.RawMessage) (ContextStatus, bool) {
 		return ContextStatus{}, false
 	}
 	return ContextStatus{UsedTokens: used, MaxTokens: int64(max)}, true
+}
+
+// codexTurnUsage extracts the per-turn billed-token breakdown from a
+// turn/completed payload's last_token_usage node (the tokens for the latest
+// exchange only, so it is naturally incremental — one emission per turn).
+func codexTurnUsage(params json.RawMessage) (TurnUsage, bool) {
+	var value any
+	if err := json.Unmarshal(params, &value); err != nil {
+		return TurnUsage{}, false
+	}
+	usage := findMapByKey(value, "last_token_usage", "lastTokenUsage")
+	if usage == nil {
+		return TurnUsage{}, false
+	}
+	num := func(keys ...string) int64 {
+		if v, ok := numFromMap(usage, keys...); ok {
+			return int64(v)
+		}
+		return 0
+	}
+	tu := TurnUsage{
+		Input:      num("input_tokens", "inputTokens"),
+		Output:     num("output_tokens", "outputTokens") + num("reasoning_output_tokens", "reasoningOutputTokens"),
+		CacheRead:  num("cached_input_tokens", "cachedInputTokens"),
+		CacheWrite: 0, // Codex does not report a cache-creation class.
+	}
+	if tu.Total() <= 0 {
+		return TurnUsage{}, false
+	}
+	return tu, true
 }
 
 // codexTokenUsageTotal totals a Codex token-usage node: total_tokens when the

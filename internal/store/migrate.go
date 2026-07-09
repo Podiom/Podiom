@@ -412,6 +412,21 @@ var migrations = []migration{
 		// existence and drives client-side cache-busting.
 		sql: `ALTER TABLE agents ADD COLUMN avatar_updated_at TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 16,
+		name:    "session_token_usage",
+		// Cumulative billed-token totals per session, accumulated across every turn
+		// from the provider stream's usage payload (unlike context_tokens, which is
+		// a last-request snapshot). Broken out by class so the billable metric can be
+		// re-tuned without a migration. Rolled up per goal (SUM over sessions.goal_id)
+		// to answer "how much did this session/goal consume." NOTE: this is Podiom's
+		// own token accounting, kept separate from internal/usage (which reads
+		// provider plan-limit % and deliberately never persists tokens).
+		sql: `ALTER TABLE sessions ADD COLUMN usage_input_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE sessions ADD COLUMN usage_output_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE sessions ADD COLUMN usage_cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE sessions ADD COLUMN usage_cache_write_tokens INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

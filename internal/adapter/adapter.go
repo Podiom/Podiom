@@ -116,6 +116,22 @@ type ContextStatus struct {
 	MaxTokens  int64
 }
 
+// TurnUsage reports the tokens billed for one completed turn, broken out by
+// class so the billable metric can be re-tuned later. Unlike ContextStatus
+// (a last-request snapshot), these are incremental per-turn amounts that core
+// accumulates into per-session lifetime totals.
+type TurnUsage struct {
+	Input      int64
+	Output     int64
+	CacheRead  int64
+	CacheWrite int64
+}
+
+// Total sums all token classes into the billable metric.
+func (u TurnUsage) Total() int64 {
+	return u.Input + u.Output + u.CacheRead + u.CacheWrite
+}
+
 // EventKind classifies streamed adapter output.
 type EventKind string
 
@@ -135,6 +151,9 @@ const (
 	// EventContextStatus carries the active turn's context-window utilization:
 	// how many tokens the last request consumed versus the model's window.
 	EventContextStatus EventKind = "context_status"
+	// EventTurnUsage carries the incremental tokens billed for a completed turn,
+	// which core accumulates into per-session lifetime usage totals.
+	EventTurnUsage EventKind = "turn_usage"
 	// EventRateLimited reports that the active turn cannot continue on this
 	// backing target because the provider rate-limited it.
 	EventRateLimited EventKind = "rate_limited"
@@ -151,6 +170,7 @@ type Event struct {
 	UserInputRequest  *UserInputRequest
 	RateStatus        *RateStatus
 	ContextStatus     *ContextStatus
+	TurnUsage         *TurnUsage
 }
 
 // Adapter abstracts over provider process models: per-turn Claude processes and

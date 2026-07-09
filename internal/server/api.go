@@ -17,6 +17,7 @@ import (
 	"github.com/Podiom/Podiom/internal/core"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/google/uuid"
 )
 
@@ -622,11 +623,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionDetail struct {
-	Session     store.Session   `json:"session"`
-	History     []store.Message `json:"history"`
-	Task        *store.Task     `json:"task,omitempty"`
-	ProjectID   string          `json:"project_id,omitempty"`
-	ProjectName string          `json:"project_name,omitempty"`
+	Session     store.Session        `json:"session"`
+	History     []store.Message      `json:"history"`
+	Task        *store.Task          `json:"task,omitempty"`
+	ProjectID   string               `json:"project_id,omitempty"`
+	ProjectName string               `json:"project_name,omitempty"`
+	Usage       *tokenmeter.Estimate `json:"usage,omitempty"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -665,6 +667,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail := sessionDetail{Session: session, History: history}
+	detail.Usage = s.sessionUsageEstimate(session)
 	detail.ProjectID = session.ProjectID
 	if detail.ProjectID != "" {
 		if project, err := s.core.GetProject(r.Context(), detail.ProjectID); err == nil {

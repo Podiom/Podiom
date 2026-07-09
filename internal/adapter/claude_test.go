@@ -340,3 +340,55 @@ func TestClaudeContextEventAndWindow(t *testing.T) {
 		t.Errorf("1M window = %d, want 1000000", got)
 	}
 }
+
+func TestClaudeTurnUsageEvent(t *testing.T) {
+	// Billed usage is taken from the terminal result event, including output.
+	var result map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"result","result":"done","usage":{"input_tokens":50000,"cache_creation_input_tokens":1000,"cache_read_input_tokens":30000,"output_tokens":400}}`), &result); err != nil {
+		t.Fatal(err)
+	}
+	event, ok := claudeTurnUsageEvent(result)
+	if !ok || event.Kind != EventTurnUsage || event.TurnUsage == nil {
+		t.Fatalf("expected turn usage event, got %+v ok=%v", event, ok)
+	}
+	tu := *event.TurnUsage
+	if tu.Input != 50000 || tu.Output != 400 || tu.CacheWrite != 1000 || tu.CacheRead != 30000 {
+		t.Errorf("breakdown = %+v", tu)
+	}
+	if tu.Total() != 81400 {
+		t.Errorf("total = %d, want 81400", tu.Total())
+	}
+
+	// The full parse only emits it on the terminal result, not per-message.
+	assistantEvents, err := parseClaudeLine([]byte(`{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":2}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range assistantEvents {
+		if e.Kind == EventTurnUsage {
+			t.Error("assistant event must not emit turn usage (would double-count)")
+		}
+	}
+	resultEvents, err := parseClaudeLine([]byte(`{"type":"result","result":"done","usage":{"input_tokens":10,"output_tokens":2}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawUsage bool
+	for _, e := range resultEvents {
+		if e.Kind == EventTurnUsage {
+			sawUsage = true
+		}
+	}
+	if !sawUsage {
+		t.Error("result event should emit a turn usage event")
+	}
+
+	// No usage → no event.
+	var bare map[string]any
+	if err := json.Unmarshal([]byte(`{"type":"result","result":"hi"}`), &bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := claudeTurnUsageEvent(bare); ok {
+		t.Error("expected no turn usage event without usage")
+	}
+}

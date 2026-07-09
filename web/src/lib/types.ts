@@ -168,6 +168,29 @@ export interface Session {
   // and the model's window. 0 means un-observed. Drives the composer context ring.
   ContextTokens: number;
   ContextLimit: number;
+  // Cumulative billed-token totals accumulated over the session's lifetime. The
+  // percentage share of the 5-hour/weekly limits is computed server-side and
+  // delivered as a UsageEstimate (session detail + live "session_usage" message).
+  Usage?: SessionUsageTotals;
+}
+
+// SessionUsageTotals mirrors store.SessionUsage: raw cumulative token counts.
+export interface SessionUsageTotals {
+  InputTokens: number;
+  OutputTokens: number;
+  CacheReadTokens: number;
+  CacheWriteTokens: number;
+}
+
+// UsageEstimate mirrors tokenmeter.Estimate: a token total expressed as an
+// estimated share of the provider's 5-hour and weekly plan limits. The percentages
+// are calibrated approximations (the provider exposes no absolute token ceiling),
+// so the UI presents them as estimates (~) rather than exact figures.
+export interface UsageEstimate {
+  tokens: number;
+  five_hour_percent: number;
+  weekly_percent: number;
+  calibrated: boolean;
 }
 
 // ContextUsage mirrors server.ContextUsage: live context-window utilization for a
@@ -386,6 +409,9 @@ export interface Goal {
   ClosingReport: string;
   CreatedAt: string;
   UpdatedAt: string;
+  // Rolled-up token usage across the goal's sessions, as an estimated share of the
+  // 5-hour/weekly limits. Present on the list response; absent when unmeasured.
+  Usage?: UsageEstimate;
 }
 
 export type GoalEventKind =
@@ -436,6 +462,7 @@ export interface GoalDetail {
   goal: Goal;
   events: GoalEvent[];
   access_requests: AccessRequest[];
+  usage?: UsageEstimate;
 }
 
 export interface GoalCreateRequest {
@@ -484,6 +511,7 @@ export interface SessionDetail {
   task?: Task;
   project_id?: string;
   project_name?: string;
+  usage?: UsageEstimate;
 }
 
 export type RunPermission = "preapproved" | "yolo";
@@ -723,6 +751,7 @@ export interface ServerMessage {
     | "fallback_request"
     | "turn_state"
     | "context"
+    | "session_usage"
     | "notice"
     | "done"
     | "dream_state"
@@ -746,6 +775,8 @@ export interface ServerMessage {
   fallback?: FallbackRequest;
   turn_state?: TurnState;
   context?: ContextUsage;
+  // session_usage: the session's updated token-usage estimate, pushed after a turn.
+  session_usage?: UsageEstimate;
   error?: string;
   // dream_state fields.
   agent_name?: string;

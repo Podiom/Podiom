@@ -20,6 +20,7 @@ import (
 	"github.com/Podiom/Podiom/internal/marketplace"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/schedule"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/Podiom/Podiom/internal/usage"
 	"nhooyr.io/websocket"
 )
@@ -39,6 +40,7 @@ type Server struct {
 	core        *core.Core
 	scheduler   *schedule.Scheduler
 	usage       *usage.Tracker
+	tokenMeter  *tokenmeter.Meter
 	github      *podiomgithub.Service
 	marketplace *marketplace.Service
 	broker      *permissionBroker
@@ -72,7 +74,10 @@ type Options struct {
 	Core      *core.Core
 	Scheduler *schedule.Scheduler
 	Usage     *usage.Tracker
-	Paths     config.Paths
+	// TokenMeter estimates a session/goal's share of the 5-hour and weekly limits
+	// from its cumulative billed tokens. Optional; nil yields zeroed estimates.
+	TokenMeter *tokenmeter.Meter
+	Paths      config.Paths
 	GitHub    config.GitHub
 	Logger    *slog.Logger
 	// Notifier delivers out-of-app (Web Push / future native) attention
@@ -112,6 +117,7 @@ func New(opts Options) *Server {
 		core:        opts.Core,
 		scheduler:   opts.Scheduler,
 		usage:       opts.Usage,
+		tokenMeter:  opts.TokenMeter,
 		github:      podiomgithub.New(podiomgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
 		broker:      newPermissionBroker(log),
 		input:       newUserInputBroker(log),

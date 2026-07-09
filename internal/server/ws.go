@@ -12,6 +12,7 @@ import (
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/gateway"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/Podiom/Podiom/internal/usage"
 	"github.com/google/uuid"
 	"nhooyr.io/websocket"
@@ -519,6 +520,30 @@ func (s *Server) runWSDream(writer *wsWriter, msg ClientMessage) {
 	_ = s.writeState(stateCtx, writer)
 }
 
+// sessionUsageEstimate converts a session's cumulative billed tokens into an
+// estimated share of the 5-hour and weekly limits. Returns nil when no meter is
+// wired (e.g. bare test servers).
+func (s *Server) sessionUsageEstimate(sess store.Session) *tokenmeter.Estimate {
+	if s.tokenMeter == nil {
+		return nil
+	}
+	est := s.tokenMeter.Estimate(sess.Provider, sess.Profile, sess.Usage.Total())
+	return &est
+}
+
+// turnSessionUsage builds the current usage estimate for a session by id,
+// tolerating a missing session or meter (returns nil).
+func (s *Server) turnSessionUsage(ctx context.Context, sessionID string) *tokenmeter.Estimate {
+	if s.tokenMeter == nil {
+		return nil
+	}
+	sess, err := s.core.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	return s.sessionUsageEstimate(sess)
+}
+
 func (s *Server) recordWSTurnEvent(ctx context.Context, sessionID string, event core.TurnEvent) (bool, bool) {
 	switch event.Kind {
 	case "message_stored":
@@ -540,6 +565,10 @@ func (s *Server) recordWSTurnEvent(ctx context.Context, sessionID string, event 
 	case adapter.EventContextStatus:
 		if event.ContextStatus != nil {
 			s.turns.recordContext(sessionID, event.ContextStatus.UsedTokens, event.ContextStatus.MaxTokens)
+		}
+	case adapter.EventTurnUsage:
+		if event.Usage != nil {
+			s.turns.recordSessionUsage(sessionID, s.turnSessionUsage(ctx, sessionID))
 		}
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
@@ -575,6 +604,12 @@ func (s *Server) writeTurnEvent(ctx context.Context, writer *wsWriter, requestID
 			return nil
 		}
 		return writer.write(ctx, ServerMessage{Type: "context", RequestID: requestID, SessionID: sessionID, Context: &ContextUsage{Used: event.ContextStatus.UsedTokens, Max: event.ContextStatus.MaxTokens}})
+	case adapter.EventTurnUsage:
+		est := s.turnSessionUsage(ctx, sessionID)
+		if est == nil {
+			return nil
+		}
+		return writer.write(ctx, ServerMessage{Type: "session_usage", RequestID: requestID, SessionID: sessionID, SessionUsage: est})
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		return writer.write(ctx, ServerMessage{Type: "done", RequestID: requestID})
