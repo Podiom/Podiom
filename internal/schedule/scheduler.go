@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/store"
@@ -237,6 +238,8 @@ type Status struct {
 	Name          string              `json:"name"`
 	Path          string              `json:"path"`
 	Agent         string              `json:"agent"`
+	Provider      config.Provider     `json:"provider"`
+	Profile       string              `json:"profile"`
 	Model         string              `json:"model"`
 	Effort        string              `json:"effort"`
 	Cron          string              `json:"cron"`
@@ -265,6 +268,8 @@ func (s *Scheduler) List(ctx context.Context) ([]Status, error) {
 			Name:          sc.Name,
 			Path:          sc.Path,
 			Agent:         sc.Agent,
+			Provider:      sc.Provider,
+			Profile:       sc.Profile,
 			Model:         sc.Model,
 			Effort:        sc.Effort,
 			Cron:          sc.Cron,
@@ -371,6 +376,8 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		ScheduleName: name,
 		RunID:        run.ID,
 		AgentName:    sched.Agent,
+		Provider:     sched.Provider,
+		Profile:      sched.Profile,
 		Model:        sched.Model,
 		Effort:       sched.Effort,
 		Yolo:         sched.RunPermission == PermissionYolo,
@@ -430,6 +437,8 @@ func (s *Scheduler) pathFor(name string) string {
 type CreateParams struct {
 	Name          string
 	Agent         string
+	Provider      config.Provider
+	Profile       string
 	Model         string
 	Effort        string
 	Cron          string
@@ -450,6 +459,16 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 		return Status{}, fmt.Errorf("schedule name is required")
 	}
 	s.log.Info("schedule create requested", "event", "schedule", "schedule", name, "agent", p.Agent, "permission", p.RunPermission, "allowed_tools", len(p.AllowedTools))
+	if s.core != nil {
+		if err := s.core.ValidateRunTargetForAgent(ctx, p.Agent, core.RunTarget{
+			Provider: p.Provider,
+			Profile:  p.Profile,
+			Model:    p.Model,
+			Effort:   p.Effort,
+		}); err != nil {
+			return Status{}, err
+		}
+	}
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "create_dir", podiomlog.ErrorAttr(err))
 		return Status{}, fmt.Errorf("create schedules dir: %w", err)

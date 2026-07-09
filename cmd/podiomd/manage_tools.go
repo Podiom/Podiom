@@ -44,9 +44,15 @@ func objectSchema(required []string, props map[string]any) map[string]any {
 	return schema
 }
 
-func strProp(desc string) map[string]any  { return map[string]any{"type": "string", "description": desc} }
-func boolProp(desc string) map[string]any { return map[string]any{"type": "boolean", "description": desc} }
-func intProp(desc string) map[string]any  { return map[string]any{"type": "integer", "description": desc} }
+func strProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+func boolProp(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
+func intProp(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
 func strArrProp(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }
@@ -187,6 +193,10 @@ func taskTools(c *manageClient) []mcpTool {
 				"title":          strProp("Short task title."),
 				"body":           strProp("Task description / prompt."),
 				"assigned_agent": strProp("Agent that will work the task."),
+				"provider":       strProp("Provider override: claude or codex. Omit for agent default."),
+				"profile":        strProp("Profile override. Omit for agent default."),
+				"model":          strProp("Model override. Required with any run target override."),
+				"effort":         strProp("Effort override. Required with any run target override."),
 				"status":         strProp("Initial status (defaults to backlog): backlog, in_progress, review, done."),
 				"plan_required":  boolProp("Require plan mode for this task."),
 				"pickup_at":      strProp("RFC3339 time to auto-start the task; empty = on-demand."),
@@ -199,7 +209,7 @@ func taskTools(c *manageClient) []mcpTool {
 				if err := requireField(m, "title"); err != nil {
 					return "", err
 				}
-				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "status", "plan_required", "pickup_at")
+				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at")
 				return c.post(ctx, "/api/tasks", body)
 			},
 		},
@@ -213,6 +223,10 @@ func taskTools(c *manageClient) []mcpTool {
 				"title":          strProp("New title."),
 				"body":           strProp("New description / prompt."),
 				"assigned_agent": strProp("New assignee agent."),
+				"provider":       strProp("Provider override: claude or codex. Empty string returns to agent default."),
+				"profile":        strProp("Profile override. Empty string returns to agent default."),
+				"model":          strProp("Model override. Empty string returns to agent default only when the whole target is empty."),
+				"effort":         strProp("Effort override. Empty string returns to agent default only when the whole target is empty."),
 				"status":         strProp("New status: backlog, in_progress, review, done."),
 				"plan_required":  boolProp("Toggle plan mode."),
 				"pickup_at":      strProp("RFC3339 scheduled pickup time; empty string clears it."),
@@ -225,7 +239,7 @@ func taskTools(c *manageClient) []mcpTool {
 				if err := requireField(m, "id"); err != nil {
 					return "", err
 				}
-				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "status", "plan_required", "pickup_at")
+				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at")
 				return c.patch(ctx, "/api/tasks/"+url.PathEscape(argString(m, "id")), body)
 			},
 		},
@@ -426,6 +440,8 @@ func scheduleTools(c *manageClient) []mcpTool {
 				"body":           strProp("The task prompt the agent runs each time."),
 				"cron":           strProp("5-field cron spec (mutually exclusive with every)."),
 				"every":          strProp("Interval like 6h or 30m (mutually exclusive with cron)."),
+				"provider":       strProp("Provider override: claude or codex. Omit for agent default."),
+				"profile":        strProp("Profile override. Omit for agent default."),
 				"model":          strProp("Model override (optional)."),
 				"effort":         strProp("Effort override (optional)."),
 				"run_permission": strProp("preapproved (default) or yolo."),
@@ -442,7 +458,7 @@ func scheduleTools(c *manageClient) []mcpTool {
 						return "", err
 					}
 				}
-				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "model", "effort", "run_permission", "allowed_tools", "goal_id")
+				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "goal_id")
 				return c.post(ctx, "/api/schedules", body)
 			},
 		},

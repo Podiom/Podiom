@@ -381,6 +381,8 @@ func TestCreateSessionCanOverrideAgentProvider(t *testing.T) {
 		AgentName: "portable",
 		Origin:    store.OriginWeb,
 		Provider:  config.ProviderCodex,
+		Model:     "gpt-5.1",
+		Effort:    "medium",
 	})
 	if err != nil {
 		t.Fatalf("create bare codex session: %v", err)
@@ -388,14 +390,16 @@ func TestCreateSessionCanOverrideAgentProvider(t *testing.T) {
 	if bareCodex.Provider != config.ProviderCodex || bareCodex.Profile != "" {
 		t.Fatalf("bare provider override did not select codex default: %+v", bareCodex)
 	}
-	if bareCodex.Model != "" {
-		t.Fatalf("cross-provider session should not inherit claude model, got %q", bareCodex.Model)
+	if bareCodex.Model != "gpt-5.1" || bareCodex.Effort != "medium" {
+		t.Fatalf("cross-provider session did not keep explicit model/effort: %+v", bareCodex)
 	}
 
 	profileCodex, err := c.CreateSession(ctx, CreateSessionRequest{
 		AgentName: "portable",
 		Origin:    store.OriginWeb,
 		Profile:   "codex-main",
+		Model:     "gpt-5.1",
+		Effort:    "high",
 	})
 	if err != nil {
 		t.Fatalf("create profiled codex session: %v", err)
@@ -403,12 +407,25 @@ func TestCreateSessionCanOverrideAgentProvider(t *testing.T) {
 	if profileCodex.Provider != config.ProviderCodex || profileCodex.Profile != "codex-main" {
 		t.Fatalf("profile override did not infer codex target: %+v", profileCodex)
 	}
+	if profileCodex.Model != "gpt-5.1" || profileCodex.Effort != "high" {
+		t.Fatalf("profile override did not keep explicit model/effort: %+v", profileCodex)
+	}
+
+	if _, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: "portable",
+		Origin:    store.OriginWeb,
+		Provider:  config.ProviderCodex,
+	}); err == nil {
+		t.Fatal("expected provider override without model/effort to fail")
+	}
 
 	if _, err := c.CreateSession(ctx, CreateSessionRequest{
 		AgentName: "portable",
 		Origin:    store.OriginWeb,
 		Provider:  config.ProviderClaude,
 		Profile:   "codex-main",
+		Model:     "sonnet",
+		Effort:    "medium",
 	}); err == nil {
 		t.Fatal("expected mismatched provider/profile to fail")
 	}

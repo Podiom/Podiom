@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
 	"github.com/Podiom/Podiom/internal/projects"
@@ -321,23 +322,31 @@ func repoOwnerName(req projectRepoRequest) (string, string) {
 }
 
 type taskCreateRequest struct {
-	ProjectID     string `json:"project_id"`
-	Title         string `json:"title"`
-	Body          string `json:"body"`
-	AssignedAgent string `json:"assigned_agent"`
-	Status        string `json:"status"`
-	PlanRequired  bool   `json:"plan_required"`
-	PickupAt      string `json:"pickup_at"`
+	ProjectID     string          `json:"project_id"`
+	Title         string          `json:"title"`
+	Body          string          `json:"body"`
+	AssignedAgent string          `json:"assigned_agent"`
+	Provider      config.Provider `json:"provider"`
+	Profile       string          `json:"profile"`
+	Model         string          `json:"model"`
+	Effort        string          `json:"effort"`
+	Status        string          `json:"status"`
+	PlanRequired  bool            `json:"plan_required"`
+	PickupAt      string          `json:"pickup_at"`
 }
 
 type taskUpdateRequest struct {
-	ProjectID     *string `json:"project_id,omitempty"`
-	Title         *string `json:"title,omitempty"`
-	Body          *string `json:"body,omitempty"`
-	AssignedAgent *string `json:"assigned_agent,omitempty"`
-	Status        *string `json:"status,omitempty"`
-	PlanRequired  *bool   `json:"plan_required,omitempty"`
-	PickupAt      *string `json:"pickup_at,omitempty"`
+	ProjectID     *string          `json:"project_id,omitempty"`
+	Title         *string          `json:"title,omitempty"`
+	Body          *string          `json:"body,omitempty"`
+	AssignedAgent *string          `json:"assigned_agent,omitempty"`
+	Provider      *config.Provider `json:"provider,omitempty"`
+	Profile       *string          `json:"profile,omitempty"`
+	Model         *string          `json:"model,omitempty"`
+	Effort        *string          `json:"effort,omitempty"`
+	Status        *string          `json:"status,omitempty"`
+	PlanRequired  *bool            `json:"plan_required,omitempty"`
+	PickupAt      *string          `json:"pickup_at,omitempty"`
 }
 
 type taskDescribeRequest struct {
@@ -378,6 +387,10 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 			Title:         strings.TrimSpace(req.Title),
 			Body:          req.Body,
 			AssignedAgent: req.AssignedAgent,
+			Provider:      req.Provider,
+			Profile:       strings.TrimSpace(req.Profile),
+			Model:         strings.TrimSpace(req.Model),
+			Effort:        strings.TrimSpace(req.Effort),
 			Status:        status,
 			PlanRequired:  req.PlanRequired,
 			PickupAt:      req.PickupAt,
@@ -534,6 +547,18 @@ func applyTaskUpdate(task *store.Task, req taskUpdateRequest) {
 	}
 	if req.AssignedAgent != nil {
 		task.AssignedAgent = *req.AssignedAgent
+	}
+	if req.Provider != nil {
+		task.Provider = *req.Provider
+	}
+	if req.Profile != nil {
+		task.Profile = *req.Profile
+	}
+	if req.Model != nil {
+		task.Model = *req.Model
+	}
+	if req.Effort != nil {
+		task.Effort = *req.Effort
 	}
 	if req.Status != nil {
 		task.Status = store.TaskStatus(*req.Status)

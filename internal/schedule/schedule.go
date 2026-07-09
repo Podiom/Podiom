@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,23 +30,27 @@ const (
 
 // Schedule is one parsed schedule file.
 type Schedule struct {
-	Name          string        // file name without the .md extension
-	Path          string        // absolute path to the source file
-	Agent         string        // agent that runs the task (required)
-	Model         string        // optional model override
-	Effort        string        // optional effort override
-	Cron          string        // 5-field cron expression (mutually exclusive with Every)
-	Every         string        // interval like "6h" (mutually exclusive with Cron)
-	RunPermission RunPermission // preapproved (default) | yolo
-	AllowedTools  []string      // preapproved allow-list
-	Enabled       bool          // off switch: a disabled file stays but does not fire
-	GoalID        string        // optional id of the goal whose plan created this schedule
-	Body          string        // the task prompt
+	Name          string          // file name without the .md extension
+	Path          string          // absolute path to the source file
+	Agent         string          // agent that runs the task (required)
+	Provider      config.Provider // optional provider override
+	Profile       string          // optional profile override
+	Model         string          // optional model override
+	Effort        string          // optional effort override
+	Cron          string          // 5-field cron expression (mutually exclusive with Every)
+	Every         string          // interval like "6h" (mutually exclusive with Cron)
+	RunPermission RunPermission   // preapproved (default) | yolo
+	AllowedTools  []string        // preapproved allow-list
+	Enabled       bool            // off switch: a disabled file stays but does not fire
+	GoalID        string          // optional id of the goal whose plan created this schedule
+	Body          string          // the task prompt
 }
 
 // frontmatter mirrors the YAML block at the top of a schedule file.
 type frontmatter struct {
 	Agent         string   `yaml:"agent"`
+	Provider      string   `yaml:"provider"`
+	Profile       string   `yaml:"profile"`
 	Model         string   `yaml:"model"`
 	Effort        string   `yaml:"effort"`
 	Cron          string   `yaml:"cron"`
@@ -92,6 +97,8 @@ func parseBytes(path string, raw []byte) (Schedule, error) {
 		Name:          name,
 		Path:          path,
 		Agent:         strings.TrimSpace(meta.Agent),
+		Provider:      config.Provider(strings.TrimSpace(meta.Provider)),
+		Profile:       strings.TrimSpace(meta.Profile),
 		Model:         strings.TrimSpace(meta.Model),
 		Effort:        strings.TrimSpace(meta.Effort),
 		Cron:          strings.TrimSpace(meta.Cron),
@@ -114,6 +121,11 @@ func parseBytes(path string, raw []byte) (Schedule, error) {
 func (s Schedule) validate() error {
 	if s.Agent == "" {
 		return fmt.Errorf("agent is required")
+	}
+	switch s.Provider {
+	case "", config.ProviderClaude, config.ProviderCodex:
+	default:
+		return fmt.Errorf("invalid provider %q (want claude|codex)", s.Provider)
 	}
 	if s.Cron == "" && s.Every == "" {
 		return fmt.Errorf("a cron or every value is required")
@@ -153,6 +165,12 @@ func Render(p CreateParams) string {
 	b.WriteString("agent: " + p.Agent + "\n")
 	if p.GoalID != "" {
 		b.WriteString("goal_id: " + p.GoalID + "\n")
+	}
+	if p.Provider != "" {
+		b.WriteString("provider: " + string(p.Provider) + "\n")
+	}
+	if p.Profile != "" {
+		b.WriteString("profile: " + p.Profile + "\n")
 	}
 	if p.Model != "" {
 		b.WriteString("model: " + p.Model + "\n")

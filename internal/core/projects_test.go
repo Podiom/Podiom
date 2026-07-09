@@ -66,6 +66,50 @@ func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
 	}
 }
 
+func TestStartTaskUsesStoredRunTarget(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	task, err := c.CreateTask(ctx, store.Task{
+		Title:         "Use a different engine",
+		AssignedAgent: "jared",
+		Provider:      config.ProviderCodex,
+		Model:         "gpt-5.1",
+		Effort:        "high",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	sess, err := c.StartTask(ctx, StartTaskRequest{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	if sess.Provider != config.ProviderCodex || sess.Profile != "" || sess.Model != "gpt-5.1" || sess.Effort != "high" {
+		t.Fatalf("session target = %+v", sess)
+	}
+}
+
+func TestCreateTaskRejectsIncompleteRunTarget(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateTask(ctx, store.Task{
+		Title:         "Incomplete",
+		AssignedAgent: "jared",
+		Provider:      config.ProviderCodex,
+	}); err == nil {
+		t.Fatal("expected incomplete run target to fail")
+	}
+}
+
 func TestCreateSessionStoresProjectAndRejectsUnknownProject(t *testing.T) {
 	ctx := context.Background()
 	c, _, cleanup := newScheduledTestCore(t)

@@ -55,6 +55,8 @@ type ScheduledRunRequest struct {
 	ScheduleName string
 	RunID        string
 	AgentName    string
+	Provider     config.Provider
+	Profile      string
 	Model        string
 	Effort       string
 	// Yolo runs with whole-machine auto-approval. When false the run is
@@ -81,6 +83,8 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 	sess, err := c.CreateSession(ctx, CreateSessionRequest{
 		AgentName:      req.AgentName,
 		Origin:         store.OriginSchedule,
+		Provider:       req.Provider,
+		Profile:        req.Profile,
 		Model:          req.Model,
 		Effort:         req.Effort,
 		PermissionMode: permission,

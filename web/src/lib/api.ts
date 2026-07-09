@@ -449,6 +449,8 @@ export async function deleteSchedule(name: string): Promise<void> {
 export interface NewScheduleRequest {
   name: string;
   agent: string;
+  provider?: Provider | "";
+  profile?: string;
   model?: string;
   effort?: string;
   cron?: string;
@@ -652,6 +654,10 @@ export interface NewTaskRequest {
   title: string;
   body: string;
   assigned_agent: string;
+  provider?: Provider | "";
+  profile?: string;
+  model?: string;
+  effort?: string;
   status?: TaskStatus;
   plan_required?: boolean;
   pickup_at?: string;
@@ -672,6 +678,10 @@ export interface TaskPatch {
   title?: string;
   body?: string;
   assigned_agent?: string;
+  provider?: Provider | "";
+  profile?: string;
+  model?: string;
+  effort?: string;
   status?: TaskStatus;
   plan_required?: boolean;
   pickup_at?: string;

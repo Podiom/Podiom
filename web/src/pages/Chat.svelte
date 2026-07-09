@@ -1,12 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { deleteSession, getSession, listProfiles, listProjects } from "../lib/api";
-  import {
-    capabilityKey,
-    effortOptions as capabilityEffortOptions,
-    loadProviderCapabilities,
-    modelOptions as capabilityModelOptions,
-  } from "../lib/capabilities";
   import { randomID } from "../lib/id";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
@@ -15,6 +9,8 @@
   import UsageChip from "../lib/UsageChip.svelte";
   import UsageBar from "../lib/UsageBar.svelte";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import {
     modeChip,
     originLabel,
@@ -32,7 +28,6 @@
     Provider,
     ProfileInfo,
     Project,
-    ProviderCapabilities,
     ServerMessage,
     Session,
     SessionOrigin,
@@ -127,7 +122,6 @@
   let isPhone = $state(false);
   let openDropdown = $state<string | null>(null);
   let newSessionOpen = $state(false);
-  let customModelDraft = $state("");
   let planFeedbackOpen = $state(false);
   let planFeedbackText = $state("");
   let planYoloAck = $state(false);
@@ -200,26 +194,21 @@
     activeSession?.Profile ?? (draftProvider ? draftProfile : activeAgent?.Profile ?? ""),
   );
   const inheritedModel = $derived(selectedProvider === activeAgent?.Provider ? activeAgent?.Model || "" : "");
-  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
-  let loadingCapabilities = new Set<string>();
-  const selectedCapabilityKey = $derived(capabilityKey(selectedProvider, selectedProfile));
-  const selectedCapabilities = $derived(capabilitiesByKey[selectedCapabilityKey] ?? null);
   const selectedModelValue = $derived(
     activeSession ? activeSession.Model || inheritedModel : draftModel || inheritedModel,
   );
-  const modelOptions = $derived(capabilityModelOptions(selectedCapabilities, selectedModelValue));
   const curModel = $derived(
     selectedModelValue || "—",
   );
   const curEffort = $derived(
     activeSession ? activeSession.Effort || activeAgent?.Effort || "medium" : draftEffort || activeAgent?.Effort || "medium",
   );
-  const effortOptions = $derived(capabilityEffortOptions(selectedCapabilities, selectedModelValue, curEffort));
   const curMode = $derived(
     activeSession
       ? activeSession.PermissionMode || activeAgent?.PermissionMode || "approve"
       : draftPermissionMode || activeAgent?.PermissionMode || "approve",
   );
+  const draftRunTargetExplicit = $derived(!!(draftProvider || draftProfile || draftModel || draftEffort));
   const curProjectID = $derived(activeSession ? activeSession.ProjectID : draftProjectID);
   const linkedProjectName = $derived(curProjectID ? projectName || projectLabel(curProjectID) : "");
   const planPending = $derived(activeSession?.PlanState === "pending_submission");
@@ -235,7 +224,6 @@
   const usageKey = $derived(usageProfile || usageProvider);
   const usageSnapshot = $derived(live.usageByProfile.get(usageKey));
   const accountLabel = $derived(usageProfile ? `${usageProvider} · ${usageProfile}` : usageProvider);
-  const providerProfiles = $derived(profiles.filter((p) => p.Provider === usageProvider));
   const showSlash = $derived(messageText.startsWith("/"));
   const activeTurn = $derived(activeSession ? activeTurns[activeSession.ID] : undefined);
   const contextUsage = $derived(activeSession ? live.contextBySession[activeSession.ID] : undefined);
@@ -276,25 +264,6 @@
       unsubscribe?.();
     };
   });
-
-  $effect(() => {
-    void ensureCapabilities(selectedProvider, selectedProfile);
-  });
-
-  async function ensureCapabilities(provider: Provider, profile = "") {
-    const key = capabilityKey(provider, profile);
-    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
-    loadingCapabilities.add(key);
-    try {
-      const caps = await loadProviderCapabilities(provider, profile);
-      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
-    } catch {
-      // The daemon endpoint itself falls back on provider discovery failures.
-      // If the HTTP request fails, leave the menu empty and preserve current text.
-    } finally {
-      loadingCapabilities.delete(key);
-    }
-  }
 
   // When the shared socket (re)connects, re-attach to the open session and flush
   // any pending seed so a freshly opened chat still starts its turn.
@@ -666,10 +635,10 @@
       agent_name: activeSession ? undefined : selectedAgent,
       session_id: activeSession?.ID,
       message: text,
-      provider: activeSession ? undefined : usageProvider,
-      profile: activeSession ? undefined : usageProfile || undefined,
-      model: activeSession ? undefined : draftModel || undefined,
-      effort: activeSession ? undefined : draftEffort || undefined,
+      provider: activeSession || !draftRunTargetExplicit ? undefined : draftProvider || undefined,
+      profile: activeSession || !draftRunTargetExplicit ? undefined : draftProfile || undefined,
+      model: activeSession || !draftRunTargetExplicit ? undefined : draftModel || undefined,
+      effort: activeSession || !draftRunTargetExplicit ? undefined : draftEffort || undefined,
       permission_mode: activeSession ? undefined : draftPermissionMode || undefined,
       project_id: activeSession ? undefined : draftProjectID || undefined,
       create_plan_before_implementation: activeSession ? undefined : draftPlanFirst,
@@ -706,50 +675,23 @@
 
   function startSessionWith(agentName: string) {
     selectedAgent = agentName;
-    draftProvider = "";
-    draftProfile = "";
-    draftModel = "";
-    draftEffort = "";
     draftPermissionMode = "";
     newSession(false);
     newSessionOpen = false;
   }
 
-  function setDraftProvider(provider: Provider) {
-    draftProvider = provider;
-    draftProfile = "";
-    void ensureCapabilities(provider);
-    openDropdown = null;
-  }
-
-  function setDraftProfile(profile: ProfileInfo) {
-    draftProvider = profile.Provider;
-    draftProfile = profile.Name;
-    void ensureCapabilities(profile.Provider, profile.Name);
-    openDropdown = null;
-  }
-
-  function setModel(model: string) {
+  function applyRunTarget(next: RunTargetValue) {
     if (activeSession) {
-      updateSessionSettings({ model });
+      const patch: { model?: string; effort?: string } = {};
+      if (next.model !== undefined && next.model !== activeSession.Model) patch.model = next.model;
+      if (next.effort !== undefined && next.effort !== activeSession.Effort) patch.effort = next.effort;
+      if (patch.model || patch.effort) updateSessionSettings(patch);
       return;
     }
-    draftModel = model;
-    openDropdown = null;
-  }
-
-  function applyCustomModel() {
-    const value = customModelDraft.trim();
-    if (value) setModel(value);
-  }
-
-  function setEffort(effort: string) {
-    if (activeSession) {
-      updateSessionSettings({ effort });
-      return;
-    }
-    draftEffort = effort;
-    openDropdown = null;
+    draftProvider = next.provider || "";
+    draftProfile = next.profile || "";
+    draftModel = next.model || "";
+    draftEffort = next.effort || "";
   }
 
   function setPermissionMode(mode: PermissionMode) {
@@ -1030,7 +972,6 @@
   }
 
   function toggleDropdown(key: string) {
-    if (openDropdown !== key && key === "model") customModelDraft = selectedModelValue;
     openDropdown = openDropdown === key ? null : key;
   }
 
@@ -1618,72 +1559,21 @@
             <span class="plan-chip-dot"></span>
             {draftPlanFirst ? "plan first" : "direct"}
           </button>
-          <!-- Account chip: provider glyph + provider · profile for the new session. -->
-          <div class="dd-wrap">
-            <button class="chip-btn" onclick={() => toggleDropdown("account")} title="Provider & profile for this session">
-              <span class="prov-glyph" class:diamond={usageProvider === "codex"}
-                style={`background:${usageProvider === "codex" ? "#4B5560" : "#B0572F"}`}></span>
-              {accountLabel} <span class="chip-chev">▾</span>
-            </button>
-            {#if openDropdown === "account"}
-              <div class="dd-menu up wide">
-                <div class="dd-section">PROVIDER</div>
-                <button class="dd-opt2" class:sel={usageProvider === "claude" && !usageProfile} onclick={() => setDraftProvider("claude")}>
-                  <span class="dd-opt2-label">Claude</span>
-                  <span class="dd-opt2-desc">Use default Claude login</span>
-                </button>
-                <button class="dd-opt2" class:sel={usageProvider === "codex" && !usageProfile} onclick={() => setDraftProvider("codex")}>
-                  <span class="dd-opt2-label">Codex</span>
-                  <span class="dd-opt2-desc">Use default Codex login</span>
-                </button>
-                {#if providerProfiles.length}
-                  <div class="dd-section">PROFILE · {providerProfiles.length} account{providerProfiles.length === 1 ? "" : "s"}</div>
-                  {#each providerProfiles as p}
-                    <button class="dd-opt mono" class:sel={p.Name === usageProfile} onclick={() => setDraftProfile(p)}>{p.Name}</button>
-                  {/each}
-                {/if}
-              </div>
-            {/if}
-          </div>
-          <span class="chip-divider"></span>
-        {:else}
-          <!-- Read-only account chip for a live chat: provider/profile can't change
-               mid-session, but we still surface which one the chat is running with. -->
-          <span class="chip-btn readonly" title="Provider & profile for this session">
-            <span class="prov-glyph" class:diamond={usageProvider === "codex"}
-              style={`background:${usageProvider === "codex" ? "#4B5560" : "#B0572F"}`}></span>
-            {accountLabel}
-          </span>
-          <span class="chip-divider"></span>
         {/if}
 
-        <!-- Model chip -->
-        <div class="dd-wrap">
-          <button class="chip-btn mono" onclick={() => toggleDropdown("model")}>{curModel} <span class="chip-chev">▾</span></button>
-          {#if openDropdown === "model"}
-            <div class="dd-menu up">
-              {#each modelOptions as o}
-                <button class="dd-opt mono" class:sel={o === curModel} onclick={() => setModel(o)}>{o}</button>
-              {/each}
-              <div style="padding:8px;border-top:1px solid #f0e5d8;display:flex;gap:6px">
-                <input class="field-input mono" style="padding:8px 10px;font-size:12px" bind:value={customModelDraft} placeholder="custom model" onkeydown={(e) => { if (e.key === "Enter") applyCustomModel(); }} />
-                <button class="dd-opt mono" style="width:auto" disabled={!customModelDraft.trim()} onclick={applyCustomModel}>Set</button>
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <!-- Effort chip -->
-        <div class="dd-wrap">
-          <button class="chip-btn mono" onclick={() => toggleDropdown("effort")}>{curEffort} <span class="chip-chev">▾</span></button>
-          {#if openDropdown === "effort"}
-            <div class="dd-menu up">
-              {#each effortOptions as o}
-                <button class="dd-opt mono" class:sel={o === curEffort} onclick={() => setEffort(o)}>{o}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <RunTargetPicker
+          agent={activeAgent ?? null}
+          {profiles}
+          readonlyAccount={!!activeSession}
+          value={{
+            provider: activeSession ? activeSession.Provider : draftProvider,
+            profile: activeSession ? activeSession.Profile : draftProfile,
+            model: activeSession ? activeSession.Model : draftModel,
+            effort: activeSession ? activeSession.Effort : draftEffort,
+          }}
+          onChange={applyRunTarget}
+        />
+        <span class="chip-divider"></span>
 
         <!-- Usage chip (right-aligned) -->
         <UsageChip
@@ -1817,6 +1707,15 @@
           <span class="plan-chip-dot"></span>
           Create plan before implementation
         </button>
+        <div class="ns-target">
+          <RunTargetPicker
+            agent={activeAgent ?? null}
+            {profiles}
+            variant="stacked"
+            value={{ provider: draftProvider, profile: draftProfile, model: draftModel, effort: draftEffort }}
+            onChange={applyRunTarget}
+          />
+        </div>
       </div>
       <div class="ns-list">
         {#each agents as a}
@@ -1982,15 +1881,6 @@
     border-radius: 50%;
     display: inline-block;
   }
-  .prov-glyph {
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
-    display: inline-block;
-  }
-  .prov-glyph.diamond {
-    transform: rotate(45deg);
-  }
   .chip-divider {
     width: 1px;
     height: 18px;
@@ -2000,13 +1890,6 @@
   }
   .dd-menu.wide {
     min-width: 210px;
-  }
-  .dd-section {
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    color: #a2937c;
-    font-weight: 700;
-    padding: 6px 11px 3px;
   }
   .dd-opt2 {
     display: flex;
@@ -3183,10 +3066,6 @@
     cursor: pointer;
   }
 
-  .chip-btn.readonly {
-    cursor: default;
-  }
-
   .plan-chip.plan-on,
   .plan-toggle.on {
     border-color: #f0dca9;
@@ -3471,6 +3350,10 @@
     gap: 8px;
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .ns-target {
+    flex: 1 1 100%;
   }
 
   .plan-toggle {

@@ -6,6 +6,7 @@
     createTask,
     deleteTask,
     describeTask,
+    listProfiles,
     listProjects,
     listTasks,
     startTask,
@@ -13,8 +14,10 @@
     updateTask,
   } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { projectColor } from "../lib/theme";
-  import type { Agent, Project, Session, Task, TaskStatus } from "../lib/types";
+  import type { Agent, ProfileInfo, Project, Session, Task, TaskStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -37,6 +40,7 @@
 
   let tasks = $state<Task[]>([]);
   let projects = $state<Project[]>([]);
+  let profiles = $state<ProfileInfo[]>([]);
   let projectFilter = $state("all");
   let error = $state<string | null>(null);
   let dragId = $state<string>("");
@@ -64,6 +68,10 @@
   let ntTitle = $state("");
   let ntBody = $state("");
   let ntAgent = $state("");
+  let ntProvider = $state<RunTargetValue["provider"]>("");
+  let ntProfile = $state("");
+  let ntModel = $state("");
+  let ntEffort = $state("");
   let ntScheduled = $state(false);
   let ntPickup = $state("");
   let ntPlanRequired = $state(false);
@@ -76,6 +84,10 @@
   let etTitle = $state("");
   let etBody = $state("");
   let etAgent = $state("");
+  let etProvider = $state<RunTargetValue["provider"]>("");
+  let etProfile = $state("");
+  let etModel = $state("");
+  let etEffort = $state("");
   let etScheduled = $state(false);
   let etPickup = $state("");
   let etPlanRequired = $state(false);
@@ -85,11 +97,12 @@
 
   async function load() {
     try {
-      const [nextTasks, nextProjects] = await Promise.all([listTasks(), listProjects()]);
+      const [nextTasks, nextProjects, nextProfiles] = await Promise.all([listTasks(), listProjects(), listProfiles()]);
       const sessionPairs = await Promise.all(
         nextTasks.map(async (task) => [task.ID, await taskSession(task.ID)] as const),
       );
       projects = nextProjects;
+      profiles = nextProfiles;
       taskSessions = Object.fromEntries(sessionPairs);
       taskHasSession = Object.fromEntries(sessionPairs.map(([id, session]) => [id, Boolean(session)]));
       tasks = nextTasks;
@@ -102,6 +115,8 @@
   const visibleTasks = $derived(
     projectFilter === "all" ? tasks : tasks.filter((t) => t.ProjectID === projectFilter),
   );
+  const ntSelectedAgent = $derived(agents.find((a) => a.Name === ntAgent) ?? null);
+  const etSelectedAgent = $derived(agents.find((a) => a.Name === etAgent) ?? null);
 
   function tasksFor(status: TaskStatus) {
     return visibleTasks.filter((t) => t.Status === status);
@@ -233,6 +248,10 @@
         title: ntTitle.trim(),
         body: ntBody.trim(),
         assigned_agent: ntAgent,
+        provider: ntProvider,
+        profile: ntProfile,
+        model: ntModel,
+        effort: ntEffort,
         plan_required: ntPlanRequired,
         pickup_at: ntScheduled && ntPickup ? new Date(ntPickup).toISOString() : "",
       });
@@ -241,6 +260,10 @@
       ntScheduled = false;
       ntPickup = "";
       ntPlanRequired = false;
+      ntProvider = "";
+      ntProfile = "";
+      ntModel = "";
+      ntEffort = "";
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -304,6 +327,10 @@
     etTitle = task.Title;
     etBody = task.Body;
     etAgent = task.AssignedAgent;
+    etProvider = task.Provider || "";
+    etProfile = task.Profile;
+    etModel = task.Model;
+    etEffort = task.Effort;
     etScheduled = Boolean(task.PickupAt);
     etPickup = toDateTimeLocal(task.PickupAt);
     etPlanRequired = task.PlanRequired;
@@ -320,6 +347,10 @@
         title: etTitle.trim(),
         body: etBody.trim(),
         assigned_agent: etAgent,
+        provider: etProvider,
+        profile: etProfile,
+        model: etModel,
+        effort: etEffort,
         plan_required: etPlanRequired,
         pickup_at: etScheduled && etPickup ? new Date(etPickup).toISOString() : "",
       });
@@ -581,6 +612,20 @@
           {/each}
         </div>
 
+        <div class="label-mono" style="margin:18px 0 8px">run</div>
+        <RunTargetPicker
+          agent={ntSelectedAgent}
+          {profiles}
+          variant="stacked"
+          value={{ provider: ntProvider, profile: ntProfile, model: ntModel, effort: ntEffort }}
+          onChange={(next) => {
+            ntProvider = next.provider || "";
+            ntProfile = next.profile || "";
+            ntModel = next.model || "";
+            ntEffort = next.effort || "";
+          }}
+        />
+
         <div class="label-mono" style="margin:18px 0 8px">start mode</div>
         <button class="plan-task-toggle" class:on={ntPlanRequired} onclick={() => (ntPlanRequired = !ntPlanRequired)}>
           <span class="plan-task-dot"></span>
@@ -641,6 +686,20 @@
             </button>
           {/each}
         </div>
+
+        <div class="label-mono" style="margin:18px 0 8px">run</div>
+        <RunTargetPicker
+          agent={etSelectedAgent}
+          {profiles}
+          variant="stacked"
+          value={{ provider: etProvider, profile: etProfile, model: etModel, effort: etEffort }}
+          onChange={(next) => {
+            etProvider = next.provider || "";
+            etProfile = next.profile || "";
+            etModel = next.model || "";
+            etEffort = next.effort || "";
+          }}
+        />
 
         <div class="label-mono" style="margin:18px 0 8px">start mode</div>
         <button class="plan-task-toggle" class:on={etPlanRequired} onclick={() => (etPlanRequired = !etPlanRequired)}>

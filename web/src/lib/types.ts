@@ -375,6 +375,10 @@ export interface Task {
   Title: string;
   Body: string;
   AssignedAgent: string;
+  Provider: Provider | "";
+  Profile: string;
+  Model: string;
+  Effort: string;
   Status: TaskStatus;
   PlanRequired: boolean;
   PickupAt: string;
@@ -404,6 +408,10 @@ export interface Goal {
   ReviewEvery: string;
   LeadAgent: string;
   ProjectID: string;
+  Provider: Provider | "";
+  Profile: string;
+  Model: string;
+  Effort: string;
   Status: GoalStatus;
   NextReviewAt: string;
   ClosingReport: string;
@@ -473,6 +481,10 @@ export interface GoalCreateRequest {
   review_every: string;
   lead_agent: string;
   project_id: string;
+  provider?: Provider | "";
+  profile?: string;
+  model?: string;
+  effort?: string;
 }
 
 export interface GoalPatchRequest {
@@ -535,6 +547,8 @@ export interface ScheduleStatus {
   name: string;
   path: string;
   agent: string;
+  provider: Provider | "";
+  profile: string;
   model: string;
   effort: string;
   cron: string;

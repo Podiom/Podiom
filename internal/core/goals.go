@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/store"
 	podiomtools "github.com/Podiom/Podiom/internal/tools"
 )
@@ -70,6 +71,9 @@ func (c *Core) CreateGoal(ctx context.Context, goal store.Goal) (store.Goal, err
 	if _, err := c.store.GetAgent(ctx, goal.LeadAgent); err != nil {
 		return store.Goal{}, fmt.Errorf("lead agent %q: %w", goal.LeadAgent, err)
 	}
+	if err := c.ValidateRunTargetForAgent(ctx, goal.LeadAgent, goalRunTarget(goal)); err != nil {
+		return store.Goal{}, err
+	}
 	every, err := parseReviewEvery(goal.ReviewEvery)
 	if err != nil {
 		return store.Goal{}, err
@@ -102,6 +106,15 @@ func (c *Core) CreateGoal(ctx context.Context, goal store.Goal) (store.Goal, err
 		"metrics", len(created.Metrics),
 	)
 	return created, nil
+}
+
+func goalRunTarget(goal store.Goal) RunTarget {
+	return RunTarget{
+		Provider: config.Provider(strings.TrimSpace(string(goal.Provider))),
+		Profile:  strings.TrimSpace(goal.Profile),
+		Model:    strings.TrimSpace(goal.Model),
+		Effort:   strings.TrimSpace(goal.Effort),
+	}
 }
 
 // GoalPatch carries partial goal updates. Nil fields are left untouched.
@@ -167,6 +180,9 @@ func (c *Core) UpdateGoal(ctx context.Context, id string, patch GoalPatch) (stor
 		if goal.Status == store.GoalActive {
 			goal.NextReviewAt = nextReviewFrom(time.Now(), every)
 		}
+	}
+	if err := c.ValidateRunTargetForAgent(ctx, goal.LeadAgent, goalRunTarget(goal)); err != nil {
+		return store.Goal{}, err
 	}
 	updated, err := c.store.UpdateGoal(ctx, goal)
 	if err != nil {

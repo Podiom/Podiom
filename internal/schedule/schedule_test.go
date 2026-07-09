@@ -3,6 +3,7 @@ package schedule
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,8 @@ func TestParseValidCronSchedule(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSchedule(t, dir, "morning.md", `---
 agent: jared
+provider: codex
+profile: work
 model: sonnet
 effort: low
 cron: "0 7 * * *"
@@ -39,11 +42,32 @@ Summarise today's calendar.
 	if sched.CronSpec() != "0 7 * * *" {
 		t.Fatalf("cron spec = %q", sched.CronSpec())
 	}
+	if sched.Provider != "codex" || sched.Profile != "work" {
+		t.Fatalf("target = %s/%s", sched.Provider, sched.Profile)
+	}
 	if sched.Body != "Summarise today's calendar." {
 		t.Fatalf("body = %q", sched.Body)
 	}
 	if !sched.Enabled || sched.RunPermission != PermissionPreapproved {
 		t.Fatalf("flags wrong: %+v", sched)
+	}
+}
+
+func TestRenderIncludesRunTarget(t *testing.T) {
+	text := Render(CreateParams{
+		Name:     "nightly",
+		Agent:    "jared",
+		Provider: "codex",
+		Profile:  "work",
+		Model:    "gpt-5.1",
+		Effort:   "high",
+		Cron:     "0 1 * * *",
+		Body:     "Run the audit.",
+	})
+	for _, want := range []string{"provider: codex", "profile: work", "model: gpt-5.1", "effort: high"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered schedule missing %q:\n%s", want, text)
+		}
 	}
 }
 
@@ -72,12 +96,12 @@ Do a thing.
 func TestParseRejectsInvalidSchedules(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]string{
-		"no-front.md": "just a body, no frontmatter\n",
-		"no-agent.md": "---\ncron: \"0 7 * * *\"\nenabled: true\n---\nbody\n",
-		"no-timing.md": "---\nagent: jared\nenabled: true\n---\nbody\n",
+		"no-front.md":    "just a body, no frontmatter\n",
+		"no-agent.md":    "---\ncron: \"0 7 * * *\"\nenabled: true\n---\nbody\n",
+		"no-timing.md":   "---\nagent: jared\nenabled: true\n---\nbody\n",
 		"both-timing.md": "---\nagent: jared\ncron: \"0 7 * * *\"\nevery: 6h\nenabled: true\n---\nbody\n",
-		"bad-perm.md": "---\nagent: jared\ncron: \"0 7 * * *\"\nrun_permission: sometimes\nenabled: true\n---\nbody\n",
-		"empty-body.md": "---\nagent: jared\ncron: \"0 7 * * *\"\nenabled: true\n---\n",
+		"bad-perm.md":    "---\nagent: jared\ncron: \"0 7 * * *\"\nrun_permission: sometimes\nenabled: true\n---\nbody\n",
+		"empty-body.md":  "---\nagent: jared\ncron: \"0 7 * * *\"\nenabled: true\n---\n",
 	}
 	for name, content := range cases {
 		path := writeSchedule(t, dir, name, content)

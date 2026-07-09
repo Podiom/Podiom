@@ -1,14 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { createSchedule, deleteSchedule, listGoals, listSchedules, runSchedule } from "../lib/api";
-  import {
-    capabilityKey,
-    effortOptions as capabilityEffortOptions,
-    loadProviderCapabilities,
-  } from "../lib/capabilities";
+  import { createSchedule, deleteSchedule, listGoals, listProfiles, listSchedules, runSchedule } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { modeChip } from "../lib/theme";
-  import type { Agent, Goal, ProviderCapabilities, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
+  import type { Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -25,6 +22,7 @@
 
   let schedules = $state<ScheduleStatus[]>([]);
   let goals = $state<Goal[]>([]);
+  let profiles = $state<ProfileInfo[]>([]);
   let error = $state<string | null>(null);
   let busy = $state<string>("");
   let hoverRun = $state<string>("");
@@ -39,6 +37,8 @@
   let nsName = $state("");
   let nsCron = $state("0 7 * * *");
   let nsAgent = $state("");
+  let nsProvider = $state<RunTargetValue["provider"]>("");
+  let nsProfile = $state("");
   let nsModel = $state("");
   let nsEffort = $state("");
   let nsMode = $state("preapproved");
@@ -51,40 +51,15 @@
     { label: "Hourly", v: "0 * * * *" },
     { label: "Weekdays 09:00", v: "0 9 * * 1-5" },
   ];
-  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
-  let loadingCapabilities = new Set<string>();
   const selectedScheduleAgent = $derived(agents.find((a) => a.Name === nsAgent) ?? null);
-  const scheduleCapabilityKey = $derived(
-    selectedScheduleAgent ? capabilityKey(selectedScheduleAgent.Provider, selectedScheduleAgent.Profile) : "",
-  );
-  const scheduleCapabilities = $derived(scheduleCapabilityKey ? capabilitiesByKey[scheduleCapabilityKey] ?? null : null);
-  const effortOptions = $derived(capabilityEffortOptions(scheduleCapabilities, nsModel || selectedScheduleAgent?.Model || "", nsEffort));
-
-  $effect(() => {
-    if (creating && selectedScheduleAgent) {
-      void ensureCapabilities(selectedScheduleAgent.Provider, selectedScheduleAgent.Profile);
-    }
-  });
-
-  async function ensureCapabilities(provider: Agent["Provider"], profile = "") {
-    const key = capabilityKey(provider, profile);
-    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
-    loadingCapabilities.add(key);
-    try {
-      const caps = await loadProviderCapabilities(provider, profile);
-      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
-    } catch {
-      // Keep the free-form schedule model/effort inputs usable if offline.
-    } finally {
-      loadingCapabilities.delete(key);
-    }
-  }
 
   const nsSlug = $derived(
     (nsName.trim() || "untitled-job").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
   );
   const nsPreview = $derived(
     `---\nagent: ${nsAgent || "—"}\n` +
+      (nsProvider ? `provider: ${nsProvider}\n` : "") +
+      (nsProfile ? `profile: ${nsProfile}\n` : "") +
       (nsModel ? `model: ${nsModel}\n` : "") +
       (nsEffort ? `effort: ${nsEffort}\n` : "") +
       `cron: ${nsCron.trim() || "0 9 * * *"}\nrun_permission: ${nsMode}\nenabled: true\n---\n\n` +
@@ -97,6 +72,8 @@
     nsName = "";
     nsCron = "0 7 * * *";
     nsAgent = agents.length ? agents[0].Name : "";
+    nsProvider = "";
+    nsProfile = "";
     nsModel = nsEffort = "";
     nsMode = "preapproved";
     nsBody = "";
@@ -111,6 +88,8 @@
       await createSchedule({
         name: nsName.trim(),
         agent: nsAgent,
+        provider: nsProvider,
+        profile: nsProfile,
         model: nsModel,
         effort: nsEffort,
         cron: nsCron.trim(),
@@ -146,9 +125,10 @@
 
   async function load() {
     try {
-      const [scheduleList, goalList] = await Promise.all([listSchedules(), listGoals()]);
+      const [scheduleList, goalList, profileList] = await Promise.all([listSchedules(), listGoals(), listProfiles()]);
       schedules = scheduleList;
       goals = goalList;
+      profiles = profileList;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -217,6 +197,8 @@
     ];
     if (s.model) fm.push({ k: "model", v: s.model });
     if (s.effort) fm.push({ k: "effort", v: s.effort });
+    if (s.provider) fm.push({ k: "provider", v: s.provider });
+    if (s.profile) fm.push({ k: "profile", v: s.profile });
     fm.push({ k: "mode", v: s.run_permission });
     if (s.goal_id) fm.push({ k: "origin", v: "goal plan" });
     return fm;
@@ -349,15 +331,20 @@
           {/each}
         </div>
 
-        <div class="ns-row">
-          <span class="ns-key">model</span>
-          <input class="field-input" style="flex:1" bind:value={nsModel} placeholder="agent default" />
-        </div>
-        <div class="ns-row">
-          <span class="ns-key">effort</span>
-          <div class="ns-chips">
-            {#each effortOptions as e}<button style={chip(e === nsEffort)} onclick={() => (nsEffort = e)}>{e}</button>{/each}
-          </div>
+        <div class="ns-row target-row">
+          <span class="ns-key">run</span>
+          <RunTargetPicker
+            agent={selectedScheduleAgent}
+            {profiles}
+            variant="stacked"
+            value={{ provider: nsProvider, profile: nsProfile, model: nsModel, effort: nsEffort }}
+            onChange={(next) => {
+              nsProvider = next.provider || "";
+              nsProfile = next.profile || "";
+              nsModel = next.model || "";
+              nsEffort = next.effort || "";
+            }}
+          />
         </div>
         <div class="ns-row">
           <span class="ns-key">mode</span>
@@ -410,6 +397,10 @@
     align-items: center;
     gap: 9px;
     margin-top: 11px;
+  }
+
+  .ns-row.target-row {
+    align-items: flex-start;
   }
 
   .ns-key {

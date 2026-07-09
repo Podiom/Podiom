@@ -427,6 +427,21 @@ var migrations = []migration{
 			ALTER TABLE sessions ADD COLUMN usage_cache_read_tokens INTEGER NOT NULL DEFAULT 0;
 			ALTER TABLE sessions ADD COLUMN usage_cache_write_tokens INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		version: 17,
+		name:    "run_targets",
+		sql: `ALTER TABLE tasks ADD COLUMN provider TEXT NOT NULL DEFAULT ''
+				CHECK (provider IN ('', 'claude', 'codex'));
+			ALTER TABLE tasks ADD COLUMN profile TEXT NOT NULL DEFAULT '';
+			ALTER TABLE tasks ADD COLUMN model TEXT NOT NULL DEFAULT '';
+			ALTER TABLE tasks ADD COLUMN effort TEXT NOT NULL DEFAULT '';
+
+			ALTER TABLE goals ADD COLUMN provider TEXT NOT NULL DEFAULT ''
+				CHECK (provider IN ('', 'claude', 'codex'));
+			ALTER TABLE goals ADD COLUMN profile TEXT NOT NULL DEFAULT '';
+			ALTER TABLE goals ADD COLUMN model TEXT NOT NULL DEFAULT '';
+			ALTER TABLE goals ADD COLUMN effort TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

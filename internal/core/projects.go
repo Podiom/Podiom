@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
@@ -282,6 +283,9 @@ func (c *Core) CreateTask(ctx context.Context, task store.Task) (store.Task, err
 		if _, err := c.store.GetAgent(ctx, task.AssignedAgent); err != nil {
 			return store.Task{}, fmt.Errorf("assigned agent %q: %w", task.AssignedAgent, err)
 		}
+		if err := c.ValidateRunTargetForAgent(ctx, task.AssignedAgent, taskRunTarget(task)); err != nil {
+			return store.Task{}, err
+		}
 	}
 	created, err := c.store.CreateTask(ctx, task)
 	if err != nil {
@@ -312,9 +316,12 @@ func (c *Core) UpdateTask(ctx context.Context, task store.Task) (store.Task, err
 	} else if hasSession && taskChangesLockedFields(existing, task) {
 		return store.Task{}, fmt.Errorf("task %q already has a session; only status can be changed", task.ID)
 	}
-	if task.AssignedAgent != "" && task.AssignedAgent != existing.AssignedAgent {
+	if task.AssignedAgent != "" && (task.AssignedAgent != existing.AssignedAgent || taskRunTargetChanged(existing, task)) {
 		if _, err := c.store.GetAgent(ctx, task.AssignedAgent); err != nil {
 			return store.Task{}, fmt.Errorf("assigned agent %q: %w", task.AssignedAgent, err)
+		}
+		if err := c.ValidateRunTargetForAgent(ctx, task.AssignedAgent, taskRunTarget(task)); err != nil {
+			return store.Task{}, err
 		}
 	}
 	updated, err := c.store.UpdateTask(ctx, task)
@@ -594,6 +601,10 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 	sess, err := c.CreateSession(ctx, CreateSessionRequest{
 		AgentName:                      task.AssignedAgent,
 		Origin:                         store.OriginRoadmap,
+		Provider:                       task.Provider,
+		Profile:                        task.Profile,
+		Model:                          task.Model,
+		Effort:                         task.Effort,
 		TaskID:                         task.ID,
 		ProjectID:                      task.ProjectID,
 		CreatePlanBeforeImplementation: task.PlanRequired,
@@ -648,14 +659,34 @@ func projectLogFields(p projects.Project) map[string]string {
 
 func taskLogFields(t store.Task) map[string]string {
 	return map[string]string{
-		"project": t.ProjectID,
-		"title":   boolString(strings.TrimSpace(t.Title) != ""),
-		"body":    boolString(strings.TrimSpace(t.Body) != ""),
-		"agent":   t.AssignedAgent,
-		"status":  string(t.Status),
-		"plan":    boolString(t.PlanRequired),
-		"pickup":  boolString(strings.TrimSpace(t.PickupAt) != ""),
+		"project":  t.ProjectID,
+		"title":    boolString(strings.TrimSpace(t.Title) != ""),
+		"body":     boolString(strings.TrimSpace(t.Body) != ""),
+		"agent":    t.AssignedAgent,
+		"provider": string(t.Provider),
+		"profile":  t.Profile,
+		"model":    t.Model,
+		"effort":   t.Effort,
+		"status":   string(t.Status),
+		"plan":     boolString(t.PlanRequired),
+		"pickup":   boolString(strings.TrimSpace(t.PickupAt) != ""),
 	}
+}
+
+func taskRunTarget(task store.Task) RunTarget {
+	return RunTarget{
+		Provider: config.Provider(strings.TrimSpace(string(task.Provider))),
+		Profile:  strings.TrimSpace(task.Profile),
+		Model:    strings.TrimSpace(task.Model),
+		Effort:   strings.TrimSpace(task.Effort),
+	}
+}
+
+func taskRunTargetChanged(before, after store.Task) bool {
+	return before.Provider != after.Provider ||
+		before.Profile != after.Profile ||
+		before.Model != after.Model ||
+		before.Effort != after.Effort
 }
 
 func boolString(v bool) string {
@@ -701,6 +732,10 @@ func taskChangesLockedFields(before, after store.Task) bool {
 		before.Title != after.Title ||
 		before.Body != after.Body ||
 		before.AssignedAgent != after.AssignedAgent ||
+		before.Provider != after.Provider ||
+		before.Profile != after.Profile ||
+		before.Model != after.Model ||
+		before.Effort != after.Effort ||
 		before.PlanRequired != after.PlanRequired ||
 		before.PickupAt != after.PickupAt
 }

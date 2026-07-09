@@ -19,9 +19,10 @@ func (s *Store) CreateTask(ctx context.Context, task Task) (Task, error) {
 		task.Status = TaskBacklog
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO tasks
-		(id, project_id, title, body, assigned_agent, status, plan_required, pickup_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
-		task.ID, task.ProjectID, task.Title, task.Body, task.AssignedAgent, task.Status, boolInt(task.PlanRequired), task.PickupAt,
+		(id, project_id, title, body, assigned_agent, provider, profile, model, effort, status, plan_required, pickup_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
+		task.ID, task.ProjectID, task.Title, task.Body, task.AssignedAgent, task.Provider, task.Profile, task.Model, task.Effort,
+		task.Status, boolInt(task.PlanRequired), task.PickupAt,
 	)
 	if err != nil {
 		return Task{}, fmt.Errorf("create task %q: %w", task.ID, err)
@@ -56,10 +57,14 @@ func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 // title, pickup time).
 func (s *Store) UpdateTask(ctx context.Context, task Task) (Task, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE tasks
-		SET project_id = ?, title = ?, body = ?, assigned_agent = ?, status = ?, plan_required = ?,
+		SET project_id = ?, title = ?, body = ?, assigned_agent = ?,
+			provider = ?, profile = ?, model = ?, effort = ?,
+			status = ?, plan_required = ?,
 			pickup_at = NULLIF(?, ''), updated_at = datetime('now')
 		WHERE id = ?`,
-		task.ProjectID, task.Title, task.Body, task.AssignedAgent, task.Status, boolInt(task.PlanRequired), task.PickupAt, task.ID,
+		task.ProjectID, task.Title, task.Body, task.AssignedAgent,
+		task.Provider, task.Profile, task.Model, task.Effort,
+		task.Status, boolInt(task.PlanRequired), task.PickupAt, task.ID,
 	)
 	if err != nil {
 		return Task{}, fmt.Errorf("update task %q: %w", task.ID, err)
@@ -119,7 +124,9 @@ func (s *Store) ListDueTasks(ctx context.Context, cutoffRFC3339 string) ([]Task,
 	return scanTasks(rows)
 }
 
-const taskSelect = `SELECT id, project_id, title, body, assigned_agent, status, plan_required,
+const taskSelect = `SELECT id, project_id, title, body, assigned_agent,
+	COALESCE(provider, ''), COALESCE(profile, ''), COALESCE(model, ''), COALESCE(effort, ''),
+	status, plan_required,
 	COALESCE(pickup_at, ''), created_at, updated_at FROM tasks`
 
 func scanTasks(rows *sql.Rows) ([]Task, error) {
@@ -142,6 +149,10 @@ func scanTask(row scanner) (Task, error) {
 		&task.Title,
 		&task.Body,
 		&task.AssignedAgent,
+		&task.Provider,
+		&task.Profile,
+		&task.Model,
+		&task.Effort,
 		&task.Status,
 		&task.PlanRequired,
 		&task.PickupAt,

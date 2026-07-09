@@ -316,6 +316,10 @@ type Goal struct {
 	ReviewEvery string
 	LeadAgent   string
 	ProjectID   string
+	Provider    config.Provider
+	Profile     string
+	Model       string
+	Effort      string
 	Status      GoalStatus
 	// NextReviewAt is when the scheduler should fire the next unattended review.
 	// Empty when paused/terminal or when automatic reviews are disabled.
@@ -432,6 +436,10 @@ type Task struct {
 	Title         string
 	Body          string
 	AssignedAgent string
+	Provider      config.Provider
+	Profile       string
+	Model         string
+	Effort        string
 	Status        TaskStatus
 	PlanRequired  bool
 	PickupAt      string // optional RFC3339 scheduled pickup time

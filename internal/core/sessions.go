@@ -33,6 +33,16 @@ type CreateSessionRequest struct {
 	CreatePlanBeforeImplementation bool
 }
 
+// RunTarget is the reusable provider/profile/model/effort template for a future
+// session. An all-empty target means "use the agent default"; any explicit field
+// makes model and effort required so a run is never half-specified.
+type RunTarget struct {
+	Provider config.Provider
+	Profile  string
+	Model    string
+	Effort   string
+}
+
 // CreateSession creates a durable session and starts a fake/provider backing
 // handle that can be resumed later.
 func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (store.Session, error) {
@@ -46,20 +56,21 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 			return store.Session{}, err
 		}
 	}
-	provider, profile, err := c.resolveSessionTarget(agent, req.Provider, req.Profile)
+	target, err := c.resolveRunTarget(agent, RunTarget{
+		Provider: req.Provider,
+		Profile:  req.Profile,
+		Model:    req.Model,
+		Effort:   req.Effort,
+	})
 	if err != nil {
 		return store.Session{}, err
 	}
-	model := req.Model
-	if model == "" && provider == agent.Provider {
-		model = agent.Model
-	}
 	sess := store.Session{
 		AgentName:      agent.Name,
-		Provider:       provider,
-		Profile:        profile,
-		Model:          model,
-		Effort:         firstNonEmpty(req.Effort, agent.Effort),
+		Provider:       target.Provider,
+		Profile:        target.Profile,
+		Model:          target.Model,
+		Effort:         target.Effort,
 		PermissionMode: agent.PermissionMode,
 		Origin:         req.Origin,
 		ScheduleID:     req.ScheduleID,
@@ -144,31 +155,62 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	return updated, nil
 }
 
-func (c *Core) resolveSessionTarget(agent store.Agent, requestedProvider config.Provider, requestedProfile string) (config.Provider, string, error) {
-	provider := requestedProvider
-	profile := strings.TrimSpace(requestedProfile)
+func (c *Core) ValidateRunTargetForAgent(ctx context.Context, agentName string, target RunTarget) error {
+	agent, err := c.store.GetAgent(ctx, agentName)
+	if err != nil {
+		return err
+	}
+	_, err = c.resolveRunTarget(agent, target)
+	return err
+}
+
+func (c *Core) resolveRunTarget(agent store.Agent, requested RunTarget) (RunTarget, error) {
+	provider := requested.Provider
+	profile := strings.TrimSpace(requested.Profile)
+	model := strings.TrimSpace(requested.Model)
+	effort := strings.TrimSpace(requested.Effort)
+	explicit := provider != "" || profile != "" || model != "" || effort != ""
+
+	if explicit {
+		if model == "" {
+			return RunTarget{}, fmt.Errorf("model is required when choosing a run target")
+		}
+		if effort == "" {
+			return RunTarget{}, fmt.Errorf("effort is required when choosing a run target")
+		}
+		if !validEffort(effort) {
+			return RunTarget{}, fmt.Errorf("invalid effort %q", effort)
+		}
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if profile != "" {
 		configured, ok := c.profiles[profile]
 		if !ok {
-			return "", "", fmt.Errorf("unknown profile %q", profile)
+			return RunTarget{}, fmt.Errorf("unknown profile %q", profile)
 		}
 		if provider == "" {
 			provider = configured.Provider
 		} else if configured.Provider != provider {
-			return "", "", fmt.Errorf("profile %q belongs to provider %q, not %q", profile, configured.Provider, provider)
+			return RunTarget{}, fmt.Errorf("profile %q belongs to provider %q, not %q", profile, configured.Provider, provider)
 		}
 	}
 	if provider == "" {
 		provider = agent.Provider
 	} else if provider != config.ProviderClaude && provider != config.ProviderCodex {
-		return "", "", fmt.Errorf("unknown provider %q (want claude|codex)", provider)
+		return RunTarget{}, fmt.Errorf("unknown provider %q (want claude|codex)", provider)
 	}
 	if profile == "" && provider == agent.Provider {
 		profile = agent.Profile
 	}
-	return provider, profile, nil
+	if model == "" {
+		model = agent.Model
+	}
+	if effort == "" {
+		effort = agent.Effort
+	}
+	return RunTarget{Provider: provider, Profile: profile, Model: model, Effort: effort}, nil
 }
 
 // ListSessions returns all durable sessions, with a compatibility ProjectID

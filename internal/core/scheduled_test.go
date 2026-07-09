@@ -52,6 +52,9 @@ func TestRunScheduledCreatesProvenancedSession(t *testing.T) {
 		ScheduleName: "morning-calendar",
 		RunID:        "run-1",
 		AgentName:    "jared",
+		Provider:     config.ProviderCodex,
+		Model:        "gpt-5.1",
+		Effort:       "medium",
 		Task:         "Summarise the calendar.",
 	})
 	if err != nil {
@@ -62,6 +65,9 @@ func TestRunScheduledCreatesProvenancedSession(t *testing.T) {
 	}
 	if sess.ScheduleID != "morning-calendar" || sess.RunID != "run-1" {
 		t.Fatalf("missing schedule/run linkage: %+v", sess)
+	}
+	if sess.Provider != config.ProviderCodex || sess.Model != "gpt-5.1" || sess.Effort != "medium" {
+		t.Fatalf("scheduled run target = %+v", sess)
 	}
 
 	history, err := c.History(ctx, sess.ID)

@@ -26,10 +26,12 @@ func (s *Store) CreateGoal(ctx context.Context, goal Goal) (Goal, error) {
 		return Goal{}, fmt.Errorf("create goal %q: %w", goal.ID, err)
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO goals
-		(id, title, description, success_criteria, metrics_json, review_every, lead_agent, project_id, status, next_review_at, closing_report)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+		(id, title, description, success_criteria, metrics_json, review_every, lead_agent, project_id,
+		 provider, profile, model, effort, status, next_review_at, closing_report)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
 		goal.ID, goal.Title, goal.Description, goal.SuccessCriteria, metrics, goal.ReviewEvery,
-		goal.LeadAgent, goal.ProjectID, goal.Status, goal.NextReviewAt, goal.ClosingReport,
+		goal.LeadAgent, goal.ProjectID, goal.Provider, goal.Profile, goal.Model, goal.Effort,
+		goal.Status, goal.NextReviewAt, goal.ClosingReport,
 	)
 	if err != nil {
 		return Goal{}, fmt.Errorf("create goal %q: %w", goal.ID, err)
@@ -76,11 +78,13 @@ func (s *Store) UpdateGoal(ctx context.Context, goal Goal) (Goal, error) {
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE goals
 		SET title = ?, description = ?, success_criteria = ?, metrics_json = ?, review_every = ?,
-			lead_agent = ?, project_id = ?, status = ?, next_review_at = NULLIF(?, ''),
+			lead_agent = ?, project_id = ?, provider = ?, profile = ?, model = ?, effort = ?,
+			status = ?, next_review_at = NULLIF(?, ''),
 			closing_report = ?, updated_at = datetime('now')
 		WHERE id = ?`,
 		goal.Title, goal.Description, goal.SuccessCriteria, metrics, goal.ReviewEvery,
-		goal.LeadAgent, goal.ProjectID, goal.Status, goal.NextReviewAt, goal.ClosingReport, goal.ID,
+		goal.LeadAgent, goal.ProjectID, goal.Provider, goal.Profile, goal.Model, goal.Effort,
+		goal.Status, goal.NextReviewAt, goal.ClosingReport, goal.ID,
 	)
 	if err != nil {
 		return Goal{}, fmt.Errorf("update goal %q: %w", goal.ID, err)
@@ -149,7 +153,8 @@ func (s *Store) SetGoalNextReview(ctx context.Context, id, at string) error {
 }
 
 const goalSelect = `SELECT id, title, description, success_criteria, metrics_json, review_every,
-	lead_agent, project_id, status, COALESCE(next_review_at, ''), closing_report, created_at, updated_at FROM goals`
+	lead_agent, project_id, COALESCE(provider, ''), COALESCE(profile, ''), COALESCE(model, ''), COALESCE(effort, ''),
+	status, COALESCE(next_review_at, ''), closing_report, created_at, updated_at FROM goals`
 
 func scanGoals(rows *sql.Rows) ([]Goal, error) {
 	var goals []Goal
@@ -175,6 +180,10 @@ func scanGoal(row scanner) (Goal, error) {
 		&goal.ReviewEvery,
 		&goal.LeadAgent,
 		&goal.ProjectID,
+		&goal.Provider,
+		&goal.Profile,
+		&goal.Model,
+		&goal.Effort,
 		&goal.Status,
 		&goal.NextReviewAt,
 		&goal.ClosingReport,

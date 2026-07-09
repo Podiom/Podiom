@@ -122,6 +122,10 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 	sess, err := c.CreateSession(ctx, CreateSessionRequest{
 		AgentName: goal.LeadAgent,
 		Origin:    store.OriginGoal,
+		Provider:  goal.Provider,
+		Profile:   goal.Profile,
+		Model:     goal.Model,
+		Effort:    goal.Effort,
 		GoalID:    goal.ID,
 		ProjectID: goal.ProjectID,
 	})

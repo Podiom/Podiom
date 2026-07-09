@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
@@ -22,6 +23,10 @@ type goalCreateRequest struct {
 	ReviewEvery     string             `json:"review_every"`
 	LeadAgent       string             `json:"lead_agent"`
 	ProjectID       string             `json:"project_id"`
+	Provider        config.Provider    `json:"provider"`
+	Profile         string             `json:"profile"`
+	Model           string             `json:"model"`
+	Effort          string             `json:"effort"`
 }
 
 // goalUpdateRequest is the PATCH body. SessionID/AgentName are the manage-tool
@@ -147,6 +152,10 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 			ReviewEvery:     strings.TrimSpace(req.ReviewEvery),
 			LeadAgent:       strings.TrimSpace(req.LeadAgent),
 			ProjectID:       strings.TrimSpace(req.ProjectID),
+			Provider:        req.Provider,
+			Profile:         strings.TrimSpace(req.Profile),
+			Model:           strings.TrimSpace(req.Model),
+			Effort:          strings.TrimSpace(req.Effort),
 		})
 		if err != nil {
 			writeJSON(w, nil, err)

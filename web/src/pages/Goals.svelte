@@ -9,6 +9,7 @@
     listAccessRequests,
     listGoalEvents,
     listGoals,
+    listProfiles,
     listProjects,
     patchGoal,
     runGoalReview,
@@ -17,6 +18,8 @@
   import { renderMarkdown } from "../lib/markdown";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import UsageBar from "../lib/UsageBar.svelte";
   import type {
     AccessRequest,
@@ -28,6 +31,7 @@
     GoalEventKind,
     GoalMetric,
     GoalStatus,
+    ProfileInfo,
     Project,
   } from "../lib/types";
 
@@ -64,10 +68,15 @@
   let cCriteria = $state("");
   let cMetrics = $state<{ name: string; target: string; unit: string }[]>([{ name: "", target: "", unit: "" }]);
   let cAgent = $state("");
+  let cProvider = $state<RunTargetValue["provider"]>("");
+  let cProfile = $state("");
+  let cModel = $state("");
+  let cEffort = $state("");
   let cProject = $state("");
   let cCadence = $state("24h");
   let cBusy = $state(false);
   let projects = $state<Project[]>([]);
+  let profiles = $state<ProfileInfo[]>([]);
 
   const CADENCES = [
     { label: "every 6h", v: "6h" },
@@ -474,13 +483,15 @@
     cAgent = cAgent || agents[0]?.Name || "";
     scrollTop();
     try {
-      projects = await listProjects();
+      [projects, profiles] = await Promise.all([listProjects(), listProfiles()]);
     } catch {
       projects = [];
+      profiles = [];
     }
   }
 
   const canSubmit = $derived(cTitle.trim() !== "" && cAgent !== "");
+  const selectedCreateAgent = $derived(agents.find((a) => a.Name === cAgent) ?? null);
 
   async function submitCreate() {
     if (!canSubmit || cBusy) return;
@@ -497,12 +508,20 @@
         review_every: cCadence,
         lead_agent: cAgent,
         project_id: cProject,
+        provider: cProvider,
+        profile: cProfile,
+        model: cModel,
+        effort: cEffort,
       });
       cTitle = "";
       cDesc = "";
       cCriteria = "";
       cMetrics = [{ name: "", target: "", unit: "" }];
       cProject = "";
+      cProvider = "";
+      cProfile = "";
+      cModel = "";
+      cEffort = "";
       await refreshAll();
       await openGoal(goal.ID);
       error = null;
@@ -946,6 +965,20 @@
             <span class="muted-note">Hire an agent first — a goal needs a lead.</span>
           {/if}
         </div>
+
+        <div class="field-label mono">Run target</div>
+        <RunTargetPicker
+          agent={selectedCreateAgent}
+          {profiles}
+          variant="stacked"
+          value={{ provider: cProvider, profile: cProfile, model: cModel, effort: cEffort }}
+          onChange={(next) => {
+            cProvider = next.provider || "";
+            cProfile = next.profile || "";
+            cModel = next.model || "";
+            cEffort = next.effort || "";
+          }}
+        />
 
         <div class="two-col">
           <div>
