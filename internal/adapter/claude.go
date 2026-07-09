@@ -247,6 +247,8 @@ func (c *Claude) Teardown(ctx context.Context, handle Handle) error {
 func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (capabilities.ProviderCapabilities, error) {
 	caps := capabilities.Fallback(config.ProviderClaude, req.Profile)
 	caps.Source = "claude-help+fallback"
+
+	// Efforts come from the CLI help text; the CLI exposes no model listing.
 	helpCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := podiomexec.Command(helpCtx, c.bin, "--help")
@@ -258,10 +260,24 @@ func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (ca
 	if err != nil {
 		return capabilities.WithError(caps, fmt.Errorf("read claude help: %w", err)), nil
 	}
-	if efforts := capabilities.ParseEffortsFromHelp(string(raw)); len(efforts) > 0 {
+	efforts := capabilities.ParseEffortsFromHelp(string(raw))
+
+	// Models are fetched dynamically from the Anthropic REST API (OAuth token).
+	// Any failure keeps the bundled catalogue so the picker stays usable; the
+	// error is recorded on the snapshot but never surfaced as a hard error.
+	modelsCtx, cancelModels := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelModels()
+	if models, merr := fetchClaudeModels(modelsCtx, req.ProfileDir); merr == nil {
+		caps.Models = models
+		caps.Source = "anthropic:/v1/models"
+		caps.Stale = false
+	} else {
+		caps = capabilities.WithError(caps, merr)
+	}
+
+	if len(efforts) > 0 {
 		caps = capabilities.MergeEfforts(caps, efforts)
 	}
-	caps.Stale = false
 	return caps, nil
 }
 

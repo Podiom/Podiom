@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Podiom/Podiom/internal/claudeauth"
 )
 
 const testAccessToken = "sk-ant-oat-SECRETTOKENVALUE-do-not-log"
@@ -39,7 +41,7 @@ func TestFetchClaudeOK(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer "+testAccessToken {
 			t.Errorf("authorization = %q", got)
 		}
-		if got := r.Header.Get("anthropic-beta"); got != claudeOAuthBeta {
+		if got := r.Header.Get("anthropic-beta"); got != claudeauth.OAuthBeta {
 			t.Errorf("anthropic-beta = %q", got)
 		}
 		if !strings.HasPrefix(r.Header.Get("User-Agent"), "claude-code/") {
@@ -83,28 +85,6 @@ func TestFetchClaudeMissing(t *testing.T) {
 	snap := FetchClaude(context.Background(), http.DefaultClient, t.TempDir())
 	if snap.Status != StatusNoCredentials {
 		t.Fatalf("status = %q", snap.Status)
-	}
-}
-
-func TestClaudeKeychainService(t *testing.T) {
-	// A custom CLAUDE_CONFIG_DIR maps to the base service name suffixed with the
-	// first 8 hex chars of sha256(absolute dir), matching the Claude Code CLI.
-	if got := claudeKeychainService("/Users/marcus/.claude-personal"); got != "Claude Code-credentials-9f8d6274" {
-		t.Errorf("custom service = %q, want Claude Code-credentials-9f8d6274", got)
-	}
-
-	// The default account uses the bare service name — both for the implicit
-	// default (empty dir) and an explicit path to ~/.claude.
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	if got := claudeKeychainService(""); got != claudeKeychainBase {
-		t.Errorf("default service = %q, want %q", got, claudeKeychainBase)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home dir")
-	}
-	if got := claudeKeychainService(filepath.Join(home, ".claude")); got != claudeKeychainBase {
-		t.Errorf("explicit default service = %q, want %q", got, claudeKeychainBase)
 	}
 }
 

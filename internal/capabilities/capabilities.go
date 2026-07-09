@@ -80,9 +80,10 @@ func Fallback(provider config.Provider, profile string) ProviderCapabilities {
 		}
 	case config.ProviderClaude:
 		caps.Models = []ModelOption{
-			model("sonnet", "Sonnet", "Claude Code latest Sonnet alias.", true),
-			model("opus", "Opus", "Claude Code latest Opus alias.", false),
-			model("haiku", "Haiku", "Claude Code latest Haiku alias.", false),
+			model("claude-opus-4-8", "Claude Opus 4.8", "Claude Opus 4.8.", true),
+			model("claude-sonnet-5", "Claude Sonnet 5", "Claude Sonnet 5.", false),
+			model("claude-haiku-4-5", "Claude Haiku 4.5", "Claude Haiku 4.5.", false),
+			model("claude-fable-5", "Claude Fable 5", "Claude Fable 5.", false),
 		}
 	}
 	return caps

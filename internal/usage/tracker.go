@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/claudeauth"
 	"github.com/Podiom/Podiom/internal/config"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
@@ -191,7 +192,7 @@ func (t *Tracker) targets() []target {
 func credentialPath(provider config.Provider, dir string) string {
 	switch provider {
 	case config.ProviderClaude:
-		return claudeCredentialPath(dir)
+		return claudeauth.CredentialPath(dir)
 	case config.ProviderCodex:
 		return filepath.Join(codexHomeDir(dir), "auth.json")
 	default:
