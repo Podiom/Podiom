@@ -520,7 +520,7 @@ func TestRateLimitFallbackSwitchesProviderWithReplayHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "fallbacker", Origin: store.OriginCLI})
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "fallbacker", Origin: store.OriginCLI, Model: "claude-fable-5", Effort: "max"})
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -559,6 +559,64 @@ func TestRateLimitFallbackSwitchesProviderWithReplayHistory(t *testing.T) {
 	}
 	if len(fake.Requests[1].History) != 2 || fake.Requests[1].History[0].Content != "remember alpha" {
 		t.Fatalf("fallback request did not replay prior history: %+v", fake.Requests[1].History)
+	}
+	// Model IDs and effort vocabularies are provider-specific: the claude values
+	// must not be carried into the codex fallback request or the target rejects
+	// the turn.
+	if fake.Requests[0].Settings.Model != "claude-fable-5" || fake.Requests[0].Settings.Effort != "max" {
+		t.Fatalf("first request should carry the session model/effort: %+v", fake.Requests[0].Settings)
+	}
+	if fake.Requests[1].Settings.Model != "" || fake.Requests[1].Settings.Effort != "" {
+		t.Fatalf("cross-provider fallback should reset model/effort: %+v", fake.Requests[1].Settings)
+	}
+	if updated.Model != "" || updated.Effort != "" {
+		t.Fatalf("cross-provider fallback should clear persisted model/effort: %+v", updated)
+	}
+}
+
+func TestSwitchSessionTargetSameProviderKeepsModelAndEffort(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	c, err := New(Options{
+		Paths:   paths,
+		Store:   db,
+		Adapter: adapter.NewFake(),
+		Profiles: []config.Profile{
+			{Name: "work", Provider: config.ProviderClaude, ConfigDir: "/tmp/claude-work"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "keeper", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "keeper", Origin: store.OriginCLI, Model: "claude-fable-5", Effort: "high"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	updated, err := c.switchSessionTarget(ctx, session, config.ProviderClaude, "work")
+	if err != nil {
+		t.Fatalf("switch target: %v", err)
+	}
+	if updated.Model != "claude-fable-5" || updated.Effort != "high" {
+		t.Fatalf("same-provider switch should keep model/effort: %+v", updated)
+	}
+	if updated.ProviderHandle != "" {
+		t.Fatalf("switch should clear provider handle, got %q", updated.ProviderHandle)
 	}
 }
 

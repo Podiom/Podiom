@@ -502,6 +502,10 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 			events = append(events, ctxEvent)
 		}
 	case "result":
+		if claudeResultRateLimited(raw) {
+			events = append(events, Event{Kind: EventRateLimited, Content: firstString(raw, "result", "content")})
+			return events, nil
+		}
 		if text := firstString(raw, "result", "content"); text != "" {
 			if req, ok := claudeUserInputRequestFromText(text, line); ok {
 				events = append(events, Event{Kind: EventUserInputRequest, UserInputRequest: req})
@@ -518,6 +522,16 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 	case "api_retry":
 		if claudeRateLimited(raw) {
 			events = append(events, Event{Kind: EventRateLimited, Content: "claude rate limited"})
+		}
+	case "rate_limit_event":
+		// The CLI's authoritative account-limit signal: status "allowed" (and
+		// warnings) are informational; "rejected"/"exceeded" mean the limit is in
+		// effect for this request.
+		if info, ok := raw["rate_limit_info"].(map[string]any); ok {
+			switch strings.ToLower(firstString(info, "status")) {
+			case "rejected", "exceeded":
+				events = append(events, Event{Kind: EventRateLimited, Content: "claude rate limited: " + firstString(info, "rateLimitType", "rate_limit_type", "status")})
+			}
 		}
 	case "error":
 		message := claudeErrorMessage(raw)
@@ -676,6 +690,24 @@ func claudeRateLimited(raw map[string]any) bool {
 		}
 	}
 	return claudeRateLimitedText(claudeErrorMessage(raw))
+}
+
+// claudeResultRateLimited reports whether a terminal `result` payload signals
+// an account limit. The keyword heuristic is gated on error markers (api_error_status,
+// is_error, or the CLI's literal usage-limit banner) so a successful assistant
+// reply that merely talks about rate limits is not misclassified.
+func claudeResultRateLimited(raw map[string]any) bool {
+	if status, ok := raw["api_error_status"].(float64); ok && int(status) == 429 {
+		return true
+	}
+	text := firstString(raw, "result", "content")
+	if strings.HasPrefix(strings.ToLower(text), "claude ai usage limit reached") {
+		return true
+	}
+	if isError, ok := raw["is_error"].(bool); ok && isError {
+		return claudeRateLimitedText(text)
+	}
+	return false
 }
 
 func claudeRateLimitedText(message string) bool {

@@ -69,7 +69,14 @@ func (c *Core) switchSessionTarget(ctx context.Context, sess store.Session, prov
 			return store.Session{}, fmt.Errorf("profile %q belongs to provider %q, not %q", profile, got.Provider, provider)
 		}
 	}
-	updated, err := c.store.UpdateSessionRuntime(ctx, sess.ID, provider, profile, sess.Model, sess.Effort, sess.PermissionMode, "")
+	model, effort := sess.Model, sess.Effort
+	if provider != sess.Provider {
+		// Model IDs and effort vocabularies are provider-specific; carrying them
+		// across providers makes the target reject the turn. Empty values select
+		// the target provider's defaults.
+		model, effort = "", ""
+	}
+	updated, err := c.store.UpdateSessionRuntime(ctx, sess.ID, provider, profile, model, effort, sess.PermissionMode, "")
 	if err != nil {
 		return store.Session{}, err
 	}

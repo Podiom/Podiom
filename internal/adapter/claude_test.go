@@ -190,6 +190,51 @@ func TestParseClaudeRateLimitErrorEvent(t *testing.T) {
 	}
 }
 
+func TestParseClaudeResultRateLimited(t *testing.T) {
+	cases := []struct {
+		name    string
+		line    string
+		limited bool
+	}{
+		{"usage limit banner", `{"type":"result","subtype":"success","is_error":false,"result":"Claude AI usage limit reached|1783650000"}`, true},
+		{"error result with limit text", `{"type":"result","is_error":true,"result":"API Error: 429 too many requests"}`, true},
+		{"api error status 429", `{"type":"result","is_error":true,"api_error_status":429,"result":"request failed"}`, true},
+		{"reply that merely mentions rate limits", `{"type":"result","is_error":false,"result":"The rate limit fallback logic looks correct."}`, false},
+		{"error without limit text", `{"type":"result","is_error":true,"result":"something else broke"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events, err := parseClaudeLine([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("expected 1 event, got %+v", events)
+			}
+			if limited := events[0].Kind == EventRateLimited; limited != tc.limited {
+				t.Fatalf("rate limited = %v, want %v: %+v", limited, tc.limited, events[0])
+			}
+		})
+	}
+}
+
+func TestParseClaudeRateLimitEvent(t *testing.T) {
+	events, err := parseClaudeLine([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1783650000,"rateLimitType":"five_hour"}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != EventRateLimited {
+		t.Fatalf("expected rate limit event for rejected status, got %+v", events)
+	}
+	events, err = parseClaudeLine([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1783650000,"rateLimitType":"five_hour"}}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("allowed status must not emit events, got %+v", events)
+	}
+}
+
 func TestParseClaudeRawQuestionsText(t *testing.T) {
 	input := strings.NewReader(`{"type":"assistant","message":{"content":[{"type":"text","text":"questions: [{\"question\":\"What do you want from \\\"testing roadmap\\\"?\",\"header\":\"Intent\",\"options\":[{\"label\":\"Draft a testing roadmap\",\"description\":\"Create a phased plan/document for what testing to build over time.\"},{\"label\":\"Roadmap for a specific project\",\"description\":\"Analyze an existing codebase and produce a tailored testing strategy.\"}],\"multiSelect\":false}]"}]}}
 `)

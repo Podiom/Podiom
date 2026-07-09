@@ -434,7 +434,13 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}
 			workspaceDir := c.sessionWorkspaceDir(current.AgentName, projectCtx)
 			extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(current.AgentName).Workspace, projectCtx)
-			events, err := c.adapter.SendTurn(ctx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, mcpServers, mcpAll))
+			// Each attempt gets its own cancelable context: a rate-limited provider
+			// process can still be alive (the Claude CLI keeps retrying after an
+			// api_retry event), and it must not keep executing tools while the
+			// fallback target reruns the turn.
+			attemptCtx, cancelAttempt := context.WithCancel(ctx)
+			defer cancelAttempt()
+			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, mcpServers, mcpAll))
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "dispatch", "provider", string(current.Provider), "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
@@ -446,6 +452,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				return
 			}
 			if rateLimited {
+				cancelAttempt()
 				fallbacks++
 				var next store.Session
 				var err error
