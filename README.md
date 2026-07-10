@@ -117,3 +117,9 @@ All runtime state lives under `$PODIOM_HOME` (default `~/.podiom/`).
 - [Security & logging](docs/security.md) — permission modes, gateway token, redaction, run logs
 - [Home Assistant app](docs/home-assistant.md) — deploy Podiom as an HA add-on
 - [Integration contracts](docs/integrations/README.md)
+
+## Contributing
+
+Podiom is open source under the [MIT License](LICENSE). Contributions are
+welcome; please read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation,
+and pull request guidelines.
