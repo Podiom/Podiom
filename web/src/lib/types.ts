@@ -578,6 +578,7 @@ export interface Message {
   Role: MessageRole;
   Kind?: MessageKind;
   Content: string;
+  CreatedAt?: string;
 }
 
 export interface PermissionRequest {

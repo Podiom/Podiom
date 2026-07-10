@@ -611,6 +611,106 @@
     return !!b && a.ID === b.ID && a.SessionID === b.SessionID;
   }
 
+  function handleMessagesCopy(event: ClipboardEvent) {
+    if (!msgsEl || !event.clipboardData) return;
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    if (!rangeIntersectsElement(range, msgsEl)) return;
+
+    const selectedMessages = messages.filter((message) => {
+      const el = msgsEl?.querySelector<HTMLElement>(`[data-message-id="${message.ID}"]`);
+      return !!el && rangeIntersectsElement(range, el);
+    });
+    if (selectedMessages.length === 0) return;
+
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", transcriptPlainText(selectedMessages));
+    event.clipboardData.setData("text/html", transcriptHTML(selectedMessages));
+  }
+
+  function rangeIntersectsElement(range: Range, element: Element): boolean {
+    try {
+      return range.intersectsNode(element);
+    } catch {
+      return false;
+    }
+  }
+
+  function transcriptPlainText(selectedMessages: Message[]): string {
+    const parts = [`Podiom chat - ${sessionTitle}`];
+    for (const message of selectedMessages) {
+      const time = transcriptTime(message);
+      const speaker = transcriptSpeaker(message);
+      const label = time ? `[${time}] ${speaker}:` : `${speaker}:`;
+      parts.push(`${label}\n${message.Content}`);
+    }
+    return `${parts.join("\n\n")}\n`;
+  }
+
+  function transcriptHTML(selectedMessages: Message[]): string {
+    const articles = selectedMessages.map((message) => {
+      const time = transcriptTime(message);
+      const speaker = transcriptSpeaker(message);
+      const timeHTML = time
+        ? ` <time datetime="${escapeHTML(message.CreatedAt ?? "")}">${escapeHTML(time)}</time>`
+        : "";
+      return `<article><header><strong>${escapeHTML(speaker)}</strong>${timeHTML}</header><div>${transcriptMessageHTML(message)}</div></article>`;
+    });
+    return `<section class="podiom-transcript"><h1>Podiom chat - ${escapeHTML(sessionTitle)}</h1>${articles.join("")}</section>`;
+  }
+
+  function transcriptMessageHTML(message: Message): string {
+    if (message.Kind === "error" || message.Role === "user") {
+      return `<p>${escapeHTML(message.Content).replace(/\n/g, "<br>")}</p>`;
+    }
+    return renderMarkdown(message.Content);
+  }
+
+  function transcriptSpeaker(message: Message): string {
+    if (message.Kind === "error") return "Podiom";
+    if (message.Role === "user") return "Du";
+    return activeName;
+  }
+
+  function transcriptTime(message: Message): string {
+    const date = parseMessageDate(message.CreatedAt);
+    if (!date) return "";
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function parseMessageDate(value: string | undefined): Date | null {
+    if (!value) return null;
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+      ? `${value.replace(" ", "T")}Z`
+      : value;
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function escapeHTML(value: string): string {
+    return value.replace(/[&<>"']/g, (char) => {
+      switch (char) {
+        case "&":
+          return "&amp;";
+        case "<":
+          return "&lt;";
+        case ">":
+          return "&gt;";
+        case '"':
+          return "&quot;";
+        default:
+          return "&#39;";
+      }
+    });
+  }
+
   async function scrollMessagesToBottom(behavior: ScrollBehavior = "smooth") {
     await tick();
     requestAnimationFrame(() => {
@@ -1367,6 +1467,7 @@
     <div
       class="msgs"
       bind:this={msgsEl}
+      oncopy={handleMessagesCopy}
       onscroll={onMsgsScroll}
       onloadcapture={() => {
         if (stick) void scrollMessagesToBottom("auto");
@@ -1374,18 +1475,18 @@
     >
       {#each messages as m (m.ID)}
         {#if m.Kind === "error"}
-          <div class="row-start">
+          <div class="row-start message-row" data-message-id={m.ID}>
             <div class="bubble-error">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" /></svg>
               {m.Content}
             </div>
           </div>
         {:else if m.Role === "user"}
-          <div class="row-end">
+          <div class="row-end message-row" data-message-id={m.ID}>
             <div class="bubble-user">{m.Content}</div>
           </div>
         {:else}
-          <div class="row-start">
+          <div class="row-start message-row" data-message-id={m.ID}>
             <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
             <div class="bubble-assistant">{@html renderMarkdown(m.Content)}</div>
           </div>
