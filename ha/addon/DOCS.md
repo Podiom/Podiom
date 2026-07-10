@@ -32,11 +32,11 @@ Exact bundled versions are listed in the changelog for every release.
    CLIs, guides you through device login when needed, lets you choose a
    provider/profile, creates your first agent, and generates its `SOUL.md`.
 4. When the wizard finishes, press **Take the stage**. The setup page stores
-   the gateway token in this browser and opens the dashboard. Each browser only
-   needs this once.
+   the gateway token and opens the dashboard.
 
-After setup, Podiom opens directly to the dashboard. The **Terminal** sidebar
-item stays available for later Claude/Codex re-authentication or shell access.
+After setup, Podiom opens directly to the dashboard from any HA-authenticated
+browser. The **Terminal** sidebar item stays available for later Claude/Codex
+re-authentication or shell access.
 
 ### Re-authenticating later
 

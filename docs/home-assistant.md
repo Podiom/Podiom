@@ -28,10 +28,10 @@ works — the LLM compute is cloud-side; see the resource note below).
    you through device login when needed, creates your first agent, and
    generates its `SOUL.md`.
 3. When the wizard finishes, click **Take the stage**. The setup page stores
-   the gateway token in that browser and opens the dashboard.
-4. Future visits open the dashboard directly. HA installs also show a
-   **Terminal** sidebar item for later Claude/Codex re-authentication or
-   maintenance shell access.
+   the gateway token and opens the dashboard.
+4. Future visits, including from other HA-authenticated browsers, open the
+   dashboard directly. HA installs also show a **Terminal** sidebar item for
+   later Claude/Codex re-authentication or maintenance shell access.
 
 ## The gateway token
 
@@ -39,12 +39,13 @@ HA's login protects the *browser → HA* hop; the gateway token authenticates
 the *client → podiomd* hop ([full model](security.md#gateway-token)). In the
 HA app the token lifecycle is mostly terminal-free:
 
-- **First browser setup** — after `podiom onboard` completes, the setup page
-  exposes a narrow HA-only copy button and stores the token in that browser.
+- **First setup** — after `podiom onboard` completes, the setup page stores the
+  token in the browser. Later HA-authenticated browsers bootstrap the same token
+  automatically after confirming onboarding is complete.
 - **Rotate** — switch on the `rotate_token` toggle and save; the app restarts,
   rotates, writes the new value back, and resets the toggle. Open browser tabs
-  disconnect; use the HA token-copy surface to store the new value in the
-  browser.
+  disconnect and bootstrap the new value through the HA-authenticated setup
+  check.
 
 The token value never appears in the add-on **log**. The CLI can still show it
 with `podiom token show` inside the container, and the HA setup page can show

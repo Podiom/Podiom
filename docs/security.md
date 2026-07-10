@@ -57,18 +57,19 @@ How each client gets it:
 
 - **The `podiom` CLI** reads it from disk automatically — same machine, same
   trust domain, zero friction.
-- **Browsers** enter it once in the web UI's token screen and remember it per
-  browser. Get the value with `podiom token show` (standalone) or from the
-  add-on's Configuration page (Home Assistant).
+- **Browsers** remember it locally after unlock. Standalone browsers enter it
+  once in the web UI's token screen; get the value with `podiom token show`.
+  Home Assistant browsers bootstrap it through the HA-authenticated setup flow
+  after onboarding has completed.
 
 Rotation (`podiom token rotate`, or the `rotate_token` toggle in the HA app)
 invalidates the previous value immediately: live browser tabs are disconnected
-with close code `4401` and prompted for the new token, while the CLI picks it
-up from disk on its next call.
+with close code `4401` and unlock again, while the CLI picks it up from disk on
+its next call.
 
 Two rules keep the value contained: the daemon logs token *events* (generated,
-rotated) but never the value, and there is deliberately no API that returns
-the token — the web UI can never display its own credential.
+rotated) but never the value, and the only unauthenticated browser token return
+is the HA-only bootstrap endpoint after onboarding has completed.
 
 Why a token even when the UI sits behind authenticated proxies (HA Ingress):
 defense in depth for the client→daemon hop, safe LAN exposure of standalone

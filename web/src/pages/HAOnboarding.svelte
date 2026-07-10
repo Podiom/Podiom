@@ -106,22 +106,37 @@
       <div class="error">{error}</div>
     {/if}
 
-    <section class="terminal-card" aria-label="Onboarding wizard">
-      <div class="titlebar">
-        <div class="terminal-label">
-          <span class="live-dot"></span>
-          ONBOARDING WIZARD
-          <span class="wave" aria-hidden="true">
-            {#each [9, 15, 11, 19, 13, 17, 10] as height, i}
-              <span style={`height:${height}px; animation-delay:${-(i * 0.22).toFixed(2)}s`}></span>
-            {/each}
-          </span>
+    {#if onboarding?.completed}
+      <section class="terminal-card complete-card" aria-label="Setup complete">
+        <div class="titlebar">
+          <div class="terminal-label">
+            <span class="live-dot"></span>
+            SETUP COMPLETE
+          </div>
         </div>
-      </div>
-      <div class="terminal-body">
-        <HATerminalPanel flow="onboard" showToolbar={false} />
-      </div>
-    </section>
+        <div class="complete-body">
+          <div class="complete-title">Ready for the dashboard.</div>
+          <div class="complete-copy">This Home Assistant install has already finished onboarding.</div>
+        </div>
+      </section>
+    {:else}
+      <section class="terminal-card" aria-label="Onboarding wizard">
+        <div class="titlebar">
+          <div class="terminal-label">
+            <span class="live-dot"></span>
+            ONBOARDING WIZARD
+            <span class="wave" aria-hidden="true">
+              {#each [9, 15, 11, 19, 13, 17, 10] as height, i}
+                <span style={`height:${height}px; animation-delay:${-(i * 0.22).toFixed(2)}s`}></span>
+              {/each}
+            </span>
+          </div>
+        </div>
+        <div class="terminal-body">
+          <HATerminalPanel flow="onboard" showToolbar={false} />
+        </div>
+      </section>
+    {/if}
 
     <footer class="footer-row">
       <div class="live-line">
@@ -341,6 +356,31 @@
   .terminal-body :global(.terminal-frame) {
     min-height: 400px;
     background: #0d0f0b;
+  }
+
+  .complete-card {
+    background: linear-gradient(180deg, #25362f 0%, #1d2a25 100%);
+  }
+
+  .complete-body {
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 44px 28px;
+    text-align: center;
+  }
+
+  .complete-title {
+    color: #e9f4ee;
+    font: 750 26px/1.15 "Hanken Grotesk", system-ui, sans-serif;
+  }
+
+  .complete-copy {
+    color: #a9c7bb;
+    font: 500 14px/1.45 "Hanken Grotesk", system-ui, sans-serif;
   }
 
   .footer-row {

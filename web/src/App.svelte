@@ -1,6 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { applyUpdate, checkUpdate, createProfile, getHealth, hireAgent, listAgents, listProfiles } from "./lib/api";
+  import {
+    applyUpdate,
+    checkUpdate,
+    createProfile,
+    getHealth,
+    getOnboardingState,
+    getOnboardingToken,
+    hireAgent,
+    listAgents,
+    listProfiles,
+  } from "./lib/api";
   import { auth } from "./lib/auth.svelte";
   import { avatars } from "./lib/avatars.svelte";
   import { deployment } from "./lib/base";
@@ -79,7 +89,12 @@
 
   let route = $state<Route>("chat");
   const mode = deployment();
-  let showHAOnboarding = $state(mode === "ha" && !auth.token);
+  let showHAOnboarding = $state(false);
+  let haBootstrapState = $state<"idle" | "checking" | "onboarding" | "failed">(
+    mode === "ha" && !auth.token ? "checking" : "idle",
+  );
+  let haBootstrapError = $state<string | null>(null);
+  let haBootstrapInFlight = false;
   let health = $state<Health | null>(null);
   let update = $state<UpdateStatus | null>(null);
   let updateState = $state<"idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed">("idle");
@@ -119,7 +134,24 @@
   // a rotation (token cleared → re-entered) to reopen the socket and refresh.
   let booted = $state(false);
   $effect(() => {
-    if (mode === "ha" && !auth.token) showHAOnboarding = true;
+    if (mode !== "ha") return;
+    if (auth.token) {
+      showHAOnboarding = false;
+      haBootstrapState = "idle";
+      haBootstrapError = null;
+      return;
+    }
+    if (showHAOnboarding) return;
+    if (haBootstrapState === "idle") {
+      haBootstrapState = "checking";
+      return;
+    }
+    if (haBootstrapState === "checking" && !haBootstrapInFlight) {
+      void bootstrapHA();
+    }
+  });
+
+  $effect(() => {
     if (!auth.token) return;
     if (mode === "ha" && showHAOnboarding) return;
     if (booted) {
@@ -129,6 +161,30 @@
     booted = true;
     void boot();
   });
+
+  async function bootstrapHA() {
+    haBootstrapInFlight = true;
+    haBootstrapError = null;
+    try {
+      const onboarding = await getOnboardingState();
+      if (!onboarding.completed) {
+        showHAOnboarding = true;
+        haBootstrapState = "onboarding";
+        return;
+      }
+      const result = await getOnboardingToken();
+      route = "chat";
+      booted = false;
+      showHAOnboarding = false;
+      auth.setToken(result.token);
+      haBootstrapState = "idle";
+    } catch (e) {
+      haBootstrapError = e instanceof Error ? e.message : String(e);
+      haBootstrapState = "failed";
+    } finally {
+      haBootstrapInFlight = false;
+    }
+  }
 
   async function boot() {
     // Open the app-wide socket once, above any page, so attention signalling
@@ -371,7 +427,29 @@
   }
 </script>
 
-{#if mode === "ha" && showHAOnboarding}
+{#if mode === "ha" && !auth.token && !showHAOnboarding}
+  <main class="ha-bootstrap">
+    <div class="bootstrap-mark">
+      <svg width="34" height="34" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M8 31 Q18 6 30 16" fill="none" stroke="#2F6E60" stroke-width="3.4" stroke-linecap="round" />
+        <circle cx="30" cy="16" r="4.6" fill="#2F6E60" />
+        <circle cx="36" cy="23" r="2.9" fill="#2F6E60" opacity=".72" />
+        <circle cx="41" cy="29" r="1.7" fill="#2F6E60" opacity=".45" />
+      </svg>
+    </div>
+    <div class="bootstrap-title">Opening Podiom</div>
+    <div class="bootstrap-status mono">
+      {#if haBootstrapState === "failed"}
+        {haBootstrapError ?? "could not check Home Assistant setup"}
+      {:else}
+        checking Home Assistant setup...
+      {/if}
+    </div>
+    {#if haBootstrapState === "failed"}
+      <button class="bootstrap-retry" onclick={() => { haBootstrapError = null; haBootstrapState = "checking"; }}>Retry</button>
+    {/if}
+  </main>
+{:else if mode === "ha" && showHAOnboarding}
   <HAOnboarding onUnlocked={() => { showHAOnboarding = false; route = "chat"; booted = false; }} />
 {:else if !auth.token}
   <TokenGate />
@@ -605,6 +683,58 @@
 {/if}
 
 <style>
+  .ha-bootstrap {
+    min-height: 100vh;
+    background: linear-gradient(180deg, #f8f3ea 0%, #efe5d6 100%);
+    color: #2b2520;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 32px;
+    text-align: center;
+  }
+
+  .bootstrap-mark {
+    width: 62px;
+    height: 62px;
+    border-radius: 18px;
+    background: #e3f1ec;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 18px 34px -22px rgba(47, 110, 96, 0.75);
+  }
+
+  .bootstrap-title {
+    margin-top: 4px;
+    color: #2b2520;
+    font: 800 28px/1.1 "Hanken Grotesk", system-ui, sans-serif;
+  }
+
+  .bootstrap-status {
+    max-width: min(440px, 100%);
+    color: #8a7d6a;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .bootstrap-retry {
+    margin-top: 6px;
+    border: 1px solid #bfe0d6;
+    border-radius: 10px;
+    background: #3f8f7e;
+    color: #fffaf2;
+    cursor: pointer;
+    padding: 10px 18px;
+    font: 700 14px "Hanken Grotesk", system-ui, sans-serif;
+  }
+
+  .bootstrap-retry:hover {
+    background: #357b6c;
+  }
+
   .sidebar {
     width: 236px;
     flex: none;
