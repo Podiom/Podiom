@@ -31,7 +31,7 @@ curl -fsSL https://github.com/Podiom/Podiom/releases/latest/download/install.sh 
 Windows PowerShell:
 
 ```powershell
-irm https://podiom.ai/install.ps1 | iex
+irm https://github.com/Podiom/Podiom/releases/latest/download/install.ps1 | iex
 ```
 
 The installer downloads the matching release binary, verifies checksums, can set
