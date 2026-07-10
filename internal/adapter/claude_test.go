@@ -155,24 +155,21 @@ func TestParseClaudeStream(t *testing.T) {
 	for event := range out {
 		events = append(events, event)
 	}
-	if len(events) != 5 {
+	if len(events) != 4 {
 		b, _ := json.Marshal(events)
-		t.Fatalf("expected 5 events, got %d: %s", len(events), b)
+		t.Fatalf("expected 4 events, got %d: %s", len(events), b)
 	}
 	if events[0].Kind != EventHandleUpdated || events[0].Handle.ID != "abc" {
 		t.Fatalf("bad handle event: %+v", events[0])
 	}
-	if events[1].Kind != EventHandleUpdated || events[1].Handle.ID != "abc" {
-		t.Fatalf("bad nested handle event: %+v", events[1])
+	if events[1].Kind != EventAssistantDelta || events[1].Content != "O" {
+		t.Fatalf("bad nested delta event: %+v", events[1])
 	}
-	if events[2].Kind != EventAssistantDelta || events[2].Content != "O" {
-		t.Fatalf("bad nested delta event: %+v", events[2])
+	if events[2].Kind != EventAssistantDelta || events[2].Content != "hel" {
+		t.Fatalf("bad delta event: %+v", events[2])
 	}
-	if events[3].Kind != EventAssistantDelta || events[3].Content != "hel" {
-		t.Fatalf("bad delta event: %+v", events[3])
-	}
-	if events[4].Kind != EventAssistantMessage || events[4].Content != "hello" {
-		t.Fatalf("bad assistant event: %+v", events[4])
+	if events[3].Kind != EventAssistantMessage || events[3].Content != "hello" {
+		t.Fatalf("bad assistant event: %+v", events[3])
 	}
 }
 

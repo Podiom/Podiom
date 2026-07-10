@@ -446,7 +446,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			assistant, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, events)
+			assistant, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, current.ProviderHandle, events)
 			if !ok {
 				runLog.Info("turn aborted", "provider", string(current.Provider))
 				return
@@ -725,8 +725,9 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 	return assigned, cat.Servers, nil
 }
 
-func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, provider config.Provider, profile string, events <-chan adapter.Event) (strings.Builder, bool, bool) {
+func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (strings.Builder, bool, bool) {
 	var assistant strings.Builder
+	currentProviderHandle := providerHandle
 	for event := range events {
 		switch event.Kind {
 		case adapter.EventAssistantDelta:
@@ -750,10 +751,14 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 			}
 		case adapter.EventHandleUpdated:
 			if event.Handle != nil {
+				if event.Handle.ID == currentProviderHandle {
+					continue
+				}
 				if _, err := c.store.UpdateSessionProviderHandle(ctx, sessionID, event.Handle.ID); err != nil {
 					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 					return assistant, false, false
 				}
+				currentProviderHandle = event.Handle.ID
 				c.log.Info("provider handle stored",
 					"event", "provider",
 					"session", sessionID,

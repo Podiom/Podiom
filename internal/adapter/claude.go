@@ -191,12 +191,16 @@ type claudeStreamTrack struct {
 
 func (c *Claude) trackClaudeStream(ctx context.Context, req TurnRequest, in <-chan Event, out chan<- Event, done chan<- claudeStreamTrack) {
 	var track claudeStreamTrack
+	lastHandleID := req.Handle.ID
 	for event := range in {
 		if event.Kind == EventAssistantMessage && strings.TrimSpace(event.Content) != "" {
 			track.lastMessage = event.Content
 		}
 		if event.Kind == EventHandleUpdated && event.Handle != nil {
-			c.providerLog(req).Info("provider handle updated", "event", "provider", "stage", "stream", "provider_handle_set", event.Handle.ID != "")
+			if event.Handle.ID != lastHandleID {
+				lastHandleID = event.Handle.ID
+				c.providerLog(req).Info("provider handle updated", "event", "provider", "stage", "stream", "provider_handle_set", event.Handle.ID != "")
+			}
 		}
 		// The Claude CLI reports prompt token usage but not the model's window,
 		// so stamp the deterministic per-model limit here where the request
@@ -445,6 +449,7 @@ func claudeInputMessage(role, text string) map[string]any {
 func parseClaudeStream(ctx context.Context, r io.Reader, out chan<- Event) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	lastHandleID := ""
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -458,6 +463,12 @@ func parseClaudeStream(ctx context.Context, r io.Reader, out chan<- Event) error
 			return err
 		}
 		for _, event := range events {
+			if event.Kind == EventHandleUpdated && event.Handle != nil {
+				if event.Handle.ID == lastHandleID {
+					continue
+				}
+				lastHandleID = event.Handle.ID
+			}
 			if !sendAdapterEvent(ctx, out, event) {
 				return ctx.Err()
 			}
