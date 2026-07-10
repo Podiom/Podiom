@@ -613,6 +613,26 @@
     }
   }
 
+  // Grow the composer textarea to fit its content, capped at 7 lines.
+  function autogrow(node: HTMLTextAreaElement, _value?: string) {
+    const maxRows = 7;
+    const resize = () => {
+      node.style.height = "auto";
+      const style = getComputedStyle(node);
+      const lineHeight = parseFloat(style.lineHeight) || 22;
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const maxHeight = lineHeight * maxRows + padding;
+      node.style.height = `${Math.min(node.scrollHeight, maxHeight)}px`;
+      node.style.overflowY = node.scrollHeight > maxHeight ? "auto" : "hidden";
+    };
+    resize();
+    node.addEventListener("input", resize);
+    return {
+      update: resize,
+      destroy: () => node.removeEventListener("input", resize),
+    };
+  }
+
   function sendTurn(text = messageText.trim()) {
     if (!text) return;
     if (!activeSession && !selectedAgent) {
@@ -1500,15 +1520,31 @@
           {/each}
         </div>
       {/if}
+      {#if !activeSession && draftPlanFirst}
+        <div class="plan-mode-banner">
+          <span class="plan-mode-dot"></span>
+          <span>Plan mode on — {activeAgent?.Name ?? "the agent"} explores, then submits a plan before building.</span>
+        </div>
+      {/if}
       <div class="composer-box">
-        <input
+        <textarea
           class="composer-input"
+          rows="1"
           bind:value={messageText}
+          use:autogrow={messageText}
           placeholder={`Message ${activeAgent?.Name ?? "agent"}…   / for commands`}
-          onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendTurn(); } }}
-        />
+          onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendTurn(); } }}
+        ></textarea>
         {#if contextUsage}
           <ContextRing used={contextUsage.used} max={contextUsage.max} />
+        {/if}
+        {#if !activeSession}
+          <button
+            class="composer-plan"
+            class:on={draftPlanFirst}
+            title="Plan first — explore, then submit a plan before building"
+            onclick={() => (draftPlanFirst = !draftPlanFirst)}
+          >{draftPlanFirst ? "◆ Plan" : "◇ Plan"}</button>
         {/if}
         <VoiceButton size={isPhone ? "sm" : "md"} onText={(t) => (messageText = appendTranscript(messageText, t))} />
         {#if activeTurn}
@@ -1553,15 +1589,6 @@
               </div>
             {/if}
           </div>
-          <button
-            class="chip-btn plan-chip"
-            class:plan-on={draftPlanFirst}
-            title="Ask the agent to submit a plan before implementation"
-            onclick={() => (draftPlanFirst = !draftPlanFirst)}
-          >
-            <span class="plan-chip-dot"></span>
-            {draftPlanFirst ? "plan first" : "direct"}
-          </button>
         {/if}
 
         <RunTargetPicker
@@ -3001,7 +3028,7 @@
 
   .composer-box {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     gap: 10px;
     background: #fff;
     border: 1px solid var(--field-line);
@@ -3015,8 +3042,12 @@
     outline: none;
     background: transparent;
     font: 400 15px "Hanken Grotesk";
+    line-height: 22px;
     color: var(--ink);
     padding: 6px 0;
+    resize: none;
+    overflow-y: hidden;
+    max-height: 166px;
   }
 
   .composer-send {
@@ -3069,11 +3100,65 @@
     cursor: pointer;
   }
 
-  .plan-chip.plan-on,
   .plan-toggle.on {
     border-color: #f0dca9;
     background: #fbf1dd;
     color: #9a6e1e;
+  }
+
+  .composer-plan {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    padding: 7px 12px;
+    border: 1px solid #e6dbcb;
+    border-radius: 999px;
+    background: #f7f1e8;
+    color: #7a6f63;
+    font: 700 12px "Hanken Grotesk";
+    cursor: pointer;
+    transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+  }
+
+  .composer-plan.on {
+    border-color: #5b57c2;
+    background: #5b57c2;
+    color: #fff;
+    box-shadow: 0 6px 14px -8px rgba(91, 87, 194, 0.8);
+  }
+
+  .plan-mode-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding: 9px 13px;
+    background: #f0eefb;
+    border: 1px solid #e1ddf5;
+    border-radius: 12px;
+    font: 600 12px "Hanken Grotesk";
+    color: #4b45a8;
+    animation: slideIn 0.16s ease;
+  }
+
+  .plan-mode-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 99px;
+    background: #5b57c2;
+    animation: pmPulse 2.4s infinite;
+  }
+
+  @keyframes pmPulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(91, 87, 194, 0.5);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(91, 87, 194, 0);
+    }
   }
 
   .plan-chip-dot {
