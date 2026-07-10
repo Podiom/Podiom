@@ -6,6 +6,8 @@
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import ContextRing from "../lib/ContextRing.svelte";
+  import VoiceButton from "../lib/VoiceButton.svelte";
+  import { appendTranscript } from "../lib/voice";
   import UsageChip from "../lib/UsageChip.svelte";
   import UsageBar from "../lib/UsageBar.svelte";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
@@ -1508,6 +1510,7 @@
         {#if contextUsage}
           <ContextRing used={contextUsage.used} max={contextUsage.max} />
         {/if}
+        <VoiceButton size={isPhone ? "sm" : "md"} onText={(t) => (messageText = appendTranscript(messageText, t))} />
         {#if activeTurn}
           <button class="composer-stop" title="Stop active turn" onclick={stopActiveTurn}>■</button>
         {:else}

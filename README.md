@@ -113,6 +113,7 @@ All runtime state lives under `$PODIOM_HOME` (default `~/.podiom/`).
 - [Projects & Roadmap](docs/projects.md)
 - [Goals](docs/goals.md) — hand an outcome to an agent; it plans, reviews, and reports back
 - [Workspace tools](docs/workspace-tools.md) — approved per-agent CLI installs
+- [Voice input](docs/voice-input.md) — speak prompts in chat, tasks, and goals (OpenAI Whisper)
 - [Security & logging](docs/security.md) — permission modes, gateway token, redaction, run logs
 - [Home Assistant app](docs/home-assistant.md) — deploy Podiom as an HA add-on
 - [Integration contracts](docs/integrations/README.md)

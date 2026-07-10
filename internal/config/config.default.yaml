@@ -86,6 +86,17 @@ agents: []
   #   mcp_servers: [github, filesystem]   # opt-in per-agent MCP server assignments
 
 # ---------------------------------------------------------------------------
+# voice: OPTIONAL. Enables voice input — a microphone button in chat and in the
+# task/goal prompt fields that transcribes speech with the OpenAI Whisper API.
+# The key is used server-side only and never sent to the browser, but note it
+# is a SECRET stored here in plain text. Prefer setting PODIOM_OPENAI_API_KEY
+# or OPENAI_API_KEY in the daemon's environment to keep it out of this file;
+# the environment variables take precedence. Editable from Settings in the UI.
+# ---------------------------------------------------------------------------
+# voice:
+#   openai_api_key: ""
+
+# ---------------------------------------------------------------------------
 # server: the local web UI / API bind address. Keep it on loopback unless you
 # know you want it exposed (single-user, local deployment is the v1 assumption).
 #

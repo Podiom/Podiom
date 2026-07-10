@@ -72,6 +72,54 @@ func setGlobal(root *yaml.Node, g Global) bool {
 	return changed
 }
 
+// SetVoice upserts the voice-input settings under the top-level `voice:`
+// mapping in config.yaml, editing the YAML syntax tree so user comments and
+// unrelated settings survive. An empty key removes it; a voice mapping left
+// empty is dropped entirely so a cleared config carries no stray block.
+func SetVoice(path string, v Voice) error {
+	return editFile(path, func(root *yaml.Node) (bool, error) {
+		return setVoice(root, v), nil
+	})
+}
+
+func setVoice(root *yaml.Node, v Voice) bool {
+	doc := root
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		doc = root.Content[0]
+	}
+	if doc.Kind != yaml.MappingNode {
+		return false
+	}
+	voice := mappingChild(doc, "voice")
+	if voice == nil {
+		if v.OpenAIAPIKey == "" {
+			return false
+		}
+		voice = &yaml.Node{Kind: yaml.MappingNode}
+		doc.Content = append(doc.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "voice"},
+			voice,
+		)
+	}
+
+	changed := setScalarChild(voice, "openai_api_key", v.OpenAIAPIKey)
+	if len(voice.Content) == 0 {
+		changed = removeMappingChild(doc, "voice") || changed
+	}
+	return changed
+}
+
+// removeMappingChild deletes key (and its value) from a mapping node.
+func removeMappingChild(mapping *yaml.Node, key string) bool {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content = append(mapping.Content[:i], mapping.Content[i+2:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // mappingChild returns the value node for key in a mapping node, or nil.
 func mappingChild(mapping *yaml.Node, key string) *yaml.Node {
 	if mapping.Kind != yaml.MappingNode {

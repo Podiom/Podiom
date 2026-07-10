@@ -176,6 +176,7 @@ func run() error {
 		Store:      db,
 		Adapter:    adapter.NewRouter(adapters),
 		Global:     cfg.Global,
+		Voice:      cfg.Voice,
 		Profiles:   cfg.Profiles,
 		DaemonAddr: addr,
 		Logger:     log,

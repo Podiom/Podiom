@@ -108,6 +108,17 @@ global login — it never leaks one profile's variable into another profile's
 process. (Agent *workspaces* are intentionally shared across agents, §5.8; it is
 only the auth state that stays isolated.)
 
+### Voice-input OpenAI key
+
+The [voice input](voice-input.md) feature stores its OpenAI Whisper key as
+`voice.openai_api_key` in `config.yaml` — the one user-managed secret that
+lives in the file, kept there deliberately so the Settings UI and the YAML
+stay in sync. It is used server-side only: `GET /api/config` exposes just a
+`key set` boolean, the key is never sent to a browser, and log lines record
+presence, never the value. The `PODIOM_OPENAI_API_KEY` / `OPENAI_API_KEY`
+environment variables override the file for setups that keep secrets out of
+YAML entirely.
+
 ### GitHub project repo tokens
 
 Podiom's GitHub project integration is local-first and does not ship a GitHub App

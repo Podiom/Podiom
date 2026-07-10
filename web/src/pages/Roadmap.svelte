@@ -15,6 +15,8 @@
   } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import VoiceButton from "../lib/VoiceButton.svelte";
+  import { appendTranscript } from "../lib/voice";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { projectColor } from "../lib/theme";
   import type { Agent, ProfileInfo, Project, Session, Task, TaskStatus } from "../lib/types";
@@ -580,10 +582,13 @@
 
         <div class="prompt-head">
           <div class="label-mono">prompt for the agent <span style="color:#B6AA9C;text-transform:none;font-weight:400">— the full instructions to run</span></div>
-          <button class="ai-btn" disabled={busyDescribe === "new"} onclick={helpNewTask}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" /></svg>
-            {busyDescribe === "new" ? "Writing…" : "Help me write"}
-          </button>
+          <div class="prompt-actions">
+            <VoiceButton size="sm" onText={(t) => (ntBody = appendTranscript(ntBody, t))} />
+            <button class="ai-btn" disabled={busyDescribe === "new"} onclick={helpNewTask}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" /></svg>
+              {busyDescribe === "new" ? "Writing…" : "Help me write"}
+            </button>
+          </div>
         </div>
         <textarea class="field-area" rows="6" bind:value={ntBody} placeholder="Describe the task in detail. This is sent to the agent verbatim when the task starts — paste a spec, acceptance criteria, file paths, anything." style="min-height:120px"></textarea>
 
@@ -662,10 +667,13 @@
 
         <div class="prompt-head">
           <div class="label-mono">prompt for the agent</div>
-          <button class="ai-btn" disabled={busyDescribe === editing.ID} onclick={helpEditTask}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" /></svg>
-            {busyDescribe === editing.ID ? "Writing…" : "Help me write"}
-          </button>
+          <div class="prompt-actions">
+            <VoiceButton size="sm" onText={(t) => (etBody = appendTranscript(etBody, t))} />
+            <button class="ai-btn" disabled={busyDescribe === editing.ID} onclick={helpEditTask}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z" /></svg>
+              {busyDescribe === editing.ID ? "Writing…" : "Help me write"}
+            </button>
+          </div>
         </div>
         <textarea class="field-area" rows="6" bind:value={etBody} placeholder="Describe the task in detail. This is sent to the agent verbatim when the task starts." style="min-height:120px"></textarea>
 
@@ -1065,6 +1073,13 @@
 
   .prompt-head .label-mono {
     flex: 1;
+  }
+
+  .prompt-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
   }
 
   .ai-btn {

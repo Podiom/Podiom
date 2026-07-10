@@ -79,6 +79,17 @@ present, after archiving its sessions into the preserved agent workspace.
 | `fallback` | list of profile names or `default` | Ordered rate-limit fallback (may cross providers). Applied automatically for non-interactive runs; interactive turns prompt the user to confirm or override it. |
 | `mcp_config` | path | Opt-in per-agent MCP config, additive to native tools. |
 
+## `voice`
+
+**Entirely optional.** Enables [voice input](voice-input.md): a microphone
+button in chat and in the task/goal prompt fields, transcribed with the OpenAI
+Whisper API. Omit the block and the buttons simply report that no key is
+configured.
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `openai_api_key` | string | OpenAI API key used server-side for Whisper transcription. **A secret stored in plain text** — prefer the `PODIOM_OPENAI_API_KEY` or `OPENAI_API_KEY` environment variables, which take precedence. Editable from Settings → Voice input; never returned by the API or logged. |
+
 ## `server`
 
 | Field | Default | Meaning |

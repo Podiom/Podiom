@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/config"
@@ -38,6 +39,99 @@ func TestPatchConfigUpdatesPermissionTimeout(t *testing.T) {
 	}
 	if cfg.Global.PermissionTimeout != "5m" {
 		t.Fatalf("persisted permission_timeout = %q, want 5m", cfg.Global.PermissionTimeout)
+	}
+}
+
+func TestConfigVoiceKeySetClearAndMasking(t *testing.T) {
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	// Set the key.
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(`{"voice":{"openai_api_key":"sk-test-secret"}}`))
+	req.RemoteAddr = "127.0.0.1:1234"
+	rr := httptest.NewRecorder()
+	srv.handleConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set key status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); strings.Contains(body, "sk-test-secret") {
+		t.Fatalf("raw key leaked into PATCH response: %s", body)
+	}
+	var got globalConfigDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !got.Voice.OpenAIAPIKeySet {
+		t.Fatalf("openai_api_key_set = false after set")
+	}
+	if live := srv.core.GetVoice().OpenAIAPIKey; live != "sk-test-secret" {
+		t.Fatalf("live voice key = %q", live)
+	}
+	cfg, err := config.Load(paths.ConfigYAML)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Voice.OpenAIAPIKey != "sk-test-secret" {
+		t.Fatalf("persisted voice key = %q", cfg.Voice.OpenAIAPIKey)
+	}
+
+	// GET must expose presence only, never the key.
+	req = httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rr = httptest.NewRecorder()
+	srv.handleConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get status = %d", rr.Code)
+	}
+	if body := rr.Body.String(); strings.Contains(body, "sk-test-secret") {
+		t.Fatalf("raw key leaked into GET response: %s", body)
+	}
+	if !strings.Contains(rr.Body.String(), `"openai_api_key_set":true`) {
+		t.Fatalf("GET should report key presence: %s", rr.Body.String())
+	}
+
+	// A patch omitting voice leaves the key untouched.
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(`{"model":"opus"}`))
+	req.RemoteAddr = "127.0.0.1:1234"
+	rr = httptest.NewRecorder()
+	srv.handleConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unrelated patch status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	if live := srv.core.GetVoice().OpenAIAPIKey; live != "sk-test-secret" {
+		t.Fatalf("unrelated patch clobbered voice key: %q", live)
+	}
+
+	// Empty string clears the key and drops the block from yaml.
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(`{"voice":{"openai_api_key":""}}`))
+	req.RemoteAddr = "127.0.0.1:1234"
+	rr = httptest.NewRecorder()
+	srv.handleConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear key status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	if live := srv.core.GetVoice().OpenAIAPIKey; live != "" {
+		t.Fatalf("voice key not cleared: %q", live)
+	}
+	cfg, err = config.Load(paths.ConfigYAML)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.Voice.OpenAIAPIKey != "" {
+		t.Fatalf("persisted voice key not cleared: %q", cfg.Voice.OpenAIAPIKey)
+	}
+}
+
+func TestPatchConfigRejectsWhitespaceVoiceKey(t *testing.T) {
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(`{"voice":{"openai_api_key":"sk bad key"}}`))
+	req.RemoteAddr = "127.0.0.1:1234"
+	rr := httptest.NewRecorder()
+	srv.handleConfig(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
 }
 

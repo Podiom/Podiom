@@ -91,10 +91,18 @@ export interface GlobalConfig {
   permission_mode: PermissionMode;
   permission_timeout: string;
   fallback: string[];
+  voice: VoiceConfig;
+}
+
+// VoiceConfig mirrors the `voice:` config block. The OpenAI key is a secret
+// that never leaves the daemon — reads only expose whether one is set.
+export interface VoiceConfig {
+  openai_api_key_set: boolean;
 }
 
 // GlobalConfigPatch is the PATCH /api/config body. Omitted fields keep their
-// current value; a present-but-empty fallback clears the chain.
+// current value; a present-but-empty fallback clears the chain, and a
+// present-but-empty voice.openai_api_key clears the stored key.
 export interface GlobalConfigPatch {
   provider?: Provider;
   profile?: string;
@@ -103,6 +111,7 @@ export interface GlobalConfigPatch {
   permission_mode?: PermissionMode;
   permission_timeout?: string;
   fallback?: string[];
+  voice?: { openai_api_key?: string };
 }
 export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap";
 export type MessageRole = "user" | "assistant";

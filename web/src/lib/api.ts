@@ -268,6 +268,19 @@ export async function updateConfig(patch: GlobalConfigPatch): Promise<GlobalConf
   );
 }
 
+// transcribeAudio uploads a voice recording (raw blob, not multipart) and
+// returns the recognized text. The daemon relays it to the OpenAI Whisper API
+// server-side so the API key never reaches the browser.
+export async function transcribeAudio(blob: Blob): Promise<string> {
+  const res = await request("/api/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": blob.type || "application/octet-stream" },
+    body: blob,
+  });
+  const out = (await asJSON(res)) as { text: string };
+  return out.text;
+}
+
 export async function getLogs(lines = 200): Promise<LogSnapshot> {
   return asJSON(await request(`/api/logs?lines=${encodeURIComponent(String(lines))}`));
 }

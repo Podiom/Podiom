@@ -59,6 +59,9 @@ type Server struct {
 	// haMode is true when running as a Home Assistant app: self-update is
 	// refused (HA26) and the SPA gets the "ha" deployment hint (HA10).
 	haMode bool
+	// transcribeBaseURL overrides the OpenAI Whisper endpoint in tests. Empty
+	// means the real API (transcribe.DefaultBaseURL).
+	transcribeBaseURL string
 	// wsConns tracks live WebSocket connections (with their serialized writers)
 	// so a token rotation can force-close them (HA12) and goal events can be
 	// broadcast to every open dashboard.
@@ -78,8 +81,8 @@ type Options struct {
 	// from its cumulative billed tokens. Optional; nil yields zeroed estimates.
 	TokenMeter *tokenmeter.Meter
 	Paths      config.Paths
-	GitHub    config.GitHub
-	Logger    *slog.Logger
+	GitHub     config.GitHub
+	Logger     *slog.Logger
 	// Notifier delivers out-of-app (Web Push / future native) attention
 	// notifications. Optional; nil disables out-of-app delivery.
 	Notifier *notify.Dispatcher

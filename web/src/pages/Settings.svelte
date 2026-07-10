@@ -67,6 +67,15 @@
   let fbTarget = $state<"none" | Provider>("none");
   let fbProfile = $state<string | null>(null);
 
+  // Voice input (Whisper) key. Deliberately outside canonical()/save(): the
+  // key is a secret with its own lifecycle, and omitting it from the main
+  // patch is what keeps "typed nothing" distinct from "clear the key".
+  let voiceKeySet = $state(false);
+  let voiceKeyInput = $state("");
+  let voiceKeySaving = $state(false);
+  let voiceKeyError = $state<string | null>(null);
+  let voiceKeySaved = $state(false);
+
   // Canonical JSON snapshot of the last-saved state, for dirty tracking.
   let baseline = $state("");
   let releaseNotesEl = $state<HTMLElement | null>(null);
@@ -208,6 +217,7 @@
   }
 
   function applyConfig(cfg: GlobalConfig) {
+    voiceKeySet = cfg.voice?.openai_api_key_set ?? false;
     provider = cfg.provider;
     profile = cfg.profile ?? "";
     model = cfg.model;
@@ -325,6 +335,24 @@
       saved = false;
     } finally {
       saving = false;
+    }
+  }
+
+  // Saves or clears only the voice key — the daemon leaves every other global
+  // setting untouched when the patch omits it.
+  async function patchVoiceKey(key: string) {
+    voiceKeySaving = true;
+    voiceKeyError = null;
+    voiceKeySaved = false;
+    try {
+      const cfg = await updateConfig({ voice: { openai_api_key: key } });
+      voiceKeySet = cfg.voice?.openai_api_key_set ?? false;
+      voiceKeyInput = "";
+      voiceKeySaved = true;
+    } catch (e) {
+      voiceKeyError = e instanceof Error ? e.message : String(e);
+    } finally {
+      voiceKeySaving = false;
     }
   }
 
@@ -613,6 +641,56 @@
         {/if}
         {#if fbTarget === "none"}
           <div class="fb-disabled"><span class="dot-amber">●</span>No fallback — rate-limited runs pause and retry automatically when the limit resets. Nothing is dropped.</div>
+        {/if}
+      </div>
+    </section>
+
+    <!-- ===== VOICE INPUT ===== -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-icon teal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/></svg>
+        </div>
+        <div class="grow">
+          <div class="card-title">Voice input</div>
+          <div class="card-sub">Speak prompts in chat, tasks, and goals — transcribed server-side with the OpenAI Whisper API.</div>
+        </div>
+        {#if voiceKeySet}
+          <span class="voice-key-badge on">key set</span>
+        {:else}
+          <span class="voice-key-badge">no key</span>
+        {/if}
+      </div>
+
+      <div class="rows">
+        <div class="row">
+          <span class="row-key">openai key</span>
+          <div class="voice-key-controls">
+            <input
+              class="timeout-input mono"
+              style="max-width:260px;flex:1"
+              type="password"
+              autocomplete="off"
+              bind:value={voiceKeyInput}
+              placeholder={voiceKeySet ? "replace key…" : "sk-…"}
+            />
+            <button class="btn-save sm" disabled={voiceKeySaving || !voiceKeyInput.trim()} onclick={() => patchVoiceKey(voiceKeyInput.trim())}>
+              {voiceKeySaving ? "Saving…" : "Save key"}
+            </button>
+            {#if voiceKeySet}
+              <button class="voice-key-clear" disabled={voiceKeySaving} onclick={() => patchVoiceKey("")}>Clear</button>
+            {/if}
+          </div>
+        </div>
+        <div class="hint">
+          Stored as <span class="mono">voice.openai_api_key</span> in config.yaml. The key stays on this machine — audio is uploaded to
+          OpenAI for transcription only. Setting <span class="mono">PODIOM_OPENAI_API_KEY</span> or <span class="mono">OPENAI_API_KEY</span>
+          in the daemon's environment overrides it.
+        </div>
+        {#if voiceKeyError}
+          <div class="voice-key-error">{voiceKeyError}</div>
+        {:else if voiceKeySaved}
+          <div class="voice-key-ok">Saved to config.yaml.</div>
         {/if}
       </div>
     </section>
@@ -1177,6 +1255,61 @@
   .save-hint {
     font: 400 12.5px "Hanken Grotesk";
     color: var(--faint);
+  }
+
+  /* voice input */
+  .btn-save.sm {
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+
+  .btn-save:disabled {
+    opacity: 0.55;
+  }
+
+  .voice-key-badge {
+    padding: 5px 11px;
+    border-radius: 999px;
+    font: 600 10.5px "JetBrains Mono", monospace;
+    white-space: nowrap;
+    border: 1px solid var(--line-2);
+    color: var(--faint);
+    align-self: flex-start;
+  }
+
+  .voice-key-badge.on {
+    border-color: rgba(63, 143, 126, 0.5);
+    color: #3f7a5f;
+    background: rgba(63, 143, 126, 0.08);
+  }
+
+  .voice-key-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    flex-wrap: wrap;
+  }
+
+  .voice-key-clear {
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    padding: 8px 13px;
+    background: #fff;
+    color: #8a5a4e;
+    font: 600 13px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .voice-key-error {
+    font: 500 12.5px "Hanken Grotesk";
+    color: #c0392b;
+  }
+
+  .voice-key-ok {
+    font: 600 12.5px "Hanken Grotesk";
+    color: #3f7a5f;
   }
 
   /* version & updates */

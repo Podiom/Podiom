@@ -47,8 +47,19 @@ type Config struct {
 	Marketplace Marketplace `yaml:"marketplace"`
 	Profiles    []Profile   `yaml:"profiles"`
 	Agents      []Agent     `yaml:"agents"`
+	Voice       Voice       `yaml:"voice,omitempty"`
 	Server      Server      `yaml:"server"`
 	Logging     Logging     `yaml:"logging"`
+}
+
+// Voice configures voice input (speech-to-text). The OpenAI key is used
+// server-side only, for Whisper transcription calls; it is never returned by
+// the API or sent to the browser. Unlike other secrets it lives in config.yaml
+// so the Settings UI and the file stay in sync — the PODIOM_OPENAI_API_KEY or
+// OPENAI_API_KEY environment variables override it for setups that keep
+// secrets out of the file.
+type Voice struct {
+	OpenAIAPIKey string `yaml:"openai_api_key,omitempty"`
 }
 
 // Marketplace configures the skill-marketplace search/install feature (Spec 07).
@@ -341,6 +352,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := ValidateVoice(c.Voice); err != nil {
+		return fmt.Errorf("voice: %w", err)
+	}
+
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port out of range: %d", c.Server.Port)
 	}
@@ -426,6 +441,16 @@ func ValidateGlobal(g Global, profileNames map[string]Provider) error {
 		if err := validateFallbackEntry(entry, profileNames); err != nil {
 			return fmt.Errorf("fallback[%d]: %w", i, err)
 		}
+	}
+	return nil
+}
+
+// ValidateVoice checks a standalone Voice block. Key formats vary across
+// OpenAI key generations, so the only check is a paste-error guard: no
+// whitespace inside a non-empty key.
+func ValidateVoice(v Voice) error {
+	if v.OpenAIAPIKey != "" && strings.ContainsAny(v.OpenAIAPIKey, " \t\r\n") {
+		return fmt.Errorf("openai_api_key must not contain whitespace")
 	}
 	return nil
 }

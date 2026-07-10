@@ -43,6 +43,7 @@ var notManageable = map[string]string{
 	"/api/update":                "self-update, HA/human-managed",
 	"/api/update/apply":          "self-update, HA/human-managed",
 	"/api/provider-capabilities": "static provider metadata",
+	"/api/transcribe":            "browser voice-input transport, human-only",
 	"/api/usage":                 "usage stats, read via UI",
 	"/api/push/vapid":            "web push transport",
 	"/api/push/subscribe":        "web push transport",

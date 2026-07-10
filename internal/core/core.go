@@ -27,6 +27,7 @@ type Options struct {
 	Store    *store.Store
 	Adapter  adapter.Adapter
 	Global   config.Global
+	Voice    config.Voice
 	Profiles []config.Profile
 	// DaemonAddr is used to expose Podiom-owned MCP helpers to provider
 	// processes. Empty disables those helpers, which is useful in unit tests.
@@ -45,10 +46,11 @@ type Core struct {
 	store *store.Store
 
 	adapter adapter.Adapter
-	// mu guards global and profiles, which the Settings/Profile APIs mutate at
-	// runtime after persisting config.yaml.
+	// mu guards global, voice, and profiles, which the Settings/Profile APIs
+	// mutate at runtime after persisting config.yaml.
 	mu         sync.RWMutex
 	global     config.Global
+	voice      config.Voice
 	profiles   map[string]config.Profile
 	composer   InstructionComposer
 	ledger     *projects.Ledger
@@ -131,6 +133,7 @@ func New(opts Options) (*Core, error) {
 		store:      opts.Store,
 		adapter:    ad,
 		global:     global,
+		voice:      opts.Voice,
 		profiles:   map[string]config.Profile{},
 		composer:   NewFileComposer(opts.Paths),
 		ledger:     projects.New(opts.Paths.ProjectsDir),
@@ -224,6 +227,21 @@ func (c *Core) SetGlobal(g config.Global) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.global = g
+}
+
+// GetVoice returns a copy of the voice-input settings.
+func (c *Core) GetVoice() config.Voice {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.voice
+}
+
+// SetVoice replaces the voice-input settings. Persisting to config.yaml is the
+// caller's responsibility (see config.SetVoice).
+func (c *Core) SetVoice(v config.Voice) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.voice = v
 }
 
 // ListProfiles returns the configured profiles (name + provider only), sorted

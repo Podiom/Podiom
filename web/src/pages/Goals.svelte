@@ -18,6 +18,8 @@
   import { renderMarkdown } from "../lib/markdown";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import VoiceButton from "../lib/VoiceButton.svelte";
+  import { appendTranscript } from "../lib/voice";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import UsageBar from "../lib/UsageBar.svelte";
@@ -929,10 +931,16 @@
         <div class="field-label mono">Title</div>
         <input class="field" bind:value={cTitle} placeholder="e.g. Grow the newsletter to 500 subscribers" />
 
-        <div class="field-label mono">Description</div>
+        <div class="field-label-row">
+          <div class="field-label mono">Description</div>
+          <VoiceButton size="sm" onText={(t) => (cDesc = appendTranscript(cDesc, t))} />
+        </div>
         <textarea class="field" rows="3" bind:value={cDesc} placeholder="What is the outcome, and why does it matter? Give the agent the context a teammate would need."></textarea>
 
-        <div class="field-label mono">Success criteria</div>
+        <div class="field-label-row">
+          <div class="field-label mono">Success criteria</div>
+          <VoiceButton size="sm" onText={(t) => (cCriteria = appendTranscript(cCriteria, t))} />
+        </div>
         <textarea class="field" rows="2" bind:value={cCriteria} placeholder='What does "done" look like? The agent only proposes completion when this is met.'></textarea>
 
         <div class="field-label mono">Metrics <span class="opt">· optional</span></div>
@@ -2054,6 +2062,16 @@
   }
   .form .field-label:first-child {
     margin-top: 0;
+  }
+  .field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 18px 0 8px;
+  }
+  .field-label-row .field-label {
+    margin: 0;
   }
   .opt {
     color: #c4b8a9;

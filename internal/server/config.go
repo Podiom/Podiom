@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Podiom/Podiom/internal/config"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
@@ -19,9 +20,16 @@ type globalConfigDTO struct {
 	PermissionMode    config.PermissionMode `json:"permission_mode"`
 	PermissionTimeout string                `json:"permission_timeout"`
 	Fallback          []string              `json:"fallback"`
+	Voice             voiceConfigDTO        `json:"voice"`
 }
 
-func globalToDTO(g config.Global) globalConfigDTO {
+// voiceConfigDTO mirrors the `voice:` YAML block, except the key itself is a
+// secret and only its presence is exposed.
+type voiceConfigDTO struct {
+	OpenAIAPIKeySet bool `json:"openai_api_key_set"`
+}
+
+func globalToDTO(g config.Global, v config.Voice) globalConfigDTO {
 	if g.Fallback == nil {
 		g.Fallback = []string{}
 	}
@@ -33,6 +41,7 @@ func globalToDTO(g config.Global) globalConfigDTO {
 		PermissionMode:    g.PermissionMode,
 		PermissionTimeout: g.PermissionTimeout,
 		Fallback:          g.Fallback,
+		Voice:             voiceConfigDTO{OpenAIAPIKeySet: v.OpenAIAPIKey != ""},
 	}
 }
 
@@ -46,6 +55,13 @@ type globalConfigPatch struct {
 	PermissionMode    *config.PermissionMode `json:"permission_mode,omitempty"`
 	PermissionTimeout *string                `json:"permission_timeout,omitempty"`
 	Fallback          *[]string              `json:"fallback,omitempty"`
+	Voice             *voiceConfigPatch      `json:"voice,omitempty"`
+}
+
+// voiceConfigPatch carries the raw key on writes only: nil leaves the key
+// untouched, "" clears it, anything else replaces it.
+type voiceConfigPatch struct {
+	OpenAIAPIKey *string `json:"openai_api_key,omitempty"`
 }
 
 // handleConfig serves the daemon-wide defaults the Settings page edits.
@@ -53,8 +69,8 @@ type globalConfigPatch struct {
 //	GET   /api/config -> current global defaults
 //	PATCH /api/config -> merge, validate, persist to config.yaml, apply live
 //
-// Restricted to loopback clients like the update endpoints: it mutates an
-// on-disk file and the running daemon's behavior.
+// Like every /api route it sits behind the gateway token and the source-IP
+// guard; it mutates an on-disk file and the running daemon's behavior.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if s.core == nil {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
@@ -62,7 +78,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, globalToDTO(s.core.GetGlobal()), nil)
+		writeJSON(w, globalToDTO(s.core.GetGlobal(), s.core.GetVoice()), nil)
 	case http.MethodPatch, http.MethodPut:
 		s.patchConfig(w, r)
 	default:
@@ -100,6 +116,11 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	if patch.Fallback != nil {
 		g.Fallback = *patch.Fallback
 	}
+	voiceBefore := s.core.GetVoice()
+	v := voiceBefore
+	if patch.Voice != nil && patch.Voice.OpenAIAPIKey != nil {
+		v.OpenAIAPIKey = strings.TrimSpace(*patch.Voice.OpenAIAPIKey)
+	}
 
 	profileNames := map[string]config.Provider{}
 	for _, p := range s.core.ListProfiles() {
@@ -109,25 +130,36 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := config.ValidateVoice(v); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err := config.SetGlobal(s.paths.ConfigYAML, g); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 	s.core.SetGlobal(g)
+	if v != voiceBefore {
+		if err := config.SetVoice(s.paths.ConfigYAML, v); err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		s.core.SetVoice(v)
+	}
 	s.log.Info("global config updated",
 		"event", "config",
-		"changed", podiomlog.ChangedFields(globalLogFields(before), globalLogFields(g)),
+		"changed", podiomlog.ChangedFields(globalLogFields(before, voiceBefore), globalLogFields(g, v)),
 		"provider", string(g.Provider),
 		"profile", g.Profile,
 		"permission", string(g.PermissionMode),
 		"permission_timeout", g.PermissionTimeout,
 		"fallback_count", len(g.Fallback),
 	)
-	writeJSON(w, globalToDTO(s.core.GetGlobal()), nil)
+	writeJSON(w, globalToDTO(s.core.GetGlobal(), s.core.GetVoice()), nil)
 }
 
-func globalLogFields(g config.Global) map[string]string {
+func globalLogFields(g config.Global, v config.Voice) map[string]string {
 	return map[string]string{
 		"provider":           string(g.Provider),
 		"profile":            g.Profile,
@@ -136,5 +168,7 @@ func globalLogFields(g config.Global) map[string]string {
 		"permission":         string(g.PermissionMode),
 		"permission_timeout": g.PermissionTimeout,
 		"fallback_count":     fmt.Sprintf("%d", len(g.Fallback)),
+		// presence only — the key itself must never reach a log line
+		"openai_api_key_set": fmt.Sprintf("%t", v.OpenAIAPIKey != ""),
 	}
 }
