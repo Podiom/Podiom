@@ -104,6 +104,98 @@ func TestPlanSessionSubmitRejectApproveFlow(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanUnassignedSessionRoutesToUnassignedDir(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex, PermissionMode: config.PermissionYolo}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	// No project on this session — it is unassigned.
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      "planner",
+		Origin:                         store.OriginWeb,
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if strings.TrimSpace(session.ProjectID) != "" {
+		t.Fatalf("session should be unassigned, got project %q", session.ProjectID)
+	}
+
+	// A plan under <ProjectsDir>/unassigned/plans is accepted.
+	planPath := filepath.Join(c.paths.ProjectsDir, "unassigned", "plans", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte("# Plan\n"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	submitted, err := c.SubmitPlan(ctx, SubmitPlanRequest{
+		SessionID: session.ID,
+		FilePath:  planPath,
+		Markdown:  validStructuredPlanMarkdown("Unassigned"),
+	})
+	if err != nil {
+		t.Fatalf("submit plan: %v", err)
+	}
+	if submitted.PlanInfo.FilePath != planPath {
+		t.Fatalf("submitted plan path = %q, want %q", submitted.PlanInfo.FilePath, planPath)
+	}
+
+	// A plan outside the unassigned plans dir (e.g. an invented project dir) is rejected.
+	strayPath := filepath.Join(c.paths.ProjectsDir, "made-up", "plans", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(strayPath), 0o755); err != nil {
+		t.Fatalf("mkdir stray plans: %v", err)
+	}
+	if err := os.WriteFile(strayPath, []byte("# Plan\n"), 0o644); err != nil {
+		t.Fatalf("write stray plan: %v", err)
+	}
+	if _, err := c.store.UpdateSessionPlanState(ctx, session.ID, store.PlanPendingSubmission, true, store.PlanInfo{}); err != nil {
+		t.Fatalf("reset plan state: %v", err)
+	}
+	if _, err := c.SubmitPlan(ctx, SubmitPlanRequest{
+		SessionID: session.ID,
+		FilePath:  strayPath,
+		Markdown:  validStructuredPlanMarkdown("Stray"),
+	}); err == nil {
+		t.Fatal("expected plan outside unassigned plans dir to be rejected")
+	}
+}
+
+func TestPlanModePromptForUnassignedSessionUsesUnassignedDir(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      "planner",
+		Origin:                         store.OriginWeb,
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := c.AppendTurn(ctx, session.ID, "Build a dashboard"); err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
+	}
+	got := fake.Requests[0].Message
+	if !strings.Contains(got, filepath.Join(c.paths.ProjectsDir, "unassigned", "plans")) {
+		t.Fatalf("unassigned plan-mode prompt should point at unassigned/plans:\n%s", got)
+	}
+	if strings.Contains(got, "<project>") {
+		t.Fatalf("unassigned plan-mode prompt still contains <project> placeholder:\n%s", got)
+	}
+}
+
 func TestPlanModePromptIsInjectedIntoGatedTurn(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newScheduledTestCore(t)

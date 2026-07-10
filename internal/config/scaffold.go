@@ -44,7 +44,11 @@ func Scaffold(p Paths) (ScaffoldResult, error) {
 		res.CreatedHome = true
 	}
 
-	dirs := []string{p.Home, p.AgentsDir, p.ProjectsDir, p.SchedulesDir, p.ProfilesDir, p.LogsDir, p.PushDir}
+	// The unassigned plans directory is where plan-mode sessions with no project
+	// write their plans (see core.planDirForContext); scaffold it up front so the
+	// path always exists.
+	unassignedPlansDir := filepath.Join(p.ProjectsDir, "unassigned", "plans")
+	dirs := []string{p.Home, p.AgentsDir, p.ProjectsDir, unassignedPlansDir, p.SchedulesDir, p.ProfilesDir, p.LogsDir, p.PushDir}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return res, fmt.Errorf("create dir %s: %w", d, err)

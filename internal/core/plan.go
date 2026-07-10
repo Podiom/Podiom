@@ -55,7 +55,11 @@ func (c *Core) SubmitPlan(ctx context.Context, req SubmitPlanRequest) (store.Ses
 	if err := validateStructuredPlanMarkdown(markdown); err != nil {
 		return store.Session{}, err
 	}
-	path, err := c.validatePlanPath(ctx, sess, req.FilePath)
+	projectCtx, err := c.sessionProjectExecutionContext(ctx, sess)
+	if err != nil {
+		return store.Session{}, err
+	}
+	path, err := c.validatePlanPath(c.planDirForContext(projectCtx), req.FilePath)
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -130,11 +134,19 @@ func (c *Core) FeedbackPlan(ctx context.Context, sessionID, feedback string) (Pl
 	}, nil
 }
 
-func (c *Core) planModePrompt(sess store.Session, projectCtx projectExecutionContext) string {
-	planDir := filepath.Join(c.paths.ProjectsDir, "<project>", "plans")
+// planDirForContext returns the plans directory a session should use, given its
+// resolved project execution context. Sessions bound to a project write under
+// <projectDir>/plans; sessions with no project fall back to a real
+// <ProjectsDir>/unassigned/plans directory.
+func (c *Core) planDirForContext(projectCtx projectExecutionContext) string {
 	if strings.TrimSpace(projectCtx.ProjectDir) != "" {
-		planDir = filepath.Join(projectCtx.ProjectDir, "plans")
+		return filepath.Join(projectCtx.ProjectDir, "plans")
 	}
+	return filepath.Join(c.paths.ProjectsDir, "unassigned", "plans")
+}
+
+func (c *Core) planModePrompt(sess store.Session, projectCtx projectExecutionContext) string {
+	planDir := c.planDirForContext(projectCtx)
 	lines := []string{
 		"Podiom plan mode is active for this session.",
 		"",
@@ -253,7 +265,10 @@ func (c *Core) RejectPlan(ctx context.Context, sessionID string) (store.Session,
 	return updated, nil
 }
 
-func (c *Core) validatePlanPath(ctx context.Context, sess store.Session, raw string) (string, error) {
+// validatePlanPath ensures raw resolves to a file inside planDir (the session's
+// resolved plans directory, from planDirForContext). It returns the cleaned
+// absolute path.
+func (c *Core) validatePlanPath(planDir, raw string) (string, error) {
 	path := strings.TrimSpace(raw)
 	if path == "" {
 		return "", fmt.Errorf("plan file_path is required")
@@ -262,38 +277,23 @@ func (c *Core) validatePlanPath(ctx context.Context, sess store.Session, raw str
 	if err != nil {
 		return "", err
 	}
-	allowedRoots := []string{}
-	if strings.TrimSpace(sess.ProjectID) != "" {
-		projectPath := sess.ProjectID
-		if project, err := c.ledger.Get(sess.ProjectID); err == nil && strings.TrimSpace(project.Path) != "" {
-			projectPath = project.Path
-		}
-		allowedRoots = append(allowedRoots, filepath.Join(c.paths.ProjectsDir, projectPath, "plans"))
-	} else {
-		allowedRoots = append(allowedRoots, c.paths.ProjectsDir)
+	rootAbs, err := filepath.Abs(planDir)
+	if err != nil {
+		return "", err
 	}
-	for _, root := range allowedRoots {
-		rootAbs, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(rootAbs, abs)
-		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-			continue
-		}
-		if sess.ProjectID == "" {
-			parts := strings.Split(rel, string(filepath.Separator))
-			if len(parts) < 3 || parts[1] != "plans" {
-				continue
-			}
-		}
-		return abs, nil
+	rel, err := filepath.Rel(rootAbs, abs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("plan file must be under the session's plans directory: %s", rootAbs)
 	}
-	return "", fmt.Errorf("plan file must be under the active project's plans directory")
+	return abs, nil
 }
 
 func (c *Core) removeValidatedPlanFile(ctx context.Context, sess store.Session, raw string) error {
-	path, err := c.validatePlanPath(ctx, sess, raw)
+	projectCtx, err := c.sessionProjectExecutionContext(ctx, sess)
+	if err != nil {
+		return err
+	}
+	path, err := c.validatePlanPath(c.planDirForContext(projectCtx), raw)
 	if err != nil {
 		return err
 	}

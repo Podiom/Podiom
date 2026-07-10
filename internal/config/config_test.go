@@ -36,6 +36,9 @@ func TestLoadDefaultConfigIsValid(t *testing.T) {
 	if _, err := os.Stat(p.LogsDir); err != nil {
 		t.Errorf("logs dir not scaffolded: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(p.ProjectsDir, "unassigned", "plans")); err != nil {
+		t.Errorf("unassigned plans dir not scaffolded: %v", err)
+	}
 }
 
 func TestValidateRejectsUnknownProfileReference(t *testing.T) {
