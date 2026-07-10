@@ -804,6 +804,13 @@
     draftEffort = next.effort || "";
   }
 
+  function applyDraftRunTarget(next: RunTargetValue) {
+    draftProvider = next.provider || "";
+    draftProfile = next.profile || "";
+    draftModel = next.model || "";
+    draftEffort = next.effort || "";
+  }
+
   function setPermissionMode(mode: PermissionMode) {
     if (activeSession) {
       updateSessionSettings({ permission_mode: mode });
@@ -1839,7 +1846,7 @@
             {profiles}
             variant="stacked"
             value={{ provider: draftProvider, profile: draftProfile, model: draftModel, effort: draftEffort }}
-            onChange={applyRunTarget}
+            onChange={applyDraftRunTarget}
           />
         </div>
       </div>
