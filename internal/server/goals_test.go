@@ -101,6 +101,72 @@ func TestGoalCreateKicksPlanningSession(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 }
 
+func TestGoalRateLimitAPIListsAndResolves(t *testing.T) {
+	_, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	goal := createGoalViaCore(t, srv, store.Goal{})
+	block, err := srv.core.Store().CreateGoalRateLimitBlock(ctx, store.GoalRateLimitBlock{
+		GoalID:    goal.ID,
+		SessionID: "rate-session",
+		Phase:     store.GoalRateLimitReview,
+		Provider:  config.ProviderClaude,
+		Model:     "sonnet",
+		Effort:    "medium",
+		Error:     "rate limited on claude/default; no fallback available",
+	})
+	if err != nil {
+		t.Fatalf("create rate-limit block: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/goals", nil)
+	rr := httptest.NewRecorder()
+	srv.handleGoals(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	var items []goalListItem
+	if err := json.NewDecoder(rr.Body).Decode(&items); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(items) != 1 || items[0].PendingRateLimit == nil || items[0].PendingRateLimit.ID != block.ID {
+		t.Fatalf("list pending rate limit = %+v, want block %s", items, block.ID)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/goals/"+goal.ID, nil)
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	var detail GoalDetail
+	if err := json.NewDecoder(rr.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if len(detail.RateLimitBlocks) != 1 || detail.RateLimitBlocks[0].ID != block.ID {
+		t.Fatalf("detail rate limits = %+v, want block", detail.RateLimitBlocks)
+	}
+
+	body := `{"provider":"codex","model":"gpt-5","effort":"high","retry":false}`
+	req = httptest.NewRequest(http.MethodPost, "/api/goal-rate-limits/"+block.ID+"/resolve", bytes.NewBufferString(body))
+	rr = httptest.NewRecorder()
+	srv.handleGoalRateLimit(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	updated, err := srv.core.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get updated goal: %v", err)
+	}
+	if updated.Provider != config.ProviderCodex || updated.Model != "gpt-5" || updated.Effort != "high" {
+		t.Fatalf("resolved goal target = %+v", updated)
+	}
+	if pending, err := srv.core.PendingGoalRateLimit(ctx, goal.ID); err != nil || pending != nil {
+		t.Fatalf("pending after resolve = %+v err=%v, want nil", pending, err)
+	}
+}
+
 func TestGoalStatusTransitionsAndAgentRestrictions(t *testing.T) {
 	_, srv, cleanup := newGoalTestServer(t)
 	defer cleanup()

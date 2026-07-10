@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 func openGoalStore(t *testing.T) *Store {
@@ -70,10 +72,37 @@ func TestGoalCRUDAndDueReviews(t *testing.T) {
 		t.Fatalf("future review should not be due, got %+v", due)
 	}
 
-	// Paused goals never fire even when overdue.
+	// Pending rate-limit recovery suppresses automatic review until resolved.
 	if err := db.SetGoalNextReview(ctx, created.ID, past); err != nil {
 		t.Fatalf("set next review: %v", err)
 	}
+	if _, err := db.CreateGoalRateLimitBlock(ctx, GoalRateLimitBlock{
+		GoalID:    created.ID,
+		SessionID: "blocked-session",
+		Phase:     GoalRateLimitReview,
+		Provider:  config.ProviderClaude,
+		Error:     "rate limited on claude/default; no fallback available",
+	}); err != nil {
+		t.Fatalf("create rate-limit block: %v", err)
+	}
+	if due, _ = db.ListDueGoalReviews(ctx, now); len(due) != 0 {
+		t.Fatalf("pending rate-limit block should suppress due review, got %+v", due)
+	}
+	if _, err := db.ResolveGoalRateLimitBlock(ctx, "missing", config.ProviderCodex, "", "gpt-5", "medium"); err == nil {
+		t.Fatalf("resolve missing should fail")
+	}
+	pending, err := db.PendingGoalRateLimit(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("pending rate limit: %v", err)
+	}
+	if _, err := db.ResolveGoalRateLimitBlock(ctx, pending.ID, config.ProviderCodex, "", "gpt-5", "medium"); err != nil {
+		t.Fatalf("resolve pending rate limit: %v", err)
+	}
+	if due, _ = db.ListDueGoalReviews(ctx, now); len(due) != 1 {
+		t.Fatalf("resolved rate-limit block should allow due review, got %+v", due)
+	}
+
+	// Paused goals never fire even when overdue.
 	paused := created
 	paused.Status = GoalPaused
 	paused.NextReviewAt = past
@@ -110,7 +139,7 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 		t.Fatalf("create goal: %v", err)
 	}
 
-	for _, kind := range []GoalEventKind{GoalEventCreated, GoalEventPlanningStarted, GoalEventProgress} {
+	for _, kind := range []GoalEventKind{GoalEventCreated, GoalEventPlanningStarted, GoalEventProgress, GoalEventRateLimited, GoalEventRateLimitResolved} {
 		if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: kind, Body: "b"}); err != nil {
 			t.Fatalf("append %s: %v", kind, err)
 		}
@@ -120,8 +149,8 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list events: %v", err)
 	}
-	if len(events) != 3 || events[0].Kind != GoalEventProgress {
-		t.Fatalf("events = %+v, want 3 newest-first", events)
+	if len(events) != 5 || events[0].Kind != GoalEventRateLimitResolved {
+		t.Fatalf("events = %+v, want 5 newest-first", events)
 	}
 
 	// Cursor pagination: entries strictly older than `before`.
@@ -129,8 +158,8 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list events page: %v", err)
 	}
-	if len(page) != 1 || page[0].Kind != GoalEventPlanningStarted {
-		t.Fatalf("page = %+v, want the planning event", page)
+	if len(page) != 1 || page[0].Kind != GoalEventRateLimited {
+		t.Fatalf("page = %+v, want the rate-limited event", page)
 	}
 
 	// Append-only: UPDATE is rejected at the schema level.
@@ -157,6 +186,59 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	}
 	if events, _ = db.ListGoalEvents(ctx, goal.ID, 0, 0); len(events) != 0 {
 		t.Fatalf("timeline should cascade on goal delete, got %+v", events)
+	}
+}
+
+func TestGoalRateLimitBlocksCRUDAndIdempotency(t *testing.T) {
+	ctx := context.Background()
+	db := openGoalStore(t)
+
+	goal, err := db.CreateGoal(ctx, Goal{Title: "g", LeadAgent: "atlas"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	first, err := db.CreateGoalRateLimitBlock(ctx, GoalRateLimitBlock{
+		GoalID:    goal.ID,
+		SessionID: "s1",
+		Phase:     GoalRateLimitPlanning,
+		Provider:  config.ProviderClaude,
+		Profile:   "work",
+		Model:     "sonnet",
+		Effort:    "medium",
+		Error:     "rate limit reached",
+	})
+	if err != nil {
+		t.Fatalf("create block: %v", err)
+	}
+	second, err := db.CreateGoalRateLimitBlock(ctx, GoalRateLimitBlock{
+		GoalID:    goal.ID,
+		SessionID: "s1",
+		Phase:     GoalRateLimitPlanning,
+		Provider:  config.ProviderClaude,
+		Error:     "rate limit reached again",
+	})
+	if err != nil {
+		t.Fatalf("create duplicate block: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("duplicate session should return existing block: first=%s second=%s", first.ID, second.ID)
+	}
+	pending, err := db.ListPendingGoalRateLimits(ctx)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != first.ID {
+		t.Fatalf("pending blocks = %+v, want first block", pending)
+	}
+	resolved, err := db.ResolveGoalRateLimitBlock(ctx, first.ID, config.ProviderCodex, "main", "gpt-5", "high")
+	if err != nil {
+		t.Fatalf("resolve block: %v", err)
+	}
+	if resolved.Status != GoalRateLimitResolved || resolved.ResolvedProvider != config.ProviderCodex || resolved.ResolvedModel != "gpt-5" {
+		t.Fatalf("resolved block did not persist target: %+v", resolved)
+	}
+	if pending, err = db.ListPendingGoalRateLimits(ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after resolve = %+v err=%v, want none", pending, err)
 	}
 }
 

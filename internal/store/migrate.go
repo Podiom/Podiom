@@ -442,6 +442,61 @@ var migrations = []migration{
 			ALTER TABLE goals ADD COLUMN model TEXT NOT NULL DEFAULT '';
 			ALTER TABLE goals ADD COLUMN effort TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 18,
+		name:    "goal_rate_limit_recovery",
+		sql: `DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TABLE goal_events_new (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed', 'rate_limited', 'rate_limit_resolved')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		INSERT INTO goal_events_new (id, goal_id, session_id, kind, body, payload_json, created_at)
+		SELECT id, goal_id, session_id, kind, body, payload_json, created_at FROM goal_events;
+
+		DROP TABLE goal_events;
+		ALTER TABLE goal_events_new RENAME TO goal_events;
+
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;
+
+		CREATE TABLE goal_rate_limits (
+			id                TEXT PRIMARY KEY,
+			goal_id           TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id         TEXT NOT NULL UNIQUE,
+			phase             TEXT NOT NULL CHECK (phase IN ('planning', 'review')),
+			provider          TEXT NOT NULL CHECK (provider IN ('claude', 'codex')),
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			error             TEXT NOT NULL DEFAULT '',
+			status            TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending', 'resolved')),
+			resolved_provider TEXT NOT NULL DEFAULT ''
+				CHECK (resolved_provider IN ('', 'claude', 'codex')),
+			resolved_profile  TEXT NOT NULL DEFAULT '',
+			resolved_model    TEXT NOT NULL DEFAULT '',
+			resolved_effort   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			resolved_at       TEXT
+		);
+
+		CREATE INDEX idx_goal_rate_limits_goal ON goal_rate_limits(goal_id, created_at DESC);
+		CREATE INDEX idx_goal_rate_limits_status ON goal_rate_limits(status);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

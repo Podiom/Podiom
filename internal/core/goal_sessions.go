@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -119,6 +120,7 @@ func writeGoalBrief(b *strings.Builder, goal store.Goal) {
 // preapproved posture (RunScheduled precedent — never yolo unless the agent
 // itself is yolo).
 func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.GoalEventKind, prompt string) (store.Session, error) {
+	phase := goalRateLimitPhase(kind)
 	sess, err := c.CreateSession(ctx, CreateSessionRequest{
 		AgentName: goal.LeadAgent,
 		Origin:    store.OriginGoal,
@@ -158,9 +160,71 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 		}
 	}
 	if turnErr != "" {
+		if IsRateLimitErrorMessage(turnErr) {
+			if _, err := c.ensureGoalRateLimitBlock(ctx, goal, sess, phase, turnErr); err != nil {
+				c.log.Warn("goal rate-limit block failed", "event", "goal", "goal", goal.ID, "session", sess.ID, "err", err)
+			}
+		}
 		return sess, &ScheduledRunError{Message: turnErr}
 	}
 	return sess, nil
+}
+
+func goalRateLimitPhase(kind store.GoalEventKind) store.GoalRateLimitPhase {
+	if kind == store.GoalEventPlanningStarted {
+		return store.GoalRateLimitPlanning
+	}
+	return store.GoalRateLimitReview
+}
+
+func (c *Core) ensureGoalRateLimitBlock(ctx context.Context, goal store.Goal, sess store.Session, phase store.GoalRateLimitPhase, message string) (store.GoalRateLimitBlock, error) {
+	if existing, err := c.store.GetGoalRateLimitBlockBySession(ctx, sess.ID); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return store.GoalRateLimitBlock{}, err
+	}
+	block, err := c.store.CreateGoalRateLimitBlock(ctx, store.GoalRateLimitBlock{
+		GoalID:    goal.ID,
+		SessionID: sess.ID,
+		Phase:     phase,
+		Provider:  sess.Provider,
+		Profile:   sess.Profile,
+		Model:     sess.Model,
+		Effort:    sess.Effort,
+		Error:     message,
+		Status:    store.GoalRateLimitPending,
+	})
+	if err != nil {
+		return store.GoalRateLimitBlock{}, err
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"block_id": block.ID,
+		"phase":    string(block.Phase),
+		"provider": string(block.Provider),
+		"profile":  block.Profile,
+		"model":    block.Model,
+		"effort":   block.Effort,
+		"error":    block.Error,
+	})
+	body := fmt.Sprintf("Rate limit reached on %s. Choose a model or provider to retry this goal.", targetLabel(block.Provider, block.Profile))
+	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+		GoalID:    goal.ID,
+		SessionID: sess.ID,
+		Kind:      store.GoalEventRateLimited,
+		Body:      body,
+		Payload:   string(payload),
+	}); err != nil {
+		return block, err
+	}
+	c.log.Info("goal rate-limit block created",
+		"event", "goal",
+		"goal", goal.ID,
+		"session", sess.ID,
+		"phase", string(phase),
+		"provider", string(sess.Provider),
+		"profile", sess.Profile,
+	)
+	return block, nil
 }
 
 // StartGoalPlanning runs the goal's initial decomposition session. Callers run

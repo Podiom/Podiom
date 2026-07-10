@@ -12,6 +12,7 @@
     listProfiles,
     listProjects,
     patchGoal,
+    resolveGoalRateLimit,
     runGoalReview,
   } from "../lib/api";
   import { live } from "../lib/live.svelte";
@@ -32,6 +33,7 @@
     GoalEvent,
     GoalEventKind,
     GoalMetric,
+    GoalRateLimitBlock,
     GoalStatus,
     ProfileInfo,
     Project,
@@ -80,6 +82,14 @@
   let projects = $state<Project[]>([]);
   let profiles = $state<ProfileInfo[]>([]);
 
+  // Rate-limit recovery target.
+  let recoveryBlockID = $state("");
+  let recoveryProvider = $state<RunTargetValue["provider"]>("");
+  let recoveryProfile = $state("");
+  let recoveryModel = $state("");
+  let recoveryEffort = $state("");
+  let recoveryBusy = $state(false);
+
   const CADENCES = [
     { label: "every 6h", v: "6h" },
     { label: "every 12h", v: "12h" },
@@ -112,6 +122,8 @@
     access_decided: { c: "#4f9e78", t: "#eaf1ed", label: "Access decided", ic: '<path d="M20 6 9 17l-5-5"/>' },
     status_change: { c: "#8a7f73", t: "#f1ece6", label: "Status changed", ic: '<path d="M7 4 4 7l3 3"/><path d="M4 7h11"/><path d="M17 20l3-3-3-3"/><path d="M20 17H9"/>' },
     completion_proposed: { c: "#b14322", t: "#fbe7e0", label: "Completion proposed", ic: '<path d="M12 3l2.6 5.8 6.4.6-4.8 4.2 1.4 6.2L12 17l-5.6 3 1.4-6.2L3 9.4l6.4-.6z"/>' },
+    rate_limited: { c: "#b14e2a", t: "#fbeae0", label: "Rate limited", ic: '<path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/>' },
+    rate_limit_resolved: { c: "#2f6e60", t: "#e2f0ec", label: "Rate limit resolved", ic: '<path d="M20 6 9 17l-5-5"/><path d="M14 6h6v6"/>' },
   };
 
   const RK: Record<AccessRequestKind, { label: string; c: string; t: string; b: string; ic: string }> = {
@@ -150,10 +162,13 @@
 
   async function openGoal(id: string) {
     try {
-      detail = await getGoal(id);
-      moreEvents = detail.events.length >= PAGE;
+      const next = await getGoal(id);
+      detail = next;
+      moreEvents = next.events.length >= PAGE;
+      seedRecoveryTarget(next);
       view = "detail";
       menuOpen = false;
+      void ensureProfiles();
       scrollTop();
     } catch (e) {
       error = e instanceof Error ? e.message : "Couldn't load the goal.";
@@ -166,11 +181,39 @@
       const next = await getGoal(detail.goal.ID);
       moreEvents = next.events.length >= PAGE;
       detail = next;
+      seedRecoveryTarget(next);
     } catch {
       // Deleted elsewhere: fall back to the list.
       detail = null;
       view = "list";
     }
+  }
+
+  async function ensureProfiles() {
+    if (profiles.length > 0) return;
+    try {
+      profiles = await listProfiles();
+    } catch {
+      profiles = [];
+    }
+  }
+
+  function pendingRateLimitOf(d: GoalDetail | null): GoalRateLimitBlock | null {
+    return d?.rate_limit_blocks.find((b) => b.Status === "pending") ?? null;
+  }
+
+  function seedRecoveryTarget(d: GoalDetail) {
+    const block = pendingRateLimitOf(d);
+    if (!block) {
+      recoveryBlockID = "";
+      return;
+    }
+    if (recoveryBlockID === block.ID) return;
+    recoveryBlockID = block.ID;
+    recoveryProvider = d.goal.Provider || block.Provider || "";
+    recoveryProfile = d.goal.Profile || block.Profile || "";
+    recoveryModel = d.goal.Model || block.Model || "";
+    recoveryEffort = d.goal.Effort || block.Effort || "";
   }
 
   async function loadMoreEvents() {
@@ -219,7 +262,15 @@
     return map;
   });
 
-  const needsAttention = (g: Goal) => g.Status === "review" || (openReqsByGoal.get(g.ID)?.length ?? 0) > 0;
+  const rateLimitByGoal = $derived.by(() => {
+    const map = new Map<string, GoalRateLimitBlock>();
+    for (const g of goals) {
+      if (g.pending_rate_limit) map.set(g.ID, g.pending_rate_limit);
+    }
+    return map;
+  });
+
+  const needsAttention = (g: Goal) => g.Status === "review" || (openReqsByGoal.get(g.ID)?.length ?? 0) > 0 || rateLimitByGoal.has(g.ID);
   const attention = $derived(goals.filter((g) => needsAttention(g) && g.Status !== "done" && g.Status !== "abandoned" && g.Status !== "paused"));
   const activeRest = $derived(goals.filter((g) => g.Status === "active" && !needsAttention(g)));
   const paused = $derived(goals.filter((g) => g.Status === "paused"));
@@ -478,6 +529,26 @@
     }
   }
 
+  async function resolveRateLimit(block: GoalRateLimitBlock) {
+    recoveryBusy = true;
+    try {
+      await resolveGoalRateLimit(block.ID, {
+        provider: recoveryProvider,
+        profile: recoveryProfile,
+        model: recoveryModel,
+        effort: recoveryEffort,
+        retry: true,
+      });
+      await Promise.all([refreshAll(), refreshDetail()]);
+      void live.refreshGoalAttention();
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Couldn't retry the goal.";
+    } finally {
+      recoveryBusy = false;
+    }
+  }
+
   // ---- create -------------------------------------------------------------------
 
   async function openCreate() {
@@ -535,6 +606,11 @@
   }
 
   const statusPill = (g: Goal) => STATUS_PILL[g.Status] ?? STATUS_PILL.active;
+  const selectedDetailAgent = $derived.by(() => {
+    const lead = detail?.goal.LeadAgent;
+    return lead ? (agents.find((a) => a.Name === lead) ?? null) : null;
+  });
+  const detailPendingRateLimit = $derived(pendingRateLimitOf(detail));
 
   const reqStatusChip: Record<string, [string, string, string, string]> = {
     pending: ["#fbf1dd", "#ecd9ae", "#9a6e1e", "pending"],
@@ -600,12 +676,13 @@
                   {#each group.items as g (g.ID)}
                     {@const [bg, bd, tc, lbl, pulse] = statusPill(g)}
                     {@const pend = openReqsByGoal.get(g.ID) ?? []}
+                    {@const rate = rateLimitByGoal.get(g.ID)}
                     {@const failed = pend.some((r) => r.Status === "failed")}
                     {@const primary = g.Metrics[0]}
                     <button
                       class="card"
                       class:review-ring={g.Status === "review"}
-                      class:attn-ring={g.Status !== "review" && pend.length > 0}
+                      class:attn-ring={g.Status !== "review" && (pend.length > 0 || !!rate)}
                       class:dim={g.Status === "done" || g.Status === "abandoned"}
                       onclick={() => openGoal(g.ID)}>
                       <div class="card-top">
@@ -628,11 +705,13 @@
                         <div class="card-usage"><UsageBar usage={g.Usage} compact /></div>
                       {/if}
 
-                      {#if g.Status === "review" || pend.length > 0}
+                      {#if g.Status === "review" || pend.length > 0 || rate}
                         <div class="card-attn" class:hot={g.Status === "review"}>
                           <span class="attn-dot" class:hot={g.Status === "review"}></span>
                           {#if g.Status === "review"}
                             {g.LeadAgent} proposed completion — confirm or reopen
+                          {:else if rate}
+                            Rate limit reached — choose a model to continue
                           {:else if failed}
                             {pend.length} request{pend.length > 1 ? "s" : ""} need you · an auto-grant failed
                           {:else}
@@ -659,7 +738,9 @@
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
                           next review&nbsp;<b>{nextLabel(g)}</b>
                         </span>
-                        {#if pend.length > 0}
+                        {#if rate}
+                          <span class="pend-chip mono failed">rate limit</span>
+                        {:else if pend.length > 0}
                           <span class="pend-chip mono" class:failed>{pend.length} pending</span>
                         {/if}
                         <span class="foot-updated mono">updated {relTime(g.UpdatedAt)}</span>
@@ -754,6 +835,41 @@
                 Decomposing the goal into tasks and schedules. This runs in the background — metrics, the timeline, and
                 access requests will fill in as the agent makes progress. You can safely leave.
               </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- RATE LIMIT RECOVERY banner -->
+        {#if detailPendingRateLimit}
+          <div class="banner rate-limit">
+            <div class="banner-icon amber">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b14e2a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/></svg>
+            </div>
+            <div class="recovery-main">
+              <div class="banner-title amber-ink">Rate limit reached</div>
+              <div class="banner-sub amber-sub">
+                {g.LeadAgent} could not continue the {detailPendingRateLimit.Phase} run after automatic fallback. Pick a target and retry.
+              </div>
+              <div class="recovery-picker">
+                <RunTargetPicker
+                  agent={selectedDetailAgent}
+                  {profiles}
+                  variant="inline"
+                  value={{ provider: recoveryProvider, profile: recoveryProfile, model: recoveryModel, effort: recoveryEffort }}
+                  onChange={(next) => {
+                    recoveryProvider = next.provider || "";
+                    recoveryProfile = next.profile || "";
+                    recoveryModel = next.model || "";
+                    recoveryEffort = next.effort || "";
+                  }}
+                />
+                <button class="btn-primary" disabled={recoveryBusy} onclick={() => resolveRateLimit(detailPendingRateLimit)}>
+                  {recoveryBusy ? "Retrying…" : "Retry with this model"}
+                </button>
+              </div>
+              {#if detailPendingRateLimit.Error}
+                <div class="recovery-error mono">{detailPendingRateLimit.Error}</div>
+              {/if}
             </div>
           </div>
         {/if}
@@ -1664,6 +1780,10 @@
     background: #f3f0fc;
     border: 1px solid #ddd4f5;
   }
+  .banner.rate-limit {
+    background: #fff4ed;
+    border: 1px solid #efc7b4;
+  }
   .banner-icon {
     width: 38px;
     height: 38px;
@@ -1677,6 +1797,10 @@
     background: #eeeafb;
     border: 1px solid #d8cff3;
   }
+  .banner-icon.amber {
+    background: #fbeae0;
+    border: 1px solid #efc0ad;
+  }
   .banner-title {
     font-size: 15px;
     font-weight: 700;
@@ -1687,6 +1811,9 @@
   .violet-ink {
     color: #4a3c8f;
   }
+  .amber-ink {
+    color: #a94724;
+  }
   .banner-sub {
     font-size: 13px;
     line-height: 1.55;
@@ -1694,6 +1821,31 @@
   }
   .violet-sub {
     color: #6e63a0;
+  }
+  .amber-sub {
+    color: #985735;
+  }
+  .recovery-main {
+    min-width: 0;
+    flex: 1;
+  }
+  .recovery-picker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 13px;
+  }
+  .recovery-error {
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    background: #fffaf6;
+    border: 1px solid #efc7b4;
+    color: #9a4d2b;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
   }
   .dots {
     display: inline-flex;

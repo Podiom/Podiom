@@ -429,6 +429,7 @@ export interface Goal {
   // Rolled-up token usage across the goal's sessions, as an estimated share of the
   // 5-hour/weekly limits. Present on the list response; absent when unmeasured.
   Usage?: UsageEstimate;
+  pending_rate_limit?: GoalRateLimitBlock;
 }
 
 export type GoalEventKind =
@@ -441,7 +442,9 @@ export type GoalEventKind =
   | "access_requested"
   | "access_decided"
   | "status_change"
-  | "completion_proposed";
+  | "completion_proposed"
+  | "rate_limited"
+  | "rate_limit_resolved";
 
 // GoalEvent mirrors store.GoalEvent: one append-only audit timeline entry.
 export interface GoalEvent {
@@ -474,11 +477,34 @@ export interface AccessRequest {
   ExecutedAt: string;
 }
 
+export type GoalRateLimitStatus = "pending" | "resolved";
+export type GoalRateLimitPhase = "planning" | "review";
+
+export interface GoalRateLimitBlock {
+  ID: string;
+  GoalID: string;
+  SessionID: string;
+  Phase: GoalRateLimitPhase;
+  Provider: Provider;
+  Profile: string;
+  Model: string;
+  Effort: string;
+  Error: string;
+  Status: GoalRateLimitStatus;
+  ResolvedProvider: Provider | "";
+  ResolvedProfile: string;
+  ResolvedModel: string;
+  ResolvedEffort: string;
+  CreatedAt: string;
+  ResolvedAt: string;
+}
+
 // GoalDetail is the GET /api/goals/<id> response.
 export interface GoalDetail {
   goal: Goal;
   events: GoalEvent[];
   access_requests: AccessRequest[];
+  rate_limit_blocks: GoalRateLimitBlock[];
   usage?: UsageEstimate;
 }
 

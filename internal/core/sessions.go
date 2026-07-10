@@ -465,8 +465,12 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 					next, err = c.nextFallbackSession(ctx, current, tried)
 				}
 				if err != nil {
+					reportErr := err
+					if rateLimited && !IsRateLimitErrorMessage(err.Error()) {
+						reportErr = fmt.Errorf("rate limited on %s; fallback failed: %w", targetLabel(current.Provider, current.Profile), err)
+					}
 					runLog.Warn("turn failed", "stage", "fallback", "from", targetLabel(current.Provider, current.Profile), "error", err)
-					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
+					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, reportErr.Error())
 					return
 				}
 				runLog.Info("turn fallback",

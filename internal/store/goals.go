@@ -124,6 +124,10 @@ func (s *Store) DeleteGoal(ctx context.Context, id string) error {
 func (s *Store) ListDueGoalReviews(ctx context.Context, cutoffRFC3339 string) ([]Goal, error) {
 	rows, err := s.db.QueryContext(ctx, goalSelect+`
 		WHERE status = 'active' AND next_review_at IS NOT NULL AND next_review_at <= ?
+			AND NOT EXISTS (
+				SELECT 1 FROM goal_rate_limits
+				WHERE goal_rate_limits.goal_id = goals.id AND goal_rate_limits.status = 'pending'
+			)
 		ORDER BY next_review_at`, cutoffRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("list due goal reviews: %w", err)

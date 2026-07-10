@@ -47,6 +47,14 @@ type goalUpdateRequest struct {
 	AgentName       string              `json:"agent_name,omitempty"`
 }
 
+type goalRateLimitResolveRequest struct {
+	Provider config.Provider `json:"provider"`
+	Profile  string          `json:"profile"`
+	Model    string          `json:"model"`
+	Effort   string          `json:"effort"`
+	Retry    bool            `json:"retry"`
+}
+
 type goalProgressRequest struct {
 	Kind          string                  `json:"kind,omitempty"` // progress (default) | plan_change
 	Body          string                  `json:"body,omitempty"`
@@ -75,10 +83,11 @@ type accessDecisionRequest struct {
 // GoalDetail is the GET /api/goals/{id} response: the goal plus the audit
 // surfaces the detail view renders.
 type GoalDetail struct {
-	Goal           store.Goal            `json:"goal"`
-	Events         []store.GoalEvent     `json:"events"`
-	AccessRequests []store.AccessRequest `json:"access_requests"`
-	Usage          *tokenmeter.Estimate  `json:"usage,omitempty"`
+	Goal            store.Goal                 `json:"goal"`
+	Events          []store.GoalEvent          `json:"events"`
+	AccessRequests  []store.AccessRequest      `json:"access_requests"`
+	RateLimitBlocks []store.GoalRateLimitBlock `json:"rate_limit_blocks"`
+	Usage           *tokenmeter.Estimate       `json:"usage,omitempty"`
 }
 
 // goalListItem is a goal in the list response with its rolled-up usage estimate.
@@ -86,7 +95,8 @@ type GoalDetail struct {
 // fields), and Usage is appended alongside.
 type goalListItem struct {
 	store.Goal
-	Usage *tokenmeter.Estimate `json:"Usage,omitempty"`
+	PendingRateLimit *store.GoalRateLimitBlock `json:"pending_rate_limit,omitempty"`
+	Usage            *tokenmeter.Estimate      `json:"Usage,omitempty"`
 }
 
 // goalUsageEstimate aggregates a goal's per-(provider,profile) token totals into
@@ -135,7 +145,12 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 		}
 		items := make([]goalListItem, 0, len(goals))
 		for _, g := range goals {
-			items = append(items, goalListItem{Goal: g, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
+			pending, err := s.core.PendingGoalRateLimit(r.Context(), g.ID)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			items = append(items, goalListItem{Goal: g, PendingRateLimit: pending, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
 		}
 		writeJSON(w, items, nil)
 	case http.MethodPost:
@@ -169,6 +184,7 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if _, err := s.core.StartGoalPlanning(ctx, goalID); err != nil {
 				s.log.Warn("goal planning failed", "event", "goal", "goal", goalID, "err", err)
+				s.notifyGoalRateLimitIfPending(ctx, goalID)
 			}
 			s.broadcastGoalPing(ctx, goalID)
 		}(goal.ID)
@@ -237,6 +253,7 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if _, err := s.core.RunGoalReview(ctx, goalID); err != nil {
 				s.log.Warn("manual goal review failed", "event", "goal", "goal", goalID, "err", err)
+				s.notifyGoalRateLimitIfPending(ctx, goalID)
 			}
 			s.broadcastGoalPing(ctx, goalID)
 		}(goal.ID)
@@ -264,13 +281,21 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 			writeJSON(w, nil, err)
 			return
 		}
+		rateLimits, err := s.core.ListGoalRateLimitBlocks(r.Context(), id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
 		if events == nil {
 			events = []store.GoalEvent{}
 		}
 		if requests == nil {
 			requests = []store.AccessRequest{}
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, Usage: s.goalUsageEstimate(r.Context(), id)}, nil)
+		if rateLimits == nil {
+			rateLimits = []store.GoalRateLimitBlock{}
+		}
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, Usage: s.goalUsageEstimate(r.Context(), id)}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -450,6 +475,68 @@ func (s *Server) handleAccessRequest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, decided, nil)
 }
 
+// handleGoalRateLimit handles /api/goal-rate-limits/{id}/resolve. This is
+// deliberately human-only: resolving changes the goal's future provider/model
+// target and may immediately restart an unattended run.
+func (s *Server) handleGoalRateLimit(w http.ResponseWriter, r *http.Request) {
+	if s.core == nil {
+		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/api/goal-rate-limits/")
+	id, action, _ := strings.Cut(rest, "/")
+	if id == "" {
+		http.Error(w, "goal rate limit id is required", http.StatusBadRequest)
+		return
+	}
+	if action != "resolve" {
+		http.Error(w, "unknown goal rate-limit action", http.StatusNotFound)
+		return
+	}
+	var req goalRateLimitResolveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	block, goal, err := s.core.ResolveGoalRateLimit(r.Context(), core.ResolveGoalRateLimitInput{
+		BlockID:  id,
+		Provider: req.Provider,
+		Profile:  strings.TrimSpace(req.Profile),
+		Model:    strings.TrimSpace(req.Model),
+		Effort:   strings.TrimSpace(req.Effort),
+	})
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	s.broadcastGoalPing(r.Context(), goal.ID)
+	if req.Retry {
+		go s.retryGoalRateLimit(block)
+	}
+	writeJSON(w, map[string]any{"status": "resolved", "goal": goal, "rate_limit": block}, nil)
+}
+
+func (s *Server) retryGoalRateLimit(block store.GoalRateLimitBlock) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	var err error
+	switch block.Phase {
+	case store.GoalRateLimitPlanning:
+		_, err = s.core.StartGoalPlanning(ctx, block.GoalID)
+	default:
+		_, err = s.core.RunGoalReview(ctx, block.GoalID)
+	}
+	if err != nil {
+		s.log.Warn("goal rate-limit retry failed", "event", "goal", "goal", block.GoalID, "block", block.ID, "phase", string(block.Phase), "err", err)
+		s.notifyGoalRateLimitIfPending(ctx, block.GoalID)
+	}
+	s.broadcastGoalPing(ctx, block.GoalID)
+}
+
 // accessRequestSummary renders the one-line human description of what was asked
 // for, used in notification bodies.
 func accessRequestSummary(req store.AccessRequest) string {
@@ -478,6 +565,7 @@ func accessRequestSummary(req store.AccessRequest) string {
 const (
 	notifyKindGoalAccessRequest = "goal_access_request"
 	notifyKindGoalReview        = "goal_review"
+	notifyKindGoalRateLimit     = "goal_rate_limit"
 )
 
 // notifyGoal fires an out-of-app notification off the hot path (the
@@ -498,6 +586,20 @@ func (s *Server) notifyGoal(kind string, goal store.Goal, sessionID, title, body
 			Kind:      kind,
 		})
 	}()
+}
+
+func (s *Server) notifyGoalRateLimitIfPending(ctx context.Context, goalID string) {
+	pending, err := s.core.PendingGoalRateLimit(ctx, goalID)
+	if err != nil || pending == nil {
+		return
+	}
+	goal, err := s.core.GetGoal(ctx, goalID)
+	if err != nil {
+		return
+	}
+	s.notifyGoal(notifyKindGoalRateLimit, goal, pending.SessionID,
+		goal.LeadAgent+" hit a rate limit",
+		"Choose a model or provider to continue “"+goal.Title+"”.")
 }
 
 // broadcastGoalEvent fans one appended timeline entry out to every live

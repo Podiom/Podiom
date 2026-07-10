@@ -187,6 +187,11 @@ func run() error {
 	if err := syncConfiguredAgents(context.Background(), coreSvc, cfg); err != nil {
 		return err
 	}
+	if blocks, err := coreSvc.ReconcileGoalRateLimits(context.Background()); err != nil {
+		log.Warn("goal rate-limit reconciliation failed", "error", err)
+	} else if len(blocks) > 0 {
+		log.Info("goal rate-limit reconciliation created recovery items", "count", len(blocks))
+	}
 
 	scheduler := schedule.New(schedule.Options{
 		Dir:    paths.SchedulesDir,

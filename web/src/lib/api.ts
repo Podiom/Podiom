@@ -15,6 +15,7 @@ import type {
   GoalDetail,
   GoalEvent,
   GoalPatchRequest,
+  GoalRateLimitBlock,
   WorkspaceTool,
   DreamResult,
   GitHubDevicePoll,
@@ -852,6 +853,19 @@ export async function listGoalEvents(id: string, limit = 50, before = 0): Promis
 // as the review is started (results land on the timeline).
 export async function runGoalReview(id: string): Promise<{ status: string; goal_id: string }> {
   return asJSON(await request(`/api/goals/${id}/review`, { method: "POST" }));
+}
+
+export async function resolveGoalRateLimit(
+  id: string,
+  body: { provider?: Provider | ""; profile?: string; model?: string; effort?: string; retry?: boolean },
+): Promise<{ status: string; goal: Goal; rate_limit: GoalRateLimitBlock }> {
+  return asJSON(
+    await request(`/api/goal-rate-limits/${id}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 export async function listAccessRequests(goalId = "", status = ""): Promise<AccessRequest[]> {

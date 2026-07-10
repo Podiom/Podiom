@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -126,6 +127,10 @@ type GoalPatch struct {
 	ReviewEvery     *string
 	LeadAgent       *string
 	ProjectID       *string
+	Provider        *config.Provider
+	Profile         *string
+	Model           *string
+	Effort          *string
 	// FromAgent marks a patch stamped with a session identity (a manage-tool
 	// call). Agents may adjust the goal's description, criteria, metrics
 	// definitions, and cadence — but never its title, lead, or project (§9).
@@ -170,6 +175,18 @@ func (c *Core) UpdateGoal(ctx context.Context, id string, patch GoalPatch) (stor
 			}
 		}
 		goal.ProjectID = *patch.ProjectID
+	}
+	if patch.Provider != nil {
+		goal.Provider = config.Provider(strings.TrimSpace(string(*patch.Provider)))
+	}
+	if patch.Profile != nil {
+		goal.Profile = strings.TrimSpace(*patch.Profile)
+	}
+	if patch.Model != nil {
+		goal.Model = strings.TrimSpace(*patch.Model)
+	}
+	if patch.Effort != nil {
+		goal.Effort = strings.TrimSpace(*patch.Effort)
 	}
 	if patch.ReviewEvery != nil {
 		every, err := parseReviewEvery(*patch.ReviewEvery)
@@ -273,6 +290,177 @@ func (c *Core) ListGoalEvents(ctx context.Context, goalID string, limit int, bef
 		return nil, err
 	}
 	return c.store.ListGoalEvents(ctx, goalID, limit, before)
+}
+
+// ListGoalRateLimitBlocks returns a goal's durable rate-limit attention items.
+func (c *Core) ListGoalRateLimitBlocks(ctx context.Context, goalID string) ([]store.GoalRateLimitBlock, error) {
+	if _, err := c.store.GetGoal(ctx, goalID); err != nil {
+		return nil, err
+	}
+	return c.store.ListGoalRateLimitBlocks(ctx, goalID)
+}
+
+// PendingGoalRateLimit returns the newest pending recovery item for a goal.
+func (c *Core) PendingGoalRateLimit(ctx context.Context, goalID string) (*store.GoalRateLimitBlock, error) {
+	block, err := c.store.PendingGoalRateLimit(ctx, goalID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &block, nil
+}
+
+// ResolveGoalRateLimitInput is the user's selected recovery target.
+type ResolveGoalRateLimitInput struct {
+	BlockID  string
+	Provider config.Provider
+	Profile  string
+	Model    string
+	Effort   string
+}
+
+// ResolveGoalRateLimit persists the chosen target on the goal, marks the block
+// resolved, and appends an audit event. Retrying the phase is the server's job
+// so it can broadcast the asynchronous result.
+func (c *Core) ResolveGoalRateLimit(ctx context.Context, in ResolveGoalRateLimitInput) (store.GoalRateLimitBlock, store.Goal, error) {
+	block, err := c.store.GetGoalRateLimitBlock(ctx, in.BlockID)
+	if err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+	if block.Status != store.GoalRateLimitPending {
+		return store.GoalRateLimitBlock{}, store.Goal{}, fmt.Errorf("goal rate limit %q is already %s", block.ID, block.Status)
+	}
+	goal, err := c.store.GetGoal(ctx, block.GoalID)
+	if err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+	agent, err := c.store.GetAgent(ctx, goal.LeadAgent)
+	if err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+	target, err := c.resolveRunTarget(agent, RunTarget{
+		Provider: config.Provider(strings.TrimSpace(string(in.Provider))),
+		Profile:  strings.TrimSpace(in.Profile),
+		Model:    strings.TrimSpace(in.Model),
+		Effort:   strings.TrimSpace(in.Effort),
+	})
+	if err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+
+	goal.Provider = target.Provider
+	goal.Profile = target.Profile
+	goal.Model = target.Model
+	goal.Effort = target.Effort
+	updated, err := c.store.UpdateGoal(ctx, goal)
+	if err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+	resolved, err := c.store.ResolveGoalRateLimitBlock(ctx, block.ID, target.Provider, target.Profile, target.Model, target.Effort)
+	if err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"block_id": block.ID,
+		"phase":    string(block.Phase),
+		"provider": string(target.Provider),
+		"profile":  target.Profile,
+		"model":    target.Model,
+		"effort":   target.Effort,
+	})
+	body := fmt.Sprintf("Retry target selected: %s (%s, %s).", targetLabel(target.Provider, target.Profile), target.Model, target.Effort)
+	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+		GoalID:  updated.ID,
+		Kind:    store.GoalEventRateLimitResolved,
+		Body:    body,
+		Payload: string(payload),
+	}); err != nil {
+		return store.GoalRateLimitBlock{}, store.Goal{}, err
+	}
+	c.log.Info("goal rate-limit block resolved",
+		"event", "goal",
+		"goal", updated.ID,
+		"block", resolved.ID,
+		"phase", string(resolved.Phase),
+		"provider", string(target.Provider),
+		"profile", target.Profile,
+	)
+	return resolved, updated, nil
+}
+
+// ReconcileGoalRateLimits backfills pending recovery items for old goal runs
+// that already persisted a rate-limit error before durable recovery existed.
+// It is idempotent because goal_rate_limits.session_id is unique.
+func (c *Core) ReconcileGoalRateLimits(ctx context.Context) ([]store.GoalRateLimitBlock, error) {
+	goals, err := c.store.ListGoals(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := c.store.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	activeGoals := make(map[string]store.Goal, len(goals))
+	for _, goal := range goals {
+		if goal.Status == store.GoalDone || goal.Status == store.GoalAbandoned {
+			continue
+		}
+		activeGoals[goal.ID] = goal
+	}
+
+	phaseBySession := map[string]store.GoalRateLimitPhase{}
+	for goalID := range activeGoals {
+		events, err := c.store.ListGoalEvents(ctx, goalID, 0, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range events {
+			switch ev.Kind {
+			case store.GoalEventPlanningStarted:
+				phaseBySession[ev.SessionID] = store.GoalRateLimitPlanning
+			case store.GoalEventReviewStarted:
+				phaseBySession[ev.SessionID] = store.GoalRateLimitReview
+			}
+		}
+	}
+
+	var created []store.GoalRateLimitBlock
+	for _, sess := range sessions {
+		goal, ok := activeGoals[sess.GoalID]
+		if !ok || sess.Origin != store.OriginGoal {
+			continue
+		}
+		if _, err := c.store.GetGoalRateLimitBlockBySession(ctx, sess.ID); err == nil {
+			continue
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		history, err := c.store.ListMessages(ctx, sess.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, msg := range history {
+			if msg.Kind != store.KindError || !IsRateLimitErrorMessage(msg.Content) {
+				continue
+			}
+			phase := phaseBySession[sess.ID]
+			if phase == "" {
+				phase = store.GoalRateLimitReview
+			}
+			block, err := c.ensureGoalRateLimitBlock(ctx, goal, sess, phase, msg.Content)
+			if err != nil {
+				return nil, err
+			}
+			created = append(created, block)
+			break
+		}
+	}
+	if len(created) > 0 {
+		c.log.Info("goal rate-limit backfill finished", "event", "goal", "created", len(created))
+	}
+	return created, nil
 }
 
 // GoalMetricUpdate moves one named metric to a new current value.

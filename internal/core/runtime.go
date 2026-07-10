@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
@@ -50,6 +51,18 @@ type FallbackDecision struct {
 // fallbackTimeout bounds how long an interactive turn waits for the user to
 // resolve a session-limit prompt before the turn is abandoned.
 const fallbackTimeout = 10 * time.Minute
+
+// IsRateLimitErrorMessage conservatively identifies provider rate-limit
+// failures in persisted session diagnostics. It intentionally avoids broad terms
+// like "quota" so backfill does not turn unrelated provider failures into goal
+// attention items.
+func IsRateLimitErrorMessage(message string) bool {
+	msg := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "rate-limit") ||
+		strings.Contains(msg, "rate_limited") ||
+		strings.Contains(msg, "rate limited")
+}
 
 func (c *Core) ensureSessionInstructions(ctx context.Context, sess store.Session) error {
 	_, err := c.sessionInstructionPayload(ctx, sess)

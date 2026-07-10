@@ -354,6 +354,12 @@ const (
 	GoalEventStatusChange GoalEventKind = "status_change"
 	// GoalEventCompletionProposed records the agent proposing the goal is done.
 	GoalEventCompletionProposed GoalEventKind = "completion_proposed"
+	// GoalEventRateLimited records an unattended goal run that exhausted or
+	// could not use its fallback chain and now needs the user to choose a target.
+	GoalEventRateLimited GoalEventKind = "rate_limited"
+	// GoalEventRateLimitResolved records the user choosing a new target so the
+	// blocked goal run can continue.
+	GoalEventRateLimitResolved GoalEventKind = "rate_limit_resolved"
 )
 
 // GoalEvent is one append-only timeline entry — the goal's audit trail. Updates
@@ -370,6 +376,47 @@ type GoalEvent struct {
 	// Payload is kind-specific JSON (metric deltas, request id, old/new status…).
 	Payload   string
 	CreatedAt string
+}
+
+// GoalRateLimitStatus is the lifecycle state of a goal-level rate-limit block.
+type GoalRateLimitStatus string
+
+const (
+	// GoalRateLimitPending means the user still needs to choose a recovery target.
+	GoalRateLimitPending GoalRateLimitStatus = "pending"
+	// GoalRateLimitResolved means the user picked a recovery target.
+	GoalRateLimitResolved GoalRateLimitStatus = "resolved"
+)
+
+// GoalRateLimitPhase records which autonomous goal phase hit the provider limit.
+type GoalRateLimitPhase string
+
+const (
+	// GoalRateLimitPlanning means the initial decomposition session failed.
+	GoalRateLimitPlanning GoalRateLimitPhase = "planning"
+	// GoalRateLimitReview means a periodic or manual review session failed.
+	GoalRateLimitReview GoalRateLimitPhase = "review"
+)
+
+// GoalRateLimitBlock is a durable attention item created when an unattended
+// goal run exhausts or cannot use automatic fallback after a provider rate limit.
+type GoalRateLimitBlock struct {
+	ID               string
+	GoalID           string
+	SessionID        string
+	Phase            GoalRateLimitPhase
+	Provider         config.Provider
+	Profile          string
+	Model            string
+	Effort           string
+	Error            string
+	Status           GoalRateLimitStatus
+	ResolvedProvider config.Provider
+	ResolvedProfile  string
+	ResolvedModel    string
+	ResolvedEffort   string
+	CreatedAt        string
+	ResolvedAt       string
 }
 
 // AccessRequestKind is what capability the agent asked for.
