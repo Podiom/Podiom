@@ -50,6 +50,20 @@
   let removingServer = $state(false);
   let testingMCP = $state<Record<string, boolean>>({});
   let mcpTests = $state<Record<string, MCPTestResult>>({});
+  type MCPStatus = "unknown" | "checking" | "online" | "offline";
+  interface MCPStatusEntry {
+    status: MCPStatus;
+    checkedAt?: number;
+    result?: MCPTestResult;
+    error?: string;
+  }
+
+  const MCP_STATUS_CACHE_KEY = "podiom:mcp-status:v1";
+  const MCP_STATUS_COOLDOWN_MS = 60_000;
+  const MCP_STATUS_CONCURRENCY = 3;
+
+  let mcpStatuses = $state<Record<string, MCPStatusEntry>>({});
+  let autoCheckingMCP = $state<Record<string, boolean>>({});
 
   // A server is user-managed (editable/removable) when it lives in Podiom's own
   // MCP catalogue; claude/codex-only servers are imported and read-only here.
@@ -59,7 +73,9 @@
 
   onMount(async () => {
     try {
+      loadCachedMCPStatuses();
       mcp = await getMCP();
+      void autoCheckMCPServers(mcp.servers);
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
     }
@@ -117,6 +133,128 @@
   function assigned(agent: MCPAgent, server: MCPServer): boolean {
     return (mcp.assignments[agent.name] ?? agent.mcp_servers ?? []).includes(server.name);
   }
+  function loadCachedMCPStatuses() {
+    try {
+      const raw = window.sessionStorage.getItem(MCP_STATUS_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, MCPStatusEntry>;
+      const restored: Record<string, MCPStatusEntry> = {};
+      const now = Date.now();
+      for (const [name, entry] of Object.entries(parsed)) {
+        if (!entry?.checkedAt || now - entry.checkedAt >= MCP_STATUS_COOLDOWN_MS) continue;
+        restored[name] = { ...entry, status: entry.status === "checking" ? "unknown" : entry.status };
+        if (entry.result) mcpTests[name] = entry.result;
+      }
+      mcpStatuses = restored;
+      mcpTests = { ...mcpTests };
+    } catch {
+      // Ignore malformed browser cache; the live probe will refill it.
+    }
+  }
+  function persistMCPStatuses() {
+    try {
+      const cacheable: Record<string, MCPStatusEntry> = {};
+      for (const [name, entry] of Object.entries(mcpStatuses)) {
+        if (!entry.checkedAt) continue;
+        cacheable[name] = entry;
+      }
+      window.sessionStorage.setItem(MCP_STATUS_CACHE_KEY, JSON.stringify(cacheable));
+    } catch {
+      // Status lights are best-effort UI state.
+    }
+  }
+  function statusEntry(server: MCPServer): MCPStatusEntry {
+    if (testingMCP[server.name] || autoCheckingMCP[server.name]) return { ...(mcpStatuses[server.name] ?? {}), status: "checking" };
+    return mcpStatuses[server.name] ?? { status: "unknown" };
+  }
+  function hasFreshMCPStatus(server: MCPServer): boolean {
+    const entry = mcpStatuses[server.name];
+    return Boolean(entry?.checkedAt && Date.now() - entry.checkedAt < MCP_STATUS_COOLDOWN_MS);
+  }
+  function shouldAutoCheckMCP(server: MCPServer): boolean {
+    if (testingMCP[server.name] || autoCheckingMCP[server.name]) return false;
+    return !hasFreshMCPStatus(server);
+  }
+  async function autoCheckMCPServers(servers: MCPServer[]) {
+    const queue = servers.filter(shouldAutoCheckMCP);
+    if (!queue.length) return;
+
+    let index = 0;
+    async function worker() {
+      while (index < queue.length) {
+        const server = queue[index++];
+        await checkMCPStatus(server, false);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(MCP_STATUS_CONCURRENCY, queue.length) }, worker));
+  }
+  async function checkMCPStatus(server: MCPServer, openDetailOnDone: boolean) {
+    if (testingMCP[server.name] || autoCheckingMCP[server.name]) return;
+    if (openDetailOnDone) testingMCP = { ...testingMCP, [server.name]: true };
+    else autoCheckingMCP = { ...autoCheckingMCP, [server.name]: true };
+    mcpStatuses = { ...mcpStatuses, [server.name]: { ...(mcpStatuses[server.name] ?? {}), status: "checking", checkedAt: Date.now() } };
+    persistMCPStatuses();
+    loadError = null;
+    try {
+      const result = await testMCPServer(server.name);
+      const status: MCPStatus = result.ok ? "online" : "offline";
+      mcpTests = { ...mcpTests, [server.name]: result };
+      mcpStatuses = { ...mcpStatuses, [server.name]: { status, checkedAt: Date.now(), result, error: result.error } };
+      if (openDetailOnDone) mcpOpen = { ...mcpOpen, [server.name]: true };
+      persistMCPStatuses();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const result: MCPTestResult = {
+        server: server.name,
+        transport: server.transport,
+        ok: false,
+        duration_ms: 0,
+        steps: [],
+        logs: [message],
+        error: message,
+        tool_count: 0,
+      };
+      mcpTests = { ...mcpTests, [server.name]: result };
+      mcpStatuses = { ...mcpStatuses, [server.name]: { status: "offline", checkedAt: Date.now(), result, error: message } };
+      if (openDetailOnDone) mcpOpen = { ...mcpOpen, [server.name]: true };
+      persistMCPStatuses();
+    } finally {
+      if (openDetailOnDone) testingMCP = { ...testingMCP, [server.name]: false };
+      else autoCheckingMCP = { ...autoCheckingMCP, [server.name]: false };
+    }
+  }
+  function clearMCPStatus(name: string) {
+    const { [name]: _status, ...statuses } = mcpStatuses;
+    const { [name]: _test, ...tests } = mcpTests;
+    const { [name]: _auto, ...auto } = autoCheckingMCP;
+    const { [name]: _manual, ...manual } = testingMCP;
+    mcpStatuses = statuses;
+    mcpTests = tests;
+    autoCheckingMCP = auto;
+    testingMCP = manual;
+    persistMCPStatuses();
+  }
+  function pruneMCPStatuses(servers: MCPServer[]) {
+    const names = new Set(servers.map((s) => s.name));
+    mcpStatuses = Object.fromEntries(Object.entries(mcpStatuses).filter(([name]) => names.has(name)));
+    mcpTests = Object.fromEntries(Object.entries(mcpTests).filter(([name]) => names.has(name)));
+    autoCheckingMCP = Object.fromEntries(Object.entries(autoCheckingMCP).filter(([name]) => names.has(name)));
+    testingMCP = Object.fromEntries(Object.entries(testingMCP).filter(([name]) => names.has(name)));
+    persistMCPStatuses();
+  }
+  function statusTitle(server: MCPServer): string {
+    const entry = statusEntry(server);
+    if (entry.status === "checking") return `${server.name}: checking status`;
+    if (entry.status === "online") {
+      const result = entry.result ?? mcpTests[server.name];
+      if (result) return `${server.name}: online · ${result.tool_count} tools · ${result.duration_ms}ms`;
+      return `${server.name}: online`;
+    }
+    if (entry.status === "offline") {
+      return `${server.name}: offline${entry.error ? ` · ${entry.error}` : ""}`;
+    }
+    return `${server.name}: status unknown`;
+  }
   function codexStatus(server: MCPServer, isAssigned: boolean): string {
     if (!isAssigned) return "off";
     if (server.transport === "stdio") return "native";
@@ -149,7 +287,9 @@
         server.command = addCommand.trim();
         server.args = addArgs.map((a) => a.trim()).filter(Boolean);
       }
+      clearMCPStatus(server.name);
       mcp = await saveMCPServer(server);
+      void autoCheckMCPServers(mcp.servers.filter((s) => s.name === server.name));
       resetServerForm();
       addOpen = false;
     } catch (e) {
@@ -194,6 +334,7 @@
     loadError = null;
     try {
       mcp = await removeMCPServer(removeTarget.name);
+      pruneMCPStatuses(mcp.servers);
       removeTarget = null;
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
@@ -238,30 +379,7 @@
     return Boolean(addCommand.trim());
   }
   async function runMCPTest(server: MCPServer) {
-    testingMCP = { ...testingMCP, [server.name]: true };
-    loadError = null;
-    try {
-      const result = await testMCPServer(server.name);
-      mcpTests = { ...mcpTests, [server.name]: result };
-      mcpOpen = { ...mcpOpen, [server.name]: true };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      mcpTests = {
-        ...mcpTests,
-        [server.name]: {
-          server: server.name,
-          transport: server.transport,
-          ok: false,
-          duration_ms: 0,
-          steps: [],
-          logs: [message],
-          error: message,
-          tool_count: 0,
-        },
-      };
-    } finally {
-      testingMCP = { ...testingMCP, [server.name]: false };
-    }
+    await checkMCPStatus(server, true);
   }
   function testTitle(result: MCPTestResult | undefined): string {
     if (!result) return "Not tested";
@@ -416,7 +534,10 @@
                 <button class="server-cell" onclick={() => (mcpOpen = { ...mcpOpen, [server.name]: !mcpOpen[server.name] })}>
                   <span class:rot={mcpOpen[server.name]} class="chev">›</span>
                   <div>
-                    <b>{server.name}</b>
+                    <span class="server-title">
+                      <span class={`mcp-light ${statusEntry(server).status}`} title={statusTitle(server)} aria-label={statusTitle(server)}></span>
+                      <b>{server.name}</b>
+                    </span>
                     <p>
                       {#each server.sources ?? [] as src (src)}
                         <span style={mcpChip(src)}><span style={dot(MCP_SRC[src].fg, MCP_SRC[src].glyph)}></span>{MCP_SRC[src].label}</span>
@@ -445,8 +566,8 @@
                           <button class="secondary" onclick={() => startEdit(server)}>Edit</button>
                           <button class="secondary danger" onclick={() => (removeTarget = server)}>Remove</button>
                         {/if}
-                        <button class="secondary" disabled={testingMCP[server.name]} onclick={() => runMCPTest(server)}>
-                          {testingMCP[server.name] ? "Testing..." : "Test"}
+                        <button class="secondary" disabled={testingMCP[server.name] || autoCheckingMCP[server.name]} onclick={() => runMCPTest(server)}>
+                          {testingMCP[server.name] || autoCheckingMCP[server.name] ? "Testing..." : "Test"}
                         </button>
                       </div>
                     </div>
@@ -564,8 +685,18 @@
   .matrix-top { padding: 14px 0 12px; color: #b7ac9e; font: 600 10px "JetBrains Mono", monospace; text-transform: uppercase; }
   .server-col, .server-cell { width: 300px; flex: none; }
   .server-cell { padding: 12px 0; border: 0; background: transparent; text-align: left; cursor: pointer; display: flex; gap: 12px; align-items: flex-start; }
+  .server-title { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 18px; }
   .server-cell b { font: 700 15px "JetBrains Mono", monospace; color: #241f1a; }
   .server-cell p { margin: 7px 0 0; display: flex; gap: 7px; flex-wrap: wrap; }
+  .mcp-light { width: 12px; height: 12px; border-radius: 99px; border: 1px solid; box-shadow: inset 0 0 0 2px rgba(255, 253, 251, 0.72), 0 0 0 2px rgba(43, 37, 32, 0.04); flex: none; }
+  .mcp-light.unknown { background: #c8c1b7; border-color: #aaa196; }
+  .mcp-light.checking { background: #dfa63a; border-color: #bd8122; animation: mcp-pulse 1.1s ease-in-out infinite; }
+  .mcp-light.online { background: #2f9a73; border-color: #25785b; }
+  .mcp-light.offline { background: #c94c34; border-color: #a63b28; }
+  @keyframes mcp-pulse {
+    0%, 100% { opacity: 0.58; }
+    50% { opacity: 1; }
+  }
   .chev { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; color: #b7ac9e; font-size: 22px; transition: transform 0.16s ease; }
   .chev.rot { transform: rotate(90deg); }
   .agent-col { width: 92px; flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
