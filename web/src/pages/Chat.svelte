@@ -112,11 +112,17 @@
   let unsubscribe: (() => void) | undefined;
   let countdown: number | undefined;
   let pendingSeed: string | null = null;
+  let chatEl = $state<HTMLDivElement | null>(null);
+  let sessColEl = $state<HTMLDivElement | null>(null);
   let msgsEl: HTMLDivElement | null = null;
   // stick = auto-follow the transcript to the bottom. Turns off when the user
   // scrolls up to read history, back on when they return near the bottom.
   let stick = true;
   const LAST_SESSION_KEY = "podiom:last-chat-session";
+  const PLAN_PANEL_WIDTH_KEY = "podiom:plan-panel-width";
+  const PLAN_PANEL_DEFAULT_WIDTH = 372;
+  const PLAN_PANEL_MIN_WIDTH = 320;
+  const CONV_MIN_WIDTH = 360;
 
   // Layout / UI state.
   let sessOpen = $state(true);
@@ -127,6 +133,10 @@
   let planFeedbackOpen = $state(false);
   let planFeedbackText = $state("");
   let planYoloAck = $state(false);
+  let planPanelWidth = $state(PLAN_PANEL_DEFAULT_WIDTH);
+  let planPanelResizing = $state(false);
+  let planResizeStartX = 0;
+  let planResizeStartWidth = PLAN_PANEL_DEFAULT_WIDTH;
 
   const SLASH_CMDS = [
     { cmd: "/model", desc: "set the model for this session" },
@@ -248,12 +258,17 @@
     const syncPhone = () => {
       isPhone = mq.matches;
       if (mq.matches) {
+        endPlanPanelResize();
         sessOpen = false;
         ctxOpen = false;
+      } else {
+        clampCurrentPlanPanelWidth();
       }
     };
+    restorePlanPanelWidth();
     syncPhone();
     mq.addEventListener("change", syncPhone);
+    window.addEventListener("resize", clampCurrentPlanPanelWidth);
     live.connect();
     unsubscribe = live.subscribe(handleServerMessage);
     listProjects().then((p) => (projects = p)).catch(() => {});
@@ -262,6 +277,8 @@
     countdown = window.setInterval(updatePermissionRemaining, 1000);
     return () => {
       mq.removeEventListener("change", syncPhone);
+      window.removeEventListener("resize", clampCurrentPlanPanelWidth);
+      cleanupPlanPanelResize();
       if (countdown) window.clearInterval(countdown);
       unsubscribe?.();
     };
@@ -281,6 +298,12 @@
     if (!t) return;
     onConsumeTarget();
     void openTarget(t);
+  });
+
+  $effect(() => {
+    void sessOpen;
+    void planAwaiting;
+    if (!isPhone) void tick().then(clampCurrentPlanPanelWidth);
   });
 
   async function openTarget(t: ChatTarget) {
@@ -486,6 +509,71 @@
     const id = localStorage.getItem(LAST_SESSION_KEY);
     if (!id) return;
     void loadHistory({ ID: id } as Session);
+  }
+
+  function restorePlanPanelWidth() {
+    const saved = Number(localStorage.getItem(PLAN_PANEL_WIDTH_KEY));
+    if (Number.isFinite(saved) && saved > 0) {
+      planPanelWidth = clampPlanPanelWidth(saved);
+    }
+  }
+
+  function persistPlanPanelWidth() {
+    localStorage.setItem(PLAN_PANEL_WIDTH_KEY, String(Math.round(planPanelWidth)));
+  }
+
+  function planPanelMaxWidth(): number {
+    if (typeof window === "undefined") return PLAN_PANEL_DEFAULT_WIDTH;
+    const chatWidth = chatEl?.clientWidth ?? window.innerWidth;
+    const sessionsWidth = sessOpen ? (sessColEl?.getBoundingClientRect().width ?? 0) : 0;
+    return Math.max(PLAN_PANEL_MIN_WIDTH, chatWidth - sessionsWidth - CONV_MIN_WIDTH);
+  }
+
+  function clampPlanPanelWidth(width: number): number {
+    const max = planPanelMaxWidth();
+    return Math.min(Math.max(width, PLAN_PANEL_MIN_WIDTH), max);
+  }
+
+  function clampCurrentPlanPanelWidth() {
+    if (isPhone) return;
+    const next = clampPlanPanelWidth(planPanelWidth);
+    if (next !== planPanelWidth) {
+      planPanelWidth = next;
+      persistPlanPanelWidth();
+    }
+  }
+
+  function beginPlanPanelResize(event: PointerEvent) {
+    if (isPhone) return;
+    event.preventDefault();
+    event.stopPropagation();
+    planPanelResizing = true;
+    planResizeStartX = event.clientX;
+    planResizeStartWidth = planPanelWidth;
+    window.addEventListener("pointermove", resizePlanPanel);
+    window.addEventListener("pointerup", endPlanPanelResize);
+    window.addEventListener("pointercancel", endPlanPanelResize);
+    document.body.classList.add("plan-panel-resizing");
+  }
+
+  function resizePlanPanel(event: PointerEvent) {
+    if (!planPanelResizing) return;
+    planPanelWidth = clampPlanPanelWidth(planResizeStartWidth + planResizeStartX - event.clientX);
+  }
+
+  function endPlanPanelResize() {
+    if (planPanelResizing) {
+      planPanelResizing = false;
+      persistPlanPanelWidth();
+    }
+    cleanupPlanPanelResize();
+  }
+
+  function cleanupPlanPanelResize() {
+    window.removeEventListener("pointermove", resizePlanPanel);
+    window.removeEventListener("pointerup", endPlanPanelResize);
+    window.removeEventListener("pointercancel", endPlanPanelResize);
+    document.body.classList.remove("plan-panel-resizing");
   }
 
   function attachActiveSession() {
@@ -1114,14 +1202,14 @@
   }
 </script>
 
-<div class="chat" style="flex:1;display:flex;min-height:0">
+<div class="chat" bind:this={chatEl} style="flex:1;display:flex;min-height:0">
   {#if isPhone && (sessOpen || ctxOpen)}
     <button class="mobile-panel-backdrop" aria-label="Close panel" onclick={closeMobilePanels}></button>
   {/if}
 
   <!-- ===== sessions column ===== -->
   {#if sessOpen}
-    <div class="sess-col">
+    <div class="sess-col" bind:this={sessColEl}>
       <div class="sess-head">
         <div class="sess-title">Sessions</div>
         <button class="sq-btn teal" onclick={() => (newSessionOpen = true)} title="New session">+</button>
@@ -1622,7 +1710,15 @@
 
   <!-- ===== plan review panel ===== -->
   {#if planAwaiting && activeSession}
-    <div class="plan-panel">
+    <div class="plan-panel" style={`--plan-panel-width:${planPanelWidth}px`}>
+      <button
+        type="button"
+        class="plan-panel-resize"
+        class:dragging={planPanelResizing}
+        aria-label="Resize plan panel"
+        title="Drag to resize plan panel"
+        onpointerdown={beginPlanPanelResize}
+      ></button>
       <div class="plan-panel-head">
         <div>
           <div class="plan-panel-kicker mono">PLAN REVIEW</div>
@@ -3170,13 +3266,63 @@
   }
 
   .plan-panel {
-    width: 372px;
+    width: var(--plan-panel-width, 372px);
     flex: none;
     background: #fffdfb;
     border-left: 1px solid #eadfd1;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    position: relative;
+  }
+
+  .plan-panel-resize {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -6px;
+    z-index: 4;
+    width: 12px;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    cursor: ew-resize;
+    touch-action: none;
+  }
+
+  .plan-panel-resize::after {
+    content: "";
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 5px;
+    width: 2px;
+    border-radius: 999px;
+    background: #caa57c;
+    opacity: 0;
+    transition:
+      opacity 0.14s ease,
+      box-shadow 0.14s ease;
+  }
+
+  .plan-panel-resize:hover::after,
+  .plan-panel-resize:focus-visible::after,
+  .plan-panel-resize.dragging::after {
+    opacity: 1;
+    box-shadow: 0 0 0 3px rgba(154, 110, 30, 0.12);
+  }
+
+  .plan-panel-resize:focus-visible {
+    outline: none;
+  }
+
+  :global(body.plan-panel-resizing) {
+    cursor: ew-resize;
+    user-select: none;
+  }
+
+  :global(body.plan-panel-resizing *) {
+    cursor: ew-resize !important;
   }
 
   .plan-panel-head {
@@ -3553,6 +3699,10 @@
 
     .ctx {
       padding: 16px 18px 20px;
+    }
+
+    .plan-panel-resize {
+      display: none;
     }
 
     .conv {
