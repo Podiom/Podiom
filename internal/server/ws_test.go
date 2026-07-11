@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -536,6 +537,149 @@ func TestWebSocketPersistsSessionErrorInHistory(t *testing.T) {
 	if len(detail.History) != 2 || detail.History[1].Kind != store.KindError {
 		t.Fatalf("session detail did not include durable error: %+v", detail.History)
 	}
+}
+
+func TestWebSocketCompactRunsAndReports(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	fake := adapter.NewFake()
+	fake.Responses = []string{"compact summary"}
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: fake, DisableBackgroundWork: true})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "webber", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := coreSvc.CreateSession(ctx, core.CreateSessionRequest{AgentName: "webber", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if sess.ProviderHandle == "" {
+		t.Fatal("expected initial fake handle")
+	}
+	// 14 messages so the forced summary has older history to compact.
+	msgs := make([]store.Message, 14)
+	for i := range msgs {
+		role := store.RoleUser
+		if i%2 == 1 {
+			role = store.RoleAssistant
+		}
+		msgs[i] = store.Message{Role: role, Content: fmt.Sprintf("message %d", i)}
+	}
+	if _, err := db.AppendMessages(ctx, sess.ID, msgs); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+	if err := db.UpdateSessionContext(ctx, sess.ID, 180000, 200000); err != nil {
+		t.Fatalf("seed context: %v", err)
+	}
+
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, Core: coreSvc})
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws"
+	conn := dialWSTest(t, wsURL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "send_turn", RequestID: "req-compact", SessionID: sess.ID, Message: "/compact"}); err != nil {
+		t.Fatalf("write compact: %v", err)
+	}
+
+	var sawRunning, sawContextReset, sawDone bool
+	for i := 0; i < 20; i++ {
+		var msg ServerMessage
+		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+			t.Fatalf("read ws: %v", err)
+		}
+		switch msg.Type {
+		case "turn_state":
+			if msg.TurnState != nil && msg.TurnState.Status == turnStatusRunning {
+				sawRunning = true
+			}
+		case "context":
+			if msg.Context != nil && msg.Context.Used == 0 && msg.Context.Max == 200000 {
+				sawContextReset = true
+			}
+		case "done":
+			if msg.RequestID == "req-compact" {
+				sawDone = true
+			}
+		}
+		if sawRunning && sawContextReset && sawDone {
+			break
+		}
+	}
+	if !sawRunning || !sawContextReset || !sawDone {
+		t.Fatalf("missing compact events: running=%v contextReset=%v done=%v", sawRunning, sawContextReset, sawDone)
+	}
+
+	persisted, err := coreSvc.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if persisted.ProviderHandle != "" {
+		t.Fatalf("compaction should clear provider handle, got %q", persisted.ProviderHandle)
+	}
+	if strings.TrimSpace(persisted.RollingSummary) == "" {
+		t.Fatal("expected rolling summary after compaction")
+	}
+}
+
+func TestWebSocketCompactRejectedWhileTurnRunning(t *testing.T) {
+	ctx := context.Background()
+	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)
+	defer cleanup()
+	fake.PermissionTool = "Bash"
+	fake.Responses = []string{"first completed"}
+
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "webber", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := coreSvc.CreateSession(ctx, core.CreateSessionRequest{AgentName: "webber", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	conn := dialWSTest(t, wsURL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "send_turn", RequestID: "req-1", SessionID: sess.ID, Message: "first"}); err != nil {
+		t.Fatalf("write first turn: %v", err)
+	}
+	permission := readWSTestUntil(t, conn, "permission request", func(msg ServerMessage) bool {
+		return msg.Type == "permission_request" && msg.SessionID == sess.ID && msg.Request != nil
+	})
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "send_turn", RequestID: "req-compact", SessionID: sess.ID, Message: "/compact"}); err != nil {
+		t.Fatalf("write compact: %v", err)
+	}
+	got := readWSTestUntil(t, conn, "compact rejection", func(msg ServerMessage) bool {
+		return msg.Type == "error" && msg.RequestID == "req-compact"
+	})
+	if !strings.Contains(got.Error, "already running") {
+		t.Fatalf("unexpected compact rejection: %q", got.Error)
+	}
+	// The original turn must be unaffected — approve so it can finish.
+	if err := wsjson.Write(ctx, conn, ClientMessage{
+		Type:      "permission_decision",
+		RequestID: permission.Request.ID,
+		Decision:  &adapter.PermissionDecision{Behavior: "allow"},
+	}); err != nil {
+		t.Fatalf("write permission decision: %v", err)
+	}
+	readWSTestUntil(t, conn, "first turn done", func(msg ServerMessage) bool {
+		return msg.Type == "done" && msg.SessionID == sess.ID
+	})
 }
 
 func newWSTestHarness(t *testing.T) (*core.Core, *adapter.Fake, string, func()) {

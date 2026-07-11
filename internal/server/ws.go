@@ -315,6 +315,10 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 		s.writePersistedSessionError(ctx, writer, msg.RequestID, session.ID, err.Error())
 		return
 	}
+	if slash.Compact {
+		s.runWSCompact(ctx, writer, msg, slash.Session)
+		return
+	}
 	if slash.Handled {
 		_ = writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, Session: &slash.Session})
 		_ = writer.write(ctx, ServerMessage{Type: "notice", RequestID: msg.RequestID, Notice: slash.Notice})
@@ -403,6 +407,54 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 		s.markRoadmapSessionFinished(turnCtx, session.ID)
 	}
 	s.turns.finish(session.ID)
+	stateCtx, stateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stateCancel()
+	_ = s.writeState(stateCtx, writer)
+}
+
+// runWSCompact runs an explicit /compact as a pseudo-turn registered in the
+// active-turn hub. Registration gives it the concurrent-turn guard, stop-button
+// cancelation, live progress to every attached client, and reconnect survival
+// for free — it reuses the existing turn_state/notice/session/context/done/error
+// messages rather than introducing a compact-specific protocol.
+func (s *Server) runWSCompact(ctx context.Context, writer *wsWriter, msg ClientMessage, session store.Session) {
+	turnID := uuid.NewString()
+	compactCtx, cancel := context.WithCancel(context.Background())
+	state, err := s.turns.start(session.ID, turnID, msg.RequestID, writer, cancel)
+	if err != nil {
+		cancel()
+		_ = writer.write(ctx, ServerMessage{
+			Type:      "error",
+			RequestID: msg.RequestID,
+			SessionID: session.ID,
+			Error:     "a turn is already running — compact when it finishes",
+		})
+		return
+	}
+	defer cancel()
+
+	_ = writer.write(ctx, ServerMessage{Type: "turn_state", RequestID: msg.RequestID, SessionID: session.ID, TurnState: &state})
+	_ = writer.write(ctx, ServerMessage{Type: "notice", RequestID: msg.RequestID, SessionID: session.ID, Notice: "Compacting conversation…"})
+
+	updated, err := s.core.CompactSession(compactCtx, session.ID)
+	if err != nil {
+		// fail() is a no-op if the user stopped the turn (hub already deleted it),
+		// so a cancel does not surface as an error.
+		s.turns.fail(session.ID, "Compaction failed: "+err.Error())
+		return
+	}
+
+	// Broadcast the reset before finish() deletes the turn and its subscribers.
+	s.turns.recordSession(updated)
+	s.turns.recordContext(session.ID, 0, updated.ContextLimit)
+	_ = writer.write(ctx, ServerMessage{
+		Type:      "notice",
+		RequestID: msg.RequestID,
+		SessionID: session.ID,
+		Notice:    "Conversation compacted — the next turn continues from a summary plus recent messages.",
+	})
+	s.turns.finish(session.ID)
+
 	stateCtx, stateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stateCancel()
 	_ = s.writeState(stateCtx, writer)

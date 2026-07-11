@@ -753,6 +753,32 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeStreamEvent(enc, flusher, streamEvent{Type: "error", Error: err.Error()})
 		return
 	}
+	if slash.Compact {
+		turnID := uuid.NewString()
+		compactCtx, cancel := context.WithCancel(context.Background())
+		if _, startErr := s.turns.start(session.ID, turnID, "", nil, cancel); startErr != nil {
+			cancel()
+			writeStreamEvent(enc, flusher, streamEvent{Type: "error", Error: "a turn is already running — compact when it finishes"})
+			return
+		}
+		defer cancel()
+		writeStreamEvent(enc, flusher, streamEvent{Type: "notice", Notice: "Compacting conversation…"})
+		updated, cErr := s.core.CompactSession(compactCtx, session.ID)
+		if cErr != nil {
+			// fail() broadcasts the error to attached web clients (no-op if the
+			// turn was stopped); the CLI stream gets its own error event.
+			s.turns.fail(session.ID, "Compaction failed: "+cErr.Error())
+			writeStreamEvent(enc, flusher, streamEvent{Type: "error", Error: "Compaction failed: " + cErr.Error()})
+			return
+		}
+		s.turns.recordSession(updated)
+		s.turns.recordContext(session.ID, 0, updated.ContextLimit)
+		s.turns.finish(session.ID)
+		writeStreamEvent(enc, flusher, streamEvent{Type: "session", Session: &updated})
+		writeStreamEvent(enc, flusher, streamEvent{Type: "notice", Notice: "Conversation compacted — the next turn continues from a summary plus recent messages."})
+		writeStreamEvent(enc, flusher, streamEvent{Type: "done"})
+		return
+	}
 	if slash.Handled {
 		writeStreamEvent(enc, flusher, streamEvent{Type: "session", Session: &slash.Session})
 		writeStreamEvent(enc, flusher, streamEvent{Type: "notice", Notice: slash.Notice})

@@ -15,6 +15,10 @@ type SlashResult struct {
 	Handled bool
 	Session store.Session
 	Notice  string
+	// Compact marks a recognized /compact. The command is deferred to the
+	// caller (server), which runs it under the active-turn registry so it is
+	// guarded against concurrent turns and can stream progress like a real turn.
+	Compact bool
 }
 
 // HandleSlashCommand applies session-scoped slash commands without appending
@@ -89,11 +93,13 @@ func (c *Core) HandleSlashCommand(ctx context.Context, sessionID, input string) 
 		}
 		updated, err := c.store.UpdateSessionMetadata(ctx, sess.ID, sess.Name, arg, false)
 		return SlashResult{Handled: true, Session: updated, Notice: "Session description updated"}, err
+	case "compact":
+		return SlashResult{Handled: true, Compact: true, Session: sess}, nil
 	case "help":
 		return SlashResult{
 			Handled: true,
 			Session: sess,
-			Notice:  "/model <name>, /effort <level>, /profile <name|default>, /permission <approve|yolo>, /name <text>, /describe <text>",
+			Notice:  "/model <name>, /effort <level>, /profile <name|default>, /permission <approve|yolo>, /name <text>, /describe <text>, /compact",
 		}, nil
 	default:
 		return SlashResult{Handled: true, Session: sess, Notice: fmt.Sprintf("Unknown command /%s. Try /help.", command)}, nil

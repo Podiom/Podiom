@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -809,6 +810,132 @@ func TestReplayHistoryUsesRollingSummaryAndRecentMessages(t *testing.T) {
 	}
 	if got[len(got)-1].Content != "latest" {
 		t.Fatalf("recent tail not preserved: %+v", got[len(got)-1])
+	}
+}
+
+func TestSlashCompactIsRecognized(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "compacter", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "compacter", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	result, err := c.HandleSlashCommand(ctx, session.ID, "/compact")
+	if err != nil {
+		t.Fatalf("compact slash: %v", err)
+	}
+	if !result.Handled || !result.Compact {
+		t.Fatalf("expected handled+compact, got %+v", result)
+	}
+	// Recognizing /compact must not mutate the session; the server runs the work
+	// under the turn registry.
+	after, err := c.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if after.ProviderHandle != session.ProviderHandle {
+		t.Fatalf("recognizing /compact cleared the handle: %q -> %q", session.ProviderHandle, after.ProviderHandle)
+	}
+}
+
+func TestCompactSessionForcesSummaryClearsHandleAndResetsContext(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "compacter", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "compacter", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if session.ProviderHandle == "" {
+		t.Fatal("expected initial fake handle")
+	}
+
+	// 14 conversation messages: below the rollingSummaryMinMessages gate (16),
+	// so a successful compact proves the forced path bypasses that gate.
+	msgs := make([]store.Message, 14)
+	for i := range msgs {
+		role := store.RoleUser
+		if i%2 == 1 {
+			role = store.RoleAssistant
+		}
+		msgs[i] = store.Message{Role: role, Content: fmt.Sprintf("message %d", i)}
+	}
+	if _, err := c.store.AppendMessages(ctx, session.ID, msgs); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+	if err := c.store.UpdateSessionContext(ctx, session.ID, 150000, 200000); err != nil {
+		t.Fatalf("seed context: %v", err)
+	}
+
+	updated, err := c.CompactSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if strings.TrimSpace(updated.RollingSummary) == "" {
+		t.Fatal("expected a rolling summary to be generated")
+	}
+	if updated.ProviderHandle != "" {
+		t.Fatalf("compaction should clear provider handle, got %q", updated.ProviderHandle)
+	}
+	if updated.ContextTokens != 0 {
+		t.Fatalf("compaction should reset context tokens, got %d", updated.ContextTokens)
+	}
+	if updated.ContextLimit != 200000 {
+		t.Fatalf("compaction should preserve the context limit, got %d", updated.ContextLimit)
+	}
+
+	persisted, err := c.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if persisted.ProviderHandle != "" || persisted.ContextTokens != 0 {
+		t.Fatalf("compaction not persisted: handle=%q tokens=%d", persisted.ProviderHandle, persisted.ContextTokens)
+	}
+	if strings.TrimSpace(persisted.RollingSummary) == "" {
+		t.Fatal("rolling summary not persisted")
+	}
+}
+
+func TestCompactSessionNothingToCompact(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "compacter", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "compacter", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// 8 messages — fewer than recentReplayMessages (12), so nothing is older than
+	// the recent-replay window and there is nothing to summarize.
+	msgs := make([]store.Message, 8)
+	for i := range msgs {
+		msgs[i] = store.Message{Role: store.RoleUser, Content: "short"}
+	}
+	if _, err := c.store.AppendMessages(ctx, session.ID, msgs); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+
+	if _, err := c.CompactSession(ctx, session.ID); !errors.Is(err, ErrNothingToCompact) {
+		t.Fatalf("expected ErrNothingToCompact, got %v", err)
+	}
+	// A rejected compact must leave the handle intact.
+	persisted, err := c.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if persisted.ProviderHandle == "" {
+		t.Fatal("failed compaction must not clear the provider handle")
 	}
 }
 

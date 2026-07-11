@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,11 @@ const (
 	rollingSummaryInterval    = 10
 	summaryTimeout            = 45 * time.Second
 )
+
+// ErrNothingToCompact reports an explicit compaction request on a session whose
+// history already fits within the recent-replay window, so summarizing older
+// messages would have nothing to work on.
+var ErrNothingToCompact = errors.New("not enough history to compact")
 
 func replayHistory(sess store.Session, history []store.Message) []store.Message {
 	history = conversationMessages(history)
@@ -41,6 +47,15 @@ func (c *Core) refreshRollingSummaryBackground(sessionID string) {
 // RefreshRollingSummary precomputes a compact summary of older session history
 // so future profile/provider switches do not need to replay the full transcript.
 func (c *Core) RefreshRollingSummary(ctx context.Context, sessionID string) (store.Session, error) {
+	return c.refreshRollingSummary(ctx, sessionID, false)
+}
+
+// refreshRollingSummary generates the rolling summary. When force is true the
+// message-count and interval gates are bypassed (used by explicit /compact,
+// where the user has asked for compaction regardless of cadence); a forced
+// refresh with nothing older than the recent-replay window returns
+// ErrNothingToCompact instead of silently succeeding.
+func (c *Core) refreshRollingSummary(ctx context.Context, sessionID string, force bool) (store.Session, error) {
 	sess, err := c.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return store.Session{}, err
@@ -50,14 +65,19 @@ func (c *Core) RefreshRollingSummary(ctx context.Context, sessionID string) (sto
 		return store.Session{}, err
 	}
 	history = conversationMessages(history)
-	if len(history) < rollingSummaryMinMessages {
-		return sess, nil
-	}
-	if sess.RollingSummary != "" && len(history)%rollingSummaryInterval != 0 {
-		return sess, nil
+	if !force {
+		if len(history) < rollingSummaryMinMessages {
+			return sess, nil
+		}
+		if sess.RollingSummary != "" && len(history)%rollingSummaryInterval != 0 {
+			return sess, nil
+		}
 	}
 	olderEnd := len(history) - recentReplayMessages
 	if olderEnd <= 0 {
+		if force {
+			return sess, ErrNothingToCompact
+		}
 		return sess, nil
 	}
 	summary := c.generateSummaryWithModel(ctx, sess, history[:olderEnd])
@@ -65,6 +85,40 @@ func (c *Core) RefreshRollingSummary(ctx context.Context, sessionID string) (sto
 		summary = deterministicSummary(history[:olderEnd])
 	}
 	return c.store.UpdateRollingSummary(ctx, sessionID, summary)
+}
+
+// CompactSession is the explicit, user-requested counterpart to the background
+// rolling summary. It forces a fresh summary of older history, then clears the
+// provider resume handle so the next turn drops --resume and replays the
+// compacted history (summary + recent messages) into a fresh provider session —
+// the same mechanism a profile switch uses. The persisted context snapshot is
+// reset so the composer ring/toast drop immediately; the next turn re-measures
+// the true replayed size. The context limit is preserved so the ring stays
+// visible at ~0%.
+//
+// Racing the background refreshRollingSummaryBackground trigger is benign: both
+// paths end in UpdateRollingSummary and last write wins.
+func (c *Core) CompactSession(ctx context.Context, sessionID string) (store.Session, error) {
+	ctx, cancel := context.WithTimeout(ctx, summaryTimeout)
+	defer cancel()
+
+	sess, err := c.refreshRollingSummary(ctx, sessionID, true)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if strings.TrimSpace(sess.RollingSummary) == "" {
+		return store.Session{}, fmt.Errorf("summary generation produced no output")
+	}
+
+	updated, err := c.store.UpdateSessionProviderHandle(ctx, sessionID, "")
+	if err != nil {
+		return store.Session{}, err
+	}
+	if err := c.store.UpdateSessionContext(ctx, sessionID, 0, updated.ContextLimit); err != nil {
+		c.log.Warn("reset session context after compaction failed", "session", sessionID, "error", err)
+	}
+	updated.ContextTokens = 0
+	return updated, nil
 }
 
 func (c *Core) generateSummaryWithModel(ctx context.Context, sess store.Session, older []store.Message) string {

@@ -111,6 +111,20 @@
   let sending = $state(false);
   let unsubscribe: (() => void) | undefined;
   let countdown: number | undefined;
+
+  // Compaction: the in-chat suggestion toast and its lifecycle. compactState
+  // drives the toast's four faces; compactDismissed remembers, per session, the
+  // context-fill tier the user dismissed at (80 or 95) so a dismissal holds
+  // until the next tier. compactRequestId ties server replies back to the toast.
+  type CompactState = "idle" | "compacting" | "done" | "error";
+  let compactState = $state<CompactState>("idle");
+  let compactError = $state<string | null>(null);
+  let compactRequestId: string | null = null;
+  let compactDoneTimer: number | undefined;
+  let compactTimeoutTimer: number | undefined;
+  let compactDismissed = $state<Record<string, number>>({});
+  const COMPACT_SUGGEST_PCT = 80;
+  const COMPACT_URGENT_PCT = 95;
   let pendingSeed: string | null = null;
   let chatEl = $state<HTMLDivElement | null>(null);
   let sessColEl = $state<HTMLDivElement | null>(null);
@@ -144,6 +158,7 @@
     { cmd: "/profile", desc: "switch auth context — replays history" },
     { cmd: "/permission", desc: "approve or yolo for this session" },
     { cmd: "/name", desc: "rename the session" },
+    { cmd: "/compact", desc: "summarize older history to free up context" },
     { cmd: "/help", desc: "list every command" },
   ];
 
@@ -240,6 +255,17 @@
   const activeTurn = $derived(activeSession ? activeTurns[activeSession.ID] : undefined);
   const contextUsage = $derived(activeSession ? live.contextBySession[activeSession.ID] : undefined);
   const sessionUsage = $derived(activeSession ? live.usageBySession[activeSession.ID] : undefined);
+  const contextPct = $derived(contextUsage && contextUsage.max > 0 ? (contextUsage.used / contextUsage.max) * 100 : 0);
+  const compactDismissedTier = $derived(activeSession ? compactDismissed[activeSession.ID] ?? 0 : 0);
+  // Suggest at 80% full; a dismissal there holds until 95%, where the toast
+  // re-arms once more. Above 95% only a 95-tier dismissal silences it.
+  const compactSuggested = $derived(
+    !!activeSession &&
+      (contextPct >= COMPACT_URGENT_PCT
+        ? compactDismissedTier < COMPACT_URGENT_PCT
+        : contextPct >= COMPACT_SUGGEST_PCT && compactDismissedTier < COMPACT_SUGGEST_PCT),
+  );
+  const compactToastVisible = $derived(!!activeSession && (compactState !== "idle" || compactSuggested));
   const approvalHistory = $derived(activeSession ? approvalHistoryBySession[activeSession.ID] ?? [] : []);
   const currentApproval = $derived(
     pendingPermission
@@ -361,6 +387,15 @@
         break;
       case "turn_state":
         applyTurnState(msg.turn_state);
+        // If the user stopped a running compaction, the hub reports the pseudo-
+        // turn as stopped; return the toast to its suggestion face.
+        if (
+          compactState === "compacting" &&
+          msg.turn_state?.status === "stopped" &&
+          msg.turn_state.session_id === activeSession?.ID
+        ) {
+          resetCompactState();
+        }
         break;
       case "history":
         messages = msg.history ?? [];
@@ -415,10 +450,28 @@
         if (pendingFallback) forceScrollToBottom();
         break;
       case "notice":
+        // The toast owns messaging for its own compaction; swallow the server's
+        // progress notices so they don't also print in the bottom notice line.
+        // A typed /compact has no matching request id, so it still shows there.
+        if (msg.request_id && msg.request_id === compactRequestId) break;
         notice = msg.notice ?? null;
         sending = false;
         break;
       case "done":
+        if (msg.request_id && msg.request_id === compactRequestId) {
+          window.clearTimeout(compactTimeoutTimer);
+          compactState = "done";
+          compactRequestId = null;
+          if (activeSession) {
+            const { [activeSession.ID]: _cleared, ...rest } = compactDismissed;
+            compactDismissed = rest;
+          }
+          window.clearTimeout(compactDoneTimer);
+          compactDoneTimer = window.setTimeout(() => {
+            if (compactState === "done") compactState = "idle";
+          }, 4000);
+          // fall through so the generic done handling still clears `sending`.
+        }
         if (messageForActiveSession(msg)) {
           markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
           pendingPermission = null;
@@ -430,6 +483,13 @@
         window.setTimeout(() => live.send({ type: "list" }), 1200);
         break;
       case "error":
+        if (msg.request_id && msg.request_id === compactRequestId) {
+          window.clearTimeout(compactTimeoutTimer);
+          compactState = "error";
+          compactError = msg.error ?? "Compaction failed";
+          compactRequestId = null;
+          break;
+        }
         if (messageForActiveSession(msg)) {
           if (msg.error === "permission request not found") {
             // A stale approval (the request already timed out / the daemon moved
@@ -746,6 +806,85 @@
     if (error || notice) forceScrollToBottom();
   });
 
+  // The toast sits at the bottom of the transcript; when it appears (or changes
+  // face) while auto-follow is on, keep the view pinned so it stays visible.
+  $effect(() => {
+    void compactToastVisible;
+    void compactState;
+    if (stick) void scrollMessagesToBottom();
+  });
+
+  // Re-arm the dismissal once context drops well below the suggest tier — after
+  // a compaction resets usage, or when a fresh measurement comes in low — so a
+  // later climb past the threshold surfaces the toast again.
+  $effect(() => {
+    const id = activeSession?.ID;
+    if (id && contextPct > 0 && contextPct < COMPACT_SUGGEST_PCT - 10 && compactDismissed[id]) {
+      const { [id]: _cleared, ...rest } = compactDismissed;
+      compactDismissed = rest;
+    }
+  });
+
+  // Clear the toast's transient state (spinner/done/error + timers) when leaving
+  // a session; the suggestion itself re-derives from the new session's context.
+  function resetCompactState() {
+    compactState = "idle";
+    compactError = null;
+    compactRequestId = null;
+    window.clearTimeout(compactDoneTimer);
+    window.clearTimeout(compactTimeoutTimer);
+  }
+
+  function startCompact() {
+    if (!activeSession || compactState === "compacting") return;
+    if (activeTurn) return; // a turn is running; button is disabled, but guard anyway
+    if (live.status !== "live") {
+      error = "WebSocket is offline — reconnecting…";
+      return;
+    }
+    // Optimistic: flip to the spinner immediately so the click always registers,
+    // even though the summary model call takes a few seconds.
+    compactState = "compacting";
+    compactError = null;
+    compactRequestId = randomID();
+    if (
+      !send({
+        type: "send_turn",
+        request_id: compactRequestId,
+        session_id: activeSession.ID,
+        message: "/compact",
+      })
+    ) {
+      compactState = "error";
+      compactError = "WebSocket is offline — reconnecting…";
+      compactRequestId = null;
+      return;
+    }
+    // Safety net: if the daemon never answers (dropped connection), surface an
+    // error rather than spinning forever.
+    window.clearTimeout(compactTimeoutTimer);
+    compactTimeoutTimer = window.setTimeout(() => {
+      if (compactState === "compacting") {
+        compactState = "error";
+        compactError = "Timed out — try again.";
+        compactRequestId = null;
+      }
+    }, 60000);
+  }
+
+  function dismissCompact() {
+    if (compactState === "error") {
+      compactState = "idle";
+      compactError = null;
+    }
+    if (activeSession) {
+      compactDismissed = {
+        ...compactDismissed,
+        [activeSession.ID]: contextPct >= COMPACT_URGENT_PCT ? COMPACT_URGENT_PCT : COMPACT_SUGGEST_PCT,
+      };
+    }
+  }
+
   async function loadHistory(session: Session) {
     error = null;
     try {
@@ -760,6 +899,7 @@
       pendingPermission = null;
       resetApprovalForm();
       pendingUserInput = null;
+      resetCompactState();
       sending = !!activeTurns[detail.session.ID];
       attachActiveSession();
       // Opening a session (incl. via a notification tap) lands on the newest
@@ -878,6 +1018,7 @@
     resetApprovalForm();
     pendingUserInput = null;
     resetPlanReview();
+    resetCompactState();
     notice = null;
     error = null;
     if (isPhone) sessOpen = false;
@@ -1593,6 +1734,29 @@
 
       {#if notice}<div class="notice">{notice}</div>{/if}
       {#if error}<div class="row-start"><div class="bubble-error"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" /></svg>{error}</div></div>{/if}
+      {#if compactToastVisible}
+        <div class="compact-toast" class:ok={compactState === "done"} class:bad={compactState === "error"} role="status" aria-live="polite">
+          {#if compactState === "compacting"}
+            <span class="compact-spin" aria-hidden="true"></span>
+            <span class="compact-text">Compacting conversation…</span>
+          {:else if compactState === "done"}
+            <span class="compact-text">✓ Compacted — the next turn starts fresh from a summary.</span>
+          {:else if compactState === "error"}
+            <span class="compact-text">Compaction failed{compactError ? ` — ${compactError}` : ""}</span>
+            <button class="compact-btn" onclick={startCompact}>Retry</button>
+            <button class="compact-x" onclick={dismissCompact} aria-label="Dismiss">×</button>
+          {:else}
+            <span class="compact-dot" aria-hidden="true"></span>
+            <span class="compact-text">Context {Math.round(contextPct)}% full — compact to keep responses fast.</span>
+            <button
+              class="compact-btn"
+              disabled={!!activeTurn}
+              title={activeTurn ? "Waiting for the current turn to finish" : undefined}
+              onclick={startCompact}>Compact conversation</button>
+            <button class="compact-x" onclick={dismissCompact} aria-label="Dismiss">×</button>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     {#if approvalHistory.length > 0}
@@ -2429,6 +2593,91 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
+  }
+
+  /* Floating compaction toast. Rendered as the last child of .msgs and made
+     sticky, so at the bottom of the transcript it sits in normal flow (covering
+     nothing) and floats over just the bottom edge when the user scrolls up. */
+  .compact-toast {
+    position: sticky;
+    bottom: 6px;
+    z-index: 10; /* under the approval overlay (12) and dock (14) */
+    align-self: center;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(560px, 100%);
+    padding: 8px 12px 8px 15px;
+    background: #fbf1dd;
+    border: 1px solid #f0dca9;
+    border-radius: 999px;
+    color: #9a6e1e;
+    font: 600 12.5px "Hanken Grotesk", sans-serif;
+    box-shadow: 0 8px 22px rgba(90, 70, 30, 0.16);
+    animation: popIn 0.18s ease;
+  }
+  .compact-toast.ok {
+    background: #eaf3ef;
+    border-color: #cfe6da;
+    color: var(--teal-deep);
+  }
+  .compact-toast.bad {
+    background: #fbece7;
+    border-color: #f0cdbf;
+    color: var(--orange-ink, #b14e2a);
+  }
+  .compact-text {
+    min-width: 0;
+  }
+  .compact-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 99px;
+    background: currentColor;
+    box-shadow: 0 0 0 4px rgba(201, 154, 58, 0.2);
+  }
+  .compact-btn {
+    flex: none;
+    border: 1px solid #e3c98a;
+    background: #fff;
+    color: #9a6e1e;
+    border-radius: 999px;
+    padding: 4px 12px;
+    font: 650 12px "Hanken Grotesk", sans-serif;
+    cursor: pointer;
+  }
+  .compact-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .compact-x {
+    flex: none;
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .compact-x:hover {
+    opacity: 1;
+  }
+  .compact-spin {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    border-radius: 50%;
+    border: 2px solid rgba(154, 110, 30, 0.25);
+    border-top-color: #9a6e1e;
+    animation: compactSpin 0.8s linear infinite;
+  }
+  @keyframes compactSpin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .approval-dock {
@@ -3773,6 +4022,12 @@
       background: rgba(43, 37, 32, 0.22);
       backdrop-filter: blur(1px);
       padding: 0;
+    }
+
+    .compact-toast {
+      align-self: stretch;
+      border-radius: 14px;
+      flex-wrap: wrap;
     }
 
     .chat {
