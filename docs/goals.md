@@ -30,6 +30,17 @@ the background: it decomposes the goal into roadmap tasks and/or schedules
 timeline, and files access requests for anything it is missing. You can leave
 immediately.
 
+## Adding feedback
+
+From a goal's detail page, use **Add feedback** in the Activity section to leave
+strategy notes, constraints, or thoughts about next steps. Feedback is saved as
+a normal timeline entry and is included in the next planning or review session
+for the lead agent to consider.
+
+Adding feedback does **not** start a chat, interrupt the agent, trigger an
+immediate review, or create a back-and-forth. If you want the agent to consider
+it right away, add the feedback and then use **Review now**.
+
 ## Lifecycle
 
 | Status | Meaning |
@@ -86,8 +97,8 @@ endpoints.
 ## The timeline (audit trail)
 
 Every goal has an append-only activity timeline: planning and review sessions,
-progress entries with evidence, metric changes (old → new), plan changes,
-access requests and your decisions, status changes, and the completion
+your feedback, progress entries with evidence, metric changes (old → new), plan
+changes, access requests and your decisions, status changes, and the completion
 proposal. Each agent-produced entry links to the session that produced it, so
 any claim of progress is one click from its full transcript. Append-only is
 enforced in the database schema, not by convention.
@@ -108,6 +119,7 @@ those goals first under **Needs you**.
 - `DELETE /api/goals/<id>`
 - `GET  /api/goals/<id>/events` (`?limit=&before=`) — timeline pagination
 - `POST /api/goals/<id>/events` — record progress / metric updates (agent tools)
+- `POST /api/goals/<id>/feedback` — add user feedback for the next goal run
 - `POST /api/goals/<id>/propose-completion`
 - `POST /api/goals/<id>/review` — trigger a review now
 - `GET  /api/access-requests` (`?goal_id=&status=`), `POST /api/access-requests`

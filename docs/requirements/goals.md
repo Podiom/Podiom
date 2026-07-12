@@ -77,12 +77,18 @@ when the goal itself is deleted.
 | `payload` | kind-specific JSON (metric deltas, request id, old/new status…) |
 
 Kinds: `created`, `planning_started`, `review_started`, `progress`,
-`metric_update`, `plan_change`, `access_requested`, `access_decided`,
-`status_change`, `completion_proposed`.
+`metric_update`, `plan_change`, `user_feedback`, `access_requested`,
+`access_decided`, `status_change`, `completion_proposed`, `rate_limited`,
+`rate_limit_resolved`.
 
 `metric_update` events are the single write path for metric values: appending
 one applies its payload (`{name, current}` deltas) to `goals.metrics_json`
 in the same transaction.
+
+`user_feedback` events are user-authored notes for strategy, constraints, or
+next-step guidance. They have an empty `session_id`, are included in future
+goal planning/review prompts, and do not start a chat, trigger a review, notify
+the agent immediately, or change goal status/cadence.
 
 ### 2.3 Access requests
 
@@ -143,18 +149,19 @@ the agent re-detects availability at its next review.
   roadmap`). Goal sessions carry `goal_id` for attribution.
 - **Planning session** — created immediately (asynchronously) when a goal is
   created, for the lead agent. Prompt contract: the goal's full definition +
-  instructions to (a) decompose into roadmap tasks (`podiom_create_task`,
-  delegating to other agents where sensible) and/or schedules
-  (`podiom_create_schedule`), (b) record the plan via
+  recent `user_feedback` events + instructions to (a) decompose into roadmap
+  tasks (`podiom_create_task`, delegating to other agents where sensible)
+  and/or schedules (`podiom_create_schedule`), (b) record the plan via
   `podiom_record_goal_progress` (kind `plan_change`), and (c) file
-  `podiom_request_access` for any missing capability.
+  `podiom_request_access` for any missing capability. Feedback is guidance, not
+  a direct conversation, and must not override explicit success criteria.
 - **Review session** — fired on the goal's cadence (§5) or manually
-  ("Review now"). Prompt contract: goal definition + recent timeline +
-  decided access requests **including `decision_note` texts** + duties:
-  assess progress against criteria, adjust tasks/schedules, record a
-  `progress` event with evidence and metric updates, file access requests if
-  blocked, and call `podiom_propose_goal_completion` when the success
-  criteria are met.
+  ("Review now"). Prompt contract: goal definition + recent `user_feedback`
+  events + recent timeline + decided access requests **including
+  `decision_note` texts** + duties: assess progress against criteria, adjust
+  tasks/schedules while considering feedback as guidance, record a `progress`
+  event with evidence and metric updates, file access requests if blocked, and
+  call `podiom_propose_goal_completion` when the success criteria are met.
 - Both run **unattended** with the scheduled-run permission posture:
   pre-approved allow-list (read-only file tools + the `podiom_*` management
   tools), *not* yolo — unless the agent's own permission mode is yolo (e.g.
@@ -245,6 +252,10 @@ server-side, so provenance never depends on the model remembering to pass it.
 
 Deliberately absent: create/delete goal (goals are user-created), and any
 approve/deny surface (decisions are human-only).
+
+User feedback is also human-only: `POST /api/goals/<id>/feedback` appends a
+`user_feedback` event, and there is deliberately no agent tool for creating
+one.
 
 ## 10. Security considerations
 
