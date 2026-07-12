@@ -62,6 +62,10 @@ type goalProgressRequest struct {
 	SessionID     string                  `json:"session_id,omitempty"`
 }
 
+type goalFeedbackRequest struct {
+	Body string `json:"body"`
+}
+
 type goalProposeCompletionRequest struct {
 	ClosingReport string `json:"closing_report"`
 	SessionID     string `json:"session_id,omitempty"`
@@ -214,6 +218,8 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 		s.handleGoalItem(w, r, id)
 	case "events":
 		s.handleGoalEvents(w, r, id)
+	case "feedback":
+		s.handleGoalFeedback(w, r, id)
 	case "propose-completion":
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -392,6 +398,25 @@ func (s *Server) handleGoalEvents(w http.ResponseWriter, r *http.Request, id str
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleGoalFeedback(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req goalFeedbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ev, err := s.core.AddGoalFeedback(r.Context(), id, req.Body)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	s.broadcastGoalEvent(ev)
+	writeJSON(w, ev, nil)
 }
 
 func (s *Server) handleAccessRequests(w http.ResponseWriter, r *http.Request) {

@@ -349,6 +349,9 @@ const (
 	GoalEventMetricUpdate GoalEventKind = "metric_update"
 	// GoalEventPlanChange records tasks/schedules being created or adjusted.
 	GoalEventPlanChange GoalEventKind = "plan_change"
+	// GoalEventUserFeedback records a user-authored strategy note for future
+	// goal sessions. It does not start a session by itself.
+	GoalEventUserFeedback GoalEventKind = "user_feedback"
 	// GoalEventAccessRequested records an access request being filed.
 	GoalEventAccessRequested GoalEventKind = "access_requested"
 	// GoalEventAccessDecided records the user's decision on an access request.

@@ -518,6 +518,37 @@ var migrations = []migration{
 			ALTER TABLE messages_new RENAME TO messages;
 			CREATE INDEX idx_messages_session_seq ON messages(session_id, seq);`,
 	},
+	{
+		version: 20,
+		name:    "goal_user_feedback_events",
+		sql: `DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TABLE goal_events_new (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'user_feedback', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed', 'rate_limited', 'rate_limit_resolved')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		INSERT INTO goal_events_new (id, goal_id, session_id, kind, body, payload_json, created_at)
+		SELECT id, goal_id, session_id, kind, body, payload_json, created_at FROM goal_events;
+
+		DROP TABLE goal_events;
+		ALTER TABLE goal_events_new RENAME TO goal_events;
+
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

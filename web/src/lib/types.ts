@@ -439,6 +439,7 @@ export type GoalEventKind =
   | "progress"
   | "metric_update"
   | "plan_change"
+  | "user_feedback"
   | "access_requested"
   | "access_decided"
   | "status_change"

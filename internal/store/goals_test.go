@@ -153,17 +153,48 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 		t.Fatalf("events = %+v, want 5 newest-first", events)
 	}
 
+	var feedbackMigration string
+	for _, m := range migrations {
+		if m.version == 20 {
+			feedbackMigration = m.sql
+			break
+		}
+	}
+	if feedbackMigration == "" {
+		t.Fatal("missing v20 feedback migration")
+	}
+	if _, err := db.db.ExecContext(ctx, feedbackMigration); err != nil {
+		t.Fatalf("replay v20 feedback migration: %v", err)
+	}
+	events, err = db.ListGoalEvents(ctx, goal.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events after v20 replay: %v", err)
+	}
+	if len(events) != 5 || events[0].Kind != GoalEventRateLimitResolved {
+		t.Fatalf("events after v20 replay = %+v, want existing rows preserved", events)
+	}
+	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventUserFeedback, Body: "nudge strategy"}); err != nil {
+		t.Fatalf("append feedback: %v", err)
+	}
+	feedback, err := db.ListGoalEventsByKind(ctx, goal.ID, GoalEventUserFeedback, 10)
+	if err != nil {
+		t.Fatalf("list feedback: %v", err)
+	}
+	if len(feedback) != 1 || feedback[0].Body != "nudge strategy" {
+		t.Fatalf("feedback events = %+v", feedback)
+	}
+
 	// Cursor pagination: entries strictly older than `before`.
-	page, err := db.ListGoalEvents(ctx, goal.ID, 1, events[0].ID)
+	page, err := db.ListGoalEvents(ctx, goal.ID, 1, feedback[0].ID)
 	if err != nil {
 		t.Fatalf("list events page: %v", err)
 	}
-	if len(page) != 1 || page[0].Kind != GoalEventRateLimited {
-		t.Fatalf("page = %+v, want the rate-limited event", page)
+	if len(page) != 1 || page[0].Kind != GoalEventRateLimitResolved {
+		t.Fatalf("page = %+v, want the rate-limit-resolved event", page)
 	}
 
 	// Append-only: UPDATE is rejected at the schema level.
-	if _, err := db.db.ExecContext(ctx, `UPDATE goal_events SET body = 'tampered' WHERE id = ?`, events[0].ID); err == nil {
+	if _, err := db.db.ExecContext(ctx, `UPDATE goal_events SET body = 'tampered' WHERE id = ?`, feedback[0].ID); err == nil {
 		t.Fatalf("goal_events UPDATE should be rejected by trigger")
 	}
 

@@ -261,6 +261,52 @@ func TestGoalProgressEventsApplyMetrics(t *testing.T) {
 	}
 }
 
+func TestGoalFeedbackEndpointRecordsUserEventOnly(t *testing.T) {
+	_, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	goal := createGoalViaCore(t, srv, store.Goal{ReviewEvery: "24h"})
+	beforeNext := goal.NextReviewAt
+
+	req := httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/feedback", bytes.NewBufferString(`{"body":"  Keep launch scope small.  "}`))
+	rr := httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("feedback: %d %s", rr.Code, rr.Body.String())
+	}
+	var ev store.GoalEvent
+	if err := json.NewDecoder(rr.Body).Decode(&ev); err != nil {
+		t.Fatalf("decode feedback event: %v", err)
+	}
+	if ev.Kind != store.GoalEventUserFeedback || ev.SessionID != "" || ev.Body != "Keep launch scope small." {
+		t.Fatalf("feedback event = %+v", ev)
+	}
+	got, err := srv.core.GetGoal(context.Background(), goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if got.Status != store.GoalActive || got.NextReviewAt != beforeNext {
+		t.Fatalf("feedback changed lifecycle: before next=%q after=%+v", beforeNext, got)
+	}
+	events, _ := srv.core.ListGoalEvents(context.Background(), goal.ID, 0, 0)
+	if len(events) != 2 || events[0].Kind != store.GoalEventUserFeedback || events[1].Kind != store.GoalEventCreated {
+		t.Fatalf("timeline after feedback = %+v", events)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/feedback", bytes.NewBufferString(`{"body":"  "}`))
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code == http.StatusOK {
+		t.Fatalf("empty feedback should fail")
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/goals/missing/feedback", bytes.NewBufferString(`{"body":"hello"}`))
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code == http.StatusOK {
+		t.Fatalf("missing goal feedback should fail")
+	}
+}
+
 func TestAccessRequestGrantExecution(t *testing.T) {
 	paths, srv, cleanup := newGoalTestServer(t)
 	defer cleanup()

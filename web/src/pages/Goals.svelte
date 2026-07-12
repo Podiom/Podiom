@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    addGoalFeedback,
     approveAccessRequest,
     createGoal,
     deleteGoal,
@@ -65,6 +66,9 @@
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
   let busy = $state("");
+  let feedbackOpen = $state(false);
+  let feedbackBody = $state("");
+  let feedbackBusy = $state(false);
 
   // Create form.
   let cTitle = $state("");
@@ -118,6 +122,7 @@
     progress: { c: "#3f8f7e", t: "#e3f1ec", label: "Progress", ic: '<path d="M3 17l5-5 4 4 8-9"/><path d="M21 7v4h-4"/>' },
     metric_update: { c: "#2f6e60", t: "#e2f0ec", label: "Metric update", ic: '<path d="M5 20V11"/><path d="M12 20V5"/><path d="M19 20v-6"/><path d="M3 20h18"/>' },
     plan_change: { c: "#5847b8", t: "#eeeafb", label: "Plan updated", ic: '<path d="M4 4h6v16H4z"/><path d="M14 4h6v10h-6z"/>' },
+    user_feedback: { c: "#4a6fa8", t: "#e7eef7", label: "Your feedback", ic: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 8h8"/><path d="M8 12h5"/>' },
     access_requested: { c: "#d9663d", t: "#fbeae0", label: "Access requested", ic: '<path d="M8 11V8a4 4 0 0 1 8 0"/><path d="M5 11h14v9H5z"/><path d="M12 14v3"/>' },
     access_decided: { c: "#4f9e78", t: "#eaf1ed", label: "Access decided", ic: '<path d="M20 6 9 17l-5-5"/>' },
     status_change: { c: "#8a7f73", t: "#f1ece6", label: "Status changed", ic: '<path d="M7 4 4 7l3 3"/><path d="M4 7h11"/><path d="M17 20l3-3-3-3"/><path d="M20 17H9"/>' },
@@ -166,6 +171,8 @@
       detail = next;
       moreEvents = next.events.length >= PAGE;
       seedRecoveryTarget(next);
+      feedbackOpen = false;
+      feedbackBody = "";
       view = "detail";
       menuOpen = false;
       void ensureProfiles();
@@ -451,6 +458,23 @@
       error = e instanceof Error ? e.message : "Couldn't start the review.";
     } finally {
       busy = "";
+    }
+  }
+
+  async function submitFeedback(goal: Goal) {
+    const body = feedbackBody.trim();
+    if (!body || feedbackBusy) return;
+    feedbackBusy = true;
+    try {
+      await addGoalFeedback(goal.ID, body);
+      feedbackBody = "";
+      feedbackOpen = false;
+      await refreshDetail();
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Couldn't add feedback.";
+    } finally {
+      feedbackBusy = false;
     }
   }
 
@@ -990,7 +1014,29 @@
           <div class="timeline-head">
             <span class="section-label mono" style="margin-bottom:0">Activity</span>
             <span class="group-rule"></span>
+            <button class="btn feedback-toggle" onclick={() => (feedbackOpen = !feedbackOpen)}>
+              {feedbackOpen ? "Cancel" : "Add feedback"}
+            </button>
           </div>
+          {#if feedbackOpen}
+            <div class="feedback-composer">
+              <div class="field-label-row">
+                <div class="field-label mono">Feedback</div>
+                <VoiceButton size="sm" onText={(t) => (feedbackBody = appendTranscript(feedbackBody, t))} />
+              </div>
+              <textarea
+                class="field"
+                rows="3"
+                bind:value={feedbackBody}
+                placeholder="Strategy notes, constraints, or next-step thoughts for the next goal run."></textarea>
+              <div class="feedback-actions">
+                <button class="btn-primary" disabled={feedbackBusy || !feedbackBody.trim()} onclick={() => submitFeedback(g)}>
+                  {feedbackBusy ? "Saving…" : "Save feedback"}
+                </button>
+                <button class="btn" disabled={feedbackBusy} onclick={() => { feedbackOpen = false; feedbackBody = ""; }}>Cancel</button>
+              </div>
+            </div>
+          {/if}
           <div class="timeline">
             <div class="timeline-rule"></div>
             <div class="events">
@@ -2083,6 +2129,27 @@
     align-items: center;
     gap: 10px;
     margin-bottom: 18px;
+  }
+  .feedback-toggle {
+    flex: none;
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  .feedback-composer {
+    margin: -4px 0 20px;
+    padding: 14px;
+    border: 1px solid var(--field-line);
+    border-radius: 12px;
+    background: var(--surface-2);
+  }
+  .feedback-composer textarea {
+    width: 100%;
+    resize: vertical;
+  }
+  .feedback-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
   }
   .timeline {
     position: relative;

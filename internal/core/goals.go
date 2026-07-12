@@ -292,6 +292,30 @@ func (c *Core) ListGoalEvents(ctx context.Context, goalID string, limit int, bef
 	return c.store.ListGoalEvents(ctx, goalID, limit, before)
 }
 
+// AddGoalFeedback records a user-authored note for the lead agent to consider
+// during the next goal-origin planning or review run. It deliberately does not
+// start a session, change status, or advance review timing.
+func (c *Core) AddGoalFeedback(ctx context.Context, goalID, body string) (store.GoalEvent, error) {
+	goal, err := c.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return store.GoalEvent{}, fmt.Errorf("goal feedback body is required")
+	}
+	ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+		GoalID: goal.ID,
+		Kind:   store.GoalEventUserFeedback,
+		Body:   body,
+	})
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	c.log.Info("goal feedback recorded", "event", "goal", "goal", goal.ID)
+	return ev, nil
+}
+
 // ListGoalRateLimitBlocks returns a goal's durable rate-limit attention items.
 func (c *Core) ListGoalRateLimitBlocks(ctx context.Context, goalID string) ([]store.GoalRateLimitBlock, error) {
 	if _, err := c.store.GetGoal(ctx, goalID); err != nil {

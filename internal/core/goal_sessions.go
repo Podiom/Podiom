@@ -25,18 +25,20 @@ var goalAllowedTools = []string{
 
 // GoalPlanningPrompt renders the decomposition contract for a goal's initial
 // planning session.
-func GoalPlanningPrompt(goal store.Goal) string {
+func GoalPlanningPrompt(goal store.Goal, feedback []store.GoalEvent) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a new Podiom goal. Plan how to reach it.\n\n")
 	writeGoalBrief(&b, goal)
+	writeUserFeedback(&b, feedback)
 	b.WriteString(`## Your job right now (planning session)
 
 1. Decompose the goal into concrete work:
    - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable).
    - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id (this goal's ID, above) so it shows up linked to this goal.
-2. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
-3. If you are missing a capability (an MCP server, a skill, a host CLI tool, a credential, or a permission level), file podiom_request_access with a reason the user can act on. Do not work around a missing capability silently.
-4. Do not attempt the work itself in this session — this session only plans and requests.
+2. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
+3. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
+4. If you are missing a capability (an MCP server, a skill, a host CLI tool, a credential, or a permission level), file podiom_request_access with a reason the user can act on. Do not work around a missing capability silently.
+5. Do not attempt the work itself in this session — this session only plans and requests.
 
 The user is away. They will see your plan, your access requests, and this goal's timeline when they return.
 `)
@@ -46,10 +48,11 @@ The user is away. They will see your plan, your access requests, and this goal's
 // GoalReviewPrompt renders the periodic review contract: recent timeline and
 // access-request decisions (including the user's notes — their channel back to
 // the agent) plus the review duties.
-func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest) string {
+func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, feedback []store.GoalEvent) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a Podiom goal. This is a scheduled review session.\n\n")
 	writeGoalBrief(&b, goal)
+	writeUserFeedback(&b, feedback)
 
 	if len(requests) > 0 {
 		b.WriteString("## Your access requests\n\n")
@@ -84,10 +87,11 @@ func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []stor
 	b.WriteString(`## Your job right now (review session)
 
 1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted.
-2. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed.
-3. If you are blocked on a missing capability, file podiom_request_access. If the user answered a previous request (see above), act on their note.
-4. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
-5. Keep this session focused: review, adjust, record. The spawned tasks and schedules do the heavy lifting.
+2. Consider the user's recent feedback above as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
+3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed.
+4. If you are blocked on a missing capability, file podiom_request_access. If the user answered a previous request (see above), act on their note.
+5. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
+6. Keep this session focused: review, adjust, record. The spawned tasks and schedules do the heavy lifting.
 `)
 	return b.String()
 }
@@ -111,6 +115,24 @@ func writeGoalBrief(b *strings.Builder, goal store.Goal) {
 		for _, m := range goal.Metrics {
 			fmt.Fprintf(b, "  - %s: %g / %g %s\n", m.Name, m.Current, m.Target, m.Unit)
 		}
+	}
+	b.WriteString("\n")
+}
+
+func writeUserFeedback(b *strings.Builder, feedback []store.GoalEvent) {
+	if len(feedback) == 0 {
+		return
+	}
+	b.WriteString("## Recent user feedback (newest first)\n\n")
+	for _, ev := range feedback {
+		body := strings.TrimSpace(ev.Body)
+		if body == "" {
+			continue
+		}
+		if len(body) > 500 {
+			body = body[:500] + "…"
+		}
+		fmt.Fprintf(b, "- %s: %s\n", ev.CreatedAt, body)
 	}
 	b.WriteString("\n")
 }
@@ -234,12 +256,20 @@ func (c *Core) StartGoalPlanning(ctx context.Context, goalID string) (store.Sess
 	if err != nil {
 		return store.Session{}, err
 	}
+	feedback, err := c.store.ListGoalEventsByKind(ctx, goal.ID, store.GoalEventUserFeedback, goalFeedbackContextEvents)
+	if err != nil {
+		return store.Session{}, err
+	}
 	c.log.Info("goal planning started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal))
+	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal, feedback))
 }
 
 // goalReviewContextEvents caps how much timeline a review prompt replays.
 const goalReviewContextEvents = 20
+
+// goalFeedbackContextEvents caps how many user-authored feedback notes a goal
+// session receives as durable guidance.
+const goalFeedbackContextEvents = 20
 
 // RunGoalReview runs one unattended review session for an active goal: assess,
 // adjust, record, request, propose.
@@ -259,8 +289,12 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if err != nil {
 		return store.Session{}, err
 	}
+	feedback, err := c.store.ListGoalEventsByKind(ctx, goal.ID, store.GoalEventUserFeedback, goalFeedbackContextEvents)
+	if err != nil {
+		return store.Session{}, err
+	}
 	c.log.Info("goal review started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests))
+	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, feedback))
 }
 
 // AdvanceGoalReviewClock moves next_review_at one cadence forward from now.

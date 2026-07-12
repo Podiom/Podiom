@@ -126,6 +126,33 @@ func (s *Store) ListGoalEvents(ctx context.Context, goalID string, limit int, be
 	return events, rows.Err()
 }
 
+// ListGoalEventsByKind returns a goal's timeline entries of one kind, newest
+// first. It is used for durable user feedback context without depending on how
+// noisy the rest of the activity stream is.
+func (s *Store) ListGoalEventsByKind(ctx context.Context, goalID string, kind GoalEventKind, limit int) ([]GoalEvent, error) {
+	query := goalEventSelect + ` WHERE goal_id = ? AND kind = ? ORDER BY id DESC`
+	args := []any{goalID, kind}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list goal events for %q kind %q: %w", goalID, kind, err)
+	}
+	defer rows.Close()
+
+	var events []GoalEvent
+	for rows.Next() {
+		ev, err := scanGoalEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
+}
+
 const goalEventSelect = `SELECT id, goal_id, COALESCE(session_id, ''), kind, body, payload_json, created_at FROM goal_events`
 
 func scanGoalEvent(row scanner) (GoalEvent, error) {

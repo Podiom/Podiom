@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/config"
@@ -33,6 +34,58 @@ func TestGoalPlanningUsesStoredRunTarget(t *testing.T) {
 	}
 	if sess.Provider != config.ProviderCodex || sess.Model != "gpt-5.1" || sess.Effort != "high" {
 		t.Fatalf("goal planning target = %+v", sess)
+	}
+}
+
+func TestGoalFeedbackIsUserOnlyContextForGoalRuns(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"planned", "reviewed"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{
+		Title:       "Ship it",
+		LeadAgent:   "lead",
+		ReviewEvery: "24h",
+	})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := c.AddGoalFeedback(ctx, goal.ID, "   "); err == nil {
+		t.Fatalf("empty feedback should fail")
+	}
+	before := goal.NextReviewAt
+	ev, err := c.AddGoalFeedback(ctx, goal.ID, "Bias toward staged rollout.")
+	if err != nil {
+		t.Fatalf("add feedback: %v", err)
+	}
+	if ev.Kind != store.GoalEventUserFeedback || ev.SessionID != "" || ev.Body != "Bias toward staged rollout." {
+		t.Fatalf("feedback event = %+v", ev)
+	}
+	unchanged, err := c.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if unchanged.Status != store.GoalActive || unchanged.NextReviewAt != before {
+		t.Fatalf("feedback changed goal lifecycle: before next=%q after=%+v", before, unchanged)
+	}
+
+	if _, err := c.StartGoalPlanning(ctx, goal.ID); err != nil {
+		t.Fatalf("start planning: %v", err)
+	}
+	if len(fake.Requests) == 0 || !strings.Contains(fake.Requests[len(fake.Requests)-1].Message, "Bias toward staged rollout.") {
+		t.Fatalf("planning prompt did not include feedback: requests=%+v", fake.Requests)
+	}
+
+	if _, err := c.RunGoalReview(ctx, goal.ID); err != nil {
+		t.Fatalf("run review: %v", err)
+	}
+	if len(fake.Requests) < 2 || !strings.Contains(fake.Requests[len(fake.Requests)-1].Message, "Recent user feedback") ||
+		!strings.Contains(fake.Requests[len(fake.Requests)-1].Message, "Bias toward staged rollout.") {
+		t.Fatalf("review prompt did not include feedback: %q", fake.Requests[len(fake.Requests)-1].Message)
 	}
 }
 
