@@ -32,17 +32,40 @@ Podiom composes agent instructions in this fixed order:
 1. `$PODIOM_HOME/AGENTS.md`
 2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
 3. `$PODIOM_HOME/agents/<name>/SOUL.md`
+4. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, capped to the
+   current memory injection budget
 
 The delivery artifact depends on the provider:
 
 | Provider | Workspace artifact | Contents |
 | --- | --- | --- |
-| Claude | `workspace/CLAUDE.md` | A generated file with `@` imports for each instruction source. |
+| Claude | `workspace/CLAUDE.md` | A generated file with `@` imports for each instruction source. Memory is imported through a generated capped snapshot. |
 | Codex | `workspace/AGENTS.md` | A generated bundle concatenating the instruction sources in order. |
 
 Claude wiring landed in Phase 2 and Codex wiring landed in Phase 5. The
 workspace artifacts are generated and disposable; users edit only the canonical
-base, per-agent, and `SOUL.md` sources.
+base, per-agent, `SOUL.md`, and `MEMORY.md` sources.
+
+## Native Provider Agent Hints
+
+Podiom also projects its agents into provider-native agent/subagent features
+when the backing CLI supports them. These projections are best-effort hints so a
+provider can recognize which Podiom agent is calling and, where supported, offer
+the same Podiom agents as native delegation targets.
+
+Podiom remains authoritative. Native provider agents do not replace Podiom's
+stored agent definition, workspace, memory, tools, permissions, profiles, or
+instruction composition. If Claude or Codex rejects the generated native-agent
+configuration, Podiom logs the failure and continues the same run without native
+agent features.
+
+Generated native artifacts are disposable and should not be edited:
+
+- Claude receives in-process native agent definitions for the current turn; no
+  user Claude settings, profiles, or subagent files are modified.
+- Codex receives a generated profile overlay that points to disposable custom
+  agent files under Podiom agent workspaces; user `~/.codex/config.toml` is not
+  modified.
 
 The Podiom-owned base `AGENTS.md` also tells agents to pause before risky,
 broad, destructive, security-sensitive, or architecturally comprehensive code

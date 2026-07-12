@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 		mcpCommand:        "/tmp/podiomd",
 	}
 
-	args, cleanup, err := c.args(TurnRequest{
+	args, cleanup, _, err := c.args(TurnRequest{
 		SessionID: "session-1",
 		Settings: TurnSettings{
 			Model:             "sonnet",
@@ -33,7 +35,7 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 			PermissionTurnID:  "turn-1",
 			PermissionTimeout: 5 * time.Minute,
 		},
-	})
+	}, true)
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("args: %v", err)
@@ -84,7 +86,7 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 func TestClaudeArgsIncludesAssignedMCPServersStrictly(t *testing.T) {
 	workspace := t.TempDir()
 	c := &Claude{}
-	args, cleanup, err := c.args(TurnRequest{
+	args, cleanup, _, err := c.args(TurnRequest{
 		SessionID: "session-2",
 		Settings: TurnSettings{
 			PermissionMode: config.PermissionYolo,
@@ -96,7 +98,7 @@ func TestClaudeArgsIncludesAssignedMCPServersStrictly(t *testing.T) {
 				Args:      []string{"-y", "@modelcontextprotocol/server-filesystem"},
 			}},
 		},
-	})
+	}, true)
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("args: %v", err)
@@ -130,13 +132,13 @@ func TestClaudeArgsIncludesAssignedMCPServersStrictly(t *testing.T) {
 func TestClaudeArgsYoloBypassesPermissions(t *testing.T) {
 	c := &Claude{}
 	workspace := t.TempDir()
-	args, cleanup, err := c.args(TurnRequest{
+	args, cleanup, _, err := c.args(TurnRequest{
 		Handle: Handle{ID: "claude-session"},
 		Settings: TurnSettings{
 			PermissionMode: config.PermissionYolo,
 			WorkspaceDir:   workspace,
 		},
-	})
+	}, true)
 	defer cleanup()
 	if err != nil {
 		t.Fatalf("args: %v", err)
@@ -152,6 +154,92 @@ func TestClaudeArgsYoloBypassesPermissions(t *testing.T) {
 	// discovers the union (S6).
 	if !strings.Contains(got, "--add-dir "+workspace) {
 		t.Fatalf("expected --add-dir %s in args: %q", workspace, got)
+	}
+}
+
+func TestClaudeArgsIncludesBestEffortNativeAgents(t *testing.T) {
+	c := &Claude{}
+	workspace := t.TempDir()
+	args, cleanup, native, err := c.args(TurnRequest{
+		Settings: TurnSettings{
+			PermissionMode:  config.PermissionYolo,
+			WorkspaceDir:    workspace,
+			NativeAgentName: "podiom-builder-12345678",
+			NativeAgents: []NativeAgent{{
+				Name:         "podiom-builder-12345678",
+				Description:  "Podiom agent builder",
+				Instructions: "builder instructions",
+				Model:        "sonnet",
+				Effort:       "medium",
+			}},
+		},
+	}, true)
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("args: %v", err)
+	}
+	if !native {
+		t.Fatalf("expected native agent projection to be enabled")
+	}
+	got := strings.Join(args, " ")
+	for _, want := range []string{"--agents", "--agent podiom-builder-12345678"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("args %q missing %q", got, want)
+		}
+	}
+	idx := indexOf(args, "--agents")
+	if idx == -1 || idx+1 >= len(args) {
+		t.Fatalf("missing --agents payload: %#v", args)
+	}
+	if !strings.Contains(args[idx+1], `"podiom-builder-12345678"`) || !strings.Contains(args[idx+1], `"builder instructions"`) {
+		t.Fatalf("unexpected native agents JSON: %s", args[idx+1])
+	}
+}
+
+func TestClaudeNativeAgentFailureRetriesWithoutNativeAgents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	dir := t.TempDir()
+	fakeClaude := filepath.Join(dir, "claude")
+	if err := os.WriteFile(fakeClaude, []byte(`#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--agent" ]; then
+    echo "native agent rejected" >&2
+    exit 2
+  fi
+done
+cat >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"fallback ok"}]}}'
+`), 0o755); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+
+	c := &Claude{bin: fakeClaude}
+	events, err := c.SendTurn(context.Background(), TurnRequest{
+		Message: "hello",
+		Settings: TurnSettings{
+			PermissionMode:  config.PermissionYolo,
+			WorkspaceDir:    dir,
+			NativeAgentName: "podiom-builder-12345678",
+			NativeAgents: []NativeAgent{{
+				Name:         "podiom-builder-12345678",
+				Description:  "Podiom agent builder",
+				Instructions: "builder instructions",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send turn: %v", err)
+	}
+	var final string
+	for event := range events {
+		if event.Kind == EventAssistantMessage {
+			final = event.Content
+		}
+	}
+	if final != "fallback ok" {
+		t.Fatalf("final message = %q, want fallback ok", final)
 	}
 }
 

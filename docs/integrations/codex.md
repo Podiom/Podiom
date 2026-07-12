@@ -50,6 +50,8 @@ the instruction layers in this order:
 1. `$PODIOM_HOME/AGENTS.md`
 2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
 3. `$PODIOM_HOME/agents/<name>/SOUL.md`
+4. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, capped to the memory
+   injection budget
 
 Current Codex app-server behavior was checked against `codex-cli 0.142.4` by
 starting a thread with both a parent `agents/<name>/AGENTS.md` and a workspace
@@ -59,6 +61,23 @@ not double-loaded in that version. Podiom also has a runtime guard: if a future
 Codex response reports both the generated workspace file and the parent
 per-agent file, session startup fails instead of delivering duplicated
 instructions.
+
+## Native Agent Projection
+
+Podiom may also expose Podiom agents to Codex as custom-agent entries in the
+generated profile overlay. The overlay points to disposable custom-agent TOML
+files under Podiom agent workspaces and is passed through the same app-server
+configuration override path as generated MCP settings.
+
+This projection is best-effort and complementary. The root Codex thread still
+uses Podiom's generated workspace `AGENTS.md` for authoritative instructions;
+native custom agents only help Codex recognize Podiom agents and use them as
+native delegation targets when the installed Codex version supports that.
+
+Podiom does not edit user `~/.codex/config.toml` or user-owned Codex agent
+files. If Codex rejects the generated native-agent overlay, Podiom logs the
+failure and retries with the same MCP/profile overlay minus native-agent
+entries.
 
 ## Streaming
 

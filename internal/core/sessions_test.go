@@ -390,3 +390,43 @@ func TestSessionStartOmitsAbsentOptionalLayers(t *testing.T) {
 		t.Fatalf("empty MEMORY.md should not be referenced:\n%s", instructions)
 	}
 }
+
+func TestSessionStartAndTurnSendNativeAgentProjection(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+	c.noBg = true
+
+	lead, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "Lead", Provider: config.ProviderClaude})
+	if err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "Helper", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create helper: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: lead.Name, Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	startReq := startRequestFor(t, fake, session.ID)
+	if startReq.NativeAgentName == "" {
+		t.Fatalf("start request missing active native agent")
+	}
+	if len(startReq.NativeAgents) != 2 {
+		t.Fatalf("start request native agent count = %d, want 2", len(startReq.NativeAgents))
+	}
+
+	if _, err := c.AppendTurn(ctx, session.ID, "hello"); err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake turn requests = %d, want 1", len(fake.Requests))
+	}
+	turnReq := fake.Requests[0]
+	if turnReq.Settings.NativeAgentName != startReq.NativeAgentName {
+		t.Fatalf("turn native agent = %q, want start native agent %q", turnReq.Settings.NativeAgentName, startReq.NativeAgentName)
+	}
+	if len(turnReq.Settings.NativeAgents) != 2 {
+		t.Fatalf("turn native agent count = %d, want 2", len(turnReq.Settings.NativeAgents))
+	}
+}

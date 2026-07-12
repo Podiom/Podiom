@@ -109,6 +109,17 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		return store.Session{}, err
 	}
 	mcpServers, mcpAll = c.withInternalMCPServers(created, created.ID, mcpServers, mcpAll)
+	nativeAgentName, nativeAgents, nativeErr := c.nativeAgentsForProvider(ctx, created.Provider, agent.Name)
+	if nativeErr != nil {
+		c.log.Warn("native agent projection failed",
+			"event", "provider",
+			"session", created.ID,
+			"agent", agent.Name,
+			"provider", string(created.Provider),
+			"profile", created.Profile,
+			"error", nativeErr,
+		)
+	}
 	workspaceDir := c.sessionWorkspaceDir(agent.Name, projectCtx)
 	extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(agent.Name).Workspace, projectCtx)
 	handle, err := c.adapter.Start(ctx, adapter.StartRequest{
@@ -125,6 +136,8 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(agent.Name).Tools),
 		InstructionPath:    payload.Path,
 		Instructions:       payload.Bytes,
+		NativeAgentName:    nativeAgentName,
+		NativeAgents:       nativeAgents,
 		MCPServers:         mcpServers,
 		MCPAllServers:      mcpAll,
 	})
@@ -437,6 +450,15 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
+			nativeAgentName, nativeAgents, nativeErr := c.nativeAgentsForProvider(ctx, current.Provider, current.AgentName)
+			if nativeErr != nil {
+				runLog.Warn("native agent projection failed",
+					"stage", "native_agents",
+					"provider", string(current.Provider),
+					"profile", current.Profile,
+					"error", nativeErr,
+				)
+			}
 			workspaceDir := c.sessionWorkspaceDir(current.AgentName, projectCtx)
 			extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(current.AgentName).Workspace, projectCtx)
 			// Each attempt gets its own cancelable context: a rate-limited provider
@@ -445,7 +467,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			// fallback target reruns the turn.
 			attemptCtx, cancelAttempt := context.WithCancel(ctx)
 			defer cancelAttempt()
-			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, mcpServers, mcpAll))
+			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, nativeAgentName, nativeAgents, mcpServers, mcpAll))
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "dispatch", "provider", string(current.Provider), "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
@@ -622,7 +644,7 @@ func (c *Core) sessionExtraWorkspaceDirs(workspaceDir, agentWorkspace string, pr
 	return out
 }
 
-func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
+func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, nativeAgentName string, nativeAgents []adapter.NativeAgent, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
 	effectivePermission := sess.PermissionMode
 	relay := opts.PermissionRelay
 	if PlanGateActive(sess) {
@@ -654,6 +676,8 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
 			ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(sess.AgentName).Tools),
 			InstructionPath:    instructionPath,
+			NativeAgentName:    nativeAgentName,
+			NativeAgents:       nativeAgents,
 			PermissionTurnID:   firstNonEmpty(opts.PermissionTurnID, fmt.Sprintf("%s-%d", sess.ID, time.Now().UnixNano())),
 			PermissionTimeout:  c.permissionTimeout(),
 			Unattended:         opts.Unattended,

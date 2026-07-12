@@ -176,6 +176,61 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	}
 }
 
+func TestNativeAgentProjectionUsesCanonicalLayers(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+
+	agent, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "Builder.One", Provider: config.ProviderCodex, Model: "gpt-5", Effort: "high"})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	paths := c.AgentPaths(agent.Name)
+	if err := os.WriteFile(paths.Agents, []byte("agent layer\n"), 0o644); err != nil {
+		t.Fatalf("write agent AGENTS.md: %v", err)
+	}
+	if err := os.WriteFile(paths.Soul, []byte("soul layer\n"), 0o644); err != nil {
+		t.Fatalf("write SOUL.md: %v", err)
+	}
+	if err := c.WriteAgentMemory(agent.Name, "memory layer\n"); err != nil {
+		t.Fatalf("write memory: %v", err)
+	}
+
+	active, nativeAgents, err := c.nativeAgentsForProvider(ctx, config.ProviderCodex, agent.Name)
+	if err != nil {
+		t.Fatalf("native agents: %v", err)
+	}
+	if len(nativeAgents) != 1 {
+		t.Fatalf("native agent count = %d, want 1", len(nativeAgents))
+	}
+	native := nativeAgents[0]
+	if active != native.Name {
+		t.Fatalf("active native name = %q, want %q", active, native.Name)
+	}
+	if !strings.HasPrefix(native.Name, "podiom_builder_one_") {
+		t.Fatalf("unexpected codex native name %q", native.Name)
+	}
+	for _, want := range []string{"base layer", "agent layer", "soul layer", "memory layer", "Podiom remains the source of truth"} {
+		if !strings.Contains(native.Instructions, want) {
+			t.Fatalf("native instructions missing %q:\n%s", want, native.Instructions)
+		}
+	}
+	if native.Model != "gpt-5" || native.Effort != "high" {
+		t.Fatalf("native model/effort = %q/%q", native.Model, native.Effort)
+	}
+	if !strings.Contains(native.ConfigPath, filepath.Join("native-agents", "codex")) {
+		t.Fatalf("codex native config path should be disposable workspace artifact, got %q", native.ConfigPath)
+	}
+
+	claudeName := nativeAgentName(config.ProviderClaude, agent.Name)
+	if !strings.HasPrefix(claudeName, "podiom-builder-one-") || strings.Contains(claudeName, "_") {
+		t.Fatalf("unexpected claude native name %q", claudeName)
+	}
+	if nativeAgentName(config.ProviderClaude, agent.Name) != claudeName {
+		t.Fatalf("native name should be stable")
+	}
+}
+
 func TestAppendTurnHistorySurvivesReopen(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()

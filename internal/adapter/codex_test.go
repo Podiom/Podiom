@@ -443,6 +443,53 @@ func TestCodexAppServerLaunchUsesRootProfile(t *testing.T) {
 	}
 }
 
+func TestCodexProfileIncludesBestEffortNativeAgents(t *testing.T) {
+	profileDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "podiom_builder_12345678.toml")
+	codex := &Codex{}
+	name, _, content, nativeUsed, err := codex.ensureProfile(profileDir, "builder", nil, nil, []NativeAgent{{
+		Name:         "podiom_builder_12345678",
+		Description:  "Podiom agent builder",
+		Instructions: "builder instructions",
+		Model:        "gpt-5",
+		Effort:       "high",
+		ConfigPath:   configPath,
+	}})
+	if err != nil {
+		t.Fatalf("ensure profile: %v", err)
+	}
+	if name != "podiom-builder" {
+		t.Fatalf("profile name = %q, want podiom-builder", name)
+	}
+	if !nativeUsed {
+		t.Fatalf("expected native agent projection to be used")
+	}
+	for _, want := range []string{
+		"[agents.podiom_builder_12345678]",
+		"config_file = " + strconv.Quote(configPath),
+		"description = \"Podiom agent builder\"",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("profile missing %q:\n%s", want, content)
+		}
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read native config: %v", err)
+	}
+	nativeConfig := string(raw)
+	for _, want := range []string{
+		"name = \"podiom_builder_12345678\"",
+		"developer_instructions = \"builder instructions\"",
+		"model = \"gpt-5\"",
+		"model_reasoning_effort = \"high\"",
+	} {
+		if !strings.Contains(nativeConfig, want) {
+			t.Fatalf("native config missing %q:\n%s", want, nativeConfig)
+		}
+	}
+}
+
 func TestCodexAppServerStartupErrorIncludesStderr(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "stderr_exit")
 	codex := newTestCodex(t)

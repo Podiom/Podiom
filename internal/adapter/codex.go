@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,12 +73,25 @@ func (c *Codex) Start(ctx context.Context, req StartRequest) (Handle, error) {
 		return Handle{}, errors.New("codex workspace dir is required")
 	}
 	c.providerLog(req.SessionID, req.AgentName, req.Profile).Info("provider thread start requested", "event", "provider", "stage", "thread_start", "permission", string(req.PermissionMode), "mcp_servers", len(req.MCPServers), "extra_workspaces", len(req.ExtraWorkspaceDirs))
-	profileName, profileHash, profileConfig, err := c.ensureMCPProfile(req.ProfileDir, req.AgentName, req.MCPServers, req.MCPAllServers)
+	profileName, profileHash, profileConfig, nativeUsed, err := c.ensureProfile(req.ProfileDir, req.AgentName, req.MCPServers, req.MCPAllServers, req.NativeAgents)
+	if err != nil && errors.Is(err, errCodexNativeAgents) {
+		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("native agent projection failed; retrying without native agents", "stage", "native_agents", "error", podiomlog.Redact(err.Error()))
+		profileName, profileHash, profileConfig, nativeUsed, err = c.ensureProfile(req.ProfileDir, req.AgentName, req.MCPServers, req.MCPAllServers, nil)
+	}
 	if err != nil {
 		return Handle{}, err
 	}
 	client := c.client(req.ProfileDir, profileName, profileHash, profileConfig)
 	result, err := client.call(ctx, "thread/start", codexThreadStartParams(req))
+	if err != nil && nativeUsed {
+		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("native agent projection rejected; retrying without native agents", "stage", "native_agents", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
+		client.reset()
+		profileName, profileHash, profileConfig, _, err = c.ensureProfile(req.ProfileDir, req.AgentName, req.MCPServers, req.MCPAllServers, nil)
+		if err == nil {
+			client = c.client(req.ProfileDir, profileName, profileHash, profileConfig)
+			result, err = client.call(ctx, "thread/start", codexThreadStartParams(req))
+		}
+	}
 	if err != nil {
 		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider rpc failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
 		return Handle{}, err
@@ -117,7 +131,11 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 		return nil, errors.New("codex workspace dir is required")
 	}
 	c.turnLog(req).Info("provider turn start requested", "event", "provider", "stage", "turn_start", "thread", req.Handle.ID, "permission", string(req.Settings.PermissionMode), "mcp_servers", len(req.Settings.MCPServers), "extra_workspaces", len(req.Settings.ExtraWorkspaceDirs))
-	profileName, profileHash, profileConfig, err := c.ensureMCPProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers)
+	profileName, profileHash, profileConfig, nativeUsed, err := c.ensureProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers, req.Settings.NativeAgents)
+	if err != nil && errors.Is(err, errCodexNativeAgents) {
+		c.turnLog(req).Warn("native agent projection failed; retrying without native agents", "stage", "native_agents", "error", podiomlog.Redact(err.Error()))
+		profileName, profileHash, profileConfig, nativeUsed, err = c.ensureProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +157,8 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 			ExtraWorkspaceDirs: req.Settings.ExtraWorkspaceDirs,
 			MCPServers:         req.Settings.MCPServers,
 			MCPAllServers:      req.Settings.MCPAllServers,
+			NativeAgentName:    req.Settings.NativeAgentName,
+			NativeAgents:       req.Settings.NativeAgents,
 		})
 		if err != nil {
 			c.turnLog(req).Warn("provider thread start failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
@@ -147,8 +167,24 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 		threadID = handle.ID
 		firstEvents = append(firstEvents, Event{Kind: EventHandleUpdated, Handle: &handle})
 	} else if err := client.ensureThread(ctx, threadID, req.Settings); err != nil {
-		c.turnLog(req).Warn("provider thread resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiomlog.Redact(err.Error()))
-		return nil, err
+		if nativeUsed {
+			c.turnLog(req).Warn("native agent projection rejected; retrying resume without native agents", "stage", "native_agents", "method", "thread/resume", "error", podiomlog.Redact(err.Error()))
+			client.reset()
+			profileName, profileHash, profileConfig, _, err = c.ensureProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers, nil)
+			if err == nil {
+				client = c.client(req.Settings.ProfileDir, profileName, profileHash, profileConfig)
+				err = client.ensureThread(ctx, threadID, withoutCodexNativeAgents(req.Settings))
+			}
+			if err == nil {
+				nativeUsed = false
+			}
+		}
+		if err == nil {
+			c.turnLog(req).Info("provider thread resumed", "event", "provider", "stage", "thread_resume", "thread", threadID)
+		} else {
+			c.turnLog(req).Warn("provider thread resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiomlog.Redact(err.Error()))
+			return nil, err
+		}
 	} else {
 		c.turnLog(req).Info("provider thread resumed", "event", "provider", "stage", "thread_resume", "thread", threadID)
 	}
@@ -166,6 +202,20 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 			result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Settings))
 		} else {
 			c.turnLog(req).Warn("provider retry resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiomlog.Redact(resumeErr.Error()))
+		}
+	}
+	if err != nil && nativeUsed {
+		c.turnLog(req).Warn("native agent projection rejected; retrying turn without native agents", "stage", "native_agents", "method", "turn/start", "error", podiomlog.Redact(err.Error()))
+		client.reset()
+		profileName, profileHash, profileConfig, _, err = c.ensureProfile(req.Settings.ProfileDir, req.Settings.AgentName, req.Settings.MCPServers, req.Settings.MCPAllServers, nil)
+		if err == nil {
+			client = c.client(req.Settings.ProfileDir, profileName, profileHash, profileConfig)
+			fallbackSettings := withoutCodexNativeAgents(req.Settings)
+			if resumeErr := client.ensureThread(ctx, threadID, fallbackSettings); resumeErr == nil {
+				result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, fallbackSettings))
+			} else {
+				err = resumeErr
+			}
 		}
 	}
 	if err != nil {
@@ -250,19 +300,96 @@ func (c *Codex) client(profileDir, profileName, profileHash, profileConfig strin
 	return client
 }
 
-func (c *Codex) ensureMCPProfile(profileDir, agentName string, assigned, all []podiommcp.Server) (string, string, string, error) {
-	if len(assigned) == 0 && len(all) == 0 {
-		return "", "", "", nil
+var errCodexNativeAgents = errors.New("codex native agents projection failed")
+
+func (c *Codex) ensureProfile(profileDir, agentName string, assigned, all []podiommcp.Server, nativeAgents []NativeAgent) (string, string, string, bool, error) {
+	if len(assigned) == 0 && len(all) == 0 && len(nativeAgents) == 0 {
+		return "", "", "", false, nil
 	}
 	content, unavailable := podiommcp.CodexProfile(assigned, all)
 	if len(unavailable) > 0 {
-		return "", "", "", fmt.Errorf("mcp server(s) unavailable on codex: %s", strings.Join(unavailable, ", "))
+		return "", "", "", false, fmt.Errorf("mcp server(s) unavailable on codex: %s", strings.Join(unavailable, ", "))
 	}
+	nativeContent, err := codexNativeAgentsProfile(nativeAgents)
+	if err != nil {
+		return "", "", "", false, fmt.Errorf("%w: %v", errCodexNativeAgents, err)
+	}
+	content = joinTOML(content, nativeContent)
 	name, _, err := podiommcp.WriteCodexProfile(profileDir, agentName, content)
 	if err != nil {
-		return "", "", "", fmt.Errorf("write codex mcp profile: %w", err)
+		return "", "", "", false, fmt.Errorf("write codex profile: %w", err)
 	}
-	return name, podiommcp.ProfileHash(content), content, nil
+	return name, podiommcp.ProfileHash(content), content, nativeContent != "", nil
+}
+
+func codexNativeAgentsProfile(agents []NativeAgent) (string, error) {
+	if len(agents) == 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	for _, agent := range agents {
+		if strings.TrimSpace(agent.Name) == "" || strings.TrimSpace(agent.Description) == "" || strings.TrimSpace(agent.Instructions) == "" {
+			continue
+		}
+		if strings.TrimSpace(agent.ConfigPath) == "" {
+			return "", fmt.Errorf("native agent %q missing config path", agent.Name)
+		}
+		if err := writeCodexNativeAgentFile(agent); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "\n[agents.%s]\n", codexTOMLKey(agent.Name))
+		fmt.Fprintf(&b, "config_file = %s\n", codexTOMLString(agent.ConfigPath))
+		fmt.Fprintf(&b, "description = %s\n", codexTOMLString(agent.Description))
+	}
+	return strings.TrimLeft(b.String(), "\n"), nil
+}
+
+func writeCodexNativeAgentFile(agent NativeAgent) error {
+	if err := os.MkdirAll(filepath.Dir(agent.ConfigPath), 0o755); err != nil {
+		return fmt.Errorf("create native Codex agent dir: %w", err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "name = %s\n", codexTOMLString(agent.Name))
+	fmt.Fprintf(&b, "description = %s\n", codexTOMLString(agent.Description))
+	fmt.Fprintf(&b, "developer_instructions = %s\n", codexTOMLString(agent.Instructions))
+	if agent.Model != "" {
+		fmt.Fprintf(&b, "model = %s\n", codexTOMLString(agent.Model))
+	}
+	if agent.Effort != "" {
+		fmt.Fprintf(&b, "model_reasoning_effort = %s\n", codexTOMLString(agent.Effort))
+	}
+	if err := os.WriteFile(agent.ConfigPath, []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("write native Codex agent %s: %w", agent.ConfigPath, err)
+	}
+	return nil
+}
+
+func joinTOML(parts ...string) string {
+	var out []string
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+func withoutCodexNativeAgents(settings TurnSettings) TurnSettings {
+	settings.NativeAgentName = ""
+	settings.NativeAgents = nil
+	return settings
+}
+
+func codexTOMLString(s string) string {
+	return strconv.Quote(s)
+}
+
+func codexTOMLKey(s string) string {
+	if regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(s) {
+		return s
+	}
+	return codexTOMLString(s)
 }
 
 type codexClient struct {

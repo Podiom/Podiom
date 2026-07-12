@@ -42,6 +42,11 @@ type StartRequest struct {
 	ToolPathDirs    []string
 	InstructionPath string
 	Instructions    []byte
+	// NativeAgentName/NativeAgents are best-effort provider-native projections of
+	// Podiom agents. They are hints only; adapters must be able to drop them and
+	// continue with the normal Podiom instruction path.
+	NativeAgentName string
+	NativeAgents    []NativeAgent
 	MCPServers      []podiommcp.Server
 	MCPAllServers   []podiommcp.Server
 }
@@ -77,6 +82,8 @@ type TurnSettings struct {
 	// ToolPathDirs: see StartRequest.ToolPathDirs.
 	ToolPathDirs      []string
 	InstructionPath   string
+	NativeAgentName   string
+	NativeAgents      []NativeAgent
 	PermissionTurnID  string
 	PermissionTimeout time.Duration
 	// Unattended marks a run with no human at the keyboard (a scheduled run).
@@ -89,6 +96,19 @@ type TurnSettings struct {
 	AllowedTools  []string
 	MCPServers    []podiommcp.Server
 	MCPAllServers []podiommcp.Server
+}
+
+// NativeAgent is a provider-neutral, disposable projection of a Podiom agent.
+// Podiom remains authoritative; providers may use this to label the active
+// agent or expose Podiom agents as native delegation targets.
+type NativeAgent struct {
+	PodiomName   string
+	Name         string
+	Description  string
+	Instructions string
+	Model        string
+	Effort       string
+	ConfigPath   string
 }
 
 // RateStatus reports provider-exposed rate-limit utilization when available.

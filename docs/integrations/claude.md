@@ -24,6 +24,7 @@ Optional flags:
 | Session provider handle | `--resume <claude-session-id>` |
 | Model | `--model <name>` |
 | Effort | `--effort <level>` |
+| Best-effort Podiom agent projection | `--agents <json>` and `--agent <generated-name>` |
 | `yolo` permission mode | `--permission-mode bypassPermissions` |
 
 When a profile is set, Podiom exports `CLAUDE_CONFIG_DIR=<profile.config_dir>`.
@@ -39,8 +40,23 @@ absolute `@` imports in this order:
 1. `$PODIOM_HOME/AGENTS.md`
 2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
 3. `$PODIOM_HOME/agents/<name>/SOUL.md`
+4. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, through a generated
+   capped snapshot
 
 Claude auto-discovers `CLAUDE.md` because the workspace is the process cwd.
+
+## Native Agent Projection
+
+On each turn, Podiom may also pass generated Claude native agent definitions
+with `--agents` and select the active Podiom agent with `--agent`. This is a
+provider hint only: the generated definitions are built from Podiom's canonical
+agent layers, but Podiom still relies on the generated `CLAUDE.md` instruction
+path for correctness.
+
+Podiom does not edit Claude user settings, profile directories, or user-owned
+subagent files. If Claude rejects the native-agent flags or generated
+definitions, Podiom logs the native-agent failure and retries the same turn
+without `--agent`/`--agents`.
 
 ## Streaming
 

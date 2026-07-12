@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -93,99 +94,137 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 	if req.Settings.WorkspaceDir == "" {
 		return nil, errors.New("claude workspace dir is required")
 	}
-	args, cleanup, err := c.args(req)
+	run, err := c.startProcess(ctx, req, true)
 	if err != nil {
 		c.providerLog(req).Warn("provider turn setup failed", "stage", "args", "error", err)
 		return nil, err
 	}
+
+	out := make(chan Event, 32)
+	go func() {
+		defer close(out)
+		c.consumeProcess(ctx, req, run, out, true)
+	}()
+	return out, nil
+}
+
+type claudeProcess struct {
+	cmd           *osexec.Cmd
+	stdout        io.Reader
+	stderr        io.Reader
+	cleanup       func()
+	startedAt     time.Time
+	nativeEnabled bool
+}
+
+func (c *Claude) startProcess(ctx context.Context, req TurnRequest, allowNative bool) (claudeProcess, error) {
+	args, cleanup, nativeEnabled, err := c.args(req, allowNative)
+	if err != nil {
+		if allowNative && len(req.Settings.NativeAgents) > 0 {
+			c.providerLog(req).Warn("native agent projection failed; retrying without native agents", "stage", "native_agents", "error", err)
+			return c.startProcess(ctx, withoutClaudeNativeAgents(req), false)
+		}
+		return claudeProcess{}, err
+	}
 	cmd := podiomexec.Command(ctx, c.bin, args...)
 	cmd.Dir = req.Settings.WorkspaceDir
 	cmd.Env = c.env(req.Settings.ProfileDir, req.Settings.ToolPathDirs)
-
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cleanup()
 		c.providerLog(req).Warn("provider process pipe failed", "stage", "stdin", "error", err)
-		return nil, fmt.Errorf("claude stdin: %w", err)
+		return claudeProcess{}, fmt.Errorf("claude stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cleanup()
 		c.providerLog(req).Warn("provider process pipe failed", "stage", "stdout", "error", err)
-		return nil, fmt.Errorf("claude stdout: %w", err)
+		return claudeProcess{}, fmt.Errorf("claude stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cleanup()
 		c.providerLog(req).Warn("provider process pipe failed", "stage", "stderr", "error", err)
-		return nil, fmt.Errorf("claude stderr: %w", err)
+		return claudeProcess{}, fmt.Errorf("claude stderr: %w", err)
 	}
 	startedAt := time.Now()
-	c.providerLog(req).Info("provider process starting", "event", "provider", "stage", "start", "command", c.bin, "resuming", req.Handle.ID != "", "permission", string(req.Settings.PermissionMode), "mcp_servers", len(req.Settings.MCPServers), "extra_workspaces", len(req.Settings.ExtraWorkspaceDirs))
+	c.providerLog(req).Info("provider process starting", "event", "provider", "stage", "start", "command", c.bin, "resuming", req.Handle.ID != "", "permission", string(req.Settings.PermissionMode), "mcp_servers", len(req.Settings.MCPServers), "extra_workspaces", len(req.Settings.ExtraWorkspaceDirs), "native_agent", nativeEnabled)
 	if err := cmd.Start(); err != nil {
 		cleanup()
+		if nativeEnabled {
+			c.providerLog(req).Warn("native agent projection failed; retrying without native agents", "stage", "native_agents", "error", err)
+			return c.startProcess(ctx, withoutClaudeNativeAgents(req), false)
+		}
 		c.providerLog(req).Warn("provider process start failed", "stage", "start", "error", err)
-		return nil, fmt.Errorf("start claude: %w", err)
+		return claudeProcess{}, fmt.Errorf("start claude: %w", err)
 	}
-
 	if err := writeClaudeInput(stdin, req.Message, req.History, req.Handle.ID != ""); err != nil {
 		_ = podiomexec.Kill(cmd)
 		cleanup()
 		c.providerLog(req).Warn("provider stdin write failed", "stage", "write_input", "error", err)
-		return nil, err
+		return claudeProcess{}, err
 	}
 	c.providerLog(req).Info("provider input written", "event", "provider", "stage", "write_input", "history_messages", len(req.History), "resuming", req.Handle.ID != "")
+	return claudeProcess{cmd: cmd, stdout: stdout, stderr: stderr, cleanup: cleanup, startedAt: startedAt, nativeEnabled: nativeEnabled}, nil
+}
 
-	out := make(chan Event, 32)
+func (c *Claude) consumeProcess(ctx context.Context, req TurnRequest, run claudeProcess, out chan<- Event, allowNativeRetry bool) {
+	defer run.cleanup()
+	parsec := make(chan error, 1)
+	trackc := make(chan claudeStreamTrack, 1)
+	stderrc := make(chan stderrResult, 1)
+	parsed := make(chan Event, 32)
 	go func() {
-		defer cleanup()
-		defer close(out)
-		parsec := make(chan error, 1)
-		trackc := make(chan claudeStreamTrack, 1)
-		stderrc := make(chan stderrResult, 1)
-		parsed := make(chan Event, 32)
-		go func() {
-			parsec <- parseClaudeStream(ctx, stdout, parsed)
-			close(parsed)
-		}()
-		go c.trackClaudeStream(ctx, req, parsed, out, trackc)
-		go func() { stderrc <- collectStderr(stderr, claudeStderrTailLimit) }()
-		waitErr := cmd.Wait()
-		parseErr := <-parsec
-		track := <-trackc
-		stderrResult := <-stderrc
-		if ctx.Err() != nil {
-			c.providerLog(req).Info("provider process canceled", "event", "provider", "stage", "wait", podiomlog.DurationMS("duration_ms", time.Since(startedAt)))
-			return
-		}
-		if parseErr != nil {
-			c.providerLog(req).Warn("provider stream parse failed", "stage", "parse_stdout", "error", podiomlog.Redact(parseErr.Error()))
-			sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude stream error: %v", parseErr)})
-			return
-		}
-		if stderrResult.err != nil {
-			c.providerLog(req).Warn("provider stderr read failed", "stage", "read_stderr", "error", stderrResult.err, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
-			sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude stderr error: %v", stderrResult.err)})
-			return
-		}
-		if waitErr != nil {
-			if event, send := claudeWaitEvent(waitErr, stderrResult.text, track); send && event.Kind == EventRateLimited {
-				c.providerLog(req).Warn("provider rate limited", "stage", "wait", "rate_limited", true, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
-				sendAdapterEvent(ctx, out, event)
-				return
-			} else if !send {
-				c.providerLog(req).Warn("provider process exited after provider message", "event", "provider", "stage", "wait", "exit_error", waitErr, "provider_message", podiomlog.RedactTail(track.lastMessage, 4096), "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit), podiomlog.DurationMS("duration_ms", time.Since(startedAt)))
-				return
-			} else {
-				c.providerLog(req).Warn("provider process exited with error", "stage", "wait", "exit_error", waitErr, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
-				sendAdapterEvent(ctx, out, event)
+		parsec <- parseClaudeStream(ctx, run.stdout, parsed)
+		close(parsed)
+	}()
+	go c.trackClaudeStream(ctx, req, parsed, out, trackc)
+	go func() { stderrc <- collectStderr(run.stderr, claudeStderrTailLimit) }()
+	waitErr := run.cmd.Wait()
+	parseErr := <-parsec
+	track := <-trackc
+	stderrResult := <-stderrc
+	if ctx.Err() != nil {
+		c.providerLog(req).Info("provider process canceled", "event", "provider", "stage", "wait", podiomlog.DurationMS("duration_ms", time.Since(run.startedAt)))
+		return
+	}
+	if parseErr != nil {
+		c.providerLog(req).Warn("provider stream parse failed", "stage", "parse_stdout", "error", podiomlog.Redact(parseErr.Error()))
+		sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude stream error: %v", parseErr)})
+		return
+	}
+	if stderrResult.err != nil {
+		c.providerLog(req).Warn("provider stderr read failed", "stage", "read_stderr", "error", stderrResult.err, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+		sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude stderr error: %v", stderrResult.err)})
+		return
+	}
+	if waitErr != nil {
+		if run.nativeEnabled && allowNativeRetry && track.lastMessage == "" {
+			c.providerLog(req).Warn("native agent projection failed; retrying without native agents", "stage", "native_agents", "exit_error", waitErr, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+			fallback, err := c.startProcess(ctx, withoutClaudeNativeAgents(req), false)
+			if err != nil {
+				c.providerLog(req).Warn("provider process fallback start failed", "stage", "native_agents", "error", err)
+				sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: fmt.Sprintf("claude exited with native-agent error and fallback failed: %v", err)})
 				return
 			}
+			c.consumeProcess(ctx, withoutClaudeNativeAgents(req), fallback, out, false)
+			return
 		}
-		c.providerLog(req).Info("provider process finished", "event", "provider", "stage", "wait", "status", "success", podiomlog.DurationMS("duration_ms", time.Since(startedAt)))
-		sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
-	}()
-	return out, nil
+		if event, send := claudeWaitEvent(waitErr, stderrResult.text, track); send && event.Kind == EventRateLimited {
+			c.providerLog(req).Warn("provider rate limited", "stage", "wait", "rate_limited", true, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+			sendAdapterEvent(ctx, out, event)
+			return
+		} else if !send {
+			c.providerLog(req).Warn("provider process exited after provider message", "event", "provider", "stage", "wait", "exit_error", waitErr, "provider_message", podiomlog.RedactTail(track.lastMessage, 4096), "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit), podiomlog.DurationMS("duration_ms", time.Since(run.startedAt)))
+			return
+		} else {
+			c.providerLog(req).Warn("provider process exited with error", "stage", "wait", "exit_error", waitErr, "stderr_tail", podiomlog.RedactTail(stderrResult.text, claudeStderrTailLimit))
+			sendAdapterEvent(ctx, out, event)
+			return
+		}
+	}
+	c.providerLog(req).Info("provider process finished", "event", "provider", "stage", "wait", "status", "success", podiomlog.DurationMS("duration_ms", time.Since(run.startedAt)))
+	sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 }
 
 type claudeStreamTrack struct {
@@ -288,7 +327,7 @@ func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (ca
 	return caps, nil
 }
 
-func (c *Claude) args(req TurnRequest) ([]string, func(), error) {
+func (c *Claude) args(req TurnRequest, allowNative bool) ([]string, func(), bool, error) {
 	args := []string{
 		"-p",
 		"--input-format", "stream-json",
@@ -318,6 +357,18 @@ func (c *Claude) args(req TurnRequest) ([]string, func(), error) {
 	if req.Settings.Effort != "" {
 		args = append(args, "--effort", req.Settings.Effort)
 	}
+	nativeEnabled := false
+	if allowNative && len(req.Settings.NativeAgents) > 0 {
+		raw, err := claudeNativeAgentsJSON(req.Settings.NativeAgents)
+		if err != nil {
+			return nil, func() {}, false, err
+		}
+		args = append(args, "--agents", raw)
+		if req.Settings.NativeAgentName != "" {
+			args = append(args, "--agent", req.Settings.NativeAgentName)
+		}
+		nativeEnabled = true
+	}
 	if req.Handle.ID != "" {
 		args = append(args, "--resume", req.Handle.ID)
 	}
@@ -339,18 +390,52 @@ func (c *Claude) args(req TurnRequest) ([]string, func(), error) {
 		}
 	}
 	if needsPermissionMCP && (c.daemonAddr == "" || c.mcpCommand == "") {
-		return nil, cleanup, errors.New("claude approve mode needs daemon address and MCP command")
+		return nil, cleanup, nativeEnabled, errors.New("claude approve mode needs daemon address and MCP command")
 	}
 	configPath, err := c.writeMCPConfig(req)
 	if err != nil {
-		return nil, cleanup, err
+		return nil, cleanup, nativeEnabled, err
 	}
 	cleanup = func() { _ = os.Remove(configPath) }
 	args = append(args, "--mcp-config", configPath, "--strict-mcp-config")
 	if needsPermissionMCP {
 		args = append(args, "--permission-prompt-tool", "mcp__podiom_permission__prompt")
 	}
-	return args, cleanup, nil
+	return args, cleanup, nativeEnabled, nil
+}
+
+func claudeNativeAgentsJSON(agents []NativeAgent) (string, error) {
+	payload := map[string]map[string]any{}
+	for _, agent := range agents {
+		if strings.TrimSpace(agent.Name) == "" || strings.TrimSpace(agent.Description) == "" || strings.TrimSpace(agent.Instructions) == "" {
+			continue
+		}
+		entry := map[string]any{
+			"description": agent.Description,
+			"prompt":      agent.Instructions,
+		}
+		if agent.Model != "" {
+			entry["model"] = agent.Model
+		}
+		if agent.Effort != "" {
+			entry["effort"] = agent.Effort
+		}
+		payload[agent.Name] = entry
+	}
+	if len(payload) == 0 {
+		return "", errors.New("no valid native Claude agent definitions")
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode native Claude agents: %w", err)
+	}
+	return string(raw), nil
+}
+
+func withoutClaudeNativeAgents(req TurnRequest) TurnRequest {
+	req.Settings.NativeAgentName = ""
+	req.Settings.NativeAgents = nil
+	return req
 }
 
 func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
