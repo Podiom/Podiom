@@ -289,6 +289,7 @@ Slash commands can be sent as the message body:
 | `/permission approve|yolo` | Set permission mode. |
 | `/name <text>` | Rename the session. |
 | `/describe <text>` | Set the session description. |
+| `/compact` | Summarize older history to free the context window; the next turn replays the summary plus recent turns into a fresh backing session/thread. |
 | `/help` | Print command help. |
 
 ### `podiom schedules list`

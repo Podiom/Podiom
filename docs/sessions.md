@@ -72,4 +72,5 @@ roadmap sessions.
 | `/permission approve|yolo` | Override permission mode for subsequent turns. |
 | `/name <text>` | Set the session display name. |
 | `/describe <text>` | Set the session description. |
+| `/compact` | Summarize older history and free the context window. Forces a rolling summary, clears the provider handle, and replays the summary plus recent turns into a fresh backing session/thread on the next turn. |
 | `/help` | Show available commands. |

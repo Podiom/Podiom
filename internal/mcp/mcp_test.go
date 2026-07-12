@@ -221,6 +221,36 @@ func TestClaudeAndCodexConfigsInjectResolvedEnvValues(t *testing.T) {
 	}
 }
 
+func TestCodexConfigOverridesPreserveInlineEnvTable(t *testing.T) {
+	server := Server{
+		Name:      "unifi-network",
+		Transport: TransportStdio,
+		Command:   "/usr/local/bin/uvx",
+		Args:      []string{"unifi-network-mcp@latest"},
+		EnvVars: EnvVars{
+			{Name: "UNIFI_NETWORK_HOST", Value: "192.168.1.7"},
+			{Name: "UNIFI_NETWORK_PORT", Value: "8443"},
+			{Name: "UNIFI_NETWORK_USERNAME", Value: "mar-schmidt"},
+			{Name: "UNIFI_NETWORK_PASSWORD", Value: `D69H3rmg,Y7"`},
+		},
+	}
+
+	profile, _ := CodexProfile([]Server{server}, nil)
+	overrides := strings.Join(CodexConfigOverrides(profile), "\n")
+	if strings.Contains(overrides, `mcp_servers.unifi-network.env="{`) {
+		t.Fatalf("env override should be an inline table, not a string:\n%s", overrides)
+	}
+	for _, want := range []string{
+		`mcp_servers.unifi-network.env={UNIFI_NETWORK_HOST="192.168.1.7", UNIFI_NETWORK_PASSWORD="D69H3rmg,Y7\"", UNIFI_NETWORK_PORT="8443", UNIFI_NETWORK_USERNAME="mar-schmidt"}`,
+		`mcp_servers.unifi-network.args=["unifi-network-mcp@latest"]`,
+		`mcp_servers.unifi-network.default_tools_approval_mode="approve"`,
+	} {
+		if !strings.Contains(overrides, want) {
+			t.Fatalf("overrides missing %q:\n%s", want, overrides)
+		}
+	}
+}
+
 func TestImportNativeConfigsAndEnvStatus(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "present")
 	dir := t.TempDir()

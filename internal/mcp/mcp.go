@@ -699,6 +699,21 @@ func parseTOMLValue(v string) any {
 	if v == "false" {
 		return false
 	}
+	if strings.HasPrefix(v, "{") && strings.HasSuffix(v, "}") {
+		body := strings.TrimSpace(v[1 : len(v)-1])
+		out := map[string]any{}
+		if body == "" {
+			return out
+		}
+		for _, part := range splitCSV(body) {
+			k, val, ok := strings.Cut(part, "=")
+			if !ok {
+				continue
+			}
+			out[unquoteTOML(strings.TrimSpace(k))] = parseTOMLValue(strings.TrimSpace(val))
+		}
+		return out
+	}
 	if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
 		body := strings.TrimSpace(v[1 : len(v)-1])
 		if body == "" {
@@ -838,11 +853,32 @@ func tomlValue(v any) string {
 		return "false"
 	case []string:
 		return tomlStringArray(x)
+	case map[string]any:
+		return tomlMap(x)
+	case map[string]string:
+		m := make(map[string]any, len(x))
+		for k, v := range x {
+			m[k] = v
+		}
+		return tomlMap(m)
 	case string:
 		return tomlString(x)
 	default:
 		return tomlString(fmt.Sprint(x))
 	}
+}
+
+func tomlMap(values map[string]any) string {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", tomlKey(k), tomlValue(values[k])))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
 func envVarsFromLegacy(v any) EnvVars {
