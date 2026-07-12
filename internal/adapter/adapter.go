@@ -136,6 +136,11 @@ func (u TurnUsage) Total() int64 {
 type EventKind string
 
 const (
+	// EventReasoningDelta is an incremental reasoning/thinking text chunk. It is
+	// hidden from the current chat UI and kept separate from final assistant text.
+	EventReasoningDelta EventKind = "reasoning_delta"
+	// EventReasoningMessage is a completed reasoning/thinking text block.
+	EventReasoningMessage EventKind = "reasoning_message"
 	// EventAssistantDelta is an incremental assistant text chunk.
 	EventAssistantDelta EventKind = "assistant_delta"
 	// EventAssistantMessage is the final assistant message for the turn.

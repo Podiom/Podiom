@@ -188,6 +188,33 @@ func TestParseClaudeStream(t *testing.T) {
 	}
 }
 
+func TestParseClaudeReasoningStream(t *testing.T) {
+	input := strings.NewReader(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","text":"working"}}}
+{"type":"assistant","message":{"content":[{"type":"thinking","text":"private"},{"type":"text","text":"public"}]}}
+`)
+	out := make(chan Event, 8)
+	if err := parseClaudeStream(context.Background(), input, out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	var events []Event
+	for event := range out {
+		events = append(events, event)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %+v", events)
+	}
+	if events[0].Kind != EventReasoningDelta || events[0].Content != "working" {
+		t.Fatalf("bad reasoning delta: %+v", events[0])
+	}
+	if events[1].Kind != EventReasoningMessage || events[1].Content != "private" {
+		t.Fatalf("bad reasoning message: %+v", events[1])
+	}
+	if events[2].Kind != EventAssistantMessage || events[2].Content != "public" {
+		t.Fatalf("bad assistant message: %+v", events[2])
+	}
+}
+
 func TestParseClaudeRateLimitErrorEvent(t *testing.T) {
 	input := strings.NewReader(`{"type":"error","error":{"message":"Claude usage limit reached. Try again later."}}
 `)

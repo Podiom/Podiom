@@ -115,6 +115,31 @@ func TestCodexReplayMessageIncludesHistoryAndLiveTurn(t *testing.T) {
 	}
 }
 
+func TestCodexReasoningPhaseClassification(t *testing.T) {
+	text, reasoning := codexDelta(json.RawMessage(`{"delta":"work","phase":"analysis"}`))
+	if text != "work" || !reasoning {
+		t.Fatalf("phased delta = (%q, %v), want reasoning work", text, reasoning)
+	}
+	text, reasoning = codexDelta(json.RawMessage(`{"delta":"public"}`))
+	if text != "public" || reasoning {
+		t.Fatalf("unphased delta = (%q, %v), want visible assistant", text, reasoning)
+	}
+
+	completed := json.RawMessage(`{"turn":{"items":[
+		{"type":"agentMessage","text":"private","phase":"analysis"},
+		{"type":"agentMessage","text":"public","phase":"final_answer"}
+	]}}`)
+	if got := codexReasoningMessage(completed); got != "private" {
+		t.Fatalf("reasoning message = %q", got)
+	}
+	if got := codexFinalMessage(completed); got != "public" {
+		t.Fatalf("final message = %q", got)
+	}
+	if got := codexFinalMessage(json.RawMessage(`{"turn":{"items":[{"type":"agentMessage","text":"private","phase":"analysis"}]}}`)); got != "" {
+		t.Fatalf("non-final item leaked into final message: %q", got)
+	}
+}
+
 func TestCodexFileChangeApprovalUsesPatchSummary(t *testing.T) {
 	client := newCodexClient("codex", "", "", "", "", slogDiscard())
 	params := json.RawMessage(`{

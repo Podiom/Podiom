@@ -600,6 +600,10 @@ func (s *Server) recordWSTurnEvent(ctx context.Context, sessionID string, event 
 	switch event.Kind {
 	case "message_stored":
 		s.turns.recordMessage(sessionID, event.Message)
+	case adapter.EventReasoningDelta:
+		s.turns.recordReasoning(sessionID, event.Content, false)
+	case adapter.EventReasoningMessage:
+		s.turns.recordReasoning(sessionID, event.Content, true)
 	case adapter.EventAssistantDelta:
 		s.turns.recordDelta(sessionID, event.Content)
 	case adapter.EventAssistantMessage:
@@ -637,6 +641,10 @@ func (s *Server) writeTurnEvent(ctx context.Context, writer *wsWriter, requestID
 	switch event.Kind {
 	case "message_stored":
 		return writer.write(ctx, ServerMessage{Type: "message", RequestID: requestID, Message: event.Message})
+	case adapter.EventReasoningDelta:
+		return writer.write(ctx, ServerMessage{Type: "reasoning_delta", RequestID: requestID, Delta: event.Content})
+	case adapter.EventReasoningMessage:
+		return writer.write(ctx, ServerMessage{Type: "reasoning", RequestID: requestID, Delta: event.Content})
 	case adapter.EventAssistantDelta:
 		return writer.write(ctx, ServerMessage{Type: "delta", RequestID: requestID, Delta: event.Content})
 	case adapter.EventAssistantMessage:

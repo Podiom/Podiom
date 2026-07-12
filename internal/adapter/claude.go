@@ -501,19 +501,32 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 		if nested, ok := raw["event"].(map[string]any); ok {
 			if req, ok := claudeUserInputRequest(nested, line); ok {
 				events = append(events, Event{Kind: EventUserInputRequest, UserInputRequest: req})
-			} else if text := extractText(nested); text != "" {
-				events = append(events, Event{Kind: EventAssistantDelta, Content: text})
+			} else if text, reasoning := extractTextKind(nested); text != "" {
+				if reasoning {
+					events = append(events, Event{Kind: EventReasoningDelta, Content: text})
+				} else {
+					events = append(events, Event{Kind: EventAssistantDelta, Content: text})
+				}
 			}
 		}
-	case "assistant_delta", "text_delta", "content_block_delta":
-		if text := extractText(raw); text != "" {
-			events = append(events, Event{Kind: EventAssistantDelta, Content: text})
+	case "assistant_delta", "text_delta", "content_block_delta", "thinking_delta", "reasoning_delta":
+		if text, reasoning := extractTextKind(raw); text != "" {
+			if reasoning {
+				events = append(events, Event{Kind: EventReasoningDelta, Content: text})
+			} else {
+				events = append(events, Event{Kind: EventAssistantDelta, Content: text})
+			}
 		}
 	case "assistant", "message":
 		if req, ok := claudeUserInputRequest(raw, line); ok {
 			events = append(events, Event{Kind: EventUserInputRequest, UserInputRequest: req})
-		} else if text := extractText(raw); text != "" {
-			events = append(events, Event{Kind: EventAssistantMessage, Content: text})
+		} else {
+			if text := extractReasoningText(raw); text != "" {
+				events = append(events, Event{Kind: EventReasoningMessage, Content: text})
+			}
+			if text := extractText(raw); text != "" {
+				events = append(events, Event{Kind: EventAssistantMessage, Content: text})
+			}
 		}
 		if ctxEvent, ok := claudeContextEvent(raw); ok {
 			events = append(events, ctxEvent)
@@ -774,6 +787,64 @@ func extractText(raw map[string]any) string {
 	return contentText(raw["content"])
 }
 
+func extractTextKind(raw map[string]any) (string, bool) {
+	return extractText(raw), explicitReasoning(raw)
+}
+
+func explicitReasoning(raw map[string]any) bool {
+	if isReasoningType(firstString(raw, "type", "event")) {
+		return true
+	}
+	if delta, ok := raw["delta"].(map[string]any); ok && isReasoningType(firstString(delta, "type")) {
+		return true
+	}
+	if block, ok := raw["content_block"].(map[string]any); ok && isReasoningType(firstString(block, "type")) {
+		return true
+	}
+	return false
+}
+
+func extractReasoningText(raw map[string]any) string {
+	var parts []string
+	collectReasoningText(raw, &parts)
+	return strings.Join(parts, "")
+}
+
+func collectReasoningText(value any, parts *[]string) {
+	switch v := value.(type) {
+	case map[string]any:
+		if explicitReasoning(v) || isReasoningType(firstString(v, "type")) {
+			if text := firstString(v, "text", "content"); text != "" {
+				*parts = append(*parts, text)
+			}
+		}
+		if delta, ok := v["delta"]; ok {
+			collectReasoningText(delta, parts)
+		}
+		if block, ok := v["content_block"]; ok {
+			collectReasoningText(block, parts)
+		}
+		if message, ok := v["message"].(map[string]any); ok {
+			collectReasoningText(message["content"], parts)
+		}
+		if content, ok := v["content"]; ok {
+			collectReasoningText(content, parts)
+		}
+		if event, ok := v["event"]; ok {
+			collectReasoningText(event, parts)
+		}
+	case []any:
+		for _, item := range v {
+			collectReasoningText(item, parts)
+		}
+	}
+}
+
+func isReasoningType(raw string) bool {
+	raw = strings.ToLower(raw)
+	return strings.Contains(raw, "thinking") || strings.Contains(raw, "reasoning")
+}
+
 func contentText(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -785,6 +856,9 @@ func contentText(value any) string {
 			case string:
 				parts = append(parts, block)
 			case map[string]any:
+				if isReasoningType(firstString(block, "type")) {
+					continue
+				}
 				if text := firstString(block, "text", "content"); text != "" {
 					parts = append(parts, text)
 				}

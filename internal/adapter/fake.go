@@ -17,6 +17,7 @@ type Fake struct {
 	mu               sync.Mutex
 	started          map[string]Handle
 	Responses        []string
+	Reasoning        []string
 	Requests         []TurnRequest
 	StartRequests    []StartRequest
 	RateLimitedTurns int
@@ -77,8 +78,8 @@ func (f *Fake) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, err
 		f.mu.Unlock()
 		return nil, err
 	}
-	rateLimited, response := f.nextResult(req)
-	ch := make(chan Event, 2)
+	rateLimited, response, reasoning := f.nextResult(req)
+	ch := make(chan Event, 4)
 	go func() {
 		defer close(ch)
 		if rateLimited {
@@ -105,6 +106,13 @@ func (f *Fake) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, err
 			case <-ctx.Done():
 				return
 			case <-time.After(f.ResponseDelay):
+			}
+		}
+		if reasoning != "" {
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- Event{Kind: EventReasoningMessage, Content: reasoning}:
 			}
 		}
 		select {
@@ -185,18 +193,23 @@ func (f *Fake) RecordedDecisions() []PermissionDecision {
 	return out
 }
 
-func (f *Fake) nextResult(req TurnRequest) (bool, string) {
+func (f *Fake) nextResult(req TurnRequest) (bool, string, string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Requests = append(f.Requests, req)
+	reasoning := ""
+	if len(f.Reasoning) > 0 {
+		reasoning = f.Reasoning[0]
+		f.Reasoning = f.Reasoning[1:]
+	}
 	if f.RateLimitedTurns > 0 {
 		f.RateLimitedTurns--
-		return true, ""
+		return true, "", reasoning
 	}
 	if len(f.Responses) > 0 {
 		response := f.Responses[0]
 		f.Responses = f.Responses[1:]
-		return false, response
+		return false, response, reasoning
 	}
-	return false, fmt.Sprintf("fake response: %s", req.Message)
+	return false, fmt.Sprintf("fake response: %s", req.Message), reasoning
 }

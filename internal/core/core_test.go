@@ -237,6 +237,48 @@ func TestAppendTurnHistorySurvivesReopen(t *testing.T) {
 	}
 }
 
+func TestAppendTurnPersistsReasoningHiddenBeforeAssistant(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+	c.noBg = true
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "analyst", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "analyst", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	fake.Reasoning = []string{"private chain"}
+	fake.Responses = []string{"visible answer"}
+	written, err := c.AppendTurn(ctx, session.ID, "hello")
+	if err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	if len(written) != 3 {
+		t.Fatalf("expected user, reasoning, assistant messages, got %+v", written)
+	}
+	if written[1].Kind != store.KindReasoning || written[1].Content != "private chain" {
+		t.Fatalf("reasoning not persisted before assistant: %+v", written)
+	}
+	if written[2].Kind != store.KindMessage || written[2].Role != store.RoleAssistant || written[2].Content != "visible answer" {
+		t.Fatalf("assistant message mixed with reasoning: %+v", written)
+	}
+
+	fake.Responses = []string{"next answer"}
+	if _, err := c.AppendTurn(ctx, session.ID, "continue"); err != nil {
+		t.Fatalf("append second turn: %v", err)
+	}
+	last := fake.Requests[len(fake.Requests)-1]
+	for _, msg := range last.History {
+		if msg.Kind == store.KindReasoning || strings.Contains(msg.Content, "private chain") {
+			t.Fatalf("reasoning message was replayed to provider: %+v", last.History)
+		}
+	}
+}
+
 func TestFinalAssistantPersistSurvivesCanceledTurnContext(t *testing.T) {
 	ctx := context.Background()
 	c, cleanup := newTestCore(t)

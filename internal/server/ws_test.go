@@ -104,6 +104,66 @@ func TestWebSocketSendTurn(t *testing.T) {
 	t.Fatalf("missing expected events: session=%v assistant=%v done=%v final_state=%v", sawSession, sawAssistant, sawDone, sawFinalState)
 }
 
+func TestWebSocketStreamsReasoningSeparately(t *testing.T) {
+	ctx := context.Background()
+	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)
+	defer cleanup()
+	fake.Reasoning = []string{"private chain"}
+	fake.Responses = []string{"visible answer"}
+
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "webber", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	conn := dialWSTest(t, wsURL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if err := wsjson.Write(ctx, conn, ClientMessage{
+		Type:      "send_turn",
+		RequestID: "req-1",
+		AgentName: "webber",
+		Message:   "hello",
+	}); err != nil {
+		t.Fatalf("write send_turn: %v", err)
+	}
+
+	var sessionID string
+	var sawReasoning, sawAssistant, sawDone bool
+	for i := 0; i < 16; i++ {
+		var msg ServerMessage
+		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := wsjson.Read(readCtx, conn, &msg)
+		cancel()
+		if err != nil {
+			t.Fatalf("read ws: %v", err)
+		}
+		if msg.Type == "session" && msg.Session != nil {
+			sessionID = msg.Session.ID
+		}
+		if msg.Type == "reasoning" && msg.Delta == "private chain" {
+			sawReasoning = true
+		}
+		if msg.Type == "assistant" && msg.Delta == "visible answer" {
+			sawAssistant = true
+		}
+		if msg.Type == "done" {
+			sawDone = true
+		}
+		if sessionID != "" && sawReasoning && sawAssistant && sawDone {
+			break
+		}
+	}
+	if sessionID == "" || !sawReasoning || !sawAssistant || !sawDone {
+		t.Fatalf("missing reasoning stream events: session=%q reasoning=%v assistant=%v done=%v", sessionID, sawReasoning, sawAssistant, sawDone)
+	}
+	history, err := coreSvc.History(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 3 || history[1].Kind != store.KindReasoning || history[1].Content != "private chain" || history[2].Content != "visible answer" {
+		t.Fatalf("reasoning was not persisted before assistant: %+v", history)
+	}
+}
+
 func TestWebSocketActiveTurnSurvivesReconnectWithPermission(t *testing.T) {
 	ctx := context.Background()
 	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)

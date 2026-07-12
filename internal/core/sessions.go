@@ -348,6 +348,11 @@ type TurnEvent struct {
 	Usage *store.SessionUsage
 }
 
+type turnOutput struct {
+	assistant string
+	reasoning string
+}
+
 // AppendTurn persists the user turn, drives the adapter, persists the assistant
 // reply, and returns the new history entries.
 func (c *Core) AppendTurn(ctx context.Context, sessionID, userMessage string) ([]store.Message, error) {
@@ -446,7 +451,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			assistant, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, current.ProviderHandle, events)
+			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, current.ProviderHandle, events)
 			if !ok {
 				runLog.Info("turn aborted", "provider", string(current.Provider))
 				return
@@ -484,14 +489,25 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				continue
 			}
 			duration := time.Since(startedAt)
-			if assistant.Len() == 0 {
+			if output.assistant == "" && output.reasoning == "" {
 				runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", 0, "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
 				return
 			}
-			assistantMessages, err := c.appendFinalMessages(ctx, sessionID, []store.Message{{
-				Role:    store.RoleAssistant,
-				Content: assistant.String(),
-			}})
+			var finalMessages []store.Message
+			if output.reasoning != "" {
+				finalMessages = append(finalMessages, store.Message{
+					Role:    store.RoleAssistant,
+					Kind:    store.KindReasoning,
+					Content: output.reasoning,
+				})
+			}
+			if output.assistant != "" {
+				finalMessages = append(finalMessages, store.Message{
+					Role:    store.RoleAssistant,
+					Content: output.assistant,
+				})
+			}
+			assistantMessages, err := c.appendFinalMessages(ctx, sessionID, finalMessages)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "persist", "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
@@ -501,7 +517,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				go c.autoNameSessionBackground(sessionID)
 				go c.refreshRollingSummaryBackground(sessionID)
 			}
-			runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", assistant.Len(), "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
+			runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", len(output.assistant), "reasoning_bytes", len(output.reasoning), "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
 			for _, msg := range assistantMessages {
 				msg := msg
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "message_stored", Message: &msg}) {
@@ -731,29 +747,40 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 	return assigned, cat.Servers, nil
 }
 
-func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (strings.Builder, bool, bool) {
-	var assistant strings.Builder
+func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
+	var assistant, reasoning strings.Builder
 	currentProviderHandle := providerHandle
 	for event := range events {
 		switch event.Kind {
+		case adapter.EventReasoningDelta:
+			reasoning.WriteString(event.Content)
+			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
+				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+			}
+		case adapter.EventReasoningMessage:
+			reasoning.Reset()
+			reasoning.WriteString(event.Content)
+			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
+				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+			}
 		case adapter.EventAssistantDelta:
 			assistant.WriteString(event.Content)
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
-				return assistant, false, false
+				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 			}
 		case adapter.EventAssistantMessage:
 			assistant.Reset()
 			assistant.WriteString(event.Content)
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
-				return assistant, false, false
+				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 			}
 		case adapter.EventPermissionRequest:
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, PermissionRequest: event.PermissionRequest}) {
-				return assistant, false, false
+				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 			}
 		case adapter.EventUserInputRequest:
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, UserInputRequest: event.UserInputRequest}) {
-				return assistant, false, false
+				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 			}
 		case adapter.EventHandleUpdated:
 			if event.Handle != nil {
@@ -762,7 +789,7 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				}
 				if _, err := c.store.UpdateSessionProviderHandle(ctx, sessionID, event.Handle.ID); err != nil {
 					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
-					return assistant, false, false
+					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 				}
 				currentProviderHandle = event.Handle.ID
 				c.log.Info("provider handle stored",
@@ -793,7 +820,7 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 					c.log.Warn("persist session context failed", "event", "provider", "session", sessionID, "error", err)
 				}
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ContextStatus: event.ContextStatus}) {
-					return assistant, false, false
+					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 				}
 			}
 		case adapter.EventTurnUsage:
@@ -819,16 +846,16 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 					}
 					usage := total
 					if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Usage: &usage}) {
-						return assistant, false, false
+						return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 					}
 				}
 			}
 		case adapter.EventRateLimited:
-			return assistant, true, true
+			return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, true, true
 		case adapter.EventTurnDone:
 		}
 	}
-	return assistant, false, true
+	return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, true
 }
 
 // History returns a session's canonical history.

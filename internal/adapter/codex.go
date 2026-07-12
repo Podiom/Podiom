@@ -888,12 +888,21 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 			}
 			switch event.method {
 			case "item/agentMessage/delta":
-				if text := codexDelta(event.params); text != "" {
-					if !sendAdapterEvent(ctx, out, Event{Kind: EventAssistantDelta, Content: text}) {
+				if text, reasoning := codexDelta(event.params); text != "" {
+					kind := EventAssistantDelta
+					if reasoning {
+						kind = EventReasoningDelta
+					}
+					if !sendAdapterEvent(ctx, out, Event{Kind: kind, Content: text}) {
 						return
 					}
 				}
 			case "turn/completed":
+				if text := codexReasoningMessage(event.params); text != "" {
+					if !sendAdapterEvent(ctx, out, Event{Kind: EventReasoningMessage, Content: text}) {
+						return
+					}
+				}
 				if text := codexFinalMessage(event.params); text != "" {
 					if !sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: text}) {
 						return
@@ -1219,12 +1228,17 @@ func codexNotificationKey(method string, params json.RawMessage) (codexTurnKey, 
 	}
 }
 
-func codexDelta(params json.RawMessage) string {
+func codexDelta(params json.RawMessage) (string, bool) {
 	var p struct {
 		Delta string `json:"delta"`
+		Phase string `json:"phase"`
+		Item  struct {
+			Phase string `json:"phase"`
+		} `json:"item"`
 	}
 	_ = json.Unmarshal(params, &p)
-	return p.Delta
+	phase := firstNonEmptyString(p.Phase, p.Item.Phase)
+	return p.Delta, phase != "" && phase != "final_answer"
 }
 
 func codexFinalMessage(params json.RawMessage) string {
@@ -1241,21 +1255,40 @@ func codexFinalMessage(params json.RawMessage) string {
 		return ""
 	}
 	var finals []string
-	var fallback []string
 	for _, item := range p.Turn.Items {
 		if item.Type != "agentMessage" || strings.TrimSpace(item.Text) == "" {
 			continue
 		}
 		if item.Phase == "final_answer" {
 			finals = append(finals, item.Text)
-		} else {
-			fallback = append(fallback, item.Text)
 		}
 	}
-	if len(finals) > 0 {
-		return strings.Join(finals, "\n")
+	return strings.Join(finals, "\n")
+}
+
+func codexReasoningMessage(params json.RawMessage) string {
+	var p struct {
+		Turn struct {
+			Items []struct {
+				Type  string `json:"type"`
+				Text  string `json:"text"`
+				Phase string `json:"phase"`
+			} `json:"items"`
+		} `json:"turn"`
 	}
-	return strings.Join(fallback, "\n")
+	if err := json.Unmarshal(params, &p); err != nil {
+		return ""
+	}
+	var reasoning []string
+	for _, item := range p.Turn.Items {
+		if item.Type != "agentMessage" || strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		if item.Phase != "" && item.Phase != "final_answer" {
+			reasoning = append(reasoning, item.Text)
+		}
+	}
+	return strings.Join(reasoning, "\n")
 }
 
 func codexErrorMessage(params json.RawMessage) string {

@@ -494,8 +494,29 @@ var migrations = []migration{
 			resolved_at       TEXT
 		);
 
-		CREATE INDEX idx_goal_rate_limits_goal ON goal_rate_limits(goal_id, created_at DESC);
-		CREATE INDEX idx_goal_rate_limits_status ON goal_rate_limits(status);`,
+			CREATE INDEX idx_goal_rate_limits_goal ON goal_rate_limits(goal_id, created_at DESC);
+			CREATE INDEX idx_goal_rate_limits_status ON goal_rate_limits(status);`,
+	},
+	{
+		version: 19,
+		name:    "message_reasoning_kind",
+		sql: `CREATE TABLE messages_new (
+				id         INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+				seq        INTEGER NOT NULL,
+				role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+				kind       TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'error', 'reasoning')),
+				content    TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				UNIQUE (session_id, seq)
+			);
+
+			INSERT INTO messages_new (id, session_id, seq, role, kind, content, created_at)
+			SELECT id, session_id, seq, role, kind, content, created_at FROM messages;
+
+			DROP TABLE messages;
+			ALTER TABLE messages_new RENAME TO messages;
+			CREATE INDEX idx_messages_session_seq ON messages(session_id, seq);`,
 	},
 }
 

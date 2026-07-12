@@ -412,8 +412,12 @@
         clearPendingRequests();
         if (msg.message && !messages.some((e) => sameMessage(e, msg.message))) {
           messages = [...messages, msg.message];
-          if (msg.message.Role === "assistant") pendingAssistant = "";
+          if (msg.message.Role === "assistant" && msg.message.Kind !== "reasoning") pendingAssistant = "";
         }
+        break;
+      case "reasoning_delta":
+      case "reasoning":
+        if (!messageForActiveSession(msg)) break;
         break;
       case "delta":
         if (!messageForActiveSession(msg)) break;
@@ -699,7 +703,7 @@
 
   function transcriptPlainText(selectedMessages: Message[]): string {
     const parts = [`Podiom chat - ${sessionTitle}`];
-    for (const message of selectedMessages) {
+    for (const message of visibleMessages(selectedMessages)) {
       const time = transcriptTime(message);
       const speaker = transcriptSpeaker(message);
       const label = time ? `[${time}] ${speaker}:` : `${speaker}:`;
@@ -709,7 +713,7 @@
   }
 
   function transcriptHTML(selectedMessages: Message[]): string {
-    const articles = selectedMessages.map((message) => {
+    const articles = visibleMessages(selectedMessages).map((message) => {
       const time = transcriptTime(message);
       const speaker = transcriptSpeaker(message);
       const timeHTML = time
@@ -718,6 +722,10 @@
       return `<article><header><strong>${escapeHTML(speaker)}</strong>${timeHTML}</header><div>${transcriptMessageHTML(message)}</div></article>`;
     });
     return `<section class="podiom-transcript"><h1>Podiom chat - ${escapeHTML(sessionTitle)}</h1>${articles.join("")}</section>`;
+  }
+
+  function visibleMessages(items: Message[]): Message[] {
+    return items.filter((message) => message.Kind !== "reasoning");
   }
 
   function transcriptMessageHTML(message: Message): string {
@@ -1614,7 +1622,7 @@
         if (stick) void scrollMessagesToBottom("auto");
       }}
     >
-      {#each messages as m (m.ID)}
+      {#each visibleMessages(messages) as m (m.ID)}
         {#if m.Kind === "error"}
           <div class="row-start message-row" data-message-id={m.ID}>
             <div class="bubble-error">

@@ -843,6 +843,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			switch event.Kind {
 			case "message_stored":
 				writeStreamEvent(enc, flusher, streamEvent{Type: "message", Message: event.Message})
+			case adapter.EventReasoningDelta:
+				writeStreamEvent(enc, flusher, streamEvent{Type: "reasoning_delta", Delta: event.Content})
+			case adapter.EventReasoningMessage:
+				writeStreamEvent(enc, flusher, streamEvent{Type: "reasoning", Delta: event.Content})
 			case adapter.EventAssistantDelta:
 				writeStreamEvent(enc, flusher, streamEvent{Type: "delta", Delta: event.Content})
 			case adapter.EventAssistantMessage:

@@ -115,7 +115,7 @@ export interface GlobalConfigPatch {
 }
 export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap";
 export type MessageRole = "user" | "assistant";
-export type MessageKind = "message" | "error";
+export type MessageKind = "message" | "error" | "reasoning";
 export type PlanState = "none" | "pending_submission" | "awaiting_approval";
 
 export interface PlanInfo {
@@ -734,6 +734,7 @@ export interface TurnState {
   session_id: string;
   turn_id: string;
   status: "running" | "done" | "error" | "stopped";
+  pending_reasoning?: string;
   pending_assistant?: string;
   pending_permission?: PermissionRequest;
   pending_user_input?: UserInputRequest;
@@ -794,6 +795,8 @@ export interface ServerMessage {
     | "session"
     | "history"
     | "message"
+    | "reasoning_delta"
+    | "reasoning"
     | "delta"
     | "assistant"
     | "permission_request"

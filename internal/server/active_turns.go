@@ -33,6 +33,7 @@ type TurnState struct {
 	SessionID         string                     `json:"session_id"`
 	TurnID            string                     `json:"turn_id"`
 	Status            string                     `json:"status"`
+	PendingReasoning  string                     `json:"pending_reasoning,omitempty"`
 	PendingAssistant  string                     `json:"pending_assistant,omitempty"`
 	PendingPermission *adapter.PermissionRequest `json:"pending_permission,omitempty"`
 	PendingUserInput  *adapter.UserInputRequest  `json:"pending_user_input,omitempty"`
@@ -45,6 +46,7 @@ type activeTurn struct {
 	turnID            string
 	requestID         string
 	status            string
+	pendingReasoning  string
 	pendingAssistant  string
 	pendingPermission *adapter.PermissionRequest
 	pendingUserInput  *adapter.UserInputRequest
@@ -266,6 +268,28 @@ func (h *activeTurnHub) recordDelta(sessionID, delta string) {
 	h.broadcast(writers, ServerMessage{Type: "delta", RequestID: requestID, SessionID: sessionID, Delta: delta})
 }
 
+func (h *activeTurnHub) recordReasoning(sessionID, text string, final bool) {
+	h.mu.Lock()
+	turn := h.turns[sessionID]
+	if turn == nil {
+		h.mu.Unlock()
+		return
+	}
+	if final {
+		turn.pendingReasoning = text
+	} else {
+		turn.pendingReasoning += text
+	}
+	writers := activeTurnWritersLocked(turn)
+	requestID := turn.requestID
+	h.mu.Unlock()
+	msgType := "reasoning_delta"
+	if final {
+		msgType = "reasoning"
+	}
+	h.broadcast(writers, ServerMessage{Type: msgType, RequestID: requestID, SessionID: sessionID, Delta: text})
+}
+
 // recordContext broadcasts the latest context-window utilization to the session's
 // subscribers so the composer ring updates live mid-turn. The value is also
 // persisted on the session (in core), so idle sessions restore it from state.
@@ -435,6 +459,7 @@ func activeTurnStateLocked(turn *activeTurn) TurnState {
 		SessionID:         turn.sessionID,
 		TurnID:            turn.turnID,
 		Status:            turn.status,
+		PendingReasoning:  turn.pendingReasoning,
 		PendingAssistant:  turn.pendingAssistant,
 		PendingPermission: clonePermissionRequest(turn.pendingPermission),
 		PendingUserInput:  cloneUserInputRequest(turn.pendingUserInput),

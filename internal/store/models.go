@@ -62,6 +62,9 @@ const (
 	KindMessage MessageKind = "message"
 	// KindError is a durable, session-scoped error shown in the chat history.
 	KindError MessageKind = "error"
+	// KindReasoning is provider reasoning/thinking text. It is persisted for
+	// future display but hidden from today's chat and excluded from replay.
+	KindReasoning MessageKind = "reasoning"
 )
 
 // Agent is Podiom's durable definition of a named colleague.
