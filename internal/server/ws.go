@@ -626,6 +626,8 @@ func (s *Server) recordWSTurnEvent(ctx context.Context, sessionID string, event 
 		if event.Usage != nil {
 			s.turns.recordSessionUsage(sessionID, s.turnSessionUsage(ctx, sessionID))
 		}
+	case adapter.EventNativeAgentActivity:
+		s.turns.recordNativeAgentActivity(sessionID, event.NativeAgent)
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		s.turns.finish(sessionID)
@@ -670,6 +672,8 @@ func (s *Server) writeTurnEvent(ctx context.Context, writer *wsWriter, requestID
 			return nil
 		}
 		return writer.write(ctx, ServerMessage{Type: "session_usage", RequestID: requestID, SessionID: sessionID, SessionUsage: est})
+	case adapter.EventNativeAgentActivity:
+		return writer.write(ctx, ServerMessage{Type: "native_agent_activity", RequestID: requestID, SessionID: sessionID, NativeAgent: event.NativeAgent})
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		return writer.write(ctx, ServerMessage{Type: "done", RequestID: requestID})

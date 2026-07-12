@@ -354,6 +354,7 @@ type TurnEvent struct {
 	Content           string
 	PermissionRequest *adapter.PermissionRequest
 	UserInputRequest  *adapter.UserInputRequest
+	NativeAgent       *adapter.NativeAgentActivity
 	Message           *store.Message
 	ContextStatus     *adapter.ContextStatus
 	// Usage carries the session's updated cumulative billed-token totals after a
@@ -872,6 +873,12 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 					if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Usage: &usage}) {
 						return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 					}
+				}
+			}
+		case adapter.EventNativeAgentActivity:
+			if event.NativeAgent != nil {
+				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, NativeAgent: event.NativeAgent}) {
+					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 				}
 			}
 		case adapter.EventRateLimited:

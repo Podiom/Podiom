@@ -246,7 +246,7 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 	})
 
 	out := make(chan Event, 64)
-	go client.streamTurn(ctx, key, turnEvents, firstEvents, out)
+	go client.streamTurn(ctx, key, req.Settings, turnEvents, firstEvents, out)
 	return out, nil
 }
 
@@ -467,6 +467,10 @@ type codexStreamEvent struct {
 	method string
 	params json.RawMessage
 	err    error
+}
+
+type codexNativeAgentTrack struct {
+	nativeAgentTasks map[string]NativeAgentActivity
 }
 
 func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig string, log *slog.Logger) *codexClient {
@@ -775,6 +779,11 @@ func (c *codexClient) dispatchNotification(msg codexRPCMessage) {
 	if msg.Method == "item/fileChange/patchUpdated" {
 		c.recordFileChangePatch(msg.Params)
 	}
+	if msg.Method == "thread/started" {
+		if c.dispatchThreadStartedNotification(msg) {
+			return
+		}
+	}
 	key, ok := codexNotificationKey(msg.Method, msg.Params)
 	if !ok {
 		return
@@ -797,6 +806,28 @@ func (c *codexClient) dispatchNotification(msg codexRPCMessage) {
 	}
 	c.mu.Unlock()
 	ch <- event
+}
+
+func (c *codexClient) dispatchThreadStartedNotification(msg codexRPCMessage) bool {
+	parentThreadID := codexThreadStartedParent(msg.Params)
+	if parentThreadID == "" {
+		return false
+	}
+	event := codexStreamEvent{
+		method: msg.Method,
+		params: append(json.RawMessage(nil), msg.Params...),
+	}
+	c.mu.Lock()
+	for key, ch := range c.watchers {
+		if key.threadID != parentThreadID || ch == nil {
+			continue
+		}
+		c.mu.Unlock()
+		ch <- event
+		return true
+	}
+	c.mu.Unlock()
+	return true
 }
 
 func (c *codexClient) reset() {
@@ -994,8 +1025,9 @@ func (c *codexClient) unregisterTurn(key codexTurnKey) {
 	c.mu.Unlock()
 }
 
-func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <-chan codexStreamEvent, first []Event, out chan<- Event) {
+func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings TurnSettings, events <-chan codexStreamEvent, first []Event, out chan<- Event) {
 	started := time.Now()
+	track := codexNativeAgentTrack{nativeAgentTasks: map[string]NativeAgentActivity{}}
 	defer close(out)
 	defer c.unregisterTurn(key)
 	for _, event := range first {
@@ -1024,7 +1056,26 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, events <
 						return
 					}
 				}
+			case "item/started", "item/completed", "thread/started":
+				for _, activity := range codexNativeAgentActivities(event.method, event.params) {
+					enriched, ok := enrichCodexNativeAgentActivity(settings, &track, activity)
+					if !ok {
+						continue
+					}
+					if !sendAdapterEvent(ctx, out, Event{Kind: EventNativeAgentActivity, NativeAgent: enriched}) {
+						return
+					}
+				}
 			case "turn/completed":
+				for _, activity := range codexNativeAgentActivities(event.method, event.params) {
+					enriched, ok := enrichCodexNativeAgentActivity(settings, &track, activity)
+					if !ok {
+						continue
+					}
+					if !sendAdapterEvent(ctx, out, Event{Kind: EventNativeAgentActivity, NativeAgent: enriched}) {
+						return
+					}
+				}
 				if text := codexReasoningMessage(event.params); text != "" {
 					if !sendAdapterEvent(ctx, out, Event{Kind: EventReasoningMessage, Content: text}) {
 						return
@@ -1348,11 +1399,308 @@ func codexNotificationKey(method string, params json.RawMessage) (codexTurnKey, 
 		return codexTurnKey{}, false
 	}
 	switch method {
-	case "item/agentMessage/delta", "turn/completed", "error", "turn/started", "token_count", "account/updated":
+	case "item/agentMessage/delta", "item/started", "item/completed", "turn/completed", "error", "turn/started", "token_count", "account/updated":
 		return codexTurnKey{threadID: p.ThreadID, turnID: turnID}, true
 	default:
 		return codexTurnKey{}, false
 	}
+}
+
+func codexThreadStartedParent(params json.RawMessage) string {
+	var p struct {
+		Thread struct {
+			ParentThreadID string `json:"parentThreadId"`
+		} `json:"thread"`
+	}
+	_ = json.Unmarshal(params, &p)
+	return p.Thread.ParentThreadID
+}
+
+func codexNativeAgentActivities(method string, params json.RawMessage) []*NativeAgentActivity {
+	switch method {
+	case "item/started", "item/completed":
+		if activity, ok := codexNativeAgentItemActivity(method, params); ok {
+			return []*NativeAgentActivity{activity}
+		}
+	case "thread/started":
+		if activity, ok := codexNativeAgentThreadActivity(params); ok {
+			return []*NativeAgentActivity{activity}
+		}
+	case "turn/completed":
+		return codexNativeAgentTurnActivities(params)
+	}
+	return nil
+}
+
+func codexNativeAgentItemActivity(method string, params json.RawMessage) (*NativeAgentActivity, bool) {
+	var p struct {
+		Item codexNativeAgentItem `json:"item"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, false
+	}
+	return codexNativeAgentActivityFromItem(method, p.Item)
+}
+
+func codexNativeAgentTurnActivities(params json.RawMessage) []*NativeAgentActivity {
+	var p struct {
+		Turn struct {
+			Items []codexNativeAgentItem `json:"items"`
+		} `json:"turn"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil
+	}
+	out := make([]*NativeAgentActivity, 0, len(p.Turn.Items))
+	for _, item := range p.Turn.Items {
+		activity, ok := codexNativeAgentActivityFromItem("turn/completed", item)
+		if !ok {
+			continue
+		}
+		out = append(out, activity)
+	}
+	return out
+}
+
+type codexNativeAgentItem struct {
+	Type              string                     `json:"type"`
+	ID                string                     `json:"id"`
+	Tool              string                     `json:"tool"`
+	Status            string                     `json:"status"`
+	ReceiverThreadIDs []string                   `json:"receiverThreadIds"`
+	AgentsStates      map[string]codexAgentState `json:"agentsStates"`
+	Kind              string                     `json:"kind"`
+	AgentThreadID     string                     `json:"agentThreadId"`
+	AgentPath         string                     `json:"agentPath"`
+}
+
+type codexAgentState struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+func codexNativeAgentActivityFromItem(method string, item codexNativeAgentItem) (*NativeAgentActivity, bool) {
+	switch item.Type {
+	case "collabAgentToolCall":
+		if item.Tool != "spawnAgent" {
+			return nil, false
+		}
+		taskID := firstNonEmptyString(firstCodexReceiverThread(item.ReceiverThreadIDs), item.ID)
+		if taskID == "" {
+			return nil, false
+		}
+		return &NativeAgentActivity{
+			Provider:  config.ProviderCodex,
+			TaskID:    taskID,
+			ToolUseID: item.ID,
+			Status:    codexCollabAgentStatus(method, item.Status, item.AgentsStates),
+		}, true
+	case "subAgentActivity":
+		status := codexSubAgentActivityStatus(item.Kind)
+		if status == "" {
+			return nil, false
+		}
+		taskID := firstNonEmptyString(item.AgentThreadID, item.ID)
+		if taskID == "" {
+			return nil, false
+		}
+		return &NativeAgentActivity{
+			Provider:          config.ProviderCodex,
+			TaskID:            taskID,
+			ToolUseID:         item.ID,
+			ProviderAgentName: item.AgentPath,
+			Status:            status,
+		}, true
+	default:
+		return nil, false
+	}
+}
+
+func codexNativeAgentThreadActivity(params json.RawMessage) (*NativeAgentActivity, bool) {
+	var p struct {
+		Thread struct {
+			ID             string `json:"id"`
+			ParentThreadID string `json:"parentThreadId"`
+			AgentNickname  string `json:"agentNickname"`
+			AgentRole      string `json:"agentRole"`
+			Source         any    `json:"source"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, false
+	}
+	if p.Thread.ID == "" || p.Thread.ParentThreadID == "" {
+		return nil, false
+	}
+	providerAgent := firstNonEmptyString(p.Thread.AgentRole, p.Thread.AgentNickname, codexThreadSourceAgentPath(p.Thread.Source))
+	return &NativeAgentActivity{
+		Provider:          config.ProviderCodex,
+		TaskID:            p.Thread.ID,
+		ProviderAgentName: providerAgent,
+		Status:            "started",
+	}, true
+}
+
+func codexThreadSourceAgentPath(source any) string {
+	root, ok := source.(map[string]any)
+	if !ok {
+		return ""
+	}
+	subagent, ok := root["subagent"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	spawn, ok := subagent["thread_spawn"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	agentPath, _ := spawn["agent_path"].(string)
+	return agentPath
+}
+
+func codexCollabAgentStatus(method, status string, states map[string]codexAgentState) string {
+	status = strings.TrimSpace(status)
+	switch status {
+	case "completed", "failed":
+		return status
+	case "inProgress":
+		if method == "turn/completed" {
+			for _, state := range states {
+				if terminal := codexAgentStateStatus(state.Status); terminal != "" {
+					return terminal
+				}
+			}
+		}
+		return "started"
+	default:
+		if method == "item/completed" || method == "turn/completed" {
+			return "completed"
+		}
+		return "started"
+	}
+}
+
+func codexAgentStateStatus(status string) string {
+	switch status {
+	case "completed":
+		return "completed"
+	case "errored", "notFound":
+		return "failed"
+	case "interrupted", "shutdown":
+		return "cancelled"
+	default:
+		return ""
+	}
+}
+
+func codexSubAgentActivityStatus(kind string) string {
+	switch kind {
+	case "started", "interacted":
+		return "started"
+	case "interrupted":
+		return "cancelled"
+	default:
+		return ""
+	}
+}
+
+func enrichCodexNativeAgentActivity(settings TurnSettings, track *codexNativeAgentTrack, activity *NativeAgentActivity) (*NativeAgentActivity, bool) {
+	if activity == nil {
+		return nil, false
+	}
+	cp := *activity
+	cp.Provider = config.ProviderCodex
+	if cp.Status == "" {
+		cp.Status = "started"
+	}
+	if cp.TaskID != "" && track != nil {
+		if known, ok := track.nativeAgentTasks[cp.TaskID]; ok {
+			cp.ProviderAgentName = firstNonEmptyString(cp.ProviderAgentName, known.ProviderAgentName)
+			cp.PodiomAgentName = firstNonEmptyString(cp.PodiomAgentName, known.PodiomAgentName)
+			cp.DisplayName = firstNonEmptyString(cp.DisplayName, known.DisplayName)
+			cp.ToolUseID = firstNonEmptyString(cp.ToolUseID, known.ToolUseID)
+			cp.Description = firstNonEmptyString(cp.Description, known.Description)
+		}
+	}
+	if native, ok := matchCodexNativeAgent(cp.ProviderAgentName, settings.NativeAgents); ok {
+		cp.ProviderAgentName = native.Name
+		cp.PodiomAgentName = native.PodiomName
+		cp.DisplayName = native.PodiomName
+	}
+	if cp.DisplayName == "" {
+		cp.DisplayName = displayNameForNativeAgent(codexNativeAgentDisplayCandidate(cp.ProviderAgentName))
+	}
+	if cp.TaskID == "" && cp.ToolUseID == "" && cp.ProviderAgentName == "" {
+		return nil, false
+	}
+	if cp.TaskID != "" && track != nil {
+		if previous, ok := track.nativeAgentTasks[cp.TaskID]; ok && sameNativeAgentActivity(previous, cp) {
+			return nil, false
+		}
+		track.nativeAgentTasks[cp.TaskID] = cp
+	}
+	return &cp, true
+}
+
+func sameNativeAgentActivity(a, b NativeAgentActivity) bool {
+	return a.Provider == b.Provider &&
+		a.TaskID == b.TaskID &&
+		a.ToolUseID == b.ToolUseID &&
+		a.ProviderAgentName == b.ProviderAgentName &&
+		a.PodiomAgentName == b.PodiomAgentName &&
+		a.DisplayName == b.DisplayName &&
+		a.Description == b.Description &&
+		a.Status == b.Status
+}
+
+func matchCodexNativeAgent(providerAgent string, agents []NativeAgent) (NativeAgent, bool) {
+	providerAgent = strings.TrimSpace(providerAgent)
+	candidatePath := cleanOptionalPath(providerAgent)
+	candidateBase := codexNativeAgentDisplayCandidate(providerAgent)
+	for _, native := range agents {
+		if native.Name != "" && (providerAgent == native.Name || candidateBase == native.Name) {
+			return native, true
+		}
+		if native.PodiomName != "" && strings.EqualFold(providerAgent, native.PodiomName) {
+			return native, true
+		}
+		if native.ConfigPath != "" && candidatePath != "" && cleanOptionalPath(native.ConfigPath) == candidatePath {
+			return native, true
+		}
+	}
+	return NativeAgent{}, false
+}
+
+func firstCodexReceiverThread(values []string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func cleanOptionalPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func codexNativeAgentDisplayCandidate(providerAgent string) string {
+	providerAgent = strings.TrimSpace(providerAgent)
+	if providerAgent == "" {
+		return "subagent"
+	}
+	base := filepath.Base(providerAgent)
+	if base == "." || base == string(filepath.Separator) {
+		base = providerAgent
+	}
+	if ext := filepath.Ext(base); ext != "" && len(ext) < len(base) {
+		base = strings.TrimSuffix(base, ext)
+	}
+	return firstNonEmptyString(base, providerAgent)
 }
 
 func codexDelta(params json.RawMessage) (string, bool) {

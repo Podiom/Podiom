@@ -111,6 +111,20 @@ type NativeAgent struct {
 	ConfigPath   string
 }
 
+// NativeAgentActivity reports provider-native delegation to a subagent/custom
+// agent. It intentionally carries metadata only; provider prompts, summaries,
+// tool outputs, and instruction contents stay out of logs and UI activity chips.
+type NativeAgentActivity struct {
+	Provider          config.Provider `json:"provider"`
+	TaskID            string          `json:"task_id,omitempty"`
+	ToolUseID         string          `json:"tool_use_id,omitempty"`
+	ProviderAgentName string          `json:"provider_agent_name,omitempty"`
+	PodiomAgentName   string          `json:"podiom_agent_name,omitempty"`
+	DisplayName       string          `json:"display_name,omitempty"`
+	Description       string          `json:"description,omitempty"`
+	Status            string          `json:"status,omitempty"`
+}
+
 // RateStatus reports provider-exposed rate-limit utilization when available.
 // UsedPercent is the max across all windows (kept for the ≥80% summary trigger);
 // Windows carries the full per-window breakdown when the provider exposes it.
@@ -179,6 +193,9 @@ const (
 	// EventTurnUsage carries the incremental tokens billed for a completed turn,
 	// which core accumulates into per-session lifetime usage totals.
 	EventTurnUsage EventKind = "turn_usage"
+	// EventNativeAgentActivity carries provider-native subagent/custom-agent
+	// lifecycle metadata for non-intrusive UI activity chips.
+	EventNativeAgentActivity EventKind = "native_agent_activity"
 	// EventRateLimited reports that the active turn cannot continue on this
 	// backing target because the provider rate-limited it.
 	EventRateLimited EventKind = "rate_limited"
@@ -196,6 +213,7 @@ type Event struct {
 	RateStatus        *RateStatus
 	ContextStatus     *ContextStatus
 	TurnUsage         *TurnUsage
+	NativeAgent       *NativeAgentActivity
 }
 
 // Adapter abstracts over provider process models: per-turn Claude processes and

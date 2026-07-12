@@ -490,6 +490,183 @@ func TestCodexProfileIncludesBestEffortNativeAgents(t *testing.T) {
 	}
 }
 
+func TestCodexNativeAgentActivityParsingAndEnrichment(t *testing.T) {
+	settings := TurnSettings{NativeAgents: []NativeAgent{{
+		PodiomName: "Researcher",
+		Name:       "podiom_researcher_12345678",
+		ConfigPath: filepath.Join(t.TempDir(), "podiom_researcher_12345678.toml"),
+	}}}
+	track := codexNativeAgentTrack{nativeAgentTasks: map[string]NativeAgentActivity{}}
+
+	activities := codexNativeAgentActivities("item/started", json.RawMessage(`{
+		"threadId":"thread-1",
+		"turnId":"turn-1",
+		"item":{
+			"type":"collabAgentToolCall",
+			"id":"collab-1",
+			"tool":"spawnAgent",
+			"status":"inProgress",
+			"receiverThreadIds":["agent-thread-1"],
+			"prompt":"do not leak this prompt"
+		}
+	}`))
+	if len(activities) != 1 {
+		t.Fatalf("activities = %+v, want one spawn activity", activities)
+	}
+	start, ok := enrichCodexNativeAgentActivity(settings, &track, activities[0])
+	if !ok {
+		t.Fatal("spawn activity was dropped")
+	}
+	if start.Provider != config.ProviderCodex || start.TaskID != "agent-thread-1" || start.ToolUseID != "collab-1" || start.Status != "started" {
+		t.Fatalf("bad spawn activity: %+v", start)
+	}
+	if start.Description != "" {
+		t.Fatalf("spawn activity leaked prompt/description: %+v", start)
+	}
+
+	activities = codexNativeAgentActivities("item/started", json.RawMessage(`{
+		"threadId":"thread-1",
+		"turnId":"turn-1",
+		"item":{
+			"type":"subAgentActivity",
+			"id":"subagent-1",
+			"kind":"started",
+			"agentThreadId":"agent-thread-1",
+			"agentPath":"podiom_researcher_12345678"
+		}
+	}`))
+	if len(activities) != 1 {
+		t.Fatalf("subagent activities = %+v, want one", activities)
+	}
+	named, ok := enrichCodexNativeAgentActivity(settings, &track, activities[0])
+	if !ok {
+		t.Fatal("named activity was dropped")
+	}
+	if named.PodiomAgentName != "Researcher" || named.DisplayName != "Researcher" || named.ProviderAgentName != "podiom_researcher_12345678" {
+		t.Fatalf("bad named activity: %+v", named)
+	}
+
+	activities = codexNativeAgentActivities("item/completed", json.RawMessage(`{
+		"threadId":"thread-1",
+		"turnId":"turn-1",
+		"item":{
+			"type":"collabAgentToolCall",
+			"id":"collab-1",
+			"tool":"spawnAgent",
+			"status":"completed",
+			"receiverThreadIds":["agent-thread-1"]
+		}
+	}`))
+	done, ok := enrichCodexNativeAgentActivity(settings, &track, activities[0])
+	if !ok {
+		t.Fatal("completion activity was dropped")
+	}
+	if done.Status != "completed" || done.DisplayName != "Researcher" || done.ProviderAgentName != "podiom_researcher_12345678" {
+		t.Fatalf("bad completion activity: %+v", done)
+	}
+
+	threadActivities := codexNativeAgentActivities("thread/started", json.RawMessage(`{
+		"thread":{
+			"id":"agent-thread-2",
+			"parentThreadId":"thread-1",
+			"agentRole":"researcher"
+		}
+	}`))
+	if len(threadActivities) != 1 {
+		t.Fatalf("thread activities = %+v, want one", threadActivities)
+	}
+	threadActivity, ok := enrichCodexNativeAgentActivity(settings, &track, threadActivities[0])
+	if !ok {
+		t.Fatal("thread activity was dropped")
+	}
+	if threadActivity.DisplayName != "Researcher" || threadActivity.TaskID != "agent-thread-2" {
+		t.Fatalf("bad thread activity: %+v", threadActivity)
+	}
+
+	fallback := codexNativeAgentActivities("turn/completed", json.RawMessage(`{
+		"threadId":"thread-1",
+		"turn":{
+			"id":"turn-2",
+			"items":[{
+				"type":"collabAgentToolCall",
+				"id":"collab-2",
+				"tool":"spawnAgent",
+				"status":"completed",
+				"receiverThreadIds":["agent-thread-3"],
+				"prompt":"do not leak this fallback prompt"
+			}]
+		}
+	}`))
+	if len(fallback) != 1 {
+		t.Fatalf("fallback activities = %+v, want one", fallback)
+	}
+	fallbackActivity, ok := enrichCodexNativeAgentActivity(settings, &track, fallback[0])
+	if !ok {
+		t.Fatal("fallback activity was dropped")
+	}
+	if fallbackActivity.Status != "completed" || fallbackActivity.TaskID != "agent-thread-3" || fallbackActivity.Description != "" {
+		t.Fatalf("bad fallback activity: %+v", fallbackActivity)
+	}
+}
+
+func TestCodexStreamsNativeAgentActivity(t *testing.T) {
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "native_agent")
+	codex := newTestCodex(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("workspace instructions\n"), 0o644); err != nil {
+		t.Fatalf("write agents: %v", err)
+	}
+
+	handle, err := codex.Start(ctx, StartRequest{
+		SessionID:      "session-1",
+		AgentName:      "Builder",
+		Provider:       config.ProviderCodex,
+		PermissionMode: config.PermissionApprove,
+		WorkspaceDir:   workspace,
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	events, err := codex.SendTurn(ctx, TurnRequest{
+		SessionID: "session-1",
+		Handle:    handle,
+		Message:   "delegate please",
+		Settings: TurnSettings{
+			AgentName:      "Builder",
+			PermissionMode: config.PermissionApprove,
+			WorkspaceDir:   workspace,
+			NativeAgents: []NativeAgent{{
+				PodiomName: "Researcher",
+				Name:       "podiom_researcher_12345678",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send turn: %v", err)
+	}
+
+	var activities []NativeAgentActivity
+	for _, event := range collectCodexEvents(t, events) {
+		if event.Kind == EventNativeAgentActivity && event.NativeAgent != nil {
+			activities = append(activities, *event.NativeAgent)
+		}
+	}
+	if len(activities) != 3 {
+		t.Fatalf("activities = %+v, want start, name update, completion", activities)
+	}
+	if got := activities[0]; got.Provider != config.ProviderCodex || got.TaskID != "agent-thread-1" || got.Status != "started" || got.Description != "" {
+		t.Fatalf("bad first activity: %+v", got)
+	}
+	if got := activities[1]; got.DisplayName != "Researcher" || got.PodiomAgentName != "Researcher" || got.ProviderAgentName != "podiom_researcher_12345678" {
+		t.Fatalf("bad named activity: %+v", got)
+	}
+	if got := activities[2]; got.Status != "completed" || got.DisplayName != "Researcher" {
+		t.Fatalf("bad completion activity: %+v", got)
+	}
+}
+
 func TestCodexAppServerStartupErrorIncludesStderr(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "stderr_exit")
 	codex := newTestCodex(t)
@@ -585,6 +762,15 @@ func collectCodexText(t *testing.T, events <-chan Event) string {
 		}
 	}
 	return text.String()
+}
+
+func collectCodexEvents(t *testing.T, events <-chan Event) []Event {
+	t.Helper()
+	var out []Event
+	for event := range events {
+		out = append(out, event)
+	}
+	return out
 }
 
 func runFakeCodexAppServer() {
@@ -724,6 +910,11 @@ func runFakeCodexAppServer() {
 						}},
 					}},
 				})
+			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "native_agent" {
+				writeFakeNativeAgentStarted(enc, params.ThreadID, turnID)
+				writeFakeSubAgentActivity(enc, params.ThreadID, turnID, "started")
+				writeFakeNativeAgentCompleted(enc, params.ThreadID, turnID)
+				writeFakeCompleted(enc, params.ThreadID, turnID, "delegated")
 			} else {
 				writeFakeDelta(enc, params.ThreadID, turnID, "res")
 				writeFakeDelta(enc, params.ThreadID, turnID, "umed")
@@ -771,6 +962,63 @@ func writeFakeDelta(enc *json.Encoder, threadID, turnID, delta string) {
 			"turnId":   turnID,
 			"itemId":   "assistant-1",
 			"delta":    delta,
+		},
+	})
+}
+
+func writeFakeNativeAgentStarted(enc *json.Encoder, threadID, turnID string) {
+	_ = enc.Encode(map[string]any{
+		"method": "item/started",
+		"params": map[string]any{
+			"threadId":    threadID,
+			"turnId":      turnID,
+			"startedAtMs": time.Now().UnixMilli(),
+			"item": map[string]any{
+				"type":              "collabAgentToolCall",
+				"id":                "collab-1",
+				"tool":              "spawnAgent",
+				"status":            "inProgress",
+				"senderThreadId":    threadID,
+				"receiverThreadIds": []string{"agent-thread-1"},
+				"prompt":            "do not leak this prompt",
+			},
+		},
+	})
+}
+
+func writeFakeSubAgentActivity(enc *json.Encoder, threadID, turnID, kind string) {
+	_ = enc.Encode(map[string]any{
+		"method": "item/started",
+		"params": map[string]any{
+			"threadId":    threadID,
+			"turnId":      turnID,
+			"startedAtMs": time.Now().UnixMilli(),
+			"item": map[string]any{
+				"type":          "subAgentActivity",
+				"id":            "subagent-1",
+				"kind":          kind,
+				"agentThreadId": "agent-thread-1",
+				"agentPath":     "podiom_researcher_12345678",
+			},
+		},
+	})
+}
+
+func writeFakeNativeAgentCompleted(enc *json.Encoder, threadID, turnID string) {
+	_ = enc.Encode(map[string]any{
+		"method": "item/completed",
+		"params": map[string]any{
+			"threadId":      threadID,
+			"turnId":        turnID,
+			"completedAtMs": time.Now().UnixMilli(),
+			"item": map[string]any{
+				"type":              "collabAgentToolCall",
+				"id":                "collab-1",
+				"tool":              "spawnAgent",
+				"status":            "completed",
+				"senderThreadId":    threadID,
+				"receiverThreadIds": []string{"agent-thread-1"},
+			},
 		},
 	})
 }

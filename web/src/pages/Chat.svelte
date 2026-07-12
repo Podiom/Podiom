@@ -25,6 +25,7 @@
     FallbackRequest,
     FallbackTarget,
     Message,
+    NativeAgentActivity,
     PermissionMode,
     PermissionRequest,
     Provider,
@@ -81,6 +82,8 @@
   let deleteError = $state<string | null>(null);
   let messages = $state<Message[]>([]);
   let pendingAssistant = $state("");
+  let nativeAgentActivities = $state<NativeAgentActivity[]>([]);
+  let nativeAgentMessageID = $state(0);
   let pendingPermission = $state<PermissionRequest | null>(null);
   let approvalHistoryBySession = $state<Record<string, ApprovalRecord[]>>({});
   let approvalDockOpen = $state(false);
@@ -377,7 +380,12 @@
         break;
       case "session":
         if (msg.session) {
+          const previousID = activeSession?.ID;
           activeSession = msg.session;
+          if (previousID && previousID !== msg.session.ID) {
+            nativeAgentActivities = [];
+            nativeAgentMessageID = 0;
+          }
           selectedAgent = msg.session.AgentName;
           rememberSession(msg.session.ID);
           if (!msg.session.ProjectID) projectName = "";
@@ -400,6 +408,8 @@
       case "history":
         messages = msg.history ?? [];
         pendingAssistant = "";
+        nativeAgentActivities = [];
+        nativeAgentMessageID = 0;
         pendingPermission = null;
         resetApprovalForm();
         pendingUserInput = null;
@@ -412,7 +422,10 @@
         clearPendingRequests();
         if (msg.message && !messages.some((e) => sameMessage(e, msg.message))) {
           messages = [...messages, msg.message];
-          if (msg.message.Role === "assistant" && msg.message.Kind !== "reasoning") pendingAssistant = "";
+          if (msg.message.Role === "assistant" && msg.message.Kind !== "reasoning") {
+            if (nativeAgentActivities.length) nativeAgentMessageID = msg.message.ID;
+            pendingAssistant = "";
+          }
         }
         break;
       case "reasoning_delta":
@@ -428,6 +441,10 @@
         if (!messageForActiveSession(msg)) break;
         clearPendingRequests();
         if (!pendingAssistant) pendingAssistant = msg.delta ?? "";
+        break;
+      case "native_agent_activity":
+        if (!messageForActiveSession(msg)) break;
+        if (msg.native_agent) applyNativeAgentActivity(msg.native_agent);
         break;
       case "permission_request":
         if (!messageForActiveSession(msg)) break;
@@ -657,6 +674,8 @@
     if (state.session_id !== activeSession?.ID) return;
     sending = state.status === "running";
     pendingAssistant = state.pending_assistant ?? "";
+    nativeAgentActivities = state.native_agent_activities ?? [];
+    nativeAgentMessageID = 0;
     if (state.pending_permission) {
       upsertApprovalRecord(state.session_id, state.pending_permission);
       pendingPermission = approvalResolved(state.session_id, state.pending_permission.id) ? null : state.pending_permission;
@@ -673,6 +692,55 @@
 
   function sameMessage(a: Message, b: Message | undefined) {
     return !!b && a.ID === b.ID && a.SessionID === b.SessionID;
+  }
+
+  function applyNativeAgentActivity(activity: NativeAgentActivity) {
+    const key = nativeAgentActivityKey(activity);
+    if (!key) {
+      nativeAgentActivities = [...nativeAgentActivities, activity];
+      if (stick) void scrollMessagesToBottom();
+      return;
+    }
+    let replaced = false;
+    const next = nativeAgentActivities.map((existing) => {
+      if (nativeAgentActivityKey(existing) !== key) return existing;
+      replaced = true;
+      return { ...existing, ...activity };
+    });
+    nativeAgentActivities = replaced ? next : [...nativeAgentActivities, activity];
+    if (stick) void scrollMessagesToBottom();
+  }
+
+  function nativeAgentActivityKey(activity: NativeAgentActivity): string {
+    if (activity.task_id) return `task:${activity.task_id}`;
+    if (activity.tool_use_id) return `tool:${activity.tool_use_id}`;
+    if (activity.provider_agent_name) return `${activity.provider}:${activity.provider_agent_name}:${activity.description ?? ""}`;
+    return `${activity.provider}:${activity.display_name || activity.podiom_agent_name || "subagent"}:${activity.description ?? ""}`;
+  }
+
+  function nativeAgentActivityLabel(activity: NativeAgentActivity): string {
+    const provider = activity.provider === "codex" ? "Codex" : "Claude";
+    const agent =
+      activity.display_name ||
+      activity.podiom_agent_name ||
+      friendlyNativeAgentName(activity.provider_agent_name || "subagent");
+    return `${provider} delegated to ${agent}`;
+  }
+
+  function nativeAgentActivityTitle(activity: NativeAgentActivity): string {
+    const status = activity.status === "completed" ? "completed" : activity.status || "started";
+    return `${nativeAgentActivityLabel(activity)} (${status})`;
+  }
+
+  function nativeAgentActivityDone(activity: NativeAgentActivity): boolean {
+    return activity.status === "completed" || activity.status === "failed" || activity.status === "cancelled" || activity.status === "canceled";
+  }
+
+  function friendlyNativeAgentName(name: string): string {
+    const trimmed = name.replace(/^podiom[-_]/, "").trim();
+    const parts = trimmed.split(/[-_]+/).filter(Boolean);
+    if (parts.length > 1 && /^[a-f0-9]{8}$/.test(parts[parts.length - 1])) parts.pop();
+    return parts.map((part) => part.slice(0, 1).toUpperCase() + part.slice(1)).join(" ") || "subagent";
   }
 
   function handleMessagesCopy(event: ClipboardEvent) {
@@ -806,6 +874,7 @@
     // Touch the reactive deps so the effect re-runs when they change.
     void messages.length;
     void pendingAssistant;
+    void nativeAgentActivities.length;
     if (stick) void scrollMessagesToBottom();
   });
 
@@ -904,6 +973,8 @@
       messages = detail.history ?? [];
       projectName = detail.project_name ?? (detail.session.ProjectID ? projectLabel(detail.session.ProjectID) : "");
       pendingAssistant = "";
+      nativeAgentActivities = [];
+      nativeAgentMessageID = 0;
       pendingPermission = null;
       resetApprovalForm();
       pendingUserInput = null;
@@ -934,6 +1005,8 @@
         messages = [];
         projectName = "";
         pendingAssistant = "";
+        nativeAgentActivities = [];
+        nativeAgentMessageID = 0;
         pendingPermission = null;
         resetApprovalForm();
         pendingUserInput = null;
@@ -983,6 +1056,8 @@
     notice = null;
     sending = true;
     pendingAssistant = "";
+    nativeAgentActivities = [];
+    nativeAgentMessageID = 0;
     markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
     pendingPermission = null;
     resetApprovalForm();
@@ -1018,6 +1093,8 @@
   function newSession(resetDrafts = true) {
     activeSession = null;
     messages = [];
+    nativeAgentActivities = [];
+    nativeAgentMessageID = 0;
     projectName = "";
     localStorage.removeItem(LAST_SESSION_KEY);
     if (resetDrafts) resetDraftSettings();
@@ -1104,6 +1181,8 @@
     notice = null;
     sending = true;
     pendingAssistant = "";
+    nativeAgentActivities = [];
+    nativeAgentMessageID = 0;
     resetPlanReview();
     send({
       type: "plan_approve",
@@ -1120,6 +1199,8 @@
     notice = null;
     sending = true;
     pendingAssistant = "";
+    nativeAgentActivities = [];
+    nativeAgentMessageID = 0;
     send({
       type: "plan_feedback",
       request_id: randomID(),
@@ -1637,7 +1718,23 @@
         {:else}
           <div class="row-start message-row" data-message-id={m.ID}>
             <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
-            <div class="bubble-assistant">{@html renderMarkdown(m.Content)}</div>
+            <div class="bubble-assistant">
+              {#if nativeAgentActivities.length && m.ID === nativeAgentMessageID}
+                <div class="native-agent-chips" aria-label="Provider delegation activity">
+                  {#each nativeAgentActivities as activity (nativeAgentActivityKey(activity))}
+                    <span
+                      class="native-agent-chip"
+                      class:done={nativeAgentActivityDone(activity)}
+                      title={nativeAgentActivityTitle(activity)}
+                    >
+                      <span class="native-agent-dot"></span>
+                      {nativeAgentActivityLabel(activity)}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+              {@html renderMarkdown(m.Content)}
+            </div>
           </div>
         {/if}
       {/each}
@@ -1645,11 +1742,45 @@
       {#if pendingAssistant}
         <div class="row-start">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
-          <div class="bubble-assistant">{@html renderMarkdown(pendingAssistant)}<span class="cursor"></span></div>
+          <div class="bubble-assistant">
+            {#if nativeAgentActivities.length}
+              <div class="native-agent-chips" aria-label="Provider delegation activity">
+                {#each nativeAgentActivities as activity (nativeAgentActivityKey(activity))}
+                  <span
+                    class="native-agent-chip"
+                    class:done={nativeAgentActivityDone(activity)}
+                    title={nativeAgentActivityTitle(activity)}
+                  >
+                    <span class="native-agent-dot"></span>
+                    {nativeAgentActivityLabel(activity)}
+                  </span>
+                {/each}
+              </div>
+            {/if}
+            {@html renderMarkdown(pendingAssistant)}<span class="cursor"></span>
+          </div>
         </div>
       {/if}
 
-      {#if sending && !pendingAssistant && !pendingPermission && !pendingUserInput}
+      {#if sending && !pendingAssistant && nativeAgentActivities.length && !nativeAgentMessageID}
+        <div class="row-start" style="align-items:center">
+          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
+          <div class="bubble-assistant activity-only">
+            <div class="native-agent-chips" aria-label="Provider delegation activity">
+              {#each nativeAgentActivities as activity (nativeAgentActivityKey(activity))}
+                <span
+                  class="native-agent-chip"
+                  class:done={nativeAgentActivityDone(activity)}
+                  title={nativeAgentActivityTitle(activity)}
+                >
+                  <span class="native-agent-dot"></span>
+                  {nativeAgentActivityLabel(activity)}
+                </span>
+              {/each}
+            </div>
+          </div>
+        </div>
+      {:else if sending && !pendingAssistant && !pendingPermission && !pendingUserInput}
         <div class="row-start" style="align-items:center">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <span class="thinking">
@@ -3030,6 +3161,58 @@
     box-shadow: 0 2px 8px -6px rgba(43, 37, 32, 0.12);
     min-width: 0;
     word-break: break-word;
+  }
+
+  .bubble-assistant.activity-only {
+    padding: 10px 12px;
+  }
+
+  .native-agent-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 10px;
+  }
+
+  .bubble-assistant.activity-only .native-agent-chips {
+    margin-bottom: 0;
+  }
+
+  .native-agent-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    max-width: 100%;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid #d5e5df;
+    background: #eef6f3;
+    color: #2f6e60;
+    font: 650 11px/1.25 "Hanken Grotesk";
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .native-agent-chip.done {
+    background: #f6f8f7;
+    border-color: #dde5e1;
+    color: #5d716a;
+  }
+
+  .native-agent-dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 999px;
+    background: #3f8f7e;
+    box-shadow: 0 0 0 3px rgba(63, 143, 126, 0.13);
+  }
+
+  .native-agent-chip.done .native-agent-dot {
+    background: #8da39b;
+    box-shadow: none;
   }
 
   .bubble-assistant :global(*) {

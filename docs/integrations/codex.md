@@ -86,8 +86,17 @@ Podiom correlates server notifications by `threadId` and `turnId`.
 | Codex event | Podiom behavior |
 | --- | --- |
 | `item/agentMessage/delta` | Stream as assistant delta. |
+| `item/started` / `item/completed` with `collabAgentToolCall` + `spawnAgent` | Emit best-effort native-agent activity metadata for the spawned Codex subagent. Prompt text is not surfaced. |
+| `item/started` / `item/completed` with `subAgentActivity` | Use the Codex agent path/thread id to enrich the activity chip and map it back to a Podiom agent when possible. |
+| `thread/started` for a child thread | Use `agentRole`, `agentNickname`, or source agent path as supplemental metadata for the active parent turn. |
 | `turn/completed` | Use the final `agentMessage` item as durable assistant text and finish the turn. |
+| `turn/completed` items containing native-agent activity | Backfill native-agent activity if live item events were not seen. |
 | `error` | Surface a Codex error message and finish the turn. |
+
+When Codex delegates through its native multi-agent tools, Podiom shows the same
+non-intrusive chat chip used for Claude, for example `Codex delegated to
+Researcher`. The Podiom agent remains authoritative; Codex-native activity is
+only a provider hint and UI affordance.
 
 ## Permissions
 

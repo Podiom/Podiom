@@ -466,14 +466,15 @@ type ChatRequest struct {
 
 // StreamEvent is one newline-delimited event from /api/chat.
 type StreamEvent struct {
-	Type    string                     `json:"type"`
-	Session *store.Session             `json:"session,omitempty"`
-	Message *store.Message             `json:"message,omitempty"`
-	Delta   string                     `json:"delta,omitempty"`
-	Notice  string                     `json:"notice,omitempty"`
-	Request *adapter.PermissionRequest `json:"request,omitempty"`
-	Input   *adapter.UserInputRequest  `json:"input,omitempty"`
-	Error   string                     `json:"error,omitempty"`
+	Type        string                       `json:"type"`
+	Session     *store.Session               `json:"session,omitempty"`
+	Message     *store.Message               `json:"message,omitempty"`
+	Delta       string                       `json:"delta,omitempty"`
+	Notice      string                       `json:"notice,omitempty"`
+	Request     *adapter.PermissionRequest   `json:"request,omitempty"`
+	Input       *adapter.UserInputRequest    `json:"input,omitempty"`
+	NativeAgent *adapter.NativeAgentActivity `json:"native_agent,omitempty"`
+	Error       string                       `json:"error,omitempty"`
 }
 
 // Chat streams one turn from the daemon.

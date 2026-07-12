@@ -60,15 +60,16 @@ type chatRequest struct {
 }
 
 type streamEvent struct {
-	Type       string                     `json:"type"`
-	Session    *store.Session             `json:"session,omitempty"`
-	Message    *store.Message             `json:"message,omitempty"`
-	Delta      string                     `json:"delta,omitempty"`
-	Notice     string                     `json:"notice,omitempty"`
-	Request    *adapter.PermissionRequest `json:"request,omitempty"`
-	Input      *adapter.UserInputRequest  `json:"input,omitempty"`
-	Error      string                     `json:"error,omitempty"`
-	AutoDenied bool                       `json:"auto_denied,omitempty"`
+	Type        string                       `json:"type"`
+	Session     *store.Session               `json:"session,omitempty"`
+	Message     *store.Message               `json:"message,omitempty"`
+	Delta       string                       `json:"delta,omitempty"`
+	Notice      string                       `json:"notice,omitempty"`
+	Request     *adapter.PermissionRequest   `json:"request,omitempty"`
+	Input       *adapter.UserInputRequest    `json:"input,omitempty"`
+	NativeAgent *adapter.NativeAgentActivity `json:"native_agent,omitempty"`
+	Error       string                       `json:"error,omitempty"`
+	AutoDenied  bool                         `json:"auto_denied,omitempty"`
 }
 
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
@@ -861,6 +862,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 					s.markRoadmapQuestionPending(ctx, session.ID, event.UserInputRequest.ID)
 				}
 				writeStreamEvent(enc, flusher, streamEvent{Type: "user_input_request", Input: event.UserInputRequest})
+			case adapter.EventNativeAgentActivity:
+				writeStreamEvent(enc, flusher, streamEvent{Type: "native_agent_activity", NativeAgent: event.NativeAgent})
 			case adapter.EventTurnDone:
 				sawDone = true
 				s.markRoadmapSessionFinished(ctx, session.ID)

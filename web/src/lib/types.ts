@@ -740,7 +740,19 @@ export interface TurnState {
   pending_permission?: PermissionRequest;
   pending_user_input?: UserInputRequest;
   pending_fallback?: FallbackRequest;
+  native_agent_activities?: NativeAgentActivity[];
   error?: string;
+}
+
+export interface NativeAgentActivity {
+  provider: Provider;
+  task_id?: string;
+  tool_use_id?: string;
+  provider_agent_name?: string;
+  podiom_agent_name?: string;
+  display_name?: string;
+  description?: string;
+  status?: "started" | "completed" | "failed" | "cancelled" | "canceled" | string;
 }
 
 export type ClientMessage =
@@ -803,6 +815,7 @@ export interface ServerMessage {
     | "permission_request"
     | "user_input_request"
     | "fallback_request"
+    | "native_agent_activity"
     | "turn_state"
     | "context"
     | "session_usage"
@@ -827,6 +840,7 @@ export interface ServerMessage {
   request?: PermissionRequest;
   input?: UserInputRequest;
   fallback?: FallbackRequest;
+  native_agent?: NativeAgentActivity;
   turn_state?: TurnState;
   context?: ContextUsage;
   // session_usage: the session's updated token-usage estimate, pushed after a turn.

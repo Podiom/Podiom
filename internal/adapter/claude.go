@@ -228,11 +228,12 @@ func (c *Claude) consumeProcess(ctx context.Context, req TurnRequest, run claude
 }
 
 type claudeStreamTrack struct {
-	lastMessage string
+	lastMessage      string
+	nativeAgentTasks map[string]NativeAgentActivity
 }
 
 func (c *Claude) trackClaudeStream(ctx context.Context, req TurnRequest, in <-chan Event, out chan<- Event, done chan<- claudeStreamTrack) {
-	var track claudeStreamTrack
+	track := claudeStreamTrack{nativeAgentTasks: map[string]NativeAgentActivity{}}
 	lastHandleID := req.Handle.ID
 	for event := range in {
 		if event.Kind == EventAssistantMessage && strings.TrimSpace(event.Content) != "" {
@@ -250,11 +251,94 @@ func (c *Claude) trackClaudeStream(ctx context.Context, req TurnRequest, in <-ch
 		if event.Kind == EventContextStatus && event.ContextStatus != nil && event.ContextStatus.MaxTokens == 0 {
 			event.ContextStatus.MaxTokens = claudeContextWindow(req.Settings.Model)
 		}
+		if event.Kind == EventNativeAgentActivity {
+			activity, ok := enrichClaudeNativeAgentActivity(req, &track, event.NativeAgent)
+			if !ok {
+				continue
+			}
+			event.NativeAgent = activity
+		}
 		if !sendAdapterEvent(ctx, out, event) {
 			break
 		}
 	}
 	done <- track
+}
+
+func enrichClaudeNativeAgentActivity(req TurnRequest, track *claudeStreamTrack, activity *NativeAgentActivity) (*NativeAgentActivity, bool) {
+	if activity == nil {
+		return nil, false
+	}
+	cp := *activity
+	cp.Provider = config.ProviderClaude
+	if cp.Status == "" {
+		cp.Status = "started"
+	}
+	if cp.ProviderAgentName == "" && cp.TaskID != "" && track != nil {
+		if known, ok := track.nativeAgentTasks[cp.TaskID]; ok {
+			cp.ProviderAgentName = known.ProviderAgentName
+			cp.PodiomAgentName = known.PodiomAgentName
+			cp.DisplayName = known.DisplayName
+			cp.ToolUseID = firstNonEmptyString(cp.ToolUseID, known.ToolUseID)
+			cp.Description = firstNonEmptyString(cp.Description, known.Description)
+		}
+	}
+	if cp.ProviderAgentName == "" && cp.TaskID == "" {
+		return nil, false
+	}
+	for _, native := range req.Settings.NativeAgents {
+		if native.Name != "" && native.Name == cp.ProviderAgentName {
+			cp.PodiomAgentName = native.PodiomName
+			cp.DisplayName = native.PodiomName
+			break
+		}
+	}
+	if cp.DisplayName == "" {
+		cp.DisplayName = displayNameForNativeAgent(cp.ProviderAgentName)
+	}
+	if cp.Status == "started" && cp.TaskID != "" && track != nil {
+		track.nativeAgentTasks[cp.TaskID] = cp
+	}
+	if cp.ProviderAgentName == "" {
+		// Completion-only task notifications are useful only when they can be
+		// joined to a known subagent start.
+		return nil, false
+	}
+	return &cp, true
+}
+
+func displayNameForNativeAgent(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "subagent"
+	}
+	name = strings.TrimPrefix(name, "podiom-")
+	name = strings.TrimPrefix(name, "podiom_")
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '_' })
+	if len(parts) == 0 {
+		return name
+	}
+	// Drop the projection hash from unknown Podiom native names. Known names are
+	// mapped to PodiomName before this fallback runs.
+	if len(parts) > 1 && len(parts[len(parts)-1]) == 8 && isLowerHex(parts[len(parts)-1]) {
+		parts = parts[:len(parts)-1]
+	}
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
+}
+
+func isLowerHex(value string) bool {
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return value != ""
 }
 
 func claudeWaitEvent(waitErr error, stderrText string, track claudeStreamTrack) (Event, bool) {
@@ -648,6 +732,10 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 				events = append(events, Event{Kind: EventRateLimited, Content: "claude rate limited: " + firstString(info, "rateLimitType", "rate_limit_type", "status")})
 			}
 		}
+	case "system":
+		if activity, ok := claudeNativeAgentActivity(raw); ok {
+			events = append(events, Event{Kind: EventNativeAgentActivity, NativeAgent: activity})
+		}
 	case "error":
 		message := claudeErrorMessage(raw)
 		if claudeRateLimitedText(message) {
@@ -657,6 +745,49 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 		}
 	}
 	return events, nil
+}
+
+func claudeNativeAgentActivity(raw map[string]any) (*NativeAgentActivity, bool) {
+	switch firstString(raw, "subtype") {
+	case "task_started":
+		if firstString(raw, "task_type", "taskType") != "local_agent" {
+			return nil, false
+		}
+		agentType := firstString(raw, "subagent_type", "subagentType", "agent_type", "agentType")
+		if agentType == "" {
+			return nil, false
+		}
+		return &NativeAgentActivity{
+			Provider:          config.ProviderClaude,
+			TaskID:            firstString(raw, "task_id", "taskId"),
+			ToolUseID:         firstString(raw, "tool_use_id", "toolUseID"),
+			ProviderAgentName: agentType,
+			Description:       firstString(raw, "description"),
+			Status:            "started",
+		}, true
+	case "task_notification":
+		taskID := firstString(raw, "task_id", "taskId")
+		if taskID == "" {
+			return nil, false
+		}
+		status := strings.ToLower(firstString(raw, "status"))
+		if status == "" {
+			status = "completed"
+		}
+		switch status {
+		case "completed", "failed", "cancelled", "canceled":
+			return &NativeAgentActivity{
+				Provider:  config.ProviderClaude,
+				TaskID:    taskID,
+				ToolUseID: firstString(raw, "tool_use_id", "toolUseID"),
+				Status:    status,
+			}, true
+		default:
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
 }
 
 func claudeUserInputRequest(raw map[string]any, source []byte) (*UserInputRequest, bool) {

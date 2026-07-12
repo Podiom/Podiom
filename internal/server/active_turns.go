@@ -30,30 +30,32 @@ type ActiveTurnSummary struct {
 }
 
 type TurnState struct {
-	SessionID         string                     `json:"session_id"`
-	TurnID            string                     `json:"turn_id"`
-	Status            string                     `json:"status"`
-	PendingReasoning  string                     `json:"pending_reasoning,omitempty"`
-	PendingAssistant  string                     `json:"pending_assistant,omitempty"`
-	PendingPermission *adapter.PermissionRequest `json:"pending_permission,omitempty"`
-	PendingUserInput  *adapter.UserInputRequest  `json:"pending_user_input,omitempty"`
-	PendingFallback   *core.FallbackRequest      `json:"pending_fallback,omitempty"`
-	Error             string                     `json:"error,omitempty"`
+	SessionID             string                        `json:"session_id"`
+	TurnID                string                        `json:"turn_id"`
+	Status                string                        `json:"status"`
+	PendingReasoning      string                        `json:"pending_reasoning,omitempty"`
+	PendingAssistant      string                        `json:"pending_assistant,omitempty"`
+	PendingPermission     *adapter.PermissionRequest    `json:"pending_permission,omitempty"`
+	PendingUserInput      *adapter.UserInputRequest     `json:"pending_user_input,omitempty"`
+	PendingFallback       *core.FallbackRequest         `json:"pending_fallback,omitempty"`
+	NativeAgentActivities []adapter.NativeAgentActivity `json:"native_agent_activities,omitempty"`
+	Error                 string                        `json:"error,omitempty"`
 }
 
 type activeTurn struct {
-	sessionID         string
-	turnID            string
-	requestID         string
-	status            string
-	pendingReasoning  string
-	pendingAssistant  string
-	pendingPermission *adapter.PermissionRequest
-	pendingUserInput  *adapter.UserInputRequest
-	pendingFallback   *core.FallbackRequest
-	err               string
-	cancel            context.CancelFunc
-	subscribers       map[*wsWriter]bool
+	sessionID             string
+	turnID                string
+	requestID             string
+	status                string
+	pendingReasoning      string
+	pendingAssistant      string
+	pendingPermission     *adapter.PermissionRequest
+	pendingUserInput      *adapter.UserInputRequest
+	pendingFallback       *core.FallbackRequest
+	nativeAgentActivities []adapter.NativeAgentActivity
+	err                   string
+	cancel                context.CancelFunc
+	subscribers           map[*wsWriter]bool
 }
 
 type activeTurnHub struct {
@@ -330,6 +332,39 @@ func (h *activeTurnHub) recordAssistant(sessionID, text string) {
 	h.broadcast(writers, ServerMessage{Type: "assistant", RequestID: requestID, SessionID: sessionID, Delta: text})
 }
 
+func (h *activeTurnHub) recordNativeAgentActivity(sessionID string, activity *adapter.NativeAgentActivity) {
+	if activity == nil {
+		return
+	}
+	h.mu.Lock()
+	turn := h.turns[sessionID]
+	if turn == nil {
+		h.mu.Unlock()
+		return
+	}
+	cp := cloneNativeAgentActivity(activity)
+	key := nativeAgentActivityKey(&cp)
+	if key != "" {
+		replaced := false
+		for i := range turn.nativeAgentActivities {
+			if nativeAgentActivityKey(&turn.nativeAgentActivities[i]) == key {
+				turn.nativeAgentActivities[i] = cp
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			turn.nativeAgentActivities = append(turn.nativeAgentActivities, cp)
+		}
+	} else {
+		turn.nativeAgentActivities = append(turn.nativeAgentActivities, cp)
+	}
+	writers := activeTurnWritersLocked(turn)
+	requestID := turn.requestID
+	h.mu.Unlock()
+	h.broadcast(writers, ServerMessage{Type: "native_agent_activity", RequestID: requestID, SessionID: sessionID, NativeAgent: &cp})
+}
+
 func (h *activeTurnHub) recordPermission(sessionID string, req *adapter.PermissionRequest) {
 	h.mu.Lock()
 	turn := h.turns[sessionID]
@@ -456,15 +491,16 @@ func activeTurnWritersLocked(turn *activeTurn) []*wsWriter {
 
 func activeTurnStateLocked(turn *activeTurn) TurnState {
 	return TurnState{
-		SessionID:         turn.sessionID,
-		TurnID:            turn.turnID,
-		Status:            turn.status,
-		PendingReasoning:  turn.pendingReasoning,
-		PendingAssistant:  turn.pendingAssistant,
-		PendingPermission: clonePermissionRequest(turn.pendingPermission),
-		PendingUserInput:  cloneUserInputRequest(turn.pendingUserInput),
-		PendingFallback:   cloneFallbackRequest(turn.pendingFallback),
-		Error:             turn.err,
+		SessionID:             turn.sessionID,
+		TurnID:                turn.turnID,
+		Status:                turn.status,
+		PendingReasoning:      turn.pendingReasoning,
+		PendingAssistant:      turn.pendingAssistant,
+		PendingPermission:     clonePermissionRequest(turn.pendingPermission),
+		PendingUserInput:      cloneUserInputRequest(turn.pendingUserInput),
+		PendingFallback:       cloneFallbackRequest(turn.pendingFallback),
+		NativeAgentActivities: cloneNativeAgentActivities(turn.nativeAgentActivities),
+		Error:                 turn.err,
 	}
 }
 
@@ -513,4 +549,36 @@ func cloneFallbackRequest(req *core.FallbackRequest) *core.FallbackRequest {
 	cp := *req
 	cp.Targets = append([]core.FallbackTarget(nil), req.Targets...)
 	return &cp
+}
+
+func cloneNativeAgentActivity(activity *adapter.NativeAgentActivity) adapter.NativeAgentActivity {
+	if activity == nil {
+		return adapter.NativeAgentActivity{}
+	}
+	return *activity
+}
+
+func cloneNativeAgentActivities(activities []adapter.NativeAgentActivity) []adapter.NativeAgentActivity {
+	if len(activities) == 0 {
+		return nil
+	}
+	out := make([]adapter.NativeAgentActivity, len(activities))
+	copy(out, activities)
+	return out
+}
+
+func nativeAgentActivityKey(activity *adapter.NativeAgentActivity) string {
+	if activity == nil {
+		return ""
+	}
+	if activity.TaskID != "" {
+		return "task:" + activity.TaskID
+	}
+	if activity.ToolUseID != "" {
+		return "tool:" + activity.ToolUseID
+	}
+	if activity.ProviderAgentName != "" {
+		return string(activity.Provider) + ":" + activity.ProviderAgentName + ":" + activity.Description
+	}
+	return ""
 }

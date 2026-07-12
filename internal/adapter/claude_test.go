@@ -276,6 +276,61 @@ func TestParseClaudeStream(t *testing.T) {
 	}
 }
 
+func TestParseClaudeNativeAgentActivity(t *testing.T) {
+	input := strings.NewReader(`{"type":"system","subtype":"task_started","task_id":"agent-1","tool_use_id":"toolu_1","description":"Review changes","subagent_type":"podiom-reviewer-12345678","task_type":"local_agent","session_id":"abc"}
+{"type":"system","subtype":"task_notification","task_id":"agent-1","tool_use_id":"toolu_1","status":"completed","summary":"done","session_id":"abc"}
+`)
+	out := make(chan Event, 8)
+	if err := parseClaudeStream(context.Background(), input, out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	var activities []NativeAgentActivity
+	for event := range out {
+		if event.Kind == EventNativeAgentActivity && event.NativeAgent != nil {
+			activities = append(activities, *event.NativeAgent)
+		}
+	}
+	if len(activities) != 2 {
+		t.Fatalf("activities = %+v, want start and completion", activities)
+	}
+	if got := activities[0]; got.Status != "started" || got.TaskID != "agent-1" || got.ProviderAgentName != "podiom-reviewer-12345678" || got.ToolUseID != "toolu_1" {
+		t.Fatalf("bad start activity: %+v", got)
+	}
+	if got := activities[1]; got.Status != "completed" || got.TaskID != "agent-1" || got.ProviderAgentName != "" {
+		t.Fatalf("bad completion activity: %+v", got)
+	}
+}
+
+func TestClaudeNativeAgentActivityEnrichment(t *testing.T) {
+	req := TurnRequest{Settings: TurnSettings{NativeAgents: []NativeAgent{{
+		PodiomName: "Researcher",
+		Name:       "podiom-researcher-12345678",
+	}}}}
+	track := claudeStreamTrack{nativeAgentTasks: map[string]NativeAgentActivity{}}
+	start, ok := enrichClaudeNativeAgentActivity(req, &track, &NativeAgentActivity{
+		TaskID:            "agent-1",
+		ProviderAgentName: "podiom-researcher-12345678",
+		Status:            "started",
+	})
+	if !ok {
+		t.Fatal("start activity was dropped")
+	}
+	if start.PodiomAgentName != "Researcher" || start.DisplayName != "Researcher" {
+		t.Fatalf("bad start enrichment: %+v", start)
+	}
+	done, ok := enrichClaudeNativeAgentActivity(req, &track, &NativeAgentActivity{
+		TaskID: "agent-1",
+		Status: "completed",
+	})
+	if !ok {
+		t.Fatal("completion activity was dropped")
+	}
+	if done.ProviderAgentName != "podiom-researcher-12345678" || done.DisplayName != "Researcher" || done.Status != "completed" {
+		t.Fatalf("bad completion enrichment: %+v", done)
+	}
+}
+
 func TestParseClaudeReasoningStream(t *testing.T) {
 	input := strings.NewReader(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","text":"working"}}}
 {"type":"assistant","message":{"content":[{"type":"thinking","text":"private"},{"type":"text","text":"public"}]}}
