@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
 )
 
 func TestForwardPermissionExtractsDescription(t *testing.T) {
@@ -76,5 +79,34 @@ func TestForwardPermissionExtractsDescription(t *testing.T) {
 				t.Fatalf("description = %q, want %q", req.Description, tt.want)
 			}
 		})
+	}
+}
+
+func TestForwardPermissionSendsGatewayToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(config.EnvHome, home)
+	if err := os.WriteFile(config.NewPaths(home).GatewayToken, []byte("permission-token\n"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	tokens := make(chan string, 1)
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tokens <- r.Header.Get(gateway.Header)
+			_ = json.NewEncoder(w).Encode(adapter.PermissionDecision{Behavior: "allow"})
+		}),
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Shutdown(context.Background())
+
+	params, _ := json.Marshal(map[string]any{"arguments": map[string]any{"tool_name": "Bash"}})
+	if _, err := forwardPermission(context.Background(), ln.Addr().String(), "turn-1", time.Second, params); err != nil {
+		t.Fatalf("forward permission: %v", err)
+	}
+	if got := <-tokens; got != "permission-token" {
+		t.Fatalf("gateway token header = %q, want permission-token", got)
 	}
 }

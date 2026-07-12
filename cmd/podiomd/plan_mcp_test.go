@@ -2,8 +2,14 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
 )
 
 func TestPlanMCPToolDescribesStructuredMarkdown(t *testing.T) {
@@ -25,5 +31,27 @@ func TestPlanMCPToolDescribesStructuredMarkdown(t *testing.T) {
 		if !strings.Contains(description, want) {
 			t.Fatalf("description missing %q: %s", want, description)
 		}
+	}
+}
+
+func TestSetGatewayTokenReadsCurrentTokenEachRequest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(config.EnvHome, home)
+	path := config.NewPaths(home).GatewayToken
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatalf("write old token: %v", err)
+	}
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	setGatewayToken(req1)
+	if got := req1.Header.Get(gateway.Header); got != "old" {
+		t.Fatalf("first token header = %q, want old", got)
+	}
+	if err := os.WriteFile(path, []byte("new\n"), 0o600); err != nil {
+		t.Fatalf("write new token: %v", err)
+	}
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	setGatewayToken(req2)
+	if got := req2.Header.Get(gateway.Header); got != "new" {
+		t.Fatalf("second token header = %q, want new", got)
 	}
 }

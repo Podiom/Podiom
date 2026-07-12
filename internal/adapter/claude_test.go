@@ -17,6 +17,7 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 	workspace := t.TempDir()
 	c := &Claude{
 		daemonAddr:        "127.0.0.1:8787",
+		podiomHome:        "/data/podiom",
 		permissionTimeout: time.Minute,
 		mcpCommand:        "/tmp/podiomd",
 	}
@@ -63,6 +64,20 @@ func TestClaudeArgsApproveWritesPermissionMCPConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "permission-mcp") || !strings.Contains(string(raw), "turn-1") || !strings.Contains(string(raw), "5m0s") {
 		t.Fatalf("unexpected mcp config:\n%s", raw)
+	}
+	var parsed struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("parse mcp config: %v\n%s", err, raw)
+	}
+	permission := parsed.MCPServers["podiom_permission"]
+	env, ok := permission["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("permission MCP missing env: %+v", permission)
+	}
+	if got := env[config.EnvHome]; got != "/data/podiom" {
+		t.Fatalf("permission MCP %s env = %v, want /data/podiom", config.EnvHome, got)
 	}
 }
 

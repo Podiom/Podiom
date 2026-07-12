@@ -29,6 +29,7 @@ const claudeStderrTailLimit = 16 * 1024
 type ClaudeOptions struct {
 	Discovery         podiomexec.Discovery
 	DaemonAddr        string
+	PodiomHome        string
 	PermissionTimeout time.Duration
 	MCPCommand        string
 	Logger            *slog.Logger
@@ -38,6 +39,7 @@ type ClaudeOptions struct {
 type Claude struct {
 	bin               string
 	daemonAddr        string
+	podiomHome        string
 	permissionTimeout time.Duration
 	mcpCommand        string
 	log               *slog.Logger
@@ -62,6 +64,7 @@ func NewClaude(opts ClaudeOptions) (*Claude, error) {
 	return &Claude{
 		bin:               found.Path,
 		daemonAddr:        opts.DaemonAddr,
+		podiomHome:        opts.PodiomHome,
 		permissionTimeout: timeout,
 		mcpCommand:        mcpCommand,
 		log:               loggerOrDefault(opts.Logger),
@@ -375,6 +378,9 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 				"--turn", turnID,
 				"--timeout", timeout.String(),
 			},
+		}
+		if c.podiomHome != "" {
+			permission["env"] = map[string]string{config.EnvHome: c.podiomHome}
 		}
 	}
 	payload := podiommcp.ClaudeConfig(req.Settings.MCPServers, permission)

@@ -680,6 +680,7 @@ func (c *Core) withInternalMCPServers(sess store.Session, turnID string, assigne
 			"--session", sess.ID,
 			"--turn", turnID,
 		},
+		EnvVars: podiommcp.EnvVars{{Name: config.EnvHome, Value: c.paths.Home}},
 		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
 	}
 	manage := podiommcp.Server{
@@ -692,6 +693,7 @@ func (c *Core) withInternalMCPServers(sess store.Session, turnID string, assigne
 			"--session", sess.ID,
 			"--agent", sess.AgentName,
 		},
+		EnvVars: podiommcp.EnvVars{{Name: config.EnvHome, Value: c.paths.Home}},
 		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
 	}
 	return append(assigned, plan, manage), append(all, plan, manage)

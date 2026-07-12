@@ -144,14 +144,15 @@ func run() error {
 		log.Info("home assistant mode detected")
 	}
 
-	addr := net.JoinHostPort(cfg.Server.Bind, strconv.Itoa(cfg.Server.Port))
+	callbackAddr := internalCallbackAddr(cfg.Server.Bind, cfg.Server.Port)
 	permissionTimeout, err := time.ParseDuration(cfg.Global.PermissionTimeout)
 	if err != nil {
 		return err
 	}
 	adapters := map[config.Provider]adapter.Adapter{}
 	claude, err := adapter.NewClaude(adapter.ClaudeOptions{
-		DaemonAddr:        addr,
+		DaemonAddr:        callbackAddr,
+		PodiomHome:        paths.Home,
 		PermissionTimeout: permissionTimeout,
 		Logger:            log,
 	})
@@ -178,7 +179,7 @@ func run() error {
 		Global:     cfg.Global,
 		Voice:      cfg.Voice,
 		Profiles:   cfg.Profiles,
-		DaemonAddr: addr,
+		DaemonAddr: callbackAddr,
 		Logger:     log,
 	})
 	if err != nil {
@@ -284,6 +285,19 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+func internalCallbackAddr(bind string, port int) string {
+	if bind == "" {
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	}
+	if ip := net.ParseIP(bind); ip != nil && ip.IsUnspecified() {
+		if ip.To4() == nil {
+			return net.JoinHostPort("::1", strconv.Itoa(port))
+		}
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	}
+	return net.JoinHostPort(bind, strconv.Itoa(port))
 }
 
 func syncConfiguredAgents(ctx context.Context, coreSvc *core.Core, cfg *config.Config) error {

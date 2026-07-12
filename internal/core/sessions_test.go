@@ -104,6 +104,19 @@ func TestSessionStartIncludesInternalPlanMCP(t *testing.T) {
 	if !hasMCPServer(req.MCPAllServers, "podiom_plan") {
 		t.Fatalf("initial StartRequest missing plan MCP in all servers: %+v", req.MCPAllServers)
 	}
+	var plan *podiommcp.Server
+	for i := range req.MCPServers {
+		if req.MCPServers[i].Name == "podiom_plan" {
+			plan = &req.MCPServers[i]
+			break
+		}
+	}
+	if plan == nil {
+		t.Fatalf("plan server not found")
+	}
+	if got := envValue(plan.EnvVars, config.EnvHome); got != c.paths.Home {
+		t.Fatalf("plan MCP %s env = %q, want %q", config.EnvHome, got, c.paths.Home)
+	}
 }
 
 func TestSessionStartIncludesInternalManageMCP(t *testing.T) {
@@ -146,6 +159,18 @@ func TestSessionStartIncludesInternalManageMCP(t *testing.T) {
 			t.Fatalf("manage MCP args missing %q: %v", want, manage.Args)
 		}
 	}
+	if got := envValue(manage.EnvVars, config.EnvHome); got != c.paths.Home {
+		t.Fatalf("manage MCP %s env = %q, want %q", config.EnvHome, got, c.paths.Home)
+	}
+}
+
+func envValue(vars podiommcp.EnvVars, name string) string {
+	for _, kv := range vars {
+		if kv.Name == name {
+			return kv.Value
+		}
+	}
+	return ""
 }
 
 func TestStreamTurnPersistsErrorAndExcludesItFromReplay(t *testing.T) {

@@ -6,8 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/gateway"
 )
 
 // recordingServer captures the last request a tool made so tests can assert the
@@ -130,6 +134,29 @@ func TestCreateTaskPostsBody(t *testing.T) {
 	}
 	if _, ok := rec.body["assigned_agent"]; ok {
 		t.Fatalf("body should omit unspecified assigned_agent: %v", rec.body)
+	}
+}
+
+func TestManageClientSendsGatewayToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(config.EnvHome, home)
+	if err := os.WriteFile(config.NewPaths(home).GatewayToken, []byte("manage-token\n"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	var gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get(gateway.Header)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := newManageClient(strings.TrimPrefix(srv.URL, "http://"))
+	if _, err := c.get(context.Background(), "/api/config"); err != nil {
+		t.Fatalf("manage client get: %v", err)
+	}
+	if gotToken != "manage-token" {
+		t.Fatalf("gateway token header = %q, want manage-token", gotToken)
 	}
 }
 
