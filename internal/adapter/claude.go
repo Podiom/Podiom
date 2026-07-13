@@ -161,6 +161,10 @@ func (c *Claude) startProcess(ctx context.Context, req TurnRequest, allowNative 
 	if err := writeClaudeInput(stdin, req.Message, req.History, req.Handle.ID != ""); err != nil {
 		_ = podiomexec.Kill(cmd)
 		cleanup()
+		if nativeEnabled {
+			c.providerLog(req).Warn("native agent projection failed; retrying without native agents", "stage", "native_agents", "error", err)
+			return c.startProcess(ctx, withoutClaudeNativeAgents(req), false)
+		}
 		c.providerLog(req).Warn("provider stdin write failed", "stage", "write_input", "error", err)
 		return claudeProcess{}, err
 	}
