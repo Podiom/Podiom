@@ -31,6 +31,9 @@ const memoryBudgetLines = 200
 type InstructionSource struct {
 	Label string
 	Path  string
+	// Content carries an in-memory source that should be snapshotted into the
+	// generated workspace artifact instead of read from a canonical file.
+	Content []byte
 	// MaxLines caps how many leading lines of this source are composed in
 	// (0 = unlimited). Used to enforce MEMORY.md's injection budget.
 	MaxLines int
@@ -49,9 +52,10 @@ type InstructionPayload struct {
 }
 
 // InstructionComposer composes Podiom's base instructions, optional per-agent
-// instructions, and SOUL.md in the fixed order required by the spec.
+// instructions, SOUL.md, optional project instructions, and memory in the fixed
+// order required by the spec.
 type InstructionComposer interface {
-	Compose(context.Context, store.Agent, DeliveryMode) (InstructionPayload, error)
+	Compose(context.Context, store.Agent, DeliveryMode, string) (InstructionPayload, error)
 }
 
 // FileComposer composes instruction payloads from the Podiom home directory.
@@ -65,12 +69,12 @@ func NewFileComposer(paths config.Paths) *FileComposer {
 }
 
 // Compose produces and writes the provider-ready instruction payload.
-func (c *FileComposer) Compose(ctx context.Context, agent store.Agent, mode DeliveryMode) (InstructionPayload, error) {
+func (c *FileComposer) Compose(ctx context.Context, agent store.Agent, mode DeliveryMode, projectInstructions string) (InstructionPayload, error) {
 	if err := ctx.Err(); err != nil {
 		return InstructionPayload{}, err
 	}
 	agentPaths := agentPaths(c.paths, agent.Name)
-	sources, err := c.sources(agentPaths)
+	sources, err := c.sources(agentPaths, projectInstructions)
 	if err != nil {
 		return InstructionPayload{}, err
 	}
@@ -84,7 +88,7 @@ func (c *FileComposer) Compose(ctx context.Context, agent store.Agent, mode Deli
 	}
 }
 
-func (c *FileComposer) sources(paths AgentPaths) ([]InstructionSource, error) {
+func (c *FileComposer) sources(paths AgentPaths, projectInstructions string) ([]InstructionSource, error) {
 	sources := []InstructionSource{{Label: "base AGENTS.md", Path: c.paths.BaseAgents}}
 	if _, err := os.Stat(paths.Agents); err == nil {
 		sources = append(sources, InstructionSource{Label: "agent AGENTS.md", Path: paths.Agents})
@@ -92,15 +96,22 @@ func (c *FileComposer) sources(paths AgentPaths) ([]InstructionSource, error) {
 		return nil, fmt.Errorf("stat %s: %w", paths.Agents, err)
 	}
 	sources = append(sources, InstructionSource{Label: "SOUL.md", Path: paths.Soul})
-	// MEMORY.md is the fourth composition layer (MEM3): base AGENTS.md → agent
-	// AGENTS.md → SOUL.md → MEMORY.md, memory last so the agent's learned context
-	// sits closest to the live turn. It is optional and budget-capped.
+	if len(bytes.TrimSpace([]byte(projectInstructions))) > 0 {
+		sources = append(sources, InstructionSource{
+			Label:    "project instructions",
+			Path:     filepath.Join(paths.Workspace, ".podiom-project-instructions.md"),
+			Content:  []byte(projectInstructions),
+			Optional: true,
+		})
+	}
+	// MEMORY.md stays last so the agent's learned context sits closest to the
+	// live turn. It is optional and budget-capped.
 	memory := InstructionSource{Label: "MEMORY.md", Path: paths.Memory, MaxLines: memoryBudgetLines, Optional: true}
 	if useMemory(memory.Path) {
 		sources = append(sources, memory)
 	}
 	for _, src := range sources {
-		if src.Optional {
+		if src.Optional || len(src.Content) > 0 {
 			continue
 		}
 		if _, err := os.Stat(src.Path); err != nil {
@@ -157,6 +168,13 @@ func (c *FileComposer) composeClaude(agent store.Agent, paths AgentPaths, source
 			fmt.Fprintf(&buf, "@%s\n", filepath.Clean(snapPath))
 			continue
 		}
+		if len(src.Content) > 0 {
+			if err := writeSnapshot(src.Path, src.Content); err != nil {
+				return InstructionPayload{}, err
+			}
+			fmt.Fprintf(&buf, "@%s\n", filepath.Clean(src.Path))
+			continue
+		}
 		fmt.Fprintf(&buf, "@%s\n", filepath.Clean(src.Path))
 	}
 	payloadPath := filepath.Join(paths.Workspace, "CLAUDE.md")
@@ -186,16 +204,33 @@ func (c *FileComposer) writeMemorySnapshot(paths AgentPaths, src InstructionSour
 	return snapPath, nil
 }
 
+func writeSnapshot(path string, raw []byte) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create parent for instruction snapshot: %w", err)
+	}
+	if err := os.WriteFile(path, bytes.TrimSpace(raw), 0o644); err != nil {
+		return fmt.Errorf("write instruction snapshot %s: %w", path, err)
+	}
+	return nil
+}
+
 func (c *FileComposer) composeCodex(agent store.Agent, paths AgentPaths, sources []InstructionSource) (InstructionPayload, error) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "# Podiom generated Codex instructions for %s\n\n", agent.Name)
 	for i, src := range sources {
-		raw, err := os.ReadFile(src.Path)
-		if err != nil {
-			if src.Optional && os.IsNotExist(err) {
-				continue
+		raw := src.Content
+		if len(raw) == 0 {
+			var err error
+			raw, err = os.ReadFile(src.Path)
+			if err != nil {
+				if src.Optional && os.IsNotExist(err) {
+					continue
+				}
+				return InstructionPayload{}, fmt.Errorf("read instruction source %s: %w", src.Path, err)
 			}
-			return InstructionPayload{}, fmt.Errorf("read instruction source %s: %w", src.Path, err)
 		}
 		if src.MaxLines > 0 {
 			raw = truncateLines(raw, src.MaxLines)

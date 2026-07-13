@@ -40,7 +40,9 @@ absolute `@` imports in this order:
 1. `$PODIOM_HOME/AGENTS.md`
 2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
 3. `$PODIOM_HOME/agents/<name>/SOUL.md`
-4. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, through a generated
+4. the project ledger entry's `instructions` field when the session is bound to
+   a project and that field is non-empty, through a generated snapshot
+5. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, through a generated
    capped snapshot
 
 Claude auto-discovers `CLAUDE.md` because the workspace is the process cwd.

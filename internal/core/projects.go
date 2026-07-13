@@ -121,6 +121,33 @@ type DeleteProjectResult struct {
 	OrphanedSessions int    `json:"orphaned_sessions"`
 }
 
+// ProjectInstructions is the editable project-specific instruction block stored
+// on the project's ledger entry.
+type ProjectInstructions struct {
+	ProjectID    string `json:"project_id"`
+	Path         string `json:"path"`
+	Instructions string `json:"instructions"`
+}
+
+// ReadProjectInstructions returns the project instructions stored in
+// projects.yaml.
+func (c *Core) ReadProjectInstructions(projectID string) (ProjectInstructions, error) {
+	project, err := c.ledger.Get(strings.TrimSpace(projectID))
+	if err != nil {
+		return ProjectInstructions{}, err
+	}
+	return ProjectInstructions{ProjectID: project.ID, Path: c.paths.ProjectsYAML, Instructions: project.Instructions}, nil
+}
+
+// WriteProjectInstructions overwrites the project instructions in projects.yaml.
+func (c *Core) WriteProjectInstructions(projectID, instructions string) (ProjectInstructions, error) {
+	updated, err := c.UpdateProject(context.Background(), strings.TrimSpace(projectID), projects.ProjectPatch{Instructions: &instructions})
+	if err != nil {
+		return ProjectInstructions{}, err
+	}
+	return ProjectInstructions{ProjectID: updated.ID, Path: c.paths.ProjectsYAML, Instructions: updated.Instructions}, nil
+}
+
 // DeleteProject removes a project record from the shared ledger. It is
 // intentionally non-cascading: the on-disk project directory is kept, and any
 // tasks or sessions that referenced the project are left in place (orphaned)
@@ -647,13 +674,14 @@ func projectLogFields(p projects.Project) map[string]string {
 		repo = p.Repo.Owner + "/" + p.Repo.Name + "@" + p.Repo.Ref
 	}
 	return map[string]string{
-		"name":        p.Name,
-		"description": boolString(strings.TrimSpace(p.Description) != ""),
-		"color":       p.Color,
-		"status":      p.Status,
-		"stack_count": fmt.Sprintf("%d", len(p.Stack)),
-		"notes":       boolString(strings.TrimSpace(p.Notes) != ""),
-		"repo":        repo,
+		"name":         p.Name,
+		"description":  boolString(strings.TrimSpace(p.Description) != ""),
+		"color":        p.Color,
+		"status":       p.Status,
+		"stack_count":  fmt.Sprintf("%d", len(p.Stack)),
+		"notes":        boolString(strings.TrimSpace(p.Notes) != ""),
+		"instructions": boolString(strings.TrimSpace(p.Instructions) != ""),
+		"repo":         repo,
 	}
 }
 
@@ -831,9 +859,10 @@ func (c *Core) taskProjectPromptContext(ctx context.Context, projectID string) (
 }
 
 type projectExecutionContext struct {
-	Root       string
-	ProjectDir string
-	Prompt     string
+	Root         string
+	ProjectDir   string
+	Instructions string
+	Prompt       string
 }
 
 func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Session) (projectExecutionContext, error) {
@@ -897,5 +926,5 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 		prompt += " The connected GitHub repository has been downloaded as a local source snapshot at " + root + ". " +
 			"You may inspect files there for project facts. It is not a Git checkout: do not assume .git, branches, commits, pushes, or PR operations are available."
 	}
-	return projectExecutionContext{Root: root, ProjectDir: projectDir, Prompt: prompt}, nil
+	return projectExecutionContext{Root: root, ProjectDir: projectDir, Instructions: proj.Instructions, Prompt: prompt}, nil
 }

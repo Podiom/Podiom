@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/config"
@@ -68,5 +69,56 @@ func TestTaskDescribeEndpointsReturnBody(t *testing.T) {
 				t.Fatalf("empty body response")
 			}
 		})
+	}
+}
+
+func TestProjectInstructionsEndpointReadsAndWrites(t *testing.T) {
+	ctx := context.Background()
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	if _, err := srv.core.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/mission-control/instructions", nil)
+	rr := httptest.NewRecorder()
+	srv.handleProject(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("initial GET status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var got core.ProjectInstructions
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode initial: %v", err)
+	}
+	if got.ProjectID != "mission-control" || got.Instructions != "" || !strings.HasSuffix(got.Path, "/projects/projects.yaml") {
+		t.Fatalf("initial instructions = %+v", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/projects/mission-control/instructions", bytes.NewBufferString(`{"instructions":"project layer\n"}`))
+	rr = httptest.NewRecorder()
+	srv.handleProject(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode put: %v", err)
+	}
+	if got.Instructions != "project layer\n" {
+		t.Fatalf("saved instructions = %q", got.Instructions)
+	}
+	project, err := srv.core.GetProject(ctx, "mission-control")
+	if err != nil {
+		t.Fatalf("get project: %v", err)
+	}
+	if project.Instructions != "project layer\n" {
+		t.Fatalf("ledger instructions = %q", project.Instructions)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/missing/instructions", nil)
+	rr = httptest.NewRecorder()
+	srv.handleProject(rr, req)
+	if rr.Code == http.StatusOK {
+		t.Fatalf("missing project should fail, body=%s", rr.Body.String())
 	}
 }

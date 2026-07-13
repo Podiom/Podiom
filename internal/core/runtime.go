@@ -65,7 +65,11 @@ func IsRateLimitErrorMessage(message string) bool {
 }
 
 func (c *Core) ensureSessionInstructions(ctx context.Context, sess store.Session) error {
-	_, err := c.sessionInstructionPayload(ctx, sess)
+	projectCtx, err := c.sessionProjectExecutionContext(ctx, sess)
+	if err != nil {
+		return err
+	}
+	_, err = c.sessionInstructionPayload(ctx, sess, projectCtx)
 	return err
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -34,6 +35,40 @@ func TestGoalPlanningUsesStoredRunTarget(t *testing.T) {
 	}
 	if sess.Provider != config.ProviderCodex || sess.Model != "gpt-5.1" || sess.Effort != "high" {
 		t.Fatalf("goal planning target = %+v", sess)
+	}
+}
+
+func TestGoalPlanningSessionUsesProjectInstructions(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"planned"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	_, err := c.WriteProjectInstructions("mission-control", "goal project layer\n")
+	if err != nil {
+		t.Fatalf("write project instructions: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{
+		Title:     "Ship it",
+		LeadAgent: "lead",
+		ProjectID: "mission-control",
+	})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	sess, err := c.StartGoalPlanning(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("start goal planning: %v", err)
+	}
+	req := startRequestFor(t, fake, sess.ID)
+	if !strings.Contains(string(req.Instructions), ".podiom-project-instructions.md") {
+		t.Fatalf("goal planning session missing project instruction path:\n%s", req.Instructions)
 	}
 }
 

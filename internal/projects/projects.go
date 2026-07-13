@@ -22,16 +22,17 @@ var safeProjectID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // Project mirrors one entry in projects.yaml (R5.10). `Path` is relative to the
 // projects directory.
 type Project struct {
-	ID          string   `yaml:"id" json:"id"`
-	Name        string   `yaml:"name" json:"name"`
-	Description string   `yaml:"description" json:"description"`
-	Color       string   `yaml:"color,omitempty" json:"color"`
-	Path        string   `yaml:"path" json:"path"`
-	Status      string   `yaml:"status" json:"status"`
-	Stack       []string `yaml:"stack" json:"stack"`
-	Repo        *Repo    `yaml:"repo" json:"repo"`
-	Roadmap     []string `yaml:"roadmap" json:"roadmap"`
-	Notes       string   `yaml:"notes" json:"notes"`
+	ID           string   `yaml:"id" json:"id"`
+	Name         string   `yaml:"name" json:"name"`
+	Description  string   `yaml:"description" json:"description"`
+	Color        string   `yaml:"color,omitempty" json:"color"`
+	Path         string   `yaml:"path" json:"path"`
+	Status       string   `yaml:"status" json:"status"`
+	Stack        []string `yaml:"stack" json:"stack"`
+	Repo         *Repo    `yaml:"repo" json:"repo"`
+	Roadmap      []string `yaml:"roadmap" json:"roadmap"`
+	Notes        string   `yaml:"notes" json:"notes"`
+	Instructions string   `yaml:"instructions,omitempty" json:"instructions"`
 }
 
 // Repo describes an optional external source linked to a Podiom project. v1
@@ -53,14 +54,15 @@ type Repo struct {
 // pointers are left unchanged so partial updates are safe under the
 // last-write-wins ledger.
 type ProjectPatch struct {
-	Name        *string
-	Description *string
-	Color       *string
-	Status      *string
-	Stack       *[]string
-	Repo        *Repo
-	ClearRepo   bool
-	Notes       *string
+	Name         *string
+	Description  *string
+	Color        *string
+	Status       *string
+	Stack        *[]string
+	Repo         *Repo
+	ClearRepo    bool
+	Notes        *string
+	Instructions *string
 }
 
 // ledgerFile is the on-disk shape of projects.yaml.
@@ -199,6 +201,9 @@ func (l *Ledger) Update(id string, patch ProjectPatch) (Project, error) {
 	if patch.Notes != nil {
 		p.Notes = *patch.Notes
 	}
+	if patch.Instructions != nil {
+		p.Instructions = *patch.Instructions
+	}
 	if err := l.write(file); err != nil {
 		return Project{}, err
 	}
@@ -303,16 +308,17 @@ func sameStrings(a, b []string) bool {
 
 func (p *Project) UnmarshalYAML(value *yaml.Node) error {
 	type rawProject struct {
-		ID          string    `yaml:"id"`
-		Name        string    `yaml:"name"`
-		Description string    `yaml:"description"`
-		Color       string    `yaml:"color,omitempty"`
-		Path        string    `yaml:"path"`
-		Status      string    `yaml:"status"`
-		Stack       []string  `yaml:"stack"`
-		Repo        yaml.Node `yaml:"repo"`
-		Roadmap     []string  `yaml:"roadmap"`
-		Notes       string    `yaml:"notes"`
+		ID           string    `yaml:"id"`
+		Name         string    `yaml:"name"`
+		Description  string    `yaml:"description"`
+		Color        string    `yaml:"color,omitempty"`
+		Path         string    `yaml:"path"`
+		Status       string    `yaml:"status"`
+		Stack        []string  `yaml:"stack"`
+		Repo         yaml.Node `yaml:"repo"`
+		Roadmap      []string  `yaml:"roadmap"`
+		Notes        string    `yaml:"notes"`
+		Instructions string    `yaml:"instructions"`
 	}
 	var raw rawProject
 	if err := value.Decode(&raw); err != nil {
@@ -327,6 +333,7 @@ func (p *Project) UnmarshalYAML(value *yaml.Node) error {
 	p.Stack = raw.Stack
 	p.Roadmap = raw.Roadmap
 	p.Notes = raw.Notes
+	p.Instructions = raw.Instructions
 	p.Repo = repoFromNode(raw.Repo)
 	return nil
 }

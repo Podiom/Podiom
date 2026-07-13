@@ -82,6 +82,7 @@ type TurnSettings struct {
 	// ToolPathDirs: see StartRequest.ToolPathDirs.
 	ToolPathDirs      []string
 	InstructionPath   string
+	Instructions      []byte
 	NativeAgentName   string
 	NativeAgents      []NativeAgent
 	PermissionTurnID  string

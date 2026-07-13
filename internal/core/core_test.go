@@ -74,7 +74,7 @@ func TestMemoryComposesAsFourthLayerWithinBudget(t *testing.T) {
 	}
 
 	// Claude: the payload @-imports a truncated snapshot, not MEMORY.md directly.
-	claudePayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport)
+	claudePayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport, "")
 	if err != nil {
 		t.Fatalf("compose claude: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestMemoryComposesAsFourthLayerWithinBudget(t *testing.T) {
 
 	// Codex: the truncated memory is inlined last, after SOUL.md.
 	agent.Provider = config.ProviderCodex
-	codexPayload, err := c.composer.Compose(ctx, agent, DeliveryCodexBundle)
+	codexPayload, err := c.composer.Compose(ctx, agent, DeliveryCodexBundle, "")
 	if err != nil {
 		t.Fatalf("compose codex: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestMemoryComposesAsFourthLayerWithinBudget(t *testing.T) {
 		t.Fatalf("clear memory: %v", err)
 	}
 	agent.Provider = config.ProviderClaude
-	emptyPayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport)
+	emptyPayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport, "")
 	if err != nil {
 		t.Fatalf("recompose claude: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 		t.Fatalf("write SOUL.md: %v", err)
 	}
 
-	claudePayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport)
+	claudePayload, err := c.composer.Compose(ctx, agent, DeliveryClaudeImport, "")
 	if err != nil {
 		t.Fatalf("compose claude: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	}
 
 	agent.Provider = config.ProviderCodex
-	codexPayload, err := c.composer.Compose(ctx, agent, DeliveryCodexBundle)
+	codexPayload, err := c.composer.Compose(ctx, agent, DeliveryCodexBundle, "")
 	if err != nil {
 		t.Fatalf("compose codex: %v", err)
 	}

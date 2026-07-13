@@ -45,13 +45,19 @@ app-server restarts, Podiom clears its in-memory loaded-thread set, calls
 
 Before a session starts, core composes the agent instructions and writes
 `agents/<name>/workspace/AGENTS.md`. The file is Podiom-managed and concatenates
-the instruction layers in this order:
+the agent instruction layers in this order:
 
 1. `$PODIOM_HOME/AGENTS.md`
 2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
 3. `$PODIOM_HOME/agents/<name>/SOUL.md`
 4. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, capped to the memory
    injection budget
+
+For sessions bound to a Podiom project, core keeps the project as the Codex
+`cwd`. To keep Podiom's base/agent/SOUL/project/memory layers available in that
+project cwd, Podiom also passes the generated bundle as `developerInstructions`
+on `thread/start` and `thread/resume`. The project layer comes from the
+project's `instructions` field in `projects.yaml`.
 
 Current Codex app-server behavior was checked against `codex-cli 0.142.4` by
 starting a thread with both a parent `agents/<name>/AGENTS.md` and a workspace

@@ -32,7 +32,9 @@ Podiom composes agent instructions in this fixed order:
 1. `$PODIOM_HOME/AGENTS.md`
 2. `$PODIOM_HOME/agents/<name>/AGENTS.md` when present
 3. `$PODIOM_HOME/agents/<name>/SOUL.md`
-4. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, capped to the
+4. the project ledger entry's `instructions` field when the session is bound to
+   a project and that field is non-empty
+5. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, capped to the
    current memory injection budget
 
 The delivery artifact depends on the provider:
@@ -40,11 +42,11 @@ The delivery artifact depends on the provider:
 | Provider | Workspace artifact | Contents |
 | --- | --- | --- |
 | Claude | `workspace/CLAUDE.md` | A generated file with `@` imports for each instruction source. Memory is imported through a generated capped snapshot. |
-| Codex | `workspace/AGENTS.md` | A generated bundle concatenating the instruction sources in order. |
+| Codex | `workspace/AGENTS.md` | A generated bundle concatenating the instruction sources. Project sessions also pass that bundle explicitly as developer instructions. |
 
 Claude wiring landed in Phase 2 and Codex wiring landed in Phase 5. The
 workspace artifacts are generated and disposable; users edit only the canonical
-base, per-agent, `SOUL.md`, and `MEMORY.md` sources.
+base, per-agent, project, `SOUL.md`, and `MEMORY.md` sources.
 
 ## Native Provider Agent Hints
 

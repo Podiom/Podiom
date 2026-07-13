@@ -37,6 +37,7 @@ import type {
   PlanState,
   ProfileInfo,
   Project,
+  ProjectInstructions,
   Provider,
   ProviderCapabilities,
   ScheduleStatus,
@@ -521,6 +522,20 @@ export async function updateProject(id: string, patch: ProjectPatch): Promise<Pr
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
+    }),
+  );
+}
+
+export async function getProjectInstructions(id: string): Promise<ProjectInstructions> {
+  return asJSON(await request(`/api/projects/${encodeURIComponent(id)}/instructions`));
+}
+
+export async function updateProjectInstructions(id: string, instructions: string): Promise<ProjectInstructions> {
+  return asJSON(
+    await request(`/api/projects/${encodeURIComponent(id)}/instructions`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instructions }),
     }),
   );
 }

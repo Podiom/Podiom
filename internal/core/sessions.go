@@ -96,11 +96,11 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		return store.Session{}, err
 	}
 
-	payload, err := c.ComposeInstructionsForProvider(ctx, agent, created.Provider)
+	projectCtx, err := c.sessionProjectExecutionContext(ctx, created)
 	if err != nil {
 		return store.Session{}, err
 	}
-	projectCtx, err := c.sessionProjectExecutionContext(ctx, created)
+	payload, err := c.ComposeInstructionsForProvider(ctx, agent, created.Provider, projectCtx)
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -122,6 +122,7 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	}
 	workspaceDir := c.sessionWorkspaceDir(agent.Name, projectCtx)
 	extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(agent.Name).Workspace, projectCtx)
+	instructions := providerInstructionsForAdapter(created.Provider, projectCtx, payload.Bytes)
 	handle, err := c.adapter.Start(ctx, adapter.StartRequest{
 		SessionID:          created.ID,
 		AgentName:          agent.Name,
@@ -135,7 +136,7 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		ExtraWorkspaceDirs: extraWorkspaceDirs,
 		ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(agent.Name).Tools),
 		InstructionPath:    payload.Path,
-		Instructions:       payload.Bytes,
+		Instructions:       instructions,
 		NativeAgentName:    nativeAgentName,
 		NativeAgents:       nativeAgents,
 		MCPServers:         mcpServers,
@@ -432,15 +433,15 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 		fallbacks := 0
 		for {
 			tried[targetKey(current.Provider, current.Profile)] = true
-			payload, err := c.sessionInstructionPayload(ctx, current)
-			if err != nil {
-				runLog.Warn("turn failed", "stage", "compose", "error", err)
-				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
-				return
-			}
 			projectCtx, err := c.sessionProjectExecutionContext(ctx, current)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "project_context", "error", err)
+				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
+				return
+			}
+			payload, err := c.sessionInstructionPayload(ctx, current, projectCtx)
+			if err != nil {
+				runLog.Warn("turn failed", "stage", "compose", "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
@@ -462,13 +463,14 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}
 			workspaceDir := c.sessionWorkspaceDir(current.AgentName, projectCtx)
 			extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(current.AgentName).Workspace, projectCtx)
+			instructions := providerInstructionsForAdapter(current.Provider, projectCtx, payload.Bytes)
 			// Each attempt gets its own cancelable context: a rate-limited provider
 			// process can still be alive (the Claude CLI keeps retrying after an
 			// api_retry event), and it must not keep executing tools while the
 			// fallback target reruns the turn.
 			attemptCtx, cancelAttempt := context.WithCancel(ctx)
 			defer cancelAttempt()
-			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, nativeAgentName, nativeAgents, mcpServers, mcpAll))
+			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, instructions, nativeAgentName, nativeAgents, mcpServers, mcpAll))
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "dispatch", "provider", string(current.Provider), "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
@@ -601,12 +603,12 @@ func (c *Core) appendFinalMessages(ctx context.Context, sessionID string, messag
 	return c.store.AppendMessages(persistCtx, sessionID, messages)
 }
 
-func (c *Core) sessionInstructionPayload(ctx context.Context, sess store.Session) (InstructionPayload, error) {
+func (c *Core) sessionInstructionPayload(ctx context.Context, sess store.Session, projectCtx projectExecutionContext) (InstructionPayload, error) {
 	agent, err := c.store.GetAgent(ctx, sess.AgentName)
 	if err != nil {
 		return InstructionPayload{}, err
 	}
-	return c.ComposeInstructionsForProvider(ctx, agent, sess.Provider)
+	return c.ComposeInstructionsForProvider(ctx, agent, sess.Provider, projectCtx)
 }
 
 func (c *Core) sessionWorkspaceDir(agentName string, projectCtx projectExecutionContext) string {
@@ -645,7 +647,7 @@ func (c *Core) sessionExtraWorkspaceDirs(workspaceDir, agentWorkspace string, pr
 	return out
 }
 
-func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, nativeAgentName string, nativeAgents []adapter.NativeAgent, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
+func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, instructions []byte, nativeAgentName string, nativeAgents []adapter.NativeAgent, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
 	effectivePermission := sess.PermissionMode
 	relay := opts.PermissionRelay
 	if PlanGateActive(sess) {
@@ -677,6 +679,7 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
 			ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(sess.AgentName).Tools),
 			InstructionPath:    instructionPath,
+			Instructions:       instructions,
 			NativeAgentName:    nativeAgentName,
 			NativeAgents:       nativeAgents,
 			PermissionTurnID:   firstNonEmpty(opts.PermissionTurnID, fmt.Sprintf("%s-%d", sess.ID, time.Now().UnixNano())),
@@ -897,21 +900,28 @@ func (c *Core) History(ctx context.Context, sessionID string) ([]store.Message, 
 // ComposeInstructions composes instructions using the session provider's
 // delivery mode without sending them to a real provider.
 func (c *Core) ComposeInstructions(ctx context.Context, agent store.Agent) (InstructionPayload, error) {
-	return c.ComposeInstructionsForProvider(ctx, agent, agent.Provider)
+	return c.ComposeInstructionsForProvider(ctx, agent, agent.Provider, projectExecutionContext{})
 }
 
 // ComposeInstructionsForProvider composes the same agent identity for a
 // specific provider target. It is used when a session switches provider while
 // staying bound to the same Podiom agent.
-func (c *Core) ComposeInstructionsForProvider(ctx context.Context, agent store.Agent, provider config.Provider) (InstructionPayload, error) {
+func (c *Core) ComposeInstructionsForProvider(ctx context.Context, agent store.Agent, provider config.Provider, projectCtx projectExecutionContext) (InstructionPayload, error) {
 	switch provider {
 	case "claude":
-		return c.composer.Compose(ctx, agent, DeliveryClaudeImport)
+		return c.composer.Compose(ctx, agent, DeliveryClaudeImport, projectCtx.Instructions)
 	case "codex":
-		return c.composer.Compose(ctx, agent, DeliveryCodexBundle)
+		return c.composer.Compose(ctx, agent, DeliveryCodexBundle, projectCtx.Instructions)
 	default:
 		return InstructionPayload{}, fmt.Errorf("unknown provider %q", provider)
 	}
+}
+
+func providerInstructionsForAdapter(provider config.Provider, projectCtx projectExecutionContext, instructions []byte) []byte {
+	if provider == config.ProviderCodex && strings.TrimSpace(projectCtx.ProjectDir) == "" {
+		return nil
+	}
+	return instructions
 }
 
 func firstNonEmpty(values ...string) string {

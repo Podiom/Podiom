@@ -29,6 +29,8 @@ projects:
     roadmap: []                  # derived roadmap task IDs
     notes: >
       Anything the next agent needs to know.
+    instructions: >
+      Standing instructions that apply to sessions bound to this project.
 ```
 
 `repo` is optional. When connected through the Projects page, Podiom stores a
@@ -84,6 +86,13 @@ Each project's `roadmap` array in `projects.yaml` is a derived list of task IDs
 for that project. Task details live in SQLite and are expanded by Podiom when
 drafting roadmap prompts.
 
+Each project may also have user-authored standing instructions in its
+`instructions` ledger field. Those instructions apply to sessions bound to the
+project, including manual project chats, roadmap task sessions, scheduled task
+pickups, and goal planning/review sessions for goals with that project id. For
+connected GitHub projects this remains Podiom ledger metadata, not part of the
+replaceable source snapshot under `repo/`.
+
 A task has: a project, a title and optional body, an assigned agent, a status
 column (`backlog` → `in_progress` → `review` → `done`), and an optional scheduled
 pickup time.
@@ -111,6 +120,7 @@ add tasks with **+ New task**. Observe tasks with `podiom tasks list`.
 ## HTTP API
 
 - `GET /api/projects`, `POST /api/projects`
+- `GET /api/projects/<id>/instructions`, `PUT /api/projects/<id>/instructions`
 - `GET /api/tasks`, `POST /api/tasks`
 - `PATCH /api/tasks/<id>` (assign / move / edit / set pickup)
 - `POST /api/tasks/<id>/start` — start on demand → returns the session

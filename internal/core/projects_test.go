@@ -66,6 +66,119 @@ func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
 	}
 }
 
+func TestProjectInstructionsApplyToProjectBoundSessions(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ok"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	_, err := c.WriteProjectInstructions("mission-control", "project layer\n")
+	if err != nil {
+		t.Fatalf("write project instructions: %v", err)
+	}
+
+	manual, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: "jared",
+		Origin:    store.OriginWeb,
+		ProjectID: "mission-control",
+	})
+	if err != nil {
+		t.Fatalf("create manual project session: %v", err)
+	}
+	manualReq := startRequestFor(t, fake, manual.ID)
+	if !strings.Contains(string(manualReq.Instructions), ".podiom-project-instructions.md") {
+		t.Fatalf("manual project session missing project instruction path:\n%s", manualReq.Instructions)
+	}
+	snap, err := os.ReadFile(filepath.Join(c.AgentPaths("jared").Workspace, ".podiom-project-instructions.md"))
+	if err != nil {
+		t.Fatalf("read project instruction snapshot: %v", err)
+	}
+	if string(snap) != "project layer" {
+		t.Fatalf("project instruction snapshot = %q", snap)
+	}
+
+	task, err := c.CreateTask(ctx, store.Task{ProjectID: "mission-control", Title: "Add dark mode", AssignedAgent: "jared"})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	roadmap, err := c.StartTask(ctx, StartTaskRequest{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	roadmapReq := startRequestFor(t, fake, roadmap.ID)
+	if !strings.Contains(string(roadmapReq.Instructions), ".podiom-project-instructions.md") {
+		t.Fatalf("roadmap project session missing project instruction path:\n%s", roadmapReq.Instructions)
+	}
+
+	scheduledTask, err := c.CreateTask(ctx, store.Task{ProjectID: "mission-control", Title: "Check the logs", AssignedAgent: "jared"})
+	if err != nil {
+		t.Fatalf("create scheduled task: %v", err)
+	}
+	scheduledPickup, err := c.StartTask(ctx, StartTaskRequest{TaskID: scheduledTask.ID, Unattended: true})
+	if err != nil {
+		t.Fatalf("start scheduled task pickup: %v", err)
+	}
+	scheduledReq := startRequestFor(t, fake, scheduledPickup.ID)
+	if !strings.Contains(string(scheduledReq.Instructions), ".podiom-project-instructions.md") {
+		t.Fatalf("scheduled project pickup missing project instruction path:\n%s", scheduledReq.Instructions)
+	}
+
+	unbound, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "jared", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create unbound session: %v", err)
+	}
+	unboundReq := startRequestFor(t, fake, unbound.ID)
+	if strings.Contains(string(unboundReq.Instructions), ".podiom-project-instructions.md") {
+		t.Fatalf("unbound session should not include project instructions:\n%s", unboundReq.Instructions)
+	}
+}
+
+func TestCodexProjectSessionUsesExplicitLedgerProjectInstructions(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ok"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	info, err := c.WriteProjectInstructions("mission-control", "project layer\n")
+	if err != nil {
+		t.Fatalf("write project instructions: %v", err)
+	}
+
+	sess, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName: "jared",
+		Origin:    store.OriginWeb,
+		ProjectID: "mission-control",
+	})
+	if err != nil {
+		t.Fatalf("create codex project session: %v", err)
+	}
+	startReq := startRequestFor(t, fake, sess.ID)
+	if len(startReq.Instructions) == 0 || !strings.Contains(string(startReq.Instructions), "base layer") {
+		t.Fatalf("codex project session should receive explicit base instructions:\n%s", startReq.Instructions)
+	}
+	if !strings.Contains(string(startReq.Instructions), "project layer") || strings.Contains(string(startReq.Instructions), info.Path) {
+		t.Fatalf("codex explicit instructions should include ledger project instructions without file path:\n%s", startReq.Instructions)
+	}
+	if _, err := c.AppendTurn(ctx, sess.ID, "Continue"); err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	if len(fake.Requests) != 1 || len(fake.Requests[0].Settings.Instructions) == 0 {
+		t.Fatalf("codex turn missing explicit instructions: %+v", fake.Requests)
+	}
+}
+
 func TestStartTaskUsesStoredRunTarget(t *testing.T) {
 	ctx := context.Background()
 	c, _, cleanup := newScheduledTestCore(t)

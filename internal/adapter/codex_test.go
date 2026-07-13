@@ -71,6 +71,42 @@ func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	}
 }
 
+func TestCodexParamsCarryDeveloperInstructions(t *testing.T) {
+	start := codexThreadStartParams(StartRequest{
+		PermissionMode: config.PermissionApprove,
+		WorkspaceDir:   "/tmp/workspace",
+		Instructions:   []byte("podiom generated instructions"),
+	})
+	if start["developerInstructions"] != "podiom generated instructions" {
+		t.Fatalf("start developerInstructions = %#v", start["developerInstructions"])
+	}
+	withoutInstructions := codexThreadStartParams(StartRequest{WorkspaceDir: "/tmp/workspace"})
+	if _, ok := withoutInstructions["developerInstructions"]; ok {
+		t.Fatalf("empty instructions should be omitted: %#v", withoutInstructions)
+	}
+	resume := codexThreadResumeParams("thread-1", TurnSettings{
+		WorkspaceDir:   "/tmp/workspace",
+		Instructions:   []byte("fresh instructions"),
+		PermissionMode: config.PermissionApprove,
+	})
+	if resume["developerInstructions"] != "fresh instructions" {
+		t.Fatalf("resume developerInstructions = %#v", resume["developerInstructions"])
+	}
+}
+
+func TestCodexLoadedThreadTracksInstructionHash(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	first := instructionHash([]byte("first"))
+	second := instructionHash([]byte("second"))
+	client.markLoaded("thread-1", first)
+	if !client.isLoaded("thread-1", first) {
+		t.Fatal("thread should be loaded for matching instruction hash")
+	}
+	if client.isLoaded("thread-1", second) {
+		t.Fatal("thread should not be treated as loaded after instruction hash changes")
+	}
+}
+
 func TestParseCodexModelList(t *testing.T) {
 	page, err := parseCodexModelList(json.RawMessage(`{
 		"data": [{

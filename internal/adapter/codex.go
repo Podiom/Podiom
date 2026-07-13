@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -105,7 +106,7 @@ func (c *Codex) Start(ctx context.Context, req StartRequest) (Handle, error) {
 		c.providerLog(req.SessionID, req.AgentName, req.Profile).Warn("provider response parse failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
 		return Handle{}, err
 	}
-	client.markLoaded(threadID)
+	client.markLoaded(threadID, instructionHash(req.Instructions))
 	c.providerLog(req.SessionID, req.AgentName, req.Profile).Info("provider thread started", "event", "provider", "stage", "thread_start", "thread", threadID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return Handle{Provider: config.ProviderCodex, ID: threadID}, nil
 }
@@ -159,6 +160,7 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 			MCPAllServers:      req.Settings.MCPAllServers,
 			NativeAgentName:    req.Settings.NativeAgentName,
 			NativeAgents:       req.Settings.NativeAgents,
+			Instructions:       req.Settings.Instructions,
 		})
 		if err != nil {
 			c.turnLog(req).Warn("provider thread start failed", "stage", "thread_start", "method", "thread/start", "error", podiomlog.Redact(err.Error()))
@@ -410,7 +412,7 @@ type codexClient struct {
 	initialized bool
 
 	pending     map[string]chan codexCallResponse
-	loaded      map[string]bool
+	loaded      map[string]string
 	watchers    map[codexTurnKey]chan codexStreamEvent
 	buffered    map[codexTurnKey][]codexStreamEvent
 	active      map[codexTurnKey]codexActiveTurn
@@ -487,7 +489,7 @@ func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig str
 			"mcp_profile_hash", profileHash,
 		),
 		pending:     map[string]chan codexCallResponse{},
-		loaded:      map[string]bool{},
+		loaded:      map[string]string{},
 		watchers:    map[codexTurnKey]chan codexStreamEvent{},
 		buffered:    map[codexTurnKey][]codexStreamEvent{},
 		active:      map[codexTurnKey]codexActiveTurn{},
@@ -604,7 +606,7 @@ func (c *codexClient) startLocked() error {
 	c.cmd = proc
 	c.stdin = stdin
 	c.initialized = false
-	c.loaded = map[string]bool{}
+	c.loaded = map[string]string{}
 	go c.readLoop(proc, stdout)
 	go c.readStderr(stderr, stderrDone)
 	return nil
@@ -845,7 +847,7 @@ func (c *codexClient) failLocked(err error) {
 	c.cmd = nil
 	c.stdin = nil
 	c.initialized = false
-	c.loaded = map[string]bool{}
+	c.loaded = map[string]string{}
 	c.fileChanges = map[codexTurnKey]map[string]string{}
 	for key, ch := range c.pending {
 		delete(c.pending, key)
@@ -863,7 +865,8 @@ func (c *codexClient) ensureThread(ctx context.Context, threadID string, setting
 	if threadID == "" {
 		return errors.New("codex threadId is required")
 	}
-	if c.isLoaded(threadID) {
+	hash := instructionHash(settings.Instructions)
+	if c.isLoaded(threadID, hash) {
 		return nil
 	}
 	result, err := c.call(ctx, "thread/resume", codexThreadResumeParams(threadID, settings))
@@ -873,7 +876,7 @@ func (c *codexClient) ensureThread(ctx context.Context, threadID string, setting
 	if _, err := codexThreadID(result); err != nil {
 		return err
 	}
-	c.markLoaded(threadID)
+	c.markLoaded(threadID, hash)
 	return nil
 }
 
@@ -983,16 +986,17 @@ func unionModelEfforts(models []capabilities.ModelOption) []capabilities.EffortO
 	return out
 }
 
-func (c *codexClient) isLoaded(threadID string) bool {
+func (c *codexClient) isLoaded(threadID, instructionsHash string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.loaded[threadID]
+	hash, ok := c.loaded[threadID]
+	return ok && hash == instructionsHash
 }
 
-func (c *codexClient) markLoaded(threadID string) {
+func (c *codexClient) markLoaded(threadID, instructionsHash string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.loaded[threadID] = true
+	c.loaded[threadID] = instructionsHash
 }
 
 func (c *codexClient) markUnloaded(threadID string) {
@@ -1252,6 +1256,9 @@ func codexThreadStartParams(req StartRequest) map[string]any {
 	if req.Model != "" {
 		params["model"] = req.Model
 	}
+	if len(req.Instructions) > 0 {
+		params["developerInstructions"] = string(req.Instructions)
+	}
 	return params
 }
 
@@ -1269,7 +1276,18 @@ func codexThreadResumeParams(threadID string, settings TurnSettings) map[string]
 	if settings.Model != "" {
 		params["model"] = settings.Model
 	}
+	if len(settings.Instructions) > 0 {
+		params["developerInstructions"] = string(settings.Instructions)
+	}
 	return params
+}
+
+func instructionHash(instructions []byte) string {
+	if len(instructions) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(instructions)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func codexTurnStartParams(threadID, message string, settings TurnSettings) map[string]any {

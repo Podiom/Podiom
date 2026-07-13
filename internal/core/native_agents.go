@@ -89,7 +89,7 @@ func nativeAgentName(provider config.Provider, podiomName string) string {
 
 func (c *Core) nativeAgentInstructions(agent store.Agent) (string, error) {
 	paths := c.AgentPaths(agent.Name)
-	sources, err := (&FileComposer{paths: c.paths}).sources(paths)
+	sources, err := (&FileComposer{paths: c.paths}).sources(paths, "")
 	if err != nil {
 		return "", err
 	}

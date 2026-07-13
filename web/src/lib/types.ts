@@ -266,6 +266,13 @@ export interface Project {
   repo: ProjectRepo | null;
   roadmap: string[];
   notes: string;
+  instructions: string;
+}
+
+export interface ProjectInstructions {
+  project_id: string;
+  path: string;
+  instructions: string;
 }
 
 export interface ProjectRepo {

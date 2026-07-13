@@ -74,6 +74,10 @@ type describeRequest struct {
 	Agent string `json:"agent"`
 }
 
+type projectInstructionsRequest struct {
+	Instructions string `json:"instructions"`
+}
+
 // handleProject handles /api/projects/<id> (GET one, PATCH update) and
 // /api/projects/<id>/describe (POST: draft a description with an agent's engine).
 func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +117,25 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]string{"description": text}, nil)
+		return
+	}
+
+	if action == "instructions" {
+		switch r.Method {
+		case http.MethodGet:
+			info, err := s.core.ReadProjectInstructions(id)
+			writeJSON(w, info, err)
+		case http.MethodPut:
+			var req projectInstructionsRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			info, err := s.core.WriteProjectInstructions(id, req.Instructions)
+			writeJSON(w, info, err)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 		return
 	}
 

@@ -12,10 +12,12 @@
     githubDeviceStart,
     githubRepos,
     githubStatus,
+    getProjectInstructions,
     listProjects,
     listTasks,
     syncProjectRepo,
     updateProject,
+    updateProjectInstructions,
   } from "../lib/api";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import { PROJECT_COLORS, projectColor } from "../lib/theme";
@@ -37,8 +39,12 @@
   let error = $state<string | null>(null);
   // Per-project description drafts (edited locally, saved on demand).
   let drafts = $state<Record<string, string>>({});
+  let instructionDrafts = $state<Record<string, string>>({});
+  let instructionDraftsSaved = $state<Record<string, string>>({});
+  let instructionPaths = $state<Record<string, string>>({});
   let busyDescribe = $state<string>("");
   let savingDesc = $state<string>("");
+  let savingInstructions = $state<string>("");
   // Which agent's engine drafts descriptions.
   let writerAgent = $state("");
   // Delete-project confirmation.
@@ -112,6 +118,10 @@
     try {
       [projects, tasks] = await Promise.all([listProjects(), listTasks()]);
       drafts = Object.fromEntries(projects.map((p) => [p.id, p.description]));
+      const instructionInfos = await Promise.all(projects.map((p) => getProjectInstructions(p.id)));
+      instructionDrafts = Object.fromEntries(instructionInfos.map((info) => [info.project_id, info.instructions]));
+      instructionDraftsSaved = Object.fromEntries(instructionInfos.map((info) => [info.project_id, info.instructions]));
+      instructionPaths = Object.fromEntries(instructionInfos.map((info) => [info.project_id, info.path]));
       if (!writerAgent && agents.length) writerAgent = agents[0].Name;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -136,6 +146,11 @@
     return (drafts[p.id] ?? "") !== p.description;
   }
 
+  function instructionsDirty(p: Project): boolean {
+    const path = instructionPaths[p.id];
+    return Boolean(path) && (instructionDrafts[p.id] ?? "") !== (instructionDraftsSaved[p.id] ?? "");
+  }
+
   async function setColor(p: Project, c: string) {
     try {
       const updated = await updateProject(p.id, { color: c });
@@ -155,6 +170,21 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       savingDesc = "";
+    }
+  }
+
+  async function saveInstructions(p: Project) {
+    savingInstructions = p.id;
+    error = null;
+    try {
+      const info = await updateProjectInstructions(p.id, instructionDrafts[p.id] ?? "");
+      instructionDrafts = { ...instructionDrafts, [p.id]: info.instructions };
+      instructionDraftsSaved = { ...instructionDraftsSaved, [p.id]: info.instructions };
+      instructionPaths = { ...instructionPaths, [p.id]: info.path };
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      savingInstructions = "";
     }
   }
 
@@ -511,6 +541,25 @@
           <div class="pc-save-row">
             <button class="pc-cancel" onclick={() => (drafts = { ...drafts, [p.id]: p.description })}>Reset</button>
             <button class="pc-save" disabled={savingDesc === p.id} onclick={() => saveDesc(p)}>{savingDesc === p.id ? "Saving…" : "Save description"}</button>
+          </div>
+        {/if}
+
+        <div class="pc-desc-head" style="margin-top:14px">
+          <span class="label-mono" style="flex:1">instructions</span>
+          {#if instructionPaths[p.id]}<span class="repo-meta mono instr-path">{instructionPaths[p.id]}</span>{/if}
+        </div>
+        <textarea
+          class="field-area mono"
+          rows="5"
+          value={instructionDrafts[p.id] ?? ""}
+          oninput={(e) => (instructionDrafts = { ...instructionDrafts, [p.id]: (e.currentTarget as HTMLTextAreaElement).value })}
+          placeholder="Standing project-specific instructions for agents."
+          style="min-height:110px"
+        ></textarea>
+        {#if instructionsDirty(p)}
+          <div class="pc-save-row">
+            <button class="pc-cancel" onclick={() => (instructionDrafts = { ...instructionDrafts, [p.id]: instructionDraftsSaved[p.id] ?? "" })}>Reset</button>
+            <button class="pc-save" disabled={savingInstructions === p.id} onclick={() => saveInstructions(p)}>{savingInstructions === p.id ? "Saving…" : "Save instructions"}</button>
           </div>
         {/if}
 
@@ -913,6 +962,13 @@
     margin: 4px 0 0;
     font: 500 11.5px "JetBrains Mono", monospace;
     color: #9a8e80;
+  }
+
+  .instr-path {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .repo-actions {
