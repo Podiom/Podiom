@@ -29,6 +29,9 @@ type Fake struct {
 	PermissionTool string
 	// Decisions records each permission decision the relay returned, in order.
 	Decisions []PermissionDecision
+	// ToolUses, when set, are emitted as EventToolUse before the assistant
+	// message so tests can exercise the goal tool-use audit path.
+	ToolUses []ToolUse
 }
 
 // NewFake returns a fake adapter with the default echo-style response script.
@@ -113,6 +116,14 @@ func (f *Fake) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, err
 			case <-ctx.Done():
 				return
 			case ch <- Event{Kind: EventReasoningMessage, Content: reasoning}:
+			}
+		}
+		for i := range f.ToolUses {
+			tu := f.ToolUses[i]
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- Event{Kind: EventToolUse, ToolUse: &tu}:
 			}
 		}
 		select {

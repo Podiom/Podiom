@@ -220,6 +220,36 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	}
 }
 
+func TestGoalToolUseEventsAndContextFilter(t *testing.T) {
+	ctx := context.Background()
+	db := openGoalStore(t)
+
+	goal, err := db.CreateGoal(ctx, Goal{Title: "g", LeadAgent: "atlas"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	// The 'tool_use' kind round-trips (v21 CHECK constraint accepts it).
+	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventProgress, Body: "moved"}); err != nil {
+		t.Fatalf("append progress: %v", err)
+	}
+	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventToolUse, Body: "`Bash` — ls"}); err != nil {
+		t.Fatalf("append tool_use: %v", err)
+	}
+
+	all, err := db.ListGoalEvents(ctx, goal.ID, 0, 0)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("list events = %+v (err %v), want 2", all, err)
+	}
+	// The context view (used for review prompts) excludes tool_use.
+	ctxEvents, err := db.ListGoalContextEvents(ctx, goal.ID, 50)
+	if err != nil {
+		t.Fatalf("list context events: %v", err)
+	}
+	if len(ctxEvents) != 1 || ctxEvents[0].Kind != GoalEventProgress {
+		t.Fatalf("context events = %+v, want only the progress entry", ctxEvents)
+	}
+}
+
 func TestGoalRateLimitBlocksCRUDAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	db := openGoalStore(t)

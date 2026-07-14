@@ -356,6 +356,7 @@ type taskCreateRequest struct {
 	Status        string          `json:"status"`
 	PlanRequired  bool            `json:"plan_required"`
 	PickupAt      string          `json:"pickup_at"`
+	GoalID        string          `json:"goal_id"`
 }
 
 type taskUpdateRequest struct {
@@ -370,6 +371,7 @@ type taskUpdateRequest struct {
 	Status        *string          `json:"status,omitempty"`
 	PlanRequired  *bool            `json:"plan_required,omitempty"`
 	PickupAt      *string          `json:"pickup_at,omitempty"`
+	GoalID        *string          `json:"goal_id,omitempty"`
 }
 
 type taskDescribeRequest struct {
@@ -417,6 +419,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 			Status:        status,
 			PlanRequired:  req.PlanRequired,
 			PickupAt:      req.PickupAt,
+			GoalID:        strings.TrimSpace(req.GoalID),
 		})
 		writeJSON(w, task, err)
 	default:
@@ -591,5 +594,8 @@ func applyTaskUpdate(task *store.Task, req taskUpdateRequest) {
 	}
 	if req.PickupAt != nil {
 		task.PickupAt = *req.PickupAt
+	}
+	if req.GoalID != nil {
+		task.GoalID = *req.GoalID
 	}
 }

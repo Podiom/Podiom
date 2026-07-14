@@ -358,8 +358,11 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", trigger, "stage", "create_run", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return store.ScheduleRun{}, err
 	}
+	// A goal-linked schedule always runs yolo as part of the goal's autonomous
+	// chain, regardless of the stored run_permission.
+	yolo := sched.RunPermission == PermissionYolo || sched.GoalID != ""
 	permission := "preapproved"
-	if sched.RunPermission == PermissionYolo {
+	if yolo {
 		permission = "yolo"
 	}
 	s.log.Info("scheduled run started",
@@ -368,6 +371,7 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		"run", run.ID,
 		"trigger", trigger,
 		"agent", sched.Agent,
+		"goal", sched.GoalID,
 		"permission", permission,
 		"allowed_tools", len(sched.AllowedTools),
 	)
@@ -380,9 +384,10 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		Profile:      sched.Profile,
 		Model:        sched.Model,
 		Effort:       sched.Effort,
-		Yolo:         sched.RunPermission == PermissionYolo,
+		Yolo:         yolo,
 		AllowedTools: sched.AllowedTools,
 		Task:         sched.Body,
+		GoalID:       sched.GoalID,
 	})
 
 	status := store.RunSuccess
@@ -479,6 +484,12 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 		return Status{}, fmt.Errorf("schedule %q already exists", name)
 	}
 
+	if p.GoalID != "" {
+		// Schedules created for a goal run yolo transparently: the schedule file
+		// records run_permission: yolo so the goal's autonomous posture is visible
+		// on disk, not just enforced at fire time.
+		p.RunPermission = PermissionYolo
+	}
 	if p.RunPermission == "" {
 		p.RunPermission = PermissionPreapproved
 	}

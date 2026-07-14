@@ -306,6 +306,11 @@ func (c *Core) CreateTask(ctx context.Context, task store.Task) (store.Task, err
 	if strings.TrimSpace(task.Title) == "" {
 		return store.Task{}, fmt.Errorf("task title is required")
 	}
+	if task.GoalID != "" {
+		if _, err := c.store.GetGoal(ctx, task.GoalID); err != nil {
+			return store.Task{}, fmt.Errorf("goal %q: %w", task.GoalID, err)
+		}
+	}
 	if task.AssignedAgent != "" {
 		if _, err := c.store.GetAgent(ctx, task.AssignedAgent); err != nil {
 			return store.Task{}, fmt.Errorf("assigned agent %q: %w", task.AssignedAgent, err)
@@ -625,7 +630,12 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 		return store.Session{}, fmt.Errorf("task %q has no assigned agent", task.ID)
 	}
 
-	sess, err := c.CreateSession(ctx, CreateSessionRequest{
+	// Goal-linked tasks run in yolo mode as part of the goal's autonomous chain,
+	// and their plan gate is bypassed (a plan gate forces approve mode, which
+	// would deadlock an unattended yolo run). Standalone tasks keep the default
+	// approve/preapproved posture.
+	goalLinked := task.GoalID != ""
+	createReq := CreateSessionRequest{
 		AgentName:                      task.AssignedAgent,
 		Origin:                         store.OriginRoadmap,
 		Provider:                       task.Provider,
@@ -633,11 +643,20 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 		Model:                          task.Model,
 		Effort:                         task.Effort,
 		TaskID:                         task.ID,
+		GoalID:                         task.GoalID,
 		ProjectID:                      task.ProjectID,
-		CreatePlanBeforeImplementation: task.PlanRequired,
-	})
+		CreatePlanBeforeImplementation: task.PlanRequired && !goalLinked,
+	}
+	if goalLinked {
+		createReq.PermissionMode = config.PermissionYolo
+	}
+	sess, err := c.CreateSession(ctx, createReq)
 	if err != nil {
 		return store.Session{}, err
+	}
+	permission := "inherited"
+	if goalLinked {
+		permission = "yolo"
 	}
 	c.log.Info("task session started",
 		"event", "task",
@@ -645,6 +664,8 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 		"project", task.ProjectID,
 		"agent", task.AssignedAgent,
 		"session", sess.ID,
+		"goal", task.GoalID,
+		"permission", permission,
 		"unattended", req.Unattended,
 	)
 
@@ -654,11 +675,16 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 	}
 
 	if req.Unattended {
-		events, err := c.StreamTurn(ctx, sess.ID, TaskPrompt(task), TurnOptions{
+		opts := TurnOptions{
 			PermissionTurnID: sess.ID,
-			PermissionRelay:  NewAllowListRelay(nil, c.log),
 			Unattended:       true,
-		})
+		}
+		// A goal-linked task is yolo (session permission mode above); a standalone
+		// unattended task is preapproved with an empty allow-list (deny-all).
+		if !goalLinked {
+			opts.PermissionRelay = NewAllowListRelay(nil, c.log)
+		}
+		events, err := c.StreamTurn(ctx, sess.ID, TaskPrompt(task), opts)
 		if err != nil {
 			return sess, err
 		}

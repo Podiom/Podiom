@@ -701,6 +701,12 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 				events = append(events, Event{Kind: EventAssistantMessage, Content: text})
 			}
 		}
+		// The complete assistant message carries the turn's tool_use blocks once;
+		// the streaming content_block partials above are text-only, so this is the
+		// single, non-duplicating source of tool-call audit events.
+		for _, tu := range claudeToolUses(raw) {
+			events = append(events, Event{Kind: EventToolUse, ToolUse: tu})
+		}
 		if ctxEvent, ok := claudeContextEvent(raw); ok {
 			events = append(events, ctxEvent)
 		}
@@ -749,6 +755,68 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 		}
 	}
 	return events, nil
+}
+
+// claudeToolUses extracts tool_use content blocks from a complete assistant
+// message into audit events. Each block is {type:"tool_use", id, name, input};
+// Summary is a best-effort human-readable one-liner per known tool.
+func claudeToolUses(raw map[string]any) []*ToolUse {
+	content := raw["content"]
+	if message, ok := raw["message"].(map[string]any); ok {
+		if c, ok := message["content"]; ok {
+			content = c
+		}
+	}
+	blocks, ok := content.([]any)
+	if !ok {
+		return nil
+	}
+	var uses []*ToolUse
+	for _, item := range blocks {
+		block, ok := item.(map[string]any)
+		if !ok || firstString(block, "type") != "tool_use" {
+			continue
+		}
+		name := firstString(block, "name")
+		if name == "" {
+			continue
+		}
+		tu := &ToolUse{
+			Provider:  config.ProviderClaude,
+			ToolUseID: firstString(block, "id", "tool_use_id", "toolUseID"),
+			Name:      name,
+		}
+		if input, ok := block["input"].(map[string]any); ok {
+			if raw, err := json.Marshal(input); err == nil {
+				tu.Input = raw
+			}
+			tu.Summary = claudeToolSummary(name, input)
+		}
+		uses = append(uses, tu)
+	}
+	return uses
+}
+
+// claudeToolSummary returns a one-line description of a tool call from its input.
+func claudeToolSummary(name string, input map[string]any) string {
+	switch name {
+	case "Bash":
+		return firstString(input, "command")
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "Read":
+		return firstString(input, "file_path", "notebook_path", "path")
+	case "WebFetch":
+		return firstString(input, "url")
+	case "WebSearch":
+		return firstString(input, "query")
+	case "Grep":
+		return firstString(input, "pattern")
+	case "Glob":
+		return firstString(input, "pattern", "path")
+	case "Task":
+		return firstString(input, "description")
+	default:
+		return ""
+	}
 }
 
 func claudeNativeAgentActivity(raw map[string]any) (*NativeAgentActivity, bool) {

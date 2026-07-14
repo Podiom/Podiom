@@ -1070,6 +1070,11 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 						return
 					}
 				}
+				for _, tu := range c.codexToolUses(event.method, event.params, key) {
+					if !sendAdapterEvent(ctx, out, Event{Kind: EventToolUse, ToolUse: tu}) {
+						return
+					}
+				}
 			case "turn/completed":
 				for _, activity := range codexNativeAgentActivities(event.method, event.params) {
 					enriched, ok := enrichCodexNativeAgentActivity(settings, &track, activity)
@@ -1448,6 +1453,66 @@ func codexNativeAgentActivities(method string, params json.RawMessage) []*Native
 		return codexNativeAgentTurnActivities(params)
 	}
 	return nil
+}
+
+// codexToolItem is the tool-call projection of a Codex turn item. Field names
+// are best-effort across app-server protocol revisions; unknown shapes yield an
+// empty tool use and are skipped.
+type codexToolItem struct {
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	Command  string `json:"command"`
+	Cmd      string `json:"cmd"`
+	Server   string `json:"server"`
+	Tool     string `json:"tool"`
+	Query    string `json:"query"`
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+}
+
+// codexToolUses extracts side-effecting tool calls (shell commands, file
+// changes, MCP calls, web searches) from a Codex item event into audit tool
+// uses. Command/mcp/web items are recorded when they start (intent before
+// effect); file changes are recorded on completion, when their patch summary is
+// available. It is best-effort: items it does not recognize produce nothing.
+func (c *codexClient) codexToolUses(method string, params json.RawMessage, key codexTurnKey) []*ToolUse {
+	var p struct {
+		Item codexToolItem `json:"item"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil
+	}
+	item := p.Item
+	switch item.Type {
+	case "commandExecution":
+		if method != "item/started" {
+			return nil
+		}
+		cmd := firstNonEmptyString(item.Command, item.Cmd)
+		return []*ToolUse{{Provider: config.ProviderCodex, ToolUseID: item.ID, Name: "commandExecution", Input: params, Summary: cmd}}
+	case "mcpToolCall":
+		if method != "item/started" {
+			return nil
+		}
+		name := "mcpToolCall"
+		if item.Server != "" && item.Tool != "" {
+			name = "mcp__" + item.Server + "__" + item.Tool
+		}
+		return []*ToolUse{{Provider: config.ProviderCodex, ToolUseID: item.ID, Name: name, Input: params}}
+	case "webSearch":
+		if method != "item/started" {
+			return nil
+		}
+		return []*ToolUse{{Provider: config.ProviderCodex, ToolUseID: item.ID, Name: "webSearch", Input: params, Summary: item.Query}}
+	case "fileChange":
+		if method != "item/completed" {
+			return nil
+		}
+		summary := c.fileChangeSummary(key.threadID, key.turnID, item.ID)
+		return []*ToolUse{{Provider: config.ProviderCodex, ToolUseID: item.ID, Name: "fileChange", Input: params, Summary: summary}}
+	default:
+		return nil
+	}
 }
 
 func codexNativeAgentItemActivity(method string, params json.RawMessage) (*NativeAgentActivity, bool) {

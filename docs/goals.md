@@ -68,10 +68,24 @@ with evidence and metric updates, reads your answers to its access requests,
 and proposes completion when everything is met. **Review now** on the goal
 detail triggers one immediately.
 
-Goal sessions run under the stricter **preapproved** unattended policy (the
-Podiom self-management tools plus read-only inspection — no shell). The real
-work happens in the tasks and schedules the agent spawns, not in the review
-itself.
+## Goals run in yolo mode
+
+A goal exists to reach an outcome **without** you in the loop, so the whole goal
+chain runs with full autonomous access (yolo): the lead agent's planning and
+review sessions, **and every roadmap task and schedule the goal creates**,
+execute with no per-action approval prompts (Claude `--permission-mode
+bypassPermissions`; Codex `approvalPolicy: never` + `sandbox:
+danger-full-access`). The agent can run shell commands, edit files, install
+tools, and reach the network directly.
+
+This is deliberate and clearly disclosed: the goal-creation form shows a
+full-access warning before you create the goal, and the goal detail view carries
+a persistent **autonomous · full access** badge. Tasks a goal creates carry its
+`goal_id` (their runs are forced yolo even if the task was plan-gated), and
+schedules a goal creates are written with `run_permission: yolo`.
+
+The counterweight is a complete audit trail: every tool call the goal chain
+makes is recorded on the goal timeline (see below).
 
 ## Access requests
 
@@ -83,8 +97,8 @@ request appears on the goal:
 | --- | --- |
 | `mcp_server` | Assigns the catalogue MCP server to the agent immediately. |
 | `skill` | Installs the skill from the marketplace. |
-| `permission_mode` | Changes the agent's permission mode. Granting `yolo` is security-sensitive and applies to the agent everywhere — the dialog warns you. |
-| `cli_tool` | With installer fields: installs the tool into the agent's own workspace (see [workspace-tools.md](workspace-tools.md)). Without them (host-wide tools): approval acknowledges, and you run the shown install command yourself. |
+| `permission_mode` | Changes the agent's standing permission mode everywhere. Rarely relevant to goal work — goal runs already have full access — but still used to change the agent's mode outside goals. Granting `yolo` is security-sensitive and the dialog warns you. |
+| `cli_tool` | With installer fields: installs the tool into the agent's own workspace (see [workspace-tools.md](workspace-tools.md)). Without them (host-wide tools): approval acknowledges, and you run the shown install command yourself. Since goal runs are yolo, a goal agent can usually install a tool directly instead of requesting it. |
 | `env_var` | Acknowledges. Requests name the variable and purpose only — **the secret value never transits Podiom**; you set it where `podiomd` runs. |
 
 Approve or deny with an optional **note to the agent** — it is relayed
@@ -102,6 +116,17 @@ changes, access requests and your decisions, status changes, and the completion
 proposal. Each agent-produced entry links to the session that produced it, so
 any claim of progress is one click from its full transcript. Append-only is
 enforced in the database schema, not by convention.
+
+Because the goal chain runs in yolo mode, the timeline also records a
+`tool_use` entry for **every tool call** the goal, its tasks, and its schedules
+make — shell commands, file edits, installs, web fetches, and MCP calls — so you
+can see exactly what the goal did while you were away. Runs of consecutive
+read-only calls (reads, greps, web fetches) are collapsed into a single
+expandable row to keep the timeline scannable; side-effecting calls (shell
+commands, file writes) are shown individually with the command or file path.
+Large tool inputs are truncated — command text and file paths are kept, but file
+contents written are elided — so the audit trail stays readable and never stores
+whole files.
 
 ## Notifications
 
@@ -129,14 +154,19 @@ Agents drive goals through `podiom_*` tools on the built-in `podiom_manage`
 MCP server (`podiom_get_goal`, `podiom_record_goal_progress`,
 `podiom_request_access`, `podiom_propose_goal_completion`, …). Tool calls are
 stamped with the calling session's identity server-side, so timeline
-provenance never depends on the model identifying itself.
+provenance never depends on the model identifying itself. `podiom_create_task`
+takes a `goal_id` (also on `POST /api/tasks`) — the lead agent passes it when a
+task is part of the goal's plan, which links the task's runs to the goal (forced
+yolo, audited on the goal timeline).
 
 ## Limitations (v1)
 
 - One lead agent per goal; no shared ownership.
 - No spend/token budgets or caps on how many tasks/schedules a goal may spawn —
   the audit trail is the control.
-- Tasks and schedules the agent creates are not hard-linked to the goal; the
-  plan-change timeline entries record what was created.
+- Tasks and schedules the agent creates for the goal carry its `goal_id`, so
+  their runs are autonomous (yolo) and recorded on the goal timeline. Work the
+  agent creates without a `goal_id` is not linked and runs under the normal
+  (stricter) unattended policy.
 - Reviews only fire while `podiomd` is running; an overdue review fires on the
   next scheduler tick after restart.

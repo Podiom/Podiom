@@ -44,6 +44,23 @@ Scheduled fires and server-side task pickups have no human to answer a prompt
   natively via `--allowedTools`; Codex/fake consult the in-process
   `core.AllowListRelay`. **An empty allow-list denies everything.**
 
+#### Goals
+
+Goals are the deliberate `yolo` case, applied to a whole chain: a goal exists to
+reach an outcome without the user, so its lead agent's planning/review sessions
+**and** every roadmap task and schedule that carries the goal's `goal_id` run
+`yolo` (forced at session creation and, for schedules, again at fire time so
+older `preapproved` schedule files still run autonomously). Schedules a goal
+creates are normalized to `run_permission: yolo` on disk, so the posture is
+visible, not just enforced. This is disclosed in the UI (a full-access warning on
+goal creation and a persistent badge on the goal) and audited: because `yolo`
+tool calls never reach the permission broker, Podiom instead parses each tool
+call out of the provider stream and records it as a `tool_use` goal event — the
+goal's timeline is the audit counterweight to its full access. Those events store
+the command text and file paths (so the user can see what ran) but truncate large
+inputs and elide written file contents, consistent with the redaction rules
+below.
+
 ## Gateway token
 
 Every API call and WebSocket connection to `podiomd` must present the

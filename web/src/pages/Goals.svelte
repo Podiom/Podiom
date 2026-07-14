@@ -129,6 +129,7 @@
     completion_proposed: { c: "#b14322", t: "#fbe7e0", label: "Completion proposed", ic: '<path d="M12 3l2.6 5.8 6.4.6-4.8 4.2 1.4 6.2L12 17l-5.6 3 1.4-6.2L3 9.4l6.4-.6z"/>' },
     rate_limited: { c: "#b14e2a", t: "#fbeae0", label: "Rate limited", ic: '<path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/>' },
     rate_limit_resolved: { c: "#2f6e60", t: "#e2f0ec", label: "Rate limit resolved", ic: '<path d="M20 6 9 17l-5-5"/><path d="M14 6h6v6"/>' },
+    tool_use: { c: "#6b6257", t: "#f0ece6", label: "Tool call", ic: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>' },
   };
 
   const RK: Record<AccessRequestKind, { label: string; c: string; t: string; b: string; ic: string }> = {
@@ -245,8 +246,18 @@
     });
     const unsubscribe = live.subscribe((msg) => {
       if (msg.type !== "goal_event" || !msg.goal_event) return;
+      const ev = msg.goal_event;
+      // tool_use events stream rapidly while a goal works. When the goal is open,
+      // append the new one in place rather than refetching the whole page for
+      // each call; the list-level rollups don't change on a tool call anyway.
+      if (ev.Kind === "tool_use" && ev.ID) {
+        if (detail && ev.GoalID === detail.goal.ID && !detail.events.some((e) => e.ID === ev.ID)) {
+          detail = { ...detail, events: [ev, ...detail.events] };
+        }
+        return;
+      }
       void refreshAll();
-      if (detail && msg.goal_event.GoalID === detail.goal.ID) void refreshDetail();
+      if (detail && ev.GoalID === detail.goal.ID) void refreshDetail();
     });
     return unsubscribe;
   });
@@ -406,6 +417,71 @@
     if (!ev.Body || ev.Kind === "metric_update") return "";
     const rest = ev.Body.split("\n").slice(1).join("\n").trim();
     return rest;
+  }
+
+  // ---- tool_use audit rendering ---------------------------------------------
+
+  type ToolPayload = {
+    tool: string;
+    summary: string;
+    read_only: boolean;
+    input: string;
+    input_truncated: boolean;
+  };
+
+  function toolPayload(ev: GoalEvent): ToolPayload {
+    try {
+      const p = JSON.parse(ev.Payload) as Partial<ToolPayload>;
+      return {
+        tool: p.tool ?? ev.Kind,
+        summary: p.summary ?? "",
+        read_only: p.read_only ?? false,
+        input: p.input ?? "",
+        input_truncated: p.input_truncated ?? false,
+      };
+    } catch {
+      return { tool: ev.Kind, summary: "", read_only: false, input: "", input_truncated: false };
+    }
+  }
+
+  // A rendered timeline row is either a normal event or a collapsed run of
+  // consecutive read-only tool calls (Read/Grep/WebFetch…), which the goal chain
+  // can emit in bulk. Keeping them grouped keeps the audit trail scannable while
+  // still recording every call.
+  type TimelineItem =
+    | { kind: "event"; ev: GoalEvent }
+    | { kind: "toolGroup"; id: number; events: GoalEvent[] };
+
+  const timelineItems = $derived.by<TimelineItem[]>(() => {
+    const evs = detail?.events ?? [];
+    const items: TimelineItem[] = [];
+    let group: GoalEvent[] = [];
+    const flush = () => {
+      if (group.length === 1) {
+        items.push({ kind: "event", ev: group[0] });
+      } else if (group.length > 1) {
+        items.push({ kind: "toolGroup", id: group[0].ID, events: group });
+      }
+      group = [];
+    };
+    for (const ev of evs) {
+      if (ev.Kind === "tool_use" && toolPayload(ev).read_only) {
+        group.push(ev);
+      } else {
+        flush();
+        items.push({ kind: "event", ev });
+      }
+    }
+    flush();
+    return items;
+  });
+
+  let expandedGroups = $state(new Set<number>());
+  function toggleGroup(id: number) {
+    const next = new Set(expandedGroups);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    expandedGroups = next;
   }
 
   // isPlanning: the goal was just created and the decomposition session is the
@@ -802,6 +878,10 @@
               {g.LeadAgent}
             </span>
             {#if g.ProjectID}<span class="proj mono">◆ {g.ProjectID}</span>{/if}
+            <span class="yolo-pill mono" title="This goal runs autonomously with full access (yolo): its sessions, tasks, and schedules run shell commands, edit files, and install software without per-action approval. Every tool call is recorded on the timeline below.">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4-3 6.7-7 8-4-1.3-7-4-7-8V6z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>
+              autonomous · full access
+            </span>
           </div>
           <div class="detail-title">{g.Title}</div>
           <div class="detail-meta">
@@ -1040,32 +1120,85 @@
           <div class="timeline">
             <div class="timeline-rule"></div>
             <div class="events">
-              {#each detail.events as ev (ev.ID)}
-                {@const k = EK[ev.Kind] ?? EK.progress}
-                <div class="event">
-                  <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
-                  </span>
-                  <div class="event-main">
-                    <div class="event-top">
-                      <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
-                      <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
-                    </div>
-                    <div class="event-title">{eventTitle(ev)}</div>
-                    {#if ev.Kind === "metric_update" && metricDelta(ev)}
-                      <div class="event-delta mono">{metricDelta(ev)}</div>
-                    {/if}
-                    {#if eventBody(ev)}
-                      <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
-                    {/if}
-                    {#if ev.SessionID}
-                      <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                        open session <span class="arrow">↗</span>
+              {#each timelineItems as item (item.kind === "toolGroup" ? "g" + item.id : "e" + item.ev.ID)}
+                {#if item.kind === "toolGroup"}
+                  {@const k = EK.tool_use}
+                  <div class="event">
+                    <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
+                    </span>
+                    <div class="event-main">
+                      <button class="tool-group-toggle" onclick={() => toggleGroup(item.id)}>
+                        <span class="event-kind mono" style="color:{k.c}">{item.events.length} read-only tool calls</span>
+                        <span class="arrow" class:open={expandedGroups.has(item.id)}>›</span>
                       </button>
-                    {/if}
+                      {#if expandedGroups.has(item.id)}
+                        <div class="tool-group-list">
+                          {#each item.events as ev (ev.ID)}
+                            {@const tp = toolPayload(ev)}
+                            <div class="tool-row">
+                              <span class="tool-name mono">{tp.tool}</span>
+                              {#if tp.summary}<span class="tool-summary mono">{tp.summary}</span>{/if}
+                              <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
                   </div>
-                </div>
+                {:else if item.ev.Kind === "tool_use"}
+                  {@const ev = item.ev}
+                  {@const k = EK.tool_use}
+                  {@const tp = toolPayload(ev)}
+                  <div class="event">
+                    <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
+                    </span>
+                    <div class="event-main">
+                      <div class="event-top">
+                        <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
+                        <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                      </div>
+                      <div class="event-title">{tp.tool}</div>
+                      {#if tp.summary}
+                        <div class="event-cmd mono">{tp.summary}{#if tp.input_truncated}<span class="tool-trunc"> …truncated</span>{/if}</div>
+                      {/if}
+                      {#if ev.SessionID}
+                        <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                          open session <span class="arrow">↗</span>
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+                {:else}
+                  {@const ev = item.ev}
+                  {@const k = EK[ev.Kind] ?? EK.progress}
+                  <div class="event">
+                    <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
+                    </span>
+                    <div class="event-main">
+                      <div class="event-top">
+                        <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
+                        <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                      </div>
+                      <div class="event-title">{eventTitle(ev)}</div>
+                      {#if ev.Kind === "metric_update" && metricDelta(ev)}
+                        <div class="event-delta mono">{metricDelta(ev)}</div>
+                      {/if}
+                      {#if eventBody(ev)}
+                        <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
+                      {/if}
+                      {#if ev.SessionID}
+                        <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                          open session <span class="arrow">↗</span>
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
               {/each}
             </div>
           </div>
@@ -1167,6 +1300,14 @@
                 <button class="chip mono" class:on={cCadence === c.v} onclick={() => (cCadence = c.v)}>{c.label}</button>
               {/each}
             </div>
+          </div>
+        </div>
+
+        <div class="yolo-warn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b14322" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4-3 6.7-7 8-4-1.3-7-4-7-8V6z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>
+          <div>
+            <strong>Goals run autonomously with full access (yolo).</strong>
+            {cAgent || "The lead agent"} — and every task or schedule this goal creates — can run shell commands, edit files, install software, and reach the network on this machine without asking first. Every action is recorded on the goal timeline.
           </div>
         </div>
 
@@ -1507,6 +1648,21 @@
   .proj {
     font-size: 11px;
     color: var(--faint);
+  }
+  .yolo-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #fbe7e0;
+    border: 1px solid #efc0ad;
+    color: #b14322;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: help;
   }
   .card-title {
     font-size: 17px;
@@ -2235,6 +2391,62 @@
   .event-body :global(ul:last-child) {
     margin-bottom: 0;
   }
+  /* tool_use command / file-path, shown in a compact terminal-style block */
+  .event-cmd {
+    margin-top: 6px;
+    padding: 7px 11px;
+    border-radius: 9px;
+    background: #2b2520;
+    color: #e8e0d5;
+    font-size: 11.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .tool-trunc {
+    color: #b4a897;
+  }
+  .tool-group-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+  .tool-group-toggle .arrow {
+    color: #b4a897;
+    transition: transform 0.12s ease;
+  }
+  .tool-group-toggle .arrow.open {
+    transform: rotate(90deg);
+  }
+  .tool-group-list {
+    margin-top: 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tool-row {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    font-size: 11.5px;
+  }
+  .tool-name {
+    font-weight: 700;
+    color: var(--ink);
+    flex: none;
+  }
+  .tool-summary {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .tool-row .event-time {
+    margin-left: auto;
+  }
   .event-session {
     display: inline-flex;
     align-items: center;
@@ -2405,6 +2617,26 @@
     font-size: 12px;
     color: var(--faint);
     margin-top: 10px;
+  }
+  .yolo-warn {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: #fbeee9;
+    border: 1px solid #efc7b8;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #7a3a24;
+  }
+  .yolo-warn svg {
+    flex: none;
+    margin-top: 1px;
+  }
+  .yolo-warn strong {
+    color: #b14322;
   }
 
   /* ---- modal ---- */

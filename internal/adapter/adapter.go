@@ -197,12 +197,29 @@ const (
 	// EventNativeAgentActivity carries provider-native subagent/custom-agent
 	// lifecycle metadata for non-intrusive UI activity chips.
 	EventNativeAgentActivity EventKind = "native_agent_activity"
+	// EventToolUse reports one tool invocation observed in the provider stream
+	// (a shell command, file edit, install, web fetch, or MCP call). It is audit
+	// metadata: core records it on the goal timeline for goal-linked runs, where
+	// yolo mode means tool calls never reach the permission broker.
+	EventToolUse EventKind = "tool_use"
 	// EventRateLimited reports that the active turn cannot continue on this
 	// backing target because the provider rate-limited it.
 	EventRateLimited EventKind = "rate_limited"
 	// EventTurnDone marks the end of a turn stream.
 	EventTurnDone EventKind = "turn_done"
 )
+
+// ToolUse reports one provider tool invocation observed in the stream. It is
+// audit metadata: core truncates Input before persisting or broadcasting it.
+// Summary is a best-effort one-liner (the shell command, the file path, the
+// search query) computed by the adapter for known tools.
+type ToolUse struct {
+	Provider  config.Provider `json:"provider"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	Summary   string          `json:"summary,omitempty"`
+}
 
 // Event is one streamed provider event.
 type Event struct {
@@ -215,6 +232,7 @@ type Event struct {
 	ContextStatus     *ContextStatus
 	TurnUsage         *TurnUsage
 	NativeAgent       *NativeAgentActivity
+	ToolUse           *ToolUse
 }
 
 // Adapter abstracts over provider process models: per-turn Claude processes and

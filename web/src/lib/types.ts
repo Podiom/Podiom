@@ -398,6 +398,7 @@ export interface Task {
   Status: TaskStatus;
   PlanRequired: boolean;
   PickupAt: string;
+  GoalID: string;
   CreatedAt: string;
   UpdatedAt: string;
 }
@@ -452,7 +453,8 @@ export type GoalEventKind =
   | "status_change"
   | "completion_proposed"
   | "rate_limited"
-  | "rate_limit_resolved";
+  | "rate_limit_resolved"
+  | "tool_use";
 
 // GoalEvent mirrors store.GoalEvent: one append-only audit timeline entry.
 export interface GoalEvent {

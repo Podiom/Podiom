@@ -356,6 +356,7 @@ type TurnEvent struct {
 	PermissionRequest *adapter.PermissionRequest
 	UserInputRequest  *adapter.UserInputRequest
 	NativeAgent       *adapter.NativeAgentActivity
+	ToolUse           *adapter.ToolUse
 	Message           *store.Message
 	ContextStatus     *adapter.ContextStatus
 	// Usage carries the session's updated cumulative billed-token totals after a
@@ -476,7 +477,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.Provider, current.Profile, current.ProviderHandle, events)
+			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.GoalID, current.Provider, current.Profile, current.ProviderHandle, events)
 			if !ok {
 				runLog.Info("turn aborted", "provider", string(current.Provider))
 				return
@@ -775,7 +776,7 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 	return assigned, cat.Servers, nil
 }
 
-func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
+func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
 	var assistant, reasoning strings.Builder
 	currentProviderHandle := providerHandle
 	for event := range events {
@@ -881,6 +882,18 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 		case adapter.EventNativeAgentActivity:
 			if event.NativeAgent != nil {
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, NativeAgent: event.NativeAgent}) {
+					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				}
+			}
+		case adapter.EventToolUse:
+			if event.ToolUse != nil {
+				// Record every tool call on the goal timeline for goal-linked runs —
+				// the audit counterweight to yolo. Best effort: a failed append is
+				// logged, never aborting the turn.
+				if goalID != "" {
+					c.appendGoalToolUseEvent(ctx, goalID, sessionID, *event.ToolUse)
+				}
+				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ToolUse: event.ToolUse}) {
 					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
 				}
 			}

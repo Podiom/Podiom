@@ -8,20 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/store"
 )
-
-// goalAllowedTools is the preapproved allow-list for unattended goal sessions
-// (§4 of the goals spec): the Podiom self-management MCP server (server-level
-// rule covers every podiom_* tool; each destructive tool keeps its own confirm
-// guard) plus read-only inspection. Deliberately no Bash/Edit/Write — real
-// work happens in the tasks and schedules the agent spawns, not in the
-// planning/review session itself.
-var goalAllowedTools = []string{
-	"mcp__podiom_manage",
-	"Read", "Grep", "Glob", "LS",
-	"WebFetch", "WebSearch",
-}
 
 // GoalPlanningPrompt renders the decomposition contract for a goal's initial
 // planning session.
@@ -30,15 +19,22 @@ func GoalPlanningPrompt(goal store.Goal, feedback []store.GoalEvent) string {
 	b.WriteString("You are the lead agent for a new Podiom goal. Plan how to reach it.\n\n")
 	writeGoalBrief(&b, goal)
 	writeUserFeedback(&b, feedback)
-	b.WriteString(`## Your job right now (planning session)
+	b.WriteString(`## How you run
+
+You have full autonomous access (yolo mode): you may run shell commands, edit
+files, and install tools directly — there are no permission prompts. Every tool
+call you make is recorded on this goal's audit timeline, so the user can see
+exactly what you did while they were away.
+
+## Your job right now (planning session)
 
 1. Decompose the goal into concrete work:
-   - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable).
-   - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id (this goal's ID, above) so it shows up linked to this goal.
-2. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
-3. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
-4. If you are missing a capability (an MCP server, a skill, a host CLI tool, a credential, or a permission level), file podiom_request_access with a reason the user can act on. Do not work around a missing capability silently.
-5. Do not attempt the work itself in this session — this session only plans and requests.
+   - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable). Pass goal_id (this goal's ID, above) so the task's runs are linked to this goal, run autonomously, and are audited on this timeline.
+   - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id so they run as part of this goal's autonomous chain.
+2. Do quick setup and investigation directly (install a CLI tool, read the repo, run a probe command) — but push the substantial and recurring work into the tasks and schedules above so it is tracked and survives this session.
+3. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
+4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
+5. File podiom_request_access only for things you genuinely cannot do yourself: assigning an MCP server, installing a marketplace skill, or a credential / environment variable (never ask for the secret value itself). You do not need to request CLI-tool installs or a permission level — you already have full access.
 
 The user is away. They will see your plan, your access requests, and this goal's timeline when they return.
 `)
@@ -84,14 +80,21 @@ func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []stor
 		b.WriteString("\n")
 	}
 
-	b.WriteString(`## Your job right now (review session)
+	b.WriteString(`## How you run
+
+You have full autonomous access (yolo mode): you may run shell commands, edit
+files, and install tools directly — no permission prompts. Every tool call is
+recorded on this goal's audit timeline. (The timeline above omits individual
+tool-call entries to stay readable; the full record is on the goal page.)
+
+## Your job right now (review session)
 
 1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted.
 2. Consider the user's recent feedback above as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
 3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed.
-4. If you are blocked on a missing capability, file podiom_request_access. If the user answered a previous request (see above), act on their note.
-5. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
-6. Keep this session focused: review, adjust, record. The spawned tasks and schedules do the heavy lifting.
+4. Take direct corrective action when it is quick and unblocks progress (run a command, fix a file, unstick a task); push larger or recurring work into tasks and schedules (with goal_id) so it is tracked.
+5. File podiom_request_access only for what you cannot do yourself (an MCP server, a marketplace skill, a credential). If the user answered a previous request (see above), act on their note.
+6. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
 `)
 	return b.String()
 }
@@ -138,20 +141,22 @@ func writeUserFeedback(b *strings.Builder, feedback []store.GoalEvent) {
 }
 
 // runGoalSession creates an OriginGoal session for the lead agent, appends the
-// start-of-session audit event, and runs one unattended turn under the
-// preapproved posture (RunScheduled precedent — never yolo unless the agent
-// itself is yolo).
+// start-of-session audit event, and runs one unattended turn. Goals run the
+// whole chain in yolo mode (full autonomous access) — the point of a goal is to
+// reach an outcome without the user in the loop — so every tool call is recorded
+// on the goal timeline (EventToolUse → goal_events) as the audit counterweight.
 func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.GoalEventKind, prompt string) (store.Session, error) {
 	phase := goalRateLimitPhase(kind)
 	sess, err := c.CreateSession(ctx, CreateSessionRequest{
-		AgentName: goal.LeadAgent,
-		Origin:    store.OriginGoal,
-		Provider:  goal.Provider,
-		Profile:   goal.Profile,
-		Model:     goal.Model,
-		Effort:    goal.Effort,
-		GoalID:    goal.ID,
-		ProjectID: goal.ProjectID,
+		AgentName:      goal.LeadAgent,
+		Origin:         store.OriginGoal,
+		Provider:       goal.Provider,
+		Profile:        goal.Profile,
+		Model:          goal.Model,
+		Effort:         goal.Effort,
+		PermissionMode: config.PermissionYolo,
+		GoalID:         goal.ID,
+		ProjectID:      goal.ProjectID,
 	})
 	if err != nil {
 		return store.Session{}, err
@@ -168,9 +173,7 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 
 	events, err := c.StreamTurn(ctx, sess.ID, prompt, TurnOptions{
 		PermissionTurnID: sess.ID,
-		PermissionRelay:  NewAllowListRelay(goalAllowedTools, c.log),
 		Unattended:       true,
-		AllowedTools:     goalAllowedTools,
 	})
 	if err != nil {
 		return sess, err
@@ -281,7 +284,7 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if goal.Status != store.GoalActive {
 		return store.Session{}, fmt.Errorf("goal %q is %s; only active goals are reviewed", goal.ID, goal.Status)
 	}
-	events, err := c.store.ListGoalEvents(ctx, goal.ID, goalReviewContextEvents, 0)
+	events, err := c.store.ListGoalContextEvents(ctx, goal.ID, goalReviewContextEvents)
 	if err != nil {
 		return store.Session{}, err
 	}

@@ -263,6 +263,9 @@ func run() error {
 	// consolidates one mid-flight. Wire it now that the server (turn registry)
 	// exists, then start the nightly memory-consolidation loop.
 	coreSvc.SetActiveTurnChecker(srv.HasActiveTurn)
+	// Goal tool_use audit events appended during a turn broadcast live so the
+	// goal timeline updates in real time as the agent works.
+	coreSvc.SetGoalEventHandler(srv.BroadcastGoalEvent)
 	dreamRunner := dream.New(dream.Options{Core: coreSvc, Logger: log})
 	dreamRunner.Start()
 	defer dreamRunner.Stop()

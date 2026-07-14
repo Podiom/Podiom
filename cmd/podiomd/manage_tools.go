@@ -200,6 +200,7 @@ func taskTools(c *manageClient) []mcpTool {
 				"status":         strProp("Initial status (defaults to backlog): backlog, in_progress, review, done."),
 				"plan_required":  boolProp("Require plan mode for this task."),
 				"pickup_at":      strProp("RFC3339 time to auto-start the task; empty = on-demand."),
+				"goal_id":        strProp("Goal id when this task is part of a goal's plan. REQUIRED for tasks you create for a goal: it links the task's runs to the goal timeline and runs them autonomously (yolo)."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -209,7 +210,7 @@ func taskTools(c *manageClient) []mcpTool {
 				if err := requireField(m, "title"); err != nil {
 					return "", err
 				}
-				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at")
+				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at", "goal_id")
 				return c.post(ctx, "/api/tasks", body)
 			},
 		},
@@ -230,6 +231,7 @@ func taskTools(c *manageClient) []mcpTool {
 				"status":         strProp("New status: backlog, in_progress, review, done."),
 				"plan_required":  boolProp("Toggle plan mode."),
 				"pickup_at":      strProp("RFC3339 scheduled pickup time; empty string clears it."),
+				"goal_id":        strProp("Goal id to link this task to a goal (its runs become autonomous and audited on the goal timeline); empty string unlinks it."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -239,7 +241,7 @@ func taskTools(c *manageClient) []mcpTool {
 				if err := requireField(m, "id"); err != nil {
 					return "", err
 				}
-				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at")
+				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at", "goal_id")
 				return c.patch(ctx, "/api/tasks/"+url.PathEscape(argString(m, "id")), body)
 			},
 		},

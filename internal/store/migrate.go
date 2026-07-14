@@ -549,6 +549,47 @@ var migrations = []migration{
 			SELECT RAISE(ABORT, 'goal events are append-only');
 		END;`,
 	},
+	{
+		version: 21,
+		name:    "goal_yolo_tool_audit",
+		// Goals run the whole chain in yolo mode, so tool calls no longer pass
+		// through the permission broker. 'tool_use' goal events record every
+		// provider tool invocation observed in the stream (the goal audit trail).
+		// tasks.goal_id links a roadmap task's runs back to its goal so those runs
+		// are forced yolo and their tool calls land on the goal timeline; it is a
+		// plain column (no FK) because deleting a goal must not cascade-delete its
+		// tasks.
+		sql: `DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TABLE goal_events_new (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'user_feedback', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed', 'rate_limited', 'rate_limit_resolved', 'tool_use')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		INSERT INTO goal_events_new (id, goal_id, session_id, kind, body, payload_json, created_at)
+		SELECT id, goal_id, session_id, kind, body, payload_json, created_at FROM goal_events;
+
+		DROP TABLE goal_events;
+		ALTER TABLE goal_events_new RENAME TO goal_events;
+
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;
+
+		ALTER TABLE tasks ADD COLUMN goal_id TEXT NOT NULL DEFAULT '';
+		CREATE INDEX idx_tasks_goal ON tasks(goal_id);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

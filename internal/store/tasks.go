@@ -19,10 +19,10 @@ func (s *Store) CreateTask(ctx context.Context, task Task) (Task, error) {
 		task.Status = TaskBacklog
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO tasks
-		(id, project_id, title, body, assigned_agent, provider, profile, model, effort, status, plan_required, pickup_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
+		(id, project_id, title, body, assigned_agent, provider, profile, model, effort, status, plan_required, pickup_at, goal_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
 		task.ID, task.ProjectID, task.Title, task.Body, task.AssignedAgent, task.Provider, task.Profile, task.Model, task.Effort,
-		task.Status, boolInt(task.PlanRequired), task.PickupAt,
+		task.Status, boolInt(task.PlanRequired), task.PickupAt, task.GoalID,
 	)
 	if err != nil {
 		return Task{}, fmt.Errorf("create task %q: %w", task.ID, err)
@@ -60,11 +60,11 @@ func (s *Store) UpdateTask(ctx context.Context, task Task) (Task, error) {
 		SET project_id = ?, title = ?, body = ?, assigned_agent = ?,
 			provider = ?, profile = ?, model = ?, effort = ?,
 			status = ?, plan_required = ?,
-			pickup_at = NULLIF(?, ''), updated_at = datetime('now')
+			pickup_at = NULLIF(?, ''), goal_id = ?, updated_at = datetime('now')
 		WHERE id = ?`,
 		task.ProjectID, task.Title, task.Body, task.AssignedAgent,
 		task.Provider, task.Profile, task.Model, task.Effort,
-		task.Status, boolInt(task.PlanRequired), task.PickupAt, task.ID,
+		task.Status, boolInt(task.PlanRequired), task.PickupAt, task.GoalID, task.ID,
 	)
 	if err != nil {
 		return Task{}, fmt.Errorf("update task %q: %w", task.ID, err)
@@ -127,7 +127,7 @@ func (s *Store) ListDueTasks(ctx context.Context, cutoffRFC3339 string) ([]Task,
 const taskSelect = `SELECT id, project_id, title, body, assigned_agent,
 	COALESCE(provider, ''), COALESCE(profile, ''), COALESCE(model, ''), COALESCE(effort, ''),
 	status, plan_required,
-	COALESCE(pickup_at, ''), created_at, updated_at FROM tasks`
+	COALESCE(pickup_at, ''), COALESCE(goal_id, ''), created_at, updated_at FROM tasks`
 
 func scanTasks(rows *sql.Rows) ([]Task, error) {
 	var tasks []Task
@@ -156,6 +156,7 @@ func scanTask(row scanner) (Task, error) {
 		&task.Status,
 		&task.PlanRequired,
 		&task.PickupAt,
+		&task.GoalID,
 		&task.CreatedAt,
 		&task.UpdatedAt,
 	); err != nil {

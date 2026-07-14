@@ -276,6 +276,44 @@ func TestParseClaudeStream(t *testing.T) {
 	}
 }
 
+func TestParseClaudeToolUse(t *testing.T) {
+	// A complete assistant message with mixed text + tool_use blocks must yield
+	// the assistant text once and one EventToolUse per tool_use block, while the
+	// streaming partial (content_block_start) emits no tool_use.
+	input := strings.NewReader(`{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"tool_use","id":"toolu_partial","name":"Bash","input":{}}}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"running it"},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"npm install left-pad"}},{"type":"tool_use","id":"toolu_2","name":"Read","input":{"file_path":"/repo/main.go"}}]}}
+`)
+	out := make(chan Event, 16)
+	if err := parseClaudeStream(context.Background(), input, out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	var toolUses []ToolUse
+	assistantCount := 0
+	for event := range out {
+		switch event.Kind {
+		case EventToolUse:
+			if event.ToolUse != nil {
+				toolUses = append(toolUses, *event.ToolUse)
+			}
+		case EventAssistantMessage:
+			assistantCount++
+		}
+	}
+	if assistantCount != 1 {
+		t.Fatalf("assistant messages = %d, want 1", assistantCount)
+	}
+	if len(toolUses) != 2 {
+		t.Fatalf("tool uses = %+v, want 2 (partial must not emit)", toolUses)
+	}
+	if got := toolUses[0]; got.Name != "Bash" || got.ToolUseID != "toolu_1" || got.Summary != "npm install left-pad" {
+		t.Fatalf("bad bash tool use: %+v", got)
+	}
+	if got := toolUses[1]; got.Name != "Read" || got.Summary != "/repo/main.go" {
+		t.Fatalf("bad read tool use: %+v", got)
+	}
+}
+
 func TestParseClaudeNativeAgentActivity(t *testing.T) {
 	input := strings.NewReader(`{"type":"system","subtype":"task_started","task_id":"agent-1","tool_use_id":"toolu_1","description":"Review changes","subagent_type":"podiom-reviewer-12345678","task_type":"local_agent","session_id":"abc"}
 {"type":"system","subtype":"task_notification","task_id":"agent-1","tool_use_id":"toolu_1","status":"completed","summary":"done","session_id":"abc"}

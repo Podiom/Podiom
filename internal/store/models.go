@@ -366,6 +366,13 @@ const (
 	// GoalEventRateLimitResolved records the user choosing a new target so the
 	// blocked goal run can continue.
 	GoalEventRateLimitResolved GoalEventKind = "rate_limit_resolved"
+	// GoalEventToolUse records one provider tool invocation (a shell command, file
+	// edit, install, web fetch, or MCP call) observed during a goal-linked
+	// unattended run. Because the whole goal chain runs in yolo mode, tool calls
+	// never reach the permission broker — these events are the goal's audit trail
+	// of what it actually did. The payload's read_only flag lets the UI collapse
+	// read-only calls.
+	GoalEventToolUse GoalEventKind = "tool_use"
 )
 
 // GoalEvent is one append-only timeline entry — the goal's audit trail. Updates
@@ -496,6 +503,10 @@ type Task struct {
 	Status        TaskStatus
 	PlanRequired  bool
 	PickupAt      string // optional RFC3339 scheduled pickup time
-	CreatedAt     string
-	UpdatedAt     string
+	// GoalID links this task to a goal when it was created as part of that goal's
+	// plan (""=standalone). Goal-linked task runs are forced yolo and their tool
+	// calls are recorded on the goal's timeline.
+	GoalID    string
+	CreatedAt string
+	UpdatedAt string
 }

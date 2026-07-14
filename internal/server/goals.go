@@ -633,6 +633,13 @@ func (s *Server) broadcastGoalEvent(ev store.GoalEvent) {
 	s.broadcastWS(ServerMessage{Type: "goal_event", GoalEvent: &ev})
 }
 
+// BroadcastGoalEvent is the exported hook core calls (via SetGoalEventHandler)
+// to push goal timeline events appended during a turn — e.g. tool_use audit
+// entries — to live clients in real time.
+func (s *Server) BroadcastGoalEvent(ev store.GoalEvent) {
+	s.broadcastGoalEvent(ev)
+}
+
 // broadcastGoalPing broadcasts the goal's newest timeline entry — the "something
 // changed on goal X" signal for mutations whose events were appended inside
 // core. Falls back to a bare goal_id ping when the timeline is unreadable.

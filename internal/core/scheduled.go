@@ -64,12 +64,22 @@ type ScheduledRunRequest struct {
 	Yolo         bool
 	AllowedTools []string
 	Task         string
+	// GoalID links this run to a goal. A goal-linked run is always forced yolo
+	// (part of the goal's autonomous chain) and its tool calls are recorded on
+	// the goal timeline.
+	GoalID string
 }
 
 // RunScheduled creates a durable schedule-origin session (R7.9), runs the task
 // as one normal Podiom turn with the unattended permission policy, and returns
 // the created session. A non-nil error means the turn itself failed.
 func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store.Session, error) {
+	// A goal-linked schedule run is always yolo (part of the goal's autonomous
+	// chain), even if the schedule file's run_permission is still preapproved —
+	// defense in depth for older files created before goals normalized to yolo.
+	if req.GoalID != "" {
+		req.Yolo = true
+	}
 	permission := config.PermissionApprove
 	var relay adapter.PermissionRelay
 	allowed := req.AllowedTools
@@ -90,6 +100,7 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 		PermissionMode: permission,
 		ScheduleID:     req.ScheduleName,
 		RunID:          req.RunID,
+		GoalID:         req.GoalID,
 	})
 	if err != nil {
 		return store.Session{}, err

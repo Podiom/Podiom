@@ -174,7 +174,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:      "podiom_request_access",
 			APIRoutes: []string{"/api/access-requests"},
-			Description: "File an access request when you are missing a capability a goal needs. The user is notified and approves or denies; their decision (and note) reaches you at your next review. Kinds and payload fields: " +
+			Description: "File an access request when you are missing a capability you genuinely cannot provision yourself. Goal runs already have full autonomous access (yolo), so you rarely need this: you can install CLI tools and change files directly — do NOT request cli_tool or permission_mode for goal work. Reserve it for things Podiom must wire for you: assigning an MCP server, installing a marketplace skill, or an env var / credential. The user is notified and approves or denies; their decision (and note) reaches you at your next review. Kinds and payload fields: " +
 				"mcp_server{server_name}, skill{registry,id,url}, cli_tool{tool, + installer fields below}, env_var{var_name,purpose,target}, permission_mode{mode}. " +
 				"cli_tool requests are INSTALLABLE when you add installer fields — on approval Podiom installs the tool into YOUR workspace and puts it on your PATH: " +
 				"installer=npm{package,version?}, installer=uv{package,version?}, installer=go{package (module path)}, installer=binary{url (https),sha256}. " +

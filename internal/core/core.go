@@ -65,6 +65,10 @@ type Core struct {
 	// (attributed to the session's profile/provider) so the token meter can
 	// calibrate its token→limit-% estimates. nil disables calibration feeding.
 	onTurnUsage func(profile string, provider config.Provider, delta int64)
+	// onGoalEvent, when set, receives each goal timeline event appended during a
+	// turn (e.g. tool_use audit events) so the server can broadcast it live. nil
+	// disables live broadcast.
+	onGoalEvent func(ev store.GoalEvent)
 
 	// dreamMu guards dreaming map below and serializes dreams per agent so a
 	// second concurrent dream for the same agent fails fast (ErrDreamInProgress).
@@ -100,6 +104,13 @@ func (c *Core) SetRateStatusHandler(fn func(profile string, provider config.Prov
 // completed turn. Safe to call once during daemon wiring, before turns run.
 func (c *Core) SetTurnUsageHandler(fn func(profile string, provider config.Provider, delta int64)) {
 	c.onTurnUsage = fn
+}
+
+// SetGoalEventHandler registers a callback invoked for each goal timeline event
+// appended during a turn, so the server can broadcast it live. Safe to call once
+// during daemon wiring, before turns run.
+func (c *Core) SetGoalEventHandler(fn func(ev store.GoalEvent)) {
+	c.onGoalEvent = fn
 }
 
 // New creates a Core service.

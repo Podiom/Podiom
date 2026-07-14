@@ -126,6 +126,35 @@ func (s *Store) ListGoalEvents(ctx context.Context, goalID string, limit int, be
 	return events, rows.Err()
 }
 
+// ListGoalContextEvents returns a goal's timeline for replay into a review
+// prompt, newest first, excluding 'tool_use' entries — a busy goal can emit
+// hundreds of tool-call events per run, and they would crowd out the lifecycle
+// events (progress, plan_change, access decisions) the review actually needs.
+// A limit <= 0 returns all matching entries.
+func (s *Store) ListGoalContextEvents(ctx context.Context, goalID string, limit int) ([]GoalEvent, error) {
+	query := goalEventSelect + ` WHERE goal_id = ? AND kind != ? ORDER BY id DESC`
+	args := []any{goalID, GoalEventToolUse}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list goal context events for %q: %w", goalID, err)
+	}
+	defer rows.Close()
+
+	var events []GoalEvent
+	for rows.Next() {
+		ev, err := scanGoalEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
+}
+
 // ListGoalEventsByKind returns a goal's timeline entries of one kind, newest
 // first. It is used for durable user feedback context without depending on how
 // noisy the rest of the activity stream is.

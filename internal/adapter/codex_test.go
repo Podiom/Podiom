@@ -216,6 +216,33 @@ func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
 	}
 }
 
+func TestCodexToolUsesFromItems(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	key := codexTurnKey{threadID: "thread-1", turnID: "turn-1"}
+
+	// commandExecution is recorded when it starts, with the command as summary.
+	cmd := client.codexToolUses("item/started", json.RawMessage(`{"item":{"type":"commandExecution","id":"c1","command":"go build ./..."}}`), key)
+	if len(cmd) != 1 || cmd[0].Name != "commandExecution" || cmd[0].Summary != "go build ./..." {
+		t.Fatalf("commandExecution tool use = %+v", cmd)
+	}
+	// The same item on completion must not double-record.
+	if got := client.codexToolUses("item/completed", json.RawMessage(`{"item":{"type":"commandExecution","id":"c1","command":"go build ./..."}}`), key); len(got) != 0 {
+		t.Fatalf("commandExecution should only emit on start, got %+v", got)
+	}
+
+	// fileChange is recorded on completion, using the tracked patch summary.
+	client.recordFileChangePatch(json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"f1","changes":[{"path":"main.go","kind":{"type":"update"}}]}`))
+	fc := client.codexToolUses("item/completed", json.RawMessage(`{"item":{"type":"fileChange","id":"f1"}}`), key)
+	if len(fc) != 1 || fc[0].Name != "fileChange" || fc[0].Summary == "" {
+		t.Fatalf("fileChange tool use = %+v", fc)
+	}
+
+	// Unknown item types produce nothing.
+	if got := client.codexToolUses("item/started", json.RawMessage(`{"item":{"type":"reasoning","id":"r1"}}`), key); len(got) != 0 {
+		t.Fatalf("unknown item should emit nothing, got %+v", got)
+	}
+}
+
 func TestCodexRateStatusAndLimitParsing(t *testing.T) {
 	status, ok := codexRateStatus(json.RawMessage(`{"rate_limits":{"primary":{"used_percent":82.5,"window_minutes":300,"resets_in_seconds":3600},"secondary":{"used_percent":20,"window_minutes":10080}}}`))
 	if !ok || status.UsedPercent != 82.5 {
