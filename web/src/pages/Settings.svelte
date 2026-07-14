@@ -9,11 +9,18 @@
   } from "../lib/capabilities";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import type { PushState } from "../lib/live.svelte";
-  import type { GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
+  import type { Agent, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
+  import Agents from "./Agents.svelte";
   import Logs from "./Logs.svelte";
 
   type UpdateState = "idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed";
-  type SettingsTab = "global" | "updates" | "notifications" | "logs";
+  type SettingsTab = "global" | "agents" | "updates" | "notifications" | "logs";
+
+  interface ChatTarget {
+    sessionId?: string;
+    agentName?: string;
+    seed?: string;
+  }
 
   let {
     health,
@@ -24,9 +31,13 @@
     settingsFocusTab,
     settingsFocusToken,
     pushState,
+    agents,
     onCheckUpdate,
     onRunUpdate,
     onEnablePush,
+    onHireAgent,
+    onOpenChat,
+    onAgentsChanged,
   }: {
     health: Health | null;
     update: UpdateStatus | null;
@@ -36,9 +47,13 @@
     settingsFocusTab: SettingsTab;
     settingsFocusToken: number;
     pushState: PushState;
+    agents: Agent[];
     onCheckUpdate: () => void;
     onRunUpdate: () => void;
     onEnablePush: () => void;
+    onHireAgent: () => void;
+    onOpenChat: (t: ChatTarget) => void;
+    onAgentsChanged: () => void;
   } = $props();
 
   const PERMISSIONS: PermissionMode[] = ["approve", "yolo"];
@@ -447,6 +462,7 @@
 
     <div class="tabs">
       <button class:active={tab === "global"} onclick={() => (tab = "global")}>Global config</button>
+      <button class:active={tab === "agents"} onclick={() => (tab = "agents")}>Agents</button>
       <button class:active={tab === "updates"} onclick={() => (tab = "updates")}>Version &amp; Updates</button>
       <button class:active={tab === "notifications"} onclick={() => (tab = "notifications")}>Notifications</button>
       <button class:active={tab === "logs"} onclick={() => (tab = "logs")}>Logs</button>
@@ -704,6 +720,10 @@
         <span class="save-hint">Changes apply to new runs immediately.</span>
       {/if}
     </div>
+
+    {:else if tab === "agents"}
+    <!-- ===== AGENTS ===== -->
+    <Agents embedded {agents} onHire={onHireAgent} {onOpenChat} onChanged={onAgentsChanged} />
 
     {:else if tab === "updates"}
     <!-- ===== VERSION & UPDATES ===== -->

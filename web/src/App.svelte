@@ -22,7 +22,6 @@
   import Chat from "./pages/Chat.svelte";
   import Roadmap from "./pages/Roadmap.svelte";
   import Goals from "./pages/Goals.svelte";
-  import Agents from "./pages/Agents.svelte";
   import Schedules from "./pages/Schedules.svelte";
   import Projects from "./pages/Projects.svelte";
   import Skills from "./pages/Skills.svelte";
@@ -30,8 +29,8 @@
   import Terminal from "./pages/Terminal.svelte";
   import type { PushState } from "./lib/live.svelte";
 
-  type Route = "chat" | "roadmap" | "goals" | "projects" | "agents" | "schedules" | "skills" | "terminal" | "settings";
-  type SettingsTab = "global" | "updates" | "notifications" | "logs";
+  type Route = "chat" | "roadmap" | "goals" | "projects" | "schedules" | "skills" | "terminal" | "settings";
+  type SettingsTab = "global" | "agents" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
     sessionId?: string;
@@ -59,11 +58,6 @@
       key: "projects",
       label: "Projects",
       icon: '<path d="M3 8a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="8.5" cy="13" r="1.4"/>',
-    },
-    {
-      key: "agents",
-      label: "Agents",
-      icon: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><path d="M16 5.2a3.2 3.2 0 0 1 0 5.6"/><path d="M17.5 20a5.5 5.5 0 0 0-2.5-4.6"/>',
     },
     {
       key: "schedules",
@@ -367,7 +361,7 @@
       });
       agents = [agent, ...agents.filter((a) => a.Name !== agent.Name)];
       hireOpen = false;
-      route = "agents";
+      openSettings("agents");
     } catch (e) {
       hireError = e instanceof Error ? e.message : String(e);
     }
@@ -557,8 +551,6 @@
       <Goals {agents} target={goalTarget} onConsumeTarget={() => (goalTarget = null)} onOpenChat={openChat} />
     {:else if route === "projects"}
       <Projects {agents} onOpenChat={openChat} />
-    {:else if route === "agents"}
-      <Agents {agents} onHire={openHire} onOpenChat={openChat} onChanged={refreshAgents} />
     {:else if route === "schedules"}
       <Schedules {agents} onOpenChat={openChat} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
     {:else if route === "skills"}
@@ -575,9 +567,13 @@
         {settingsFocusTab}
         {settingsFocusToken}
         {pushState}
+        {agents}
         onCheckUpdate={() => refreshUpdate()}
         onRunUpdate={runUpdate}
-        onEnablePush={enablePush} />
+        onEnablePush={enablePush}
+        onHireAgent={openHire}
+        onOpenChat={openChat}
+        onAgentsChanged={refreshAgents} />
     {/if}
   </div>
 

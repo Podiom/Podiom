@@ -45,11 +45,13 @@
     onHire = () => {},
     onOpenChat = (_t: ChatTarget) => {},
     onChanged = () => {},
+    embedded = false,
   }: {
     agents?: Agent[];
     onHire?: () => void;
     onOpenChat?: (t: ChatTarget) => void;
     onChanged?: () => void;
+    embedded?: boolean;
   } = $props();
 
   let selected = $state<Agent | null>(null);
@@ -457,7 +459,7 @@
 </script>
 
 {#if !selected}
-  <div class="page">
+  <div class="page" class:embedded>
     <header style="margin-bottom:22px">
       <div class="agents-head-row" style="display:flex;align-items:flex-end;gap:14px">
         <div>
@@ -490,7 +492,7 @@
   </div>
 {:else}
   {@const a = selected}
-  <div class="page">
+  <div class="page" class:embedded>
     <button class="back-btn" onclick={() => { selected = null; memoryInfo = null; dreams = []; }}>← All agents</button>
     <div class="ad-top">
       <div class="ad-avatar">
@@ -770,6 +772,13 @@
 {/if}
 
 <style>
+  /* Embedded inside the Settings tab: shed the full-height page chrome. */
+  .page.embedded {
+    flex: none;
+    overflow: visible;
+    padding: 0;
+  }
+
   .roster {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
