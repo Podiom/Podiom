@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -386,7 +387,7 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		Effort:       sched.Effort,
 		Yolo:         yolo,
 		AllowedTools: sched.AllowedTools,
-		Task:         sched.Body,
+		Task:         s.scheduleTaskPrompt(ctx, name, sched.Body),
 		GoalID:       sched.GoalID,
 	})
 
@@ -404,6 +405,45 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 	s.log.Info("scheduled run finished",
 		"event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "status", status, "session", sess.ID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return finished, runErr
+}
+
+// scheduleAnswerLimit caps how many prior answered questions a run replays.
+const scheduleAnswerLimit = 20
+
+// scheduleTaskPrompt prepends the answers the user gave to questions earlier
+// runs of this schedule asked (via podiom_ask_user), so a recurring schedule
+// carries those decisions forward and does not re-ask what was already settled.
+func (s *Scheduler) scheduleTaskPrompt(ctx context.Context, name, body string) string {
+	answered, err := s.store.ListAnsweredAgentQuestions(ctx, store.AgentQuestionSchedule, name, scheduleAnswerLimit)
+	if err != nil {
+		s.log.Warn("scheduled run failed to load prior answers", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(err))
+		return body
+	}
+	if len(answered) == 0 {
+		return body
+	}
+	var b strings.Builder
+	b.WriteString("## Previously answered questions\n\n")
+	b.WriteString("The user answered these in earlier runs of this schedule — treat them as settled and act on them; do not ask again.\n\n")
+	for _, q := range answered {
+		for _, item := range q.Questions {
+			prompt := strings.TrimSpace(item.Question)
+			if prompt == "" {
+				prompt = strings.TrimSpace(item.Header)
+			}
+			if prompt == "" {
+				continue
+			}
+			ans := strings.Join(q.Answers[item.ID], ", ")
+			if strings.TrimSpace(ans) == "" {
+				ans = "(no answer)"
+			}
+			fmt.Fprintf(&b, "- Q: %s\n  A: %s\n", prompt, ans)
+		}
+	}
+	b.WriteString("\n---\n\n")
+	b.WriteString(body)
+	return b.String()
 }
 
 // Delete removes a schedule: it deletes the markdown file, resyncs so the cron

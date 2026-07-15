@@ -201,6 +201,46 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			},
 		},
 		{
+			Name:      "podiom_ask_user",
+			APIRoutes: []string{"/api/agent-questions"},
+			Description: "Ask the user a question when you are genuinely blocked on a decision that is theirs to make and cannot resolve it from the goal, the code, or sensible defaults. Only for unattended runs (goal planning/reviews and scheduled runs): the run does not wait — your question is recorded and, for a goal, pauses its reviews and shows on the goal page; the user's answer reaches your next session. Provide one or more questions, each with a short header, the question text, and (recommended) a few selectable options; the user can also type a free-text answer. In an interactive chat session, do NOT use this — ask the user directly instead.",
+			InputSchema: objectSchema([]string{"questions"}, map[string]any{
+				"questions": map[string]any{
+					"type":        "array",
+					"description": "One or more questions to ask.",
+					"items": map[string]any{
+						"type":     "object",
+						"required": []string{"question"},
+						"properties": map[string]any{
+							"header":       strProp("Short label for the question (a few words)."),
+							"question":     strProp("The question text."),
+							"multi_select": map[string]any{"type": "boolean", "description": "Allow selecting more than one option."},
+							"options": map[string]any{
+								"type":        "array",
+								"description": "Selectable answers. Omit for a free-text-only question.",
+								"items": map[string]any{
+									"type":       "object",
+									"required":   []string{"label"},
+									"properties": map[string]any{"label": strProp("Option label."), "description": strProp("Optional clarifying detail.")},
+								},
+							},
+						},
+					},
+				},
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				if err := requireField(m, "questions"); err != nil {
+					return "", err
+				}
+				body := stamp(bodyFrom(m, "questions"))
+				return c.post(ctx, "/api/agent-questions", body)
+			},
+		},
+		{
 			Name:        "podiom_list_access_requests",
 			APIRoutes:   []string{"/api/access-requests"},
 			Description: "List access requests (optionally by goal and/or status: pending, approved, denied, executed, failed). Approved/denied entries carry the user's decision note — read it and act on it.",

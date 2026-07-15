@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import {
     addGoalFeedback,
+    answerAgentQuestion,
     approveAccessRequest,
     createGoal,
     deleteGoal,
@@ -29,6 +30,7 @@
     AccessRequest,
     AccessRequestKind,
     Agent,
+    AgentQuestion,
     Goal,
     GoalDetail,
     GoalEvent,
@@ -69,6 +71,9 @@
   let feedbackOpen = $state(false);
   let feedbackBody = $state("");
   let feedbackBusy = $state(false);
+  // Deferred-question answering (podiom_ask_user). Keyed by question item id.
+  let questionAnswers = $state<Record<string, string[]>>({});
+  let questionBusy = $state(false);
 
   // Create form.
   let cTitle = $state("");
@@ -130,6 +135,8 @@
     rate_limited: { c: "#b14e2a", t: "#fbeae0", label: "Rate limited", ic: '<path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/>' },
     rate_limit_resolved: { c: "#2f6e60", t: "#e2f0ec", label: "Rate limit resolved", ic: '<path d="M20 6 9 17l-5-5"/><path d="M14 6h6v6"/>' },
     tool_use: { c: "#6b6257", t: "#f0ece6", label: "Tool call", ic: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>' },
+    question_asked: { c: "#9a6e1e", t: "#fbf1dd", label: "Question asked", ic: '<path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/>' },
+    question_answered: { c: "#4f9e78", t: "#eaf1ed", label: "Question answered", ic: '<path d="M20 6 9 17l-5-5"/>' },
   };
 
   const RK: Record<AccessRequestKind, { label: string; c: string; t: string; b: string; ic: string }> = {
@@ -172,6 +179,7 @@
       detail = next;
       moreEvents = next.events.length >= PAGE;
       seedRecoveryTarget(next);
+      questionAnswers = {};
       feedbackOpen = false;
       feedbackBody = "";
       view = "detail";
@@ -288,7 +296,15 @@
     return map;
   });
 
-  const needsAttention = (g: Goal) => g.Status === "review" || (openReqsByGoal.get(g.ID)?.length ?? 0) > 0 || rateLimitByGoal.has(g.ID);
+  const questionByGoal = $derived.by(() => {
+    const map = new Map<string, AgentQuestion>();
+    for (const g of goals) {
+      if (g.pending_question) map.set(g.ID, g.pending_question);
+    }
+    return map;
+  });
+
+  const needsAttention = (g: Goal) => g.Status === "review" || (openReqsByGoal.get(g.ID)?.length ?? 0) > 0 || rateLimitByGoal.has(g.ID) || questionByGoal.has(g.ID);
   const attention = $derived(goals.filter((g) => needsAttention(g) && g.Status !== "done" && g.Status !== "abandoned" && g.Status !== "paused"));
   const activeRest = $derived(goals.filter((g) => g.Status === "active" && !needsAttention(g)));
   const paused = $derived(goals.filter((g) => g.Status === "paused"));
@@ -711,6 +727,41 @@
     return lead ? (agents.find((a) => a.Name === lead) ?? null) : null;
   });
   const detailPendingRateLimit = $derived(pendingRateLimitOf(detail));
+  const detailPendingQuestion = $derived<AgentQuestion | null>(detail?.pending_question ?? null);
+
+  // ---- deferred-question answering (mirrors the chat question card) ----------
+  const qSelected = (itemId: string, label: string) => (questionAnswers[itemId] ?? []).includes(label);
+
+  function qToggle(item: { id: string; multi_select?: boolean }, label: string) {
+    const cur = questionAnswers[item.id] ?? [];
+    if (item.multi_select) {
+      questionAnswers = { ...questionAnswers, [item.id]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] };
+    } else {
+      questionAnswers = { ...questionAnswers, [item.id]: [label] };
+    }
+  }
+
+  function qSetFree(itemId: string, value: string) {
+    questionAnswers = { ...questionAnswers, [itemId]: value ? [value] : [] };
+  }
+
+  const qReady = (pq: AgentQuestion) => pq.Questions.every((item) => (questionAnswers[item.id] ?? []).some((a) => a.trim() !== ""));
+
+  async function submitQuestionAnswer(pq: AgentQuestion) {
+    if (questionBusy || !qReady(pq)) return;
+    questionBusy = true;
+    try {
+      await answerAgentQuestion(pq.ID, questionAnswers);
+      questionAnswers = {};
+      await refreshDetail();
+      await refreshAll();
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Couldn't submit your answer.";
+    } finally {
+      questionBusy = false;
+    }
+  }
 
   const reqStatusChip: Record<string, [string, string, string, string]> = {
     pending: ["#fbf1dd", "#ecd9ae", "#9a6e1e", "pending"],
@@ -777,12 +828,13 @@
                     {@const [bg, bd, tc, lbl, pulse] = statusPill(g)}
                     {@const pend = openReqsByGoal.get(g.ID) ?? []}
                     {@const rate = rateLimitByGoal.get(g.ID)}
+                    {@const question = questionByGoal.get(g.ID)}
                     {@const failed = pend.some((r) => r.Status === "failed")}
                     {@const primary = g.Metrics[0]}
                     <button
                       class="card"
                       class:review-ring={g.Status === "review"}
-                      class:attn-ring={g.Status !== "review" && (pend.length > 0 || !!rate)}
+                      class:attn-ring={g.Status !== "review" && (pend.length > 0 || !!rate || !!question)}
                       class:dim={g.Status === "done" || g.Status === "abandoned"}
                       onclick={() => openGoal(g.ID)}>
                       <div class="card-top">
@@ -805,11 +857,13 @@
                         <div class="card-usage"><UsageBar usage={g.Usage} compact /></div>
                       {/if}
 
-                      {#if g.Status === "review" || pend.length > 0 || rate}
+                      {#if g.Status === "review" || pend.length > 0 || rate || question}
                         <div class="card-attn" class:hot={g.Status === "review"}>
                           <span class="attn-dot" class:hot={g.Status === "review"}></span>
                           {#if g.Status === "review"}
                             {g.LeadAgent} proposed completion — confirm or reopen
+                          {:else if question}
+                            {g.LeadAgent} asked a question — answer to continue
                           {:else if rate}
                             Rate limit reached — choose a model to continue
                           {:else if failed}
@@ -938,6 +992,55 @@
               <div class="banner-sub violet-sub">
                 Decomposing the goal into tasks and schedules. This runs in the background — metrics, the timeline, and
                 access requests will fill in as the agent makes progress. You can safely leave.
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- PENDING QUESTION banner: the agent is blocked on a decision -->
+        {#if detailPendingQuestion}
+          <div class="banner goal-question">
+            <div class="banner-icon amber">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
+            </div>
+            <div class="recovery-main">
+              <div class="banner-title amber-ink">{g.LeadAgent} needs an answer to continue</div>
+              <div class="banner-sub amber-sub">Reviews are paused until you answer. Your answer reaches the agent on its next session.</div>
+              <div class="goal-q-body">
+                {#each detailPendingQuestion.Questions as item}
+                  <div class="goal-q-block">
+                    {#if item.header}<div class="goal-q-header">{item.header}</div>{/if}
+                    <div class="goal-q-text">{item.question}</div>
+                    {#if item.options && item.options.length > 0}
+                      <div class="goal-q-options">
+                        {#each item.options as option}
+                          <button
+                            class="goal-q-option"
+                            class:sel={qSelected(item.id, option.label)}
+                            onclick={() => qToggle(item, option.label)}
+                          >
+                            <span class="goal-q-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
+                            <span class="goal-q-option-text">
+                              <span>{option.label}</span>
+                              {#if option.description}<small>{option.description}</small>{/if}
+                            </span>
+                          </button>
+                        {/each}
+                      </div>
+                    {:else}
+                      <input
+                        class="goal-q-free"
+                        type={item.is_secret ? "password" : "text"}
+                        placeholder="Your answer"
+                        value={(questionAnswers[item.id] ?? [])[0] ?? ""}
+                        oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
+                      />
+                    {/if}
+                  </div>
+                {/each}
+                <button class="btn-primary" disabled={questionBusy || !qReady(detailPendingQuestion)} onclick={() => submitQuestionAnswer(detailPendingQuestion)}>
+                  {questionBusy ? "Sending…" : "Send answer"}
+                </button>
               </div>
             </div>
           </div>
@@ -1985,6 +2088,83 @@
   .banner.rate-limit {
     background: #fff4ed;
     border: 1px solid #efc7b4;
+  }
+  .banner.goal-question {
+    background: #fdf6e7;
+    border: 1px solid #ecd9ae;
+  }
+  .goal-q-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+    align-items: flex-start;
+  }
+  .goal-q-block {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    width: 100%;
+  }
+  .goal-q-header {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9a6e1e;
+  }
+  .goal-q-text {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #4a3f30;
+  }
+  .goal-q-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .goal-q-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    text-align: left;
+    padding: 9px 12px;
+    border-radius: 11px;
+    border: 1px solid #e6dcc4;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .goal-q-option:hover {
+    border-color: #d9c69a;
+  }
+  .goal-q-option.sel {
+    border-color: #c69a3f;
+    background: #fbf1dd;
+  }
+  .goal-q-dot {
+    width: 16px;
+    flex: none;
+    color: #9a6e1e;
+    font-weight: 700;
+  }
+  .goal-q-option-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .goal-q-option-text small {
+    color: #8a7f6a;
+    font-size: 11.5px;
+  }
+  .goal-q-free {
+    width: 100%;
+    max-width: 420px;
+    padding: 9px 12px;
+    border-radius: 11px;
+    border: 1px solid #e6dcc4;
+    background: #fff;
+    font: inherit;
   }
   .banner-icon {
     width: 38px;

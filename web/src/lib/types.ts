@@ -438,6 +438,7 @@ export interface Goal {
   // 5-hour/weekly limits. Present on the list response; absent when unmeasured.
   Usage?: UsageEstimate;
   pending_rate_limit?: GoalRateLimitBlock;
+  pending_question?: AgentQuestion;
 }
 
 export type GoalEventKind =
@@ -454,7 +455,9 @@ export type GoalEventKind =
   | "completion_proposed"
   | "rate_limited"
   | "rate_limit_resolved"
-  | "tool_use";
+  | "tool_use"
+  | "question_asked"
+  | "question_answered";
 
 // GoalEvent mirrors store.GoalEvent: one append-only audit timeline entry.
 export interface GoalEvent {
@@ -515,6 +518,7 @@ export interface GoalDetail {
   events: GoalEvent[];
   access_requests: AccessRequest[];
   rate_limit_blocks: GoalRateLimitBlock[];
+  pending_question?: AgentQuestion;
   usage?: UsageEstimate;
 }
 
@@ -605,6 +609,9 @@ export interface ScheduleStatus {
   next_run?: string;
   parse_error?: string;
   runs: ScheduleRun[];
+  // Present when a run of this schedule asked the user a question (via
+  // podiom_ask_user) that is still awaiting an answer.
+  pending_question?: AgentQuestion;
 }
 
 export interface Message {
@@ -655,6 +662,21 @@ export interface UserInputRequest {
   item_id?: string;
   questions: UserInputQuestion[];
   auto_resolution_ms?: number;
+}
+
+// AgentQuestion mirrors store.AgentQuestion: a question an unattended agent (a
+// goal or scheduled run) asked the user, recorded to be answered from the goal
+// or schedule page. Questions reuse the chat UserInputQuestion shape.
+export interface AgentQuestion {
+  ID: string;
+  Origin: "goal" | "schedule";
+  RefID: string;
+  SessionID: string;
+  Questions: UserInputQuestion[];
+  Status: "pending" | "answered" | "dismissed";
+  Answers: Record<string, string[]>;
+  CreatedAt: string;
+  AnsweredAt: string;
 }
 
 export interface UserInputDecision {

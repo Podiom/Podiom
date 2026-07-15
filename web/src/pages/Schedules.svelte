@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { createSchedule, deleteSchedule, listGoals, listProfiles, listSchedules, runSchedule } from "../lib/api";
+  import { answerAgentQuestion, createSchedule, deleteSchedule, listGoals, listProfiles, listSchedules, runSchedule } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { modeChip } from "../lib/theme";
-  import type { Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
+  import type { AgentQuestion, Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -26,6 +26,42 @@
   let error = $state<string | null>(null);
   let busy = $state<string>("");
   let hoverRun = $state<string>("");
+
+  // Deferred-question answering (podiom_ask_user), keyed by question item id.
+  let questionAnswers = $state<Record<string, string[]>>({});
+  let questionBusy = $state<string>("");
+
+  const qSelected = (itemId: string, label: string) => (questionAnswers[itemId] ?? []).includes(label);
+
+  function qToggle(item: { id: string; multi_select?: boolean }, label: string) {
+    const cur = questionAnswers[item.id] ?? [];
+    if (item.multi_select) {
+      questionAnswers = { ...questionAnswers, [item.id]: cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label] };
+    } else {
+      questionAnswers = { ...questionAnswers, [item.id]: [label] };
+    }
+  }
+
+  function qSetFree(itemId: string, value: string) {
+    questionAnswers = { ...questionAnswers, [itemId]: value ? [value] : [] };
+  }
+
+  const qReady = (pq: AgentQuestion) => pq.Questions.every((item) => (questionAnswers[item.id] ?? []).some((a) => a.trim() !== ""));
+
+  async function submitQuestionAnswer(pq: AgentQuestion) {
+    if (questionBusy || !qReady(pq)) return;
+    questionBusy = pq.ID;
+    error = null;
+    try {
+      await answerAgentQuestion(pq.ID, questionAnswers);
+      questionAnswers = {};
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      questionBusy = "";
+    }
+  }
 
   // Delete confirmation.
   let pendingDelete = $state<ScheduleStatus | null>(null);
@@ -270,6 +306,46 @@
               <span class="fm-chip mono"><span class="fm-k">enabled</span><span class="fm-v">{s.enabled ? "true" : "false"}</span></span>
             </div>
           </div>
+
+          {#if s.pending_question}
+            {@const pq = s.pending_question}
+            <div class="sched-question">
+              <div class="sq-head">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
+                <span>{s.agent} asked a question — answer it to guide the next run</span>
+              </div>
+              {#each pq.Questions as item}
+                <div class="sq-block">
+                  {#if item.header}<div class="sq-header">{item.header}</div>{/if}
+                  <div class="sq-text">{item.question}</div>
+                  {#if item.options && item.options.length > 0}
+                    <div class="sq-options">
+                      {#each item.options as option}
+                        <button class="sq-option" class:sel={qSelected(item.id, option.label)} onclick={() => qToggle(item, option.label)}>
+                          <span class="sq-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
+                          <span class="sq-option-text">
+                            <span>{option.label}</span>
+                            {#if option.description}<small>{option.description}</small>{/if}
+                          </span>
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <input
+                      class="sq-free"
+                      type={item.is_secret ? "password" : "text"}
+                      placeholder="Your answer"
+                      value={(questionAnswers[item.id] ?? [])[0] ?? ""}
+                      oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
+                    />
+                  {/if}
+                </div>
+              {/each}
+              <button class="sq-send" disabled={questionBusy === pq.ID || !qReady(pq)} onclick={() => submitQuestionAnswer(pq)}>
+                {questionBusy === pq.ID ? "Sending…" : "Send answer"}
+              </button>
+            </div>
+          {/if}
 
           {#if s.runs && s.runs.length > 0}
             <div class="sched-runs">
@@ -586,6 +662,116 @@
   .fm-v {
     color: #5a5048;
     font-weight: 600;
+  }
+
+  .sched-question {
+    margin-top: 15px;
+    background: #fdf6e7;
+    border: 1px solid #ecd9ae;
+    border-radius: 13px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    align-items: flex-start;
+  }
+
+  .sq-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 600 12.5px "Hanken Grotesk";
+    color: #9a6e1e;
+  }
+
+  .sq-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .sq-header {
+    font: 700 10.5px "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9a6e1e;
+  }
+
+  .sq-text {
+    font: 600 13px "Hanken Grotesk";
+    color: #4a3f30;
+  }
+
+  .sq-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sq-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    text-align: left;
+    padding: 8px 11px;
+    border-radius: 10px;
+    border: 1px solid #e6dcc4;
+    background: #fff;
+    cursor: pointer;
+  }
+
+  .sq-option:hover {
+    border-color: #d9c69a;
+  }
+
+  .sq-option.sel {
+    border-color: #c69a3f;
+    background: #fbf1dd;
+  }
+
+  .sq-dot {
+    width: 15px;
+    flex: none;
+    color: #9a6e1e;
+    font-weight: 700;
+  }
+
+  .sq-option-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font: 500 13px "Hanken Grotesk";
+  }
+
+  .sq-option-text small {
+    color: #8a7f6a;
+    font-size: 11.5px;
+  }
+
+  .sq-free {
+    width: 100%;
+    max-width: 420px;
+    padding: 8px 11px;
+    border-radius: 10px;
+    border: 1px solid #e6dcc4;
+    background: #fff;
+    font: inherit;
+  }
+
+  .sq-send {
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: 1px solid #c69a3f;
+    background: #9a6e1e;
+    color: #fff;
+    font: 600 12.5px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .sq-send:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
   .sched-runs {

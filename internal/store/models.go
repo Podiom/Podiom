@@ -373,6 +373,12 @@ const (
 	// of what it actually did. The payload's read_only flag lets the UI collapse
 	// read-only calls.
 	GoalEventToolUse GoalEventKind = "tool_use"
+	// GoalEventQuestionAsked records the agent asking the user a question during
+	// an unattended goal run. The goal pauses its reviews until answered.
+	GoalEventQuestionAsked GoalEventKind = "question_asked"
+	// GoalEventQuestionAnswered records the user answering that question from the
+	// goal page; the answer is fed into the next review session.
+	GoalEventQuestionAnswered GoalEventKind = "question_answered"
 )
 
 // GoalEvent is one append-only timeline entry — the goal's audit trail. Updates
@@ -430,6 +436,65 @@ type GoalRateLimitBlock struct {
 	ResolvedEffort   string
 	CreatedAt        string
 	ResolvedAt       string
+}
+
+// AgentQuestionOrigin is the kind of unattended run a question came from.
+type AgentQuestionOrigin string
+
+const (
+	// AgentQuestionGoal is a question raised during a goal planning/review run;
+	// it is surfaced and answered on the goal page and pauses goal reviews.
+	AgentQuestionGoal AgentQuestionOrigin = "goal"
+	// AgentQuestionSchedule is a question raised during a scheduled run; it is
+	// surfaced on the Schedules page and its answer persists across runs.
+	AgentQuestionSchedule AgentQuestionOrigin = "schedule"
+)
+
+// AgentQuestionStatus is the lifecycle state of a deferred agent question.
+type AgentQuestionStatus string
+
+const (
+	// AgentQuestionPending means the user still needs to answer.
+	AgentQuestionPending AgentQuestionStatus = "pending"
+	// AgentQuestionAnswered means the user answered; the answer is available to
+	// the next run.
+	AgentQuestionAnswered AgentQuestionStatus = "answered"
+	// AgentQuestionDismissed means the user dismissed the question without an answer.
+	AgentQuestionDismissed AgentQuestionStatus = "dismissed"
+)
+
+// AgentQuestionOption is one selectable answer. Mirrors the chat
+// UserInputOption JSON shape so the frontend reuses the same components.
+type AgentQuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// AgentQuestionItem is one prompt in a deferred question. Mirrors the chat
+// UserInputQuestion JSON shape (id/header/question/options/multi_select/is_secret).
+type AgentQuestionItem struct {
+	ID          string                `json:"id"`
+	Header      string                `json:"header,omitempty"`
+	Question    string                `json:"question"`
+	Options     []AgentQuestionOption `json:"options,omitempty"`
+	MultiSelect bool                  `json:"multi_select,omitempty"`
+	IsOther     bool                  `json:"is_other,omitempty"`
+	IsSecret    bool                  `json:"is_secret,omitempty"`
+}
+
+// AgentQuestion is a durable question an unattended agent asked the user
+// (defer-and-resume): recorded here rather than blocking the run, answered from
+// the goal/schedule page, and fed into the next run.
+type AgentQuestion struct {
+	ID         string
+	Origin     AgentQuestionOrigin
+	RefID      string // goal id, or schedule name
+	SessionID  string
+	Questions  []AgentQuestionItem
+	Status     AgentQuestionStatus
+	Answers    map[string][]string // question id → selected/freeform answers
+	CreatedAt  string
+	AnsweredAt string
 }
 
 // AccessRequestKind is what capability the agent asked for.

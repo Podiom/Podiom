@@ -91,6 +91,7 @@ type GoalDetail struct {
 	Events          []store.GoalEvent          `json:"events"`
 	AccessRequests  []store.AccessRequest      `json:"access_requests"`
 	RateLimitBlocks []store.GoalRateLimitBlock `json:"rate_limit_blocks"`
+	PendingQuestion *store.AgentQuestion       `json:"pending_question,omitempty"`
 	Usage           *tokenmeter.Estimate       `json:"usage,omitempty"`
 }
 
@@ -100,6 +101,7 @@ type GoalDetail struct {
 type goalListItem struct {
 	store.Goal
 	PendingRateLimit *store.GoalRateLimitBlock `json:"pending_rate_limit,omitempty"`
+	PendingQuestion  *store.AgentQuestion      `json:"pending_question,omitempty"`
 	Usage            *tokenmeter.Estimate      `json:"Usage,omitempty"`
 }
 
@@ -154,7 +156,12 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, nil, err)
 				return
 			}
-			items = append(items, goalListItem{Goal: g, PendingRateLimit: pending, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
+			question, err := s.core.PendingAgentQuestion(r.Context(), store.AgentQuestionGoal, g.ID)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			items = append(items, goalListItem{Goal: g, PendingRateLimit: pending, PendingQuestion: question, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
 		}
 		writeJSON(w, items, nil)
 	case http.MethodPost:
@@ -301,7 +308,12 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 		if rateLimits == nil {
 			rateLimits = []store.GoalRateLimitBlock{}
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, Usage: s.goalUsageEstimate(r.Context(), id)}, nil)
+		question, err := s.core.PendingAgentQuestion(r.Context(), store.AgentQuestionGoal, id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, Usage: s.goalUsageEstimate(r.Context(), id)}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -354,6 +366,11 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 		// The goal is gone; tear down the schedules its plan created so they
 		// don't keep firing against a goal that no longer exists.
 		s.deleteGoalSchedules(r.Context(), id)
+		// Drop any deferred questions this goal accumulated (no FK cascade — the
+		// table spans goals and schedules).
+		if err := s.core.DeleteAgentQuestions(r.Context(), store.AgentQuestionGoal, id); err != nil {
+			s.log.Warn("delete goal questions failed", "event", "question", "goal", id, "err", err)
+		}
 		writeJSON(w, map[string]string{"status": "deleted", "id": id}, nil)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

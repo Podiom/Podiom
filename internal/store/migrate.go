@@ -590,6 +590,59 @@ var migrations = []migration{
 		ALTER TABLE tasks ADD COLUMN goal_id TEXT NOT NULL DEFAULT '';
 		CREATE INDEX idx_tasks_goal ON tasks(goal_id);`,
 	},
+	{
+		version: 22,
+		name:    "agent_questions",
+		// Agents running unattended (goal planning/reviews, scheduled runs) can now
+		// ask the user a question with selectable answers. Because there is no human
+		// in the loop, the question is recorded here (defer-and-resume) rather than
+		// blocking the run; the answer is fed into the next run. 'question_asked' /
+		// 'question_answered' goal events surface the exchange on the goal timeline,
+		// so goal_events' CHECK constraint needs the table-rebuild dance.
+		sql: `DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TABLE goal_events_new (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'user_feedback', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed', 'rate_limited', 'rate_limit_resolved', 'tool_use',
+				'question_asked', 'question_answered')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		INSERT INTO goal_events_new (id, goal_id, session_id, kind, body, payload_json, created_at)
+		SELECT id, goal_id, session_id, kind, body, payload_json, created_at FROM goal_events;
+
+		DROP TABLE goal_events;
+		ALTER TABLE goal_events_new RENAME TO goal_events;
+
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;
+
+		CREATE TABLE agent_questions (
+			id             TEXT PRIMARY KEY,
+			origin         TEXT NOT NULL CHECK (origin IN ('goal', 'schedule')),
+			ref_id         TEXT NOT NULL,
+			session_id     TEXT NOT NULL DEFAULT '',
+			questions_json TEXT NOT NULL DEFAULT '[]',
+			status         TEXT NOT NULL DEFAULT 'pending'
+				CHECK (status IN ('pending', 'answered', 'dismissed')),
+			answers_json   TEXT NOT NULL DEFAULT '{}',
+			created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			answered_at    TEXT
+		);
+
+		CREATE INDEX idx_agent_questions_ref ON agent_questions(origin, ref_id, status);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

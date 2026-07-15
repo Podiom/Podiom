@@ -1789,53 +1789,6 @@
         </div>
       {/if}
 
-      {#if pendingUserInput}
-        <div class="row-start question-wrap">
-          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
-          <div class="question-card">
-            <div class="question-head">
-              <span class="approve-tag mono">question · {pendingUserInput.provider ?? "provider"}</span>
-            </div>
-            <div class="question-body">
-              {#each pendingUserInput.questions as q}
-                <div class="question-block">
-                  {#if q.header}<div class="question-header">{q.header}</div>{/if}
-                  <div class="question-text">{q.question}</div>
-                  {#if q.options && q.options.length > 0}
-                    <div class="question-options">
-                      {#each q.options as option}
-                        <button
-                          class="question-option"
-                          class:sel={userInputSelected(q, option.label)}
-                          onclick={() => toggleUserInput(q, option.label)}
-                        >
-                          <span class="question-dot">{q.multi_select ? (userInputSelected(q, option.label) ? "✓" : "") : ""}</span>
-                          <span class="question-option-text">
-                            <span>{option.label}</span>
-                            {#if option.description}<small>{option.description}</small>{/if}
-                          </span>
-                        </button>
-                      {/each}
-                    </div>
-                  {:else}
-                    <input
-                      class="question-free"
-                      type={q.is_secret ? "password" : "text"}
-                      placeholder="Answer"
-                      value={(userInputAnswers[q.id] ?? [])[0] ?? ""}
-                      oninput={(e) => setFreeUserInput(q, e.currentTarget.value)}
-                    />
-                  {/if}
-                </div>
-              {/each}
-              <div class="approve-actions">
-                <button class="approve-yes" disabled={!userInputReady(pendingUserInput)} onclick={submitUserInput}>Send answer</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      {/if}
-
       {#if pendingFallback}
         <div class="row-start question-wrap">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
@@ -2004,6 +1957,52 @@
             {/if}
           </div>
         {/if}
+      </div>
+    {/if}
+
+    {#if pendingUserInput}
+      <div class="question-dock">
+        <div class="question-card">
+          <div class="question-head">
+            <span class="approve-tag mono">question · {pendingUserInput.provider ?? "provider"}</span>
+          </div>
+          <div class="question-body">
+            {#each pendingUserInput.questions as q}
+              <div class="question-block">
+                {#if q.header}<div class="question-header">{q.header}</div>{/if}
+                <div class="question-text">{q.question}</div>
+                {#if q.options && q.options.length > 0}
+                  <div class="question-options">
+                    {#each q.options as option}
+                      <button
+                        class="question-option"
+                        class:sel={userInputSelected(q, option.label)}
+                        onclick={() => toggleUserInput(q, option.label)}
+                      >
+                        <span class="question-dot">{q.multi_select ? (userInputSelected(q, option.label) ? "✓" : "") : ""}</span>
+                        <span class="question-option-text">
+                          <span>{option.label}</span>
+                          {#if option.description}<small>{option.description}</small>{/if}
+                        </span>
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <input
+                    class="question-free"
+                    type={q.is_secret ? "password" : "text"}
+                    placeholder="Answer"
+                    value={(userInputAnswers[q.id] ?? [])[0] ?? ""}
+                    oninput={(e) => setFreeUserInput(q, e.currentTarget.value)}
+                  />
+                {/if}
+              </div>
+            {/each}
+            <div class="approve-actions">
+              <button class="approve-yes" disabled={!userInputReady(pendingUserInput)} onclick={submitUserInput}>Send answer</button>
+            </div>
+          </div>
+        </div>
       </div>
     {/if}
 
@@ -3397,6 +3396,20 @@
 
   .tdot.d3 {
     animation-delay: 0.4s;
+  }
+
+  .question-dock {
+    flex: none;
+    position: relative;
+    z-index: 14;
+    border-top: 1px solid var(--line);
+    background: #fff;
+    padding: 12px 24px;
+  }
+
+  .question-dock .question-card {
+    flex: none;
+    max-width: 640px;
   }
 
   .question-wrap {

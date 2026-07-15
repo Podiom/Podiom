@@ -69,9 +69,9 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// tasks 6 + projects 5 + schedules 4 + skills 4 + mcp 5 + goals 9 + platform 5.
-	if len(tools) != 38 {
-		t.Fatalf("expected 38 tools, got %d", len(tools))
+	// tasks 6 + projects 5 + schedules 4 + skills 4 + mcp 5 + goals 10 + platform 5.
+	if len(tools) != 39 {
+		t.Fatalf("expected 39 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{

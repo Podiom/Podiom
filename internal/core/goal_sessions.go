@@ -35,6 +35,7 @@ exactly what you did while they were away.
 3. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
 4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
 5. File podiom_request_access only for things you genuinely cannot do yourself: assigning an MCP server, installing a marketplace skill, or a credential / environment variable (never ask for the secret value itself). You do not need to request CLI-tool installs or a permission level — you already have full access.
+6. If — and only if — you are genuinely blocked on a decision that is the user's to make (a strategic choice, a missing value, a preference you cannot infer), call podiom_ask_user with the question and a few selectable answers. This pauses the goal's reviews and surfaces the question on the goal page; the user's answer is fed into your next session. Do not ask about things you can decide yourself.
 
 The user is away. They will see your plan, your access requests, and this goal's timeline when they return.
 `)
@@ -44,11 +45,12 @@ The user is away. They will see your plan, your access requests, and this goal's
 // GoalReviewPrompt renders the periodic review contract: recent timeline and
 // access-request decisions (including the user's notes — their channel back to
 // the agent) plus the review duties.
-func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, feedback []store.GoalEvent) string {
+func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, feedback []store.GoalEvent, answers []store.AgentQuestion) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a Podiom goal. This is a scheduled review session.\n\n")
 	writeGoalBrief(&b, goal)
 	writeUserFeedback(&b, feedback)
+	writeAnsweredQuestions(&b, answers)
 
 	if len(requests) > 0 {
 		b.WriteString("## Your access requests\n\n")
@@ -94,7 +96,8 @@ tool-call entries to stay readable; the full record is on the goal page.)
 3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed.
 4. Take direct corrective action when it is quick and unblocks progress (run a command, fix a file, unstick a task); push larger or recurring work into tasks and schedules (with goal_id) so it is tracked.
 5. File podiom_request_access only for what you cannot do yourself (an MCP server, a marketplace skill, a credential). If the user answered a previous request (see above), act on their note.
-6. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
+6. If — and only if — you are genuinely blocked on a decision that is the user's to make, call podiom_ask_user with the question and a few selectable answers. This pauses reviews and surfaces it on the goal page; the answer reaches your next session. If the user answered a previous question (see above), act on their answer. Do not ask about things you can decide yourself.
+7. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
 `)
 	return b.String()
 }
@@ -136,6 +139,30 @@ func writeUserFeedback(b *strings.Builder, feedback []store.GoalEvent) {
 			body = body[:500] + "…"
 		}
 		fmt.Fprintf(b, "- %s: %s\n", ev.CreatedAt, body)
+	}
+	b.WriteString("\n")
+}
+
+// writeAnsweredQuestions renders the answers the user gave to questions this
+// goal's agent asked in earlier sessions (via podiom_ask_user) — their channel
+// back to the agent for a blocking decision.
+func writeAnsweredQuestions(b *strings.Builder, answers []store.AgentQuestion) {
+	if len(answers) == 0 {
+		return
+	}
+	b.WriteString("## Your answered questions (newest first)\n\n")
+	for _, q := range answers {
+		for _, item := range q.Questions {
+			prompt := strings.TrimSpace(item.Question)
+			if prompt == "" {
+				continue
+			}
+			ans := strings.Join(q.Answers[item.ID], ", ")
+			if strings.TrimSpace(ans) == "" {
+				ans = "(no answer)"
+			}
+			fmt.Fprintf(b, "- Q: %s\n  A: %s\n", prompt, ans)
+		}
 	}
 	b.WriteString("\n")
 }
@@ -296,8 +323,12 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if err != nil {
 		return store.Session{}, err
 	}
+	answers, err := c.store.ListAnsweredAgentQuestions(ctx, store.AgentQuestionGoal, goal.ID, goalFeedbackContextEvents)
+	if err != nil {
+		return store.Session{}, err
+	}
 	c.log.Info("goal review started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, feedback))
+	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, feedback, answers))
 }
 
 // AdvanceGoalReviewClock moves next_review_at one cadence forward from now.

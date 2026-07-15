@@ -50,6 +50,7 @@ var notManageable = map[string]string{
 	"/api/push/unsubscribe":      "web push transport",
 	"/api/access-requests/":      "approve/deny decisions are human-only; an agent must never grant its own request",
 	"/api/goal-rate-limits/":     "rate-limit recovery changes goal run targets; human-only decision",
+	"/api/agent-questions/":      "answering a deferred agent question is human-only; the agent asks via podiom_ask_user",
 }
 
 // coveredRoutes is the union of every route the manage tools declare they hit.

@@ -160,6 +160,8 @@ func (c *Core) planModePrompt(sess store.Session, projectCtx projectExecutionCon
 		"Submit the plan by calling podiom_submit_plan with file_path and markdown. The markdown argument must be the full rendered plan and must use exactly this structure:",
 		"",
 		structuredPlanMarkdownTemplate(),
+		"",
+		"If — and only if — you are genuinely unsure about a decision that is the user's to make (one you cannot resolve from the request, the code, or sensible defaults), you may ask them: state the question with a few selectable answers (they can also type a free-text answer). Ask before finalizing the plan, not after. Do not ask about things you can decide yourself.",
 	}
 	if sess.PlanState == store.PlanAwaitingApproval {
 		lines = append(lines,

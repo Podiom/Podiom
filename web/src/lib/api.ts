@@ -16,6 +16,7 @@ import type {
   GoalEvent,
   GoalPatchRequest,
   GoalRateLimitBlock,
+  AgentQuestion,
   WorkspaceTool,
   DreamResult,
   GitHubDevicePoll,
@@ -889,6 +890,22 @@ export async function resolveGoalRateLimit(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    }),
+  );
+}
+
+// answerAgentQuestion submits the user's answers to a deferred question an
+// unattended agent asked (from a goal or schedule page). answers maps each
+// question id to its selected/freeform answers.
+export async function answerAgentQuestion(
+  id: string,
+  answers: Record<string, string[]>,
+): Promise<AgentQuestion> {
+  return asJSON(
+    await request(`/api/agent-questions/${encodeURIComponent(id)}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers }),
     }),
   );
 }

@@ -8,7 +8,15 @@ import (
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/schedule"
+	"github.com/Podiom/Podiom/internal/store"
 )
+
+// scheduleListItem is a schedule's status with its pending deferred question (a
+// question a run asked the user via podiom_ask_user), mirroring goalListItem.
+type scheduleListItem struct {
+	schedule.Status
+	PendingQuestion *store.AgentQuestion `json:"pending_question,omitempty"`
+}
 
 type scheduleCreateRequest struct {
 	Name          string          `json:"name"`
@@ -35,7 +43,21 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		statuses, err := s.scheduler.List(r.Context())
-		writeJSON(w, statuses, err)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		items := make([]scheduleListItem, 0, len(statuses))
+		for _, st := range statuses {
+			item := scheduleListItem{Status: st}
+			if s.core != nil && st.Name != "" {
+				if q, qerr := s.core.PendingAgentQuestion(r.Context(), store.AgentQuestionSchedule, st.Name); qerr == nil {
+					item.PendingQuestion = q
+				}
+			}
+			items = append(items, item)
+		}
+		writeJSON(w, items, nil)
 	case http.MethodPost:
 		var req scheduleCreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -84,6 +106,13 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		if err := s.scheduler.Delete(r.Context(), name); err != nil {
 			writeJSON(w, nil, err)
 			return
+		}
+		// Drop any deferred questions this schedule accumulated (the file is gone;
+		// there is no FK to cascade from).
+		if s.core != nil {
+			if err := s.core.DeleteAgentQuestions(r.Context(), store.AgentQuestionSchedule, name); err != nil {
+				s.log.Warn("delete schedule questions failed", "event", "question", "schedule", name, "err", err)
+			}
 		}
 		writeJSON(w, map[string]string{"deleted": name}, nil)
 	case "run":

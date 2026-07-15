@@ -128,6 +128,11 @@ func (s *Store) ListDueGoalReviews(ctx context.Context, cutoffRFC3339 string) ([
 				SELECT 1 FROM goal_rate_limits
 				WHERE goal_rate_limits.goal_id = goals.id AND goal_rate_limits.status = 'pending'
 			)
+			AND NOT EXISTS (
+				SELECT 1 FROM agent_questions
+				WHERE agent_questions.origin = 'goal' AND agent_questions.ref_id = goals.id
+					AND agent_questions.status = 'pending'
+			)
 		ORDER BY next_review_at`, cutoffRFC3339)
 	if err != nil {
 		return nil, fmt.Errorf("list due goal reviews: %w", err)
