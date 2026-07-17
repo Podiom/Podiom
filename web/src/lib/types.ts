@@ -113,7 +113,7 @@ export interface GlobalConfigPatch {
   fallback?: string[];
   voice?: { openai_api_key?: string };
 }
-export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap";
+export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap" | "goal";
 export type MessageRole = "user" | "assistant";
 export type MessageKind = "message" | "error" | "reasoning";
 export type PlanState = "none" | "pending_submission" | "awaiting_approval";
@@ -165,6 +165,7 @@ export interface Session {
   ScheduleID: string;
   RunID: string;
   TaskID: string;
+  GoalID: string;
   ProjectID: string;
   ProviderHandle: string;
   PlanState: PlanState;

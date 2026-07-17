@@ -6,6 +6,7 @@
     createTask,
     deleteTask,
     describeTask,
+    listGoals,
     listProfiles,
     listProjects,
     listTasks,
@@ -16,10 +17,11 @@
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import VoiceButton from "../lib/VoiceButton.svelte";
+  import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { appendTranscript } from "../lib/voice";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { projectColor } from "../lib/theme";
-  import type { Agent, ProfileInfo, Project, Session, Task, TaskStatus } from "../lib/types";
+  import type { Agent, Goal, ProfileInfo, Project, Session, Task, TaskStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -31,7 +33,8 @@
   let {
     agents = [],
     onOpenChat = (_t: ChatTarget) => {},
-  }: { agents?: Agent[]; onOpenChat?: (t: ChatTarget) => void } = $props();
+    onOpenGoal = (_id: string) => {},
+  }: { agents?: Agent[]; onOpenChat?: (t: ChatTarget) => void; onOpenGoal?: (goalId: string) => void } = $props();
 
   const COLUMNS: { key: TaskStatus; label: string; dot: string }[] = [
     { key: "backlog", label: "Backlog", dot: "#C9BBAA" },
@@ -42,8 +45,10 @@
 
   let tasks = $state<Task[]>([]);
   let projects = $state<Project[]>([]);
+  let goals = $state<Goal[]>([]);
   let profiles = $state<ProfileInfo[]>([]);
   let projectFilter = $state("all");
+  let goalGroupsOpen = $state<Record<string, boolean>>({});
   let error = $state<string | null>(null);
   let dragId = $state<string>("");
   let dragging = $state(false);
@@ -99,11 +104,12 @@
 
   async function load() {
     try {
-      const [nextTasks, nextProjects, nextProfiles] = await Promise.all([listTasks(), listProjects(), listProfiles()]);
+      const [nextTasks, nextProjects, nextProfiles, nextGoals] = await Promise.all([listTasks(), listProjects(), listProfiles(), listGoals()]);
       const sessionPairs = await Promise.all(
         nextTasks.map(async (task) => [task.ID, await taskSession(task.ID)] as const),
       );
       projects = nextProjects;
+      goals = nextGoals;
       profiles = nextProfiles;
       taskSessions = Object.fromEntries(sessionPairs);
       taskHasSession = Object.fromEntries(sessionPairs.map(([id, session]) => [id, Boolean(session)]));
@@ -122,6 +128,23 @@
 
   function tasksFor(status: TaskStatus) {
     return visibleTasks.filter((t) => t.Status === status);
+  }
+
+  function taskEntriesFor(status: TaskStatus) {
+    return goalGroupedEntries(tasksFor(status), (t) => t.GoalID, goals);
+  }
+
+  function goalGroupKey(status: TaskStatus, goalId: string): string {
+    return `${status}:${goalId}`;
+  }
+
+  function toggleGoalGroup(status: TaskStatus, goalId: string) {
+    const key = goalGroupKey(status, goalId);
+    goalGroupsOpen = { ...goalGroupsOpen, [key]: !goalGroupOpen(goalGroupsOpen, key) };
+  }
+
+  function groupCountLabel(count: number, noun: string): string {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
   }
 
   function projectName(id: string) {
@@ -404,6 +427,42 @@
   }
 </script>
 
+{#snippet taskCard(task: Task)}
+  <div
+    class="task-card"
+    role="button"
+    tabindex="0"
+    draggable="true"
+    style={cardStyle(task)}
+    ondragstart={() => { dragId = task.ID; dragging = true; }}
+    ondragend={() => { dragging = false; }}
+    onclick={() => (openCard = task)}
+    onkeydown={(e) => { if (e.key === "Enter") openCard = task; }}
+  >
+    {#if task.Status !== "in_progress"}
+      <button class="tc-x" title="Delete task" aria-label="Delete task" onclick={(e) => { e.stopPropagation(); pendingDelete = task; }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    {/if}
+    <div class="tc-proj">
+      <span class="proj-dot" style="background:{projectColor(task.ProjectID)}"></span>
+      <span class="tc-proj-name mono">{projectName(task.ProjectID)}</span>
+    </div>
+    <div class="tc-title">{task.Title}</div>
+    <div class="tc-foot">
+      <AgentAvatar name={task.AssignedAgent || "?"} size={22} radius={7} fontSize={10} />
+      <span class="tc-agent">{task.AssignedAgent || "unassigned"}</span>
+      <span style={chipStyle(task)}>{chip(task).label}</span>
+    </div>
+    {#if hasSession(task)}
+      <button class="tc-openchat" onclick={(e) => { e.stopPropagation(); openInChat(task); }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+        Open in chat
+      </button>
+    {/if}
+  </div>
+{/snippet}
+
 <div class="page roadmap-page">
   <header class="page-head">
     <div>
@@ -446,40 +505,35 @@
           {/if}
         </div>
         <div class="col-zone" class:hot={isStart} class:donecol={col.key === "done"}>
-          {#each tasksFor(col.key) as task (task.ID)}
-            <div
-              class="task-card"
-              role="button"
-              tabindex="0"
-              draggable="true"
-              style={cardStyle(task)}
-              ondragstart={() => { dragId = task.ID; dragging = true; }}
-              ondragend={() => { dragging = false; }}
-              onclick={() => (openCard = task)}
-              onkeydown={(e) => { if (e.key === "Enter") openCard = task; }}
-            >
-              {#if task.Status !== "in_progress"}
-                <button class="tc-x" title="Delete task" aria-label="Delete task" onclick={(e) => { e.stopPropagation(); pendingDelete = task; }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                </button>
-              {/if}
-              <div class="tc-proj">
-                <span class="proj-dot" style="background:{projectColor(task.ProjectID)}"></span>
-                <span class="tc-proj-name mono">{projectName(task.ProjectID)}</span>
+          {#each taskEntriesFor(col.key) as entry}
+            {#if entry.kind === "group"}
+              {@const key = goalGroupKey(col.key, entry.goalId)}
+              <div class="task-goal-group">
+                <div class="task-goal-head">
+                  <button class="task-goal-toggle" onclick={() => toggleGoalGroup(col.key, entry.goalId)} title={goalGroupOpen(goalGroupsOpen, key) ? "Collapse goal group" : "Expand goal group"}>
+                    <span class="goal-chevron" class:closed={!goalGroupOpen(goalGroupsOpen, key)}>⌄</span>
+                    <span class="task-goal-text">
+                      <span class="task-goal-title">{entry.label}</span>
+                      <span class="task-goal-sub mono">{groupCountLabel(entry.items.length, "task")}{entry.goal ? ` · ${entry.goal.Status}` : ""}</span>
+                    </span>
+                  </button>
+                  {#if entry.goal}
+                    <button class="task-goal-open" onclick={() => onOpenGoal(entry.goalId)} title="Open goal" aria-label="Open goal">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
+                    </button>
+                  {/if}
+                </div>
+                {#if goalGroupOpen(goalGroupsOpen, key)}
+                  <div class="task-goal-items">
+                    {#each entry.items as task (task.ID)}
+                      {@render taskCard(task)}
+                    {/each}
+                  </div>
+                {/if}
               </div>
-              <div class="tc-title">{task.Title}</div>
-              <div class="tc-foot">
-                <AgentAvatar name={task.AssignedAgent || "?"} size={22} radius={7} fontSize={10} />
-                <span class="tc-agent">{task.AssignedAgent || "unassigned"}</span>
-                <span style={chipStyle(task)}>{chip(task).label}</span>
-              </div>
-              {#if hasSession(task)}
-                <button class="tc-openchat" onclick={(e) => { e.stopPropagation(); openInChat(task); }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-                  Open in chat
-                </button>
-              {/if}
-            </div>
+            {:else}
+              {@render taskCard(entry.item)}
+            {/if}
           {/each}
         </div>
       </div>
@@ -808,6 +862,96 @@
     background: rgba(63, 143, 126, 0.13);
     border: 2px dashed #7fc3b2;
     padding: 8px 5px;
+  }
+
+  .task-goal-group {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 9px;
+    border: 1px solid #ddd4ef;
+    border-radius: 14px;
+    background: #f4f1fb;
+  }
+
+  .task-goal-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .task-goal-toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 5px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: #5847b8;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .task-goal-toggle:hover {
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .goal-chevron {
+    flex: none;
+    font: 800 14px "Hanken Grotesk";
+    transition: transform 0.12s ease;
+  }
+
+  .goal-chevron.closed {
+    transform: rotate(-90deg);
+  }
+
+  .task-goal-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .task-goal-title {
+    font: 700 12.5px "Hanken Grotesk";
+    color: #5847b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .task-goal-sub {
+    font-size: 10px;
+    color: #8172c8;
+    margin-top: 1px;
+  }
+
+  .task-goal-open {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    border: 1px solid #d8cff3;
+    background: #fff;
+    color: #5847b8;
+    cursor: pointer;
+  }
+
+  .task-goal-open:hover {
+    background: #eeeafb;
+  }
+
+  .task-goal-items {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
   }
 
   .tc-proj {

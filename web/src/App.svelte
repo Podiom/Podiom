@@ -579,9 +579,9 @@
   <!-- ============ MAIN ============ -->
   <div class="main">
     {#if route === "chat"}
-      <Chat {agents} target={chatTarget} onConsumeTarget={() => (chatTarget = null)} />
+      <Chat {agents} target={chatTarget} onConsumeTarget={() => (chatTarget = null)} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
     {:else if route === "roadmap"}
-      <Roadmap {agents} onOpenChat={openChat} />
+      <Roadmap {agents} onOpenChat={openChat} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
     {:else if route === "goals"}
       <Goals {agents} target={goalTarget} onConsumeTarget={() => (goalTarget = null)} onOpenChat={openChat} />
     {:else if route === "projects"}

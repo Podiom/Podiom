@@ -4,6 +4,7 @@
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
+  import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { modeChip } from "../lib/theme";
   import type { AgentQuestion, Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
@@ -26,6 +27,7 @@
   let error = $state<string | null>(null);
   let busy = $state<string>("");
   let hoverRun = $state<string>("");
+  let goalGroupsOpen = $state<Record<string, boolean>>({});
 
   // Deferred-question answering (podiom_ask_user), keyed by question item id.
   let questionAnswers = $state<Record<string, string[]>>({});
@@ -88,6 +90,7 @@
     { label: "Weekdays 09:00", v: "0 9 * * 1-5" },
   ];
   const selectedScheduleAgent = $derived(agents.find((a) => a.Name === nsAgent) ?? null);
+  const scheduleEntries = $derived(goalGroupedEntries(schedules, (s) => s.goal_id, goals));
 
   const nsSlug = $derived(
     (nsName.trim() || "untitled-job").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
@@ -170,12 +173,13 @@
     }
   }
 
-  function goalFor(s: ScheduleStatus): Goal | null {
-    if (!s.goal_id) return null;
-    return goals.find((g) => g.ID === s.goal_id) ?? null;
+  function toggleGoalGroup(key: string) {
+    goalGroupsOpen = { ...goalGroupsOpen, [key]: !goalGroupOpen(goalGroupsOpen, key) };
   }
 
-  const hasGoalLinkedSchedule = $derived(schedules.some((s) => !!goalFor(s)));
+  function groupCountLabel(count: number, noun: string): string {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  }
 
   async function runNow(name: string) {
     busy = name;
@@ -248,6 +252,103 @@
   }
 </script>
 
+{#snippet scheduleCard(s: ScheduleStatus)}
+  <article class="sched-card">
+    <div class="sched-top">
+      <AgentAvatar name={s.agent} size={34} radius={11} fontSize={14} />
+      <div class="sched-id">
+        <div class="sched-title">{s.name}</div>
+        <div class="sched-file mono">{s.path}</div>
+      </div>
+      {#if s.parse_error}
+        <span style={modeChip("yolo")}>parse error</span>
+      {:else}
+        <span style={modeChip(s.run_permission === "yolo" ? "yolo" : "approve")}>{s.run_permission}</span>
+        <span class="sched-next">next {nextLabel(s)}</span>
+        <button class="sched-run" disabled={busy === s.name} onclick={() => runNow(s.name)}>{busy === s.name ? "Running…" : "Run now"}</button>
+      {/if}
+      <button class="sched-x" title="Delete schedule" aria-label="Delete schedule" onclick={() => (pendingDelete = s)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </div>
+
+    {#if s.parse_error}
+      <div class="error-banner" style="margin-top:14px">{s.parse_error}</div>
+    {:else}
+      <div class="sched-fm">
+        <div class="sched-fm-row">
+          {#each frontmatter(s) as f}
+            <span class="fm-chip mono"><span class="fm-k">{f.k}</span><span class="fm-v">{f.v}</span></span>
+          {/each}
+          <span class="fm-chip mono"><span class="fm-k">enabled</span><span class="fm-v">{s.enabled ? "true" : "false"}</span></span>
+        </div>
+      </div>
+
+      {#if s.pending_question}
+        {@const pq = s.pending_question}
+        <div class="sched-question">
+          <div class="sq-head">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
+            <span>{s.agent} asked a question — answer it to guide the next run</span>
+          </div>
+          {#each pq.Questions as item}
+            <div class="sq-block">
+              {#if item.header}<div class="sq-header">{item.header}</div>{/if}
+              <div class="sq-text">{item.question}</div>
+              {#if item.options && item.options.length > 0}
+                <div class="sq-options">
+                  {#each item.options as option}
+                    <button class="sq-option" class:sel={qSelected(item.id, option.label)} onclick={() => qToggle(item, option.label)}>
+                      <span class="sq-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
+                      <span class="sq-option-text">
+                        <span>{option.label}</span>
+                        {#if option.description}<small>{option.description}</small>{/if}
+                      </span>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <input
+                  class="sq-free"
+                  type={item.is_secret ? "password" : "text"}
+                  placeholder="Your answer"
+                  value={(questionAnswers[item.id] ?? [])[0] ?? ""}
+                  oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
+                />
+              {/if}
+            </div>
+          {/each}
+          <button class="sq-send" disabled={questionBusy === pq.ID || !qReady(pq)} onclick={() => submitQuestionAnswer(pq)}>
+            {questionBusy === pq.ID ? "Sending…" : "Send answer"}
+          </button>
+        </div>
+      {/if}
+
+      {#if s.runs && s.runs.length > 0}
+        <div class="sched-runs">
+          <div class="label-mono" style="font-size:10px;margin-bottom:9px">runs · {runsSummary(s)} · open any to see that session</div>
+          <div class="run-chips">
+            {#each s.runs as r (r.ID)}
+              {@const open = hoverRun === r.ID}
+              <button
+                class="run-chip"
+                title={runWhen(r)}
+                style="gap:{open ? '7px' : '0'};padding:5px {open ? '11px' : '7px'};border-color:{open ? '#E4D9CB' : '#EFE6DB'}"
+                onmouseenter={() => (hoverRun = r.ID)}
+                onmouseleave={() => (hoverRun = "")}
+                onclick={() => r.SessionID && onOpenChat({ sessionId: r.SessionID })}
+              >
+                <span class="run-dot" style="background:{runColor(r.Status)}"></span>
+                <span class="run-label" style="max-width:{open ? '160px' : '0'};opacity:{open ? '1' : '0'}">{runWhen(r)}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {/if}
+  </article>
+{/snippet}
+
 <div class="page">
   <header class="page-head" style="max-width:820px">
     <div>
@@ -258,118 +359,37 @@
     <button class="head-cta" onclick={openNew}>+ New schedule</button>
   </header>
 
-  {#if hasGoalLinkedSchedule}
-    <div class="goal-legend mono" style="max-width:820px">
-      <span class="goal-legend-dot"></span>goal marker
-    </div>
-  {/if}
-
   {#if error}<div class="error-banner" style="margin-bottom:14px;max-width:820px">{error}</div>{/if}
 
   <div class="sched-stack">
-    {#each schedules as s}
-      {@const goal = goalFor(s)}
-      <article class="sched-card" class:goal-linked={!!goal}>
-        {#if goal}<span class="goal-accent"></span>{/if}
-        <div class="sched-top">
-          <AgentAvatar name={s.agent} size={34} radius={11} fontSize={14} />
-          <div class="sched-id">
-            <div class="sched-title">{s.name}</div>
-            {#if goal}
-              <button class="goal-chip" onclick={() => onOpenGoal(goal.ID)} title="Open goal">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
-                {goal.Title}
+    {#each scheduleEntries as entry}
+      {#if entry.kind === "group"}
+        <section class="schedule-goal-group">
+          <div class="schedule-goal-head">
+            <button class="schedule-goal-toggle" onclick={() => toggleGoalGroup(entry.goalId)} title={goalGroupOpen(goalGroupsOpen, entry.goalId) ? "Collapse goal group" : "Expand goal group"}>
+              <span class="goal-chevron" class:closed={!goalGroupOpen(goalGroupsOpen, entry.goalId)}>⌄</span>
+              <span class="schedule-goal-text">
+                <span class="schedule-goal-title">{entry.label}</span>
+                <span class="schedule-goal-sub mono">{groupCountLabel(entry.items.length, "schedule")}{entry.goal ? ` · ${entry.goal.Status}` : ""}</span>
+              </span>
+            </button>
+            {#if entry.goal}
+              <button class="schedule-goal-open" onclick={() => onOpenGoal(entry.goalId)} title="Open goal" aria-label="Open goal">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
               </button>
             {/if}
-            <div class="sched-file mono">{s.path}</div>
           </div>
-          {#if s.parse_error}
-            <span style={modeChip("yolo")}>parse error</span>
-          {:else}
-            <span style={modeChip(s.run_permission === "yolo" ? "yolo" : "approve")}>{s.run_permission}</span>
-            <span class="sched-next">next {nextLabel(s)}</span>
-            <button class="sched-run" disabled={busy === s.name} onclick={() => runNow(s.name)}>{busy === s.name ? "Running…" : "Run now"}</button>
-          {/if}
-          <button class="sched-x" title="Delete schedule" aria-label="Delete schedule" onclick={() => (pendingDelete = s)}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
-        </div>
-
-        {#if s.parse_error}
-          <div class="error-banner" style="margin-top:14px">{s.parse_error}</div>
-        {:else}
-          <div class="sched-fm">
-            <div class="sched-fm-row">
-              {#each frontmatter(s) as f}
-                <span class="fm-chip mono"><span class="fm-k">{f.k}</span><span class="fm-v">{f.v}</span></span>
+          {#if goalGroupOpen(goalGroupsOpen, entry.goalId)}
+            <div class="schedule-goal-items">
+              {#each entry.items as s (s.name)}
+                {@render scheduleCard(s)}
               {/each}
-              <span class="fm-chip mono"><span class="fm-k">enabled</span><span class="fm-v">{s.enabled ? "true" : "false"}</span></span>
-            </div>
-          </div>
-
-          {#if s.pending_question}
-            {@const pq = s.pending_question}
-            <div class="sched-question">
-              <div class="sq-head">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
-                <span>{s.agent} asked a question — answer it to guide the next run</span>
-              </div>
-              {#each pq.Questions as item}
-                <div class="sq-block">
-                  {#if item.header}<div class="sq-header">{item.header}</div>{/if}
-                  <div class="sq-text">{item.question}</div>
-                  {#if item.options && item.options.length > 0}
-                    <div class="sq-options">
-                      {#each item.options as option}
-                        <button class="sq-option" class:sel={qSelected(item.id, option.label)} onclick={() => qToggle(item, option.label)}>
-                          <span class="sq-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
-                          <span class="sq-option-text">
-                            <span>{option.label}</span>
-                            {#if option.description}<small>{option.description}</small>{/if}
-                          </span>
-                        </button>
-                      {/each}
-                    </div>
-                  {:else}
-                    <input
-                      class="sq-free"
-                      type={item.is_secret ? "password" : "text"}
-                      placeholder="Your answer"
-                      value={(questionAnswers[item.id] ?? [])[0] ?? ""}
-                      oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
-                    />
-                  {/if}
-                </div>
-              {/each}
-              <button class="sq-send" disabled={questionBusy === pq.ID || !qReady(pq)} onclick={() => submitQuestionAnswer(pq)}>
-                {questionBusy === pq.ID ? "Sending…" : "Send answer"}
-              </button>
             </div>
           {/if}
-
-          {#if s.runs && s.runs.length > 0}
-            <div class="sched-runs">
-              <div class="label-mono" style="font-size:10px;margin-bottom:9px">runs · {runsSummary(s)} · open any to see that session</div>
-              <div class="run-chips">
-                {#each s.runs as r (r.ID)}
-                  {@const open = hoverRun === r.ID}
-                  <button
-                    class="run-chip"
-                    title={runWhen(r)}
-                    style="gap:{open ? '7px' : '0'};padding:5px {open ? '11px' : '7px'};border-color:{open ? '#E4D9CB' : '#EFE6DB'}"
-                    onmouseenter={() => (hoverRun = r.ID)}
-                    onmouseleave={() => (hoverRun = "")}
-                    onclick={() => r.SessionID && onOpenChat({ sessionId: r.SessionID })}
-                  >
-                    <span class="run-dot" style="background:{runColor(r.Status)}"></span>
-                    <span class="run-label" style="max-width:{open ? '160px' : '0'};opacity:{open ? '1' : '0'}">{runWhen(r)}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        {/if}
-      </article>
+        </section>
+      {:else}
+        {@render scheduleCard(entry.item)}
+      {/if}
     {/each}
     {#if schedules.length === 0}
       <p class="empty-note">No schedules. Drop a <span class="mono">*.md</span> file in <span class="mono">~/.podiom/schedules/</span>.</p>
@@ -499,33 +519,101 @@
     max-height: 200px;
   }
 
-  .goal-legend {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 13px;
-    margin-bottom: 14px;
-    border-radius: 999px;
-    border: 1px solid #D8CFF3;
-    background: #EEEAFB;
-    color: #5847B8;
-    font-size: 11.5px;
-    font-weight: 600;
-  }
-
-  .goal-legend-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: linear-gradient(180deg, #7C6FE0, #5847B8);
-    flex: none;
-  }
-
   .sched-stack {
     display: flex;
     flex-direction: column;
     gap: 14px;
     max-width: 820px;
+  }
+
+  .schedule-goal-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #ddd4ef;
+    border-radius: 18px;
+    background: #f4f1fb;
+  }
+
+  .schedule-goal-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .schedule-goal-toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 8px;
+    border: none;
+    border-radius: 11px;
+    background: transparent;
+    color: #5847b8;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .schedule-goal-toggle:hover {
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .goal-chevron {
+    flex: none;
+    font: 800 15px "Hanken Grotesk";
+    transition: transform 0.12s ease;
+  }
+
+  .goal-chevron.closed {
+    transform: rotate(-90deg);
+  }
+
+  .schedule-goal-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .schedule-goal-title {
+    font: 800 14px "Hanken Grotesk";
+    color: #5847b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .schedule-goal-sub {
+    font-size: 10.5px;
+    color: #8172c8;
+    margin-top: 1px;
+  }
+
+  .schedule-goal-open {
+    flex: none;
+    width: 31px;
+    height: 31px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid #d8cff3;
+    background: #fff;
+    color: #5847b8;
+    cursor: pointer;
+  }
+
+  .schedule-goal-open:hover {
+    background: #eeeafb;
+  }
+
+  .schedule-goal-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .sched-card {
@@ -536,20 +624,6 @@
     border-radius: 18px;
     padding: 20px;
     box-shadow: 0 1px 2px rgba(43, 37, 32, 0.04), 0 14px 36px -26px rgba(43, 37, 32, 0.2);
-  }
-
-  .sched-card.goal-linked {
-    border-color: #D8CFF3;
-    padding-left: 23px;
-  }
-
-  .goal-accent {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    background: linear-gradient(180deg, #7C6FE0, #5847B8);
   }
 
   .sched-top {
@@ -565,24 +639,6 @@
 
   .sched-title {
     font: 700 16px "Hanken Grotesk";
-  }
-
-  .goal-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 11px 3px 9px;
-    margin-top: 5px;
-    border-radius: 999px;
-    border: 1px solid #D8CFF3;
-    background: #EEEAFB;
-    color: #5847B8;
-    font: 600 11.5px "Hanken Grotesk";
-    cursor: pointer;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .sched-file {

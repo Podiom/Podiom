@@ -711,6 +711,7 @@ export interface NewTaskRequest {
   status?: TaskStatus;
   plan_required?: boolean;
   pickup_at?: string;
+  goal_id?: string;
 }
 
 export async function createTask(req: NewTaskRequest): Promise<Task> {
@@ -735,6 +736,7 @@ export interface TaskPatch {
   status?: TaskStatus;
   plan_required?: boolean;
   pickup_at?: string;
+  goal_id?: string;
 }
 
 export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {

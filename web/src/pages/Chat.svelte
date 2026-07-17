@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { deleteSession, getSession, listProfiles, listProjects } from "../lib/api";
+  import { deleteSession, getSession, listGoals, listProfiles, listProjects } from "../lib/api";
+  import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { randomID } from "../lib/id";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
@@ -24,6 +25,7 @@
     ClientMessage,
     FallbackRequest,
     FallbackTarget,
+    Goal,
     Message,
     NativeAgentActivity,
     PermissionMode,
@@ -60,10 +62,12 @@
     agents = [],
     target = null,
     onConsumeTarget = () => {},
+    onOpenGoal = () => {},
   }: {
     agents?: Agent[];
     target?: ChatTarget | null;
     onConsumeTarget?: () => void;
+    onOpenGoal?: (goalId: string) => void;
   } = $props();
 
   // Connection + session-list state is owned by the shared live store so it
@@ -101,7 +105,9 @@
   let agentFilter = $state("all");
   let projectFilter = $state("all");
   let projects = $state<Project[]>([]);
+  let goals = $state<Goal[]>([]);
   let profiles = $state<ProfileInfo[]>([]);
+  let goalGroupsOpen = $state<Record<string, boolean>>({});
   let draftProvider = $state<Provider | "">("");
   let draftProfile = $state("");
   let draftModel = $state("");
@@ -213,6 +219,7 @@
       return true;
     }),
   );
+  const sessionEntries = $derived(goalGroupedEntries(filteredSessions, (s) => s.GoalID, goals));
   function projectLabel(id: string): string {
     return projects.find((p) => p.id === id)?.name ?? id;
   }
@@ -283,6 +290,22 @@
     return `${s.AgentName} · ${s.Provider}${s.Model ? " " + s.Model : ""}`;
   }
 
+  function toggleGoalGroup(key: string) {
+    goalGroupsOpen = { ...goalGroupsOpen, [key]: !goalGroupOpen(goalGroupsOpen, key) };
+  }
+
+  function groupCountLabel(count: number, noun: string): string {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  }
+
+  async function loadGoals() {
+    try {
+      goals = await listGoals();
+    } catch {
+      // Goal labels are best-effort; sessions can still be opened without them.
+    }
+  }
+
   onMount(() => {
     const mq = window.matchMedia("(max-width: 768px)");
     const syncPhone = () => {
@@ -301,6 +324,7 @@
     window.addEventListener("resize", clampCurrentPlanPanelWidth);
     live.connect();
     unsubscribe = live.subscribe(handleServerMessage);
+    void loadGoals();
     listProjects().then((p) => (projects = p)).catch(() => {});
     listProfiles().then((p) => (profiles = p)).catch(() => {});
     restoreLastSession();
@@ -542,6 +566,9 @@
             sending = false;
           }
         }
+        break;
+      case "goal_event":
+        void loadGoals();
         break;
     }
   }
@@ -1614,7 +1641,7 @@
           </button>
           {#if openDropdown === "fOrigin"}
             <div class="dd-menu">
-              {#each ["all", "web", "cli", "onboarding", "schedule", "roadmap"] as o}
+              {#each ["all", "web", "cli", "onboarding", "schedule", "roadmap", "goal"] as o}
                 <button class="dd-opt" class:sel={originFilter === o} onclick={() => { originFilter = o as SessionOrigin | "all"; openDropdown = null; }}>{o === "all" ? "all origins" : o}</button>
               {/each}
             </div>
@@ -1623,34 +1650,85 @@
       </div>
 
       <div class="sess-list">
-        {#each filteredSessions as s (s.ID)}
-          <div class="sess-row-wrap">
-            <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
-              <span class="sess-avatar-wrap">
-                <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
-                {#if live.attention.has(s.ID)}
-                  <span class="attn-dot" title="Needs your attention"></span>
+        {#each sessionEntries as entry}
+          {#if entry.kind === "group"}
+            <div class="sess-goal-group">
+              <div class="sess-goal-head">
+                <button class="sess-goal-toggle" onclick={() => toggleGoalGroup(entry.goalId)} title={goalGroupOpen(goalGroupsOpen, entry.goalId) ? "Collapse goal group" : "Expand goal group"}>
+                  <span class="goal-chevron" class:closed={!goalGroupOpen(goalGroupsOpen, entry.goalId)}>⌄</span>
+                  <span class="sess-goal-text">
+                    <span class="sess-goal-title">{entry.label}</span>
+                    <span class="sess-goal-sub mono">{groupCountLabel(entry.items.length, "session")}{entry.goal ? ` · ${entry.goal.Status}` : ""}</span>
+                  </span>
+                </button>
+                {#if entry.goal}
+                  <button class="sess-goal-open" onclick={() => onOpenGoal(entry.goalId)} title="Open goal" aria-label="Open goal">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
+                  </button>
                 {/if}
-              </span>
-              <span class="sess-row-text">
-                <span class="sess-row-title">{s.Name || s.AgentName}</span>
-                <span class="sess-row-sub mono">{sessionSub(s)}</span>
-              </span>
-              {#if activeTurns[s.ID]}
-                <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
-                  {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
-                </span>
-              {:else if s.PlanState === "awaiting_approval"}
-                <span class="run-pill needs mono">plan</span>
-              {:else if s.PlanState === "pending_submission"}
-                <span class="run-pill mono">plan gate</span>
+              </div>
+              {#if goalGroupOpen(goalGroupsOpen, entry.goalId)}
+                {#each entry.items as s (s.ID)}
+                  <div class="sess-row-wrap">
+                    <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
+                      <span class="sess-avatar-wrap">
+                        <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
+                        {#if live.attention.has(s.ID)}
+                          <span class="attn-dot" title="Needs your attention"></span>
+                        {/if}
+                      </span>
+                      <span class="sess-row-text">
+                        <span class="sess-row-title">{s.Name || s.AgentName}</span>
+                        <span class="sess-row-sub mono">{sessionSub(s)}</span>
+                      </span>
+                      {#if activeTurns[s.ID]}
+                        <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
+                          {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
+                        </span>
+                      {:else if s.PlanState === "awaiting_approval"}
+                        <span class="run-pill needs mono">plan</span>
+                      {:else if s.PlanState === "pending_submission"}
+                        <span class="run-pill mono">plan gate</span>
+                      {/if}
+                      <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
+                    </button>
+                    <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                    </button>
+                  </div>
+                {/each}
               {/if}
-              <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
-            </button>
-            <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-          </div>
+            </div>
+          {:else}
+            {@const s = entry.item}
+            <div class="sess-row-wrap">
+              <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
+                <span class="sess-avatar-wrap">
+                  <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
+                  {#if live.attention.has(s.ID)}
+                    <span class="attn-dot" title="Needs your attention"></span>
+                  {/if}
+                </span>
+                <span class="sess-row-text">
+                  <span class="sess-row-title">{s.Name || s.AgentName}</span>
+                  <span class="sess-row-sub mono">{sessionSub(s)}</span>
+                </span>
+                {#if activeTurns[s.ID]}
+                  <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
+                    {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
+                  </span>
+                {:else if s.PlanState === "awaiting_approval"}
+                  <span class="run-pill needs mono">plan</span>
+                {:else if s.PlanState === "pending_submission"}
+                  <span class="run-pill mono">plan gate</span>
+                {/if}
+                <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
+              </button>
+              <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+          {/if}
         {/each}
         {#if filteredSessions.length === 0}
           <p class="empty-note">No sessions yet. Pick an agent and say hello.</p>
@@ -2501,6 +2579,89 @@
 
   .sess-row-wrap {
     position: relative;
+  }
+
+  .sess-goal-group {
+    margin: 7px 0 9px;
+    padding: 6px;
+    border: 1px solid #ddd4ef;
+    border-radius: 14px;
+    background: #f4f1fb;
+  }
+
+  .sess-goal-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .sess-goal-toggle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: #5847b8;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .sess-goal-toggle:hover {
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .goal-chevron {
+    flex: none;
+    font: 800 14px "Hanken Grotesk";
+    transition: transform 0.12s ease;
+  }
+
+  .goal-chevron.closed {
+    transform: rotate(-90deg);
+  }
+
+  .sess-goal-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sess-goal-title {
+    font: 700 12.5px "Hanken Grotesk";
+    color: #5847b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sess-goal-sub {
+    font-size: 10px;
+    color: #8172c8;
+    margin-top: 1px;
+  }
+
+  .sess-goal-open {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    border: 1px solid #d8cff3;
+    background: #fff;
+    color: #5847b8;
+    cursor: pointer;
+  }
+
+  .sess-goal-open:hover {
+    background: #eeeafb;
   }
 
   .sess-row {
