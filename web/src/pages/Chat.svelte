@@ -147,6 +147,7 @@
   let isPhone = $state(false);
   let openDropdown = $state<string | null>(null);
   let newSessionOpen = $state(false);
+  let permissionYoloConfirmOpen = $state(false);
   let planFeedbackOpen = $state(false);
   let planFeedbackText = $state("");
   let planYoloAck = $state(false);
@@ -333,6 +334,12 @@
     void sessOpen;
     void planAwaiting;
     if (!isPhone) void tick().then(clampCurrentPlanPanelWidth);
+  });
+
+  $effect(() => {
+    if (!activeTurn) return;
+    if (openDropdown === "perm") openDropdown = null;
+    permissionYoloConfirmOpen = false;
   });
 
   async function openTarget(t: ChatTarget) {
@@ -964,6 +971,7 @@
 
   async function loadHistory(session: Session) {
     error = null;
+    permissionYoloConfirmOpen = false;
     try {
       const detail = await getSession(session.ID);
       activeSession = detail.session;
@@ -1092,6 +1100,7 @@
 
   function newSession(resetDrafts = true) {
     activeSession = null;
+    permissionYoloConfirmOpen = false;
     messages = [];
     nativeAgentActivities = [];
     nativeAgentMessageID = 0;
@@ -1139,6 +1148,12 @@
 
   function setPermissionMode(mode: PermissionMode) {
     if (activeSession) {
+      openDropdown = null;
+      if (activeTurn || mode === curMode) return;
+      if (mode === "yolo") {
+        permissionYoloConfirmOpen = true;
+        return;
+      }
       updateSessionSettings({ permission_mode: mode });
       return;
     }
@@ -1152,10 +1167,20 @@
     openDropdown = null;
   }
 
-  function updateSessionSettings(patch: { model?: string; effort?: string; permission_mode?: PermissionMode }) {
+  function confirmYoloPermission() {
+    if (!activeSession || activeTurn) {
+      permissionYoloConfirmOpen = false;
+      return;
+    }
+    if (updateSessionSettings({ permission_mode: "yolo" })) {
+      permissionYoloConfirmOpen = false;
+    }
+  }
+
+  function updateSessionSettings(patch: { model?: string; effort?: string; permission_mode?: PermissionMode }): boolean {
     openDropdown = null;
-    if (!activeSession) return;
-    send({
+    if (!activeSession) return false;
+    return send({
       type: "update_session_settings",
       request_id: randomID(),
       session_id: activeSession.ID,
@@ -1419,6 +1444,7 @@
   }
 
   function toggleDropdown(key: string) {
+    if (key === "perm" && activeTurn) return;
     openDropdown = openDropdown === key ? null : key;
   }
 
@@ -2053,9 +2079,7 @@
       </div>
       <div class="composer-meta">
         {#if !activeSession}
-          <!-- Pre-session group: project, permission, account. The whole group and
-               its trailing divider drop away once a session is running — project,
-               approval mode, and the agent/account are all fixed for a live chat. -->
+          <!-- Project is fixed once the session is created. -->
           <div class="dd-wrap">
             <button class="chip-btn" onclick={() => toggleDropdown("project")} title="Project for this new session">
               <span class="chip-ico">📁</span> {curProjectID ? projectLabel(curProjectID) : "no project"} <span class="chip-chev">▾</span>
@@ -2069,25 +2093,31 @@
               </div>
             {/if}
           </div>
-          <div class="dd-wrap">
-            <button class="chip-btn" onclick={() => toggleDropdown("perm")}>
-              <span class="perm-dot" style={`background:${curMode === "yolo" ? "#C0392B" : "#2F6E60"}`}></span>
-              {curMode} <span class="chip-chev">▾</span>
-            </button>
-            {#if openDropdown === "perm"}
-              <div class="dd-menu up wide">
-                <button class="dd-opt2" class:sel={curMode === "approve"} onclick={() => setPermissionMode("approve")}>
-                  <span class="dd-opt2-label">approve</span>
-                  <span class="dd-opt2-desc">Confirm each action</span>
-                </button>
-                <button class="dd-opt2" class:sel={curMode === "yolo"} onclick={() => setPermissionMode("yolo")}>
-                  <span class="dd-opt2-label">yolo</span>
-                  <span class="dd-opt2-desc">Auto-run everything</span>
-                </button>
-              </div>
-            {/if}
-          </div>
         {/if}
+
+        <div class="dd-wrap">
+          <button
+            class="chip-btn"
+            disabled={!!activeTurn}
+            onclick={() => toggleDropdown("perm")}
+            title={activeTurn ? "Permission mode can be changed when the current turn finishes" : activeSession ? "Permission mode for the next turn" : "Permission mode for this new session"}
+          >
+            <span class="perm-dot" style={`background:${curMode === "yolo" ? "#C0392B" : "#2F6E60"}`}></span>
+            {curMode} <span class="chip-chev">▾</span>
+          </button>
+          {#if openDropdown === "perm" && !activeTurn}
+            <div class="dd-menu up wide">
+              <button class="dd-opt2" class:sel={curMode === "approve"} onclick={() => setPermissionMode("approve")}>
+                <span class="dd-opt2-label">approve</span>
+                <span class="dd-opt2-desc">Confirm each action</span>
+              </button>
+              <button class="dd-opt2" class:sel={curMode === "yolo"} onclick={() => setPermissionMode("yolo")}>
+                <span class="dd-opt2-label">yolo</span>
+                <span class="dd-opt2-desc">Auto-run everything</span>
+              </button>
+            </div>
+          {/if}
+        </div>
 
         <RunTargetPicker
           agent={activeAgent ?? null}
@@ -2283,6 +2313,16 @@
     error={deleteError}
     onConfirm={confirmDeleteSession}
     onCancel={() => (pendingDelete = null)}
+  />
+{/if}
+
+{#if permissionYoloConfirmOpen && activeSession}
+  <ConfirmModal
+    title="Enable yolo for this session?"
+    message="Yolo grants whole-machine access and auto-approves every tool call. The workspace is not a sandbox. This change applies to the next turn."
+    confirmLabel="Enable yolo"
+    onConfirm={confirmYoloPermission}
+    onCancel={() => (permissionYoloConfirmOpen = false)}
   />
 {/if}
 
@@ -3755,6 +3795,11 @@
     font: 500 12px "JetBrains Mono", monospace;
     color: #6f5b45;
     cursor: pointer;
+  }
+
+  .chip-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 
   .plan-toggle.on {

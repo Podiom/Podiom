@@ -28,6 +28,8 @@ time `yolo` is selected:
 - CLI `podiom agents create … --permission yolo` prints a whole-machine warning.
 - The `/permission yolo` slash command returns a notice spelling out that the
   workspace is not a sandbox and how to switch back.
+- Switching an existing web chat to `yolo` requires a confirmation that the
+  change grants whole-machine access and applies from the next turn.
 - The web "Hire agent" modal labels the option `yolo · full access`.
 
 The mandatory `approve` auto-deny timeout (`global.permission_timeout`) ensures a

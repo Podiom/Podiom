@@ -583,6 +583,14 @@ func (c *Core) appendErrorMessage(ctx context.Context, sessionID, content string
 }
 
 func (c *Core) sendPersistedTurnError(ctx context.Context, streamOut chan<- TurnEvent, sessionID, content string) bool {
+	// A deliberate stop (or daemon shutdown) cancels the turn context, which
+	// surfaces to the run loop as a "context canceled" error. That is not a turn
+	// failure worth recording: persisting it would leave a spurious assistant
+	// error message on the stopped session (appendErrorMessage writes with
+	// context.WithoutCancel, so it lands even after cancellation). Skip it.
+	if ctx.Err() != nil {
+		return false
+	}
 	messages, err := c.appendErrorMessage(ctx, sessionID, content)
 	if err == nil {
 		for _, msg := range messages {

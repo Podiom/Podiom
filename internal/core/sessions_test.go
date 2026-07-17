@@ -67,6 +67,49 @@ func newTestCoreAdapterWithDaemon(t *testing.T) (*Core, *adapter.Fake, func()) {
 	}
 }
 
+func TestUpdatedPermissionAppliesToNextTurnWithoutResettingHandle(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "operator", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "operator", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	originalHandle := session.ProviderHandle
+
+	updated, err := c.UpdateSessionSettings(ctx, session.ID, "", "", config.PermissionYolo)
+	if err != nil {
+		t.Fatalf("update permission: %v", err)
+	}
+	if updated.ProviderHandle != originalHandle {
+		t.Fatalf("permission update changed provider handle: got %q want %q", updated.ProviderHandle, originalHandle)
+	}
+
+	events, err := c.StreamTurn(ctx, session.ID, "continue with full access", TurnOptions{})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	for range events {
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake turn requests = %d, want 1", len(fake.Requests))
+	}
+	req := fake.Requests[0]
+	if req.Settings.PermissionMode != config.PermissionYolo {
+		t.Fatalf("next turn permission = %q, want yolo", req.Settings.PermissionMode)
+	}
+	if req.Handle.ID != originalHandle {
+		t.Fatalf("next turn handle = %q, want %q", req.Handle.ID, originalHandle)
+	}
+	if len(fake.StartRequests) != 1 {
+		t.Fatalf("permission update restarted provider: start requests = %d, want 1", len(fake.StartRequests))
+	}
+}
+
 // startRequestFor returns the StartRequest the fake adapter recorded for the
 // given session ID.
 func startRequestFor(t *testing.T, fake *adapter.Fake, sessionID string) adapter.StartRequest {
