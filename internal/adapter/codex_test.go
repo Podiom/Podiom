@@ -95,7 +95,7 @@ func TestCodexParamsCarryDeveloperInstructions(t *testing.T) {
 }
 
 func TestCodexLoadedThreadTracksInstructionHash(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
 	first := instructionHash([]byte("first"))
 	second := instructionHash([]byte("second"))
 	client.markLoaded("thread-1", first)
@@ -177,7 +177,7 @@ func TestCodexReasoningPhaseClassification(t *testing.T) {
 }
 
 func TestCodexFileChangeApprovalUsesPatchSummary(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
 	params := json.RawMessage(`{
 		"threadId": "thread-1",
 		"turnId": "turn-1",
@@ -204,7 +204,7 @@ func TestCodexFileChangeApprovalUsesPatchSummary(t *testing.T) {
 }
 
 func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
 	req := client.codexPermissionRequest(
 		"item/fileChange/requestApproval",
 		json.RawMessage("8"),
@@ -217,7 +217,7 @@ func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
 }
 
 func TestCodexToolUsesFromItems(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
 	key := codexTurnKey{threadID: "thread-1", turnID: "turn-1"}
 
 	// commandExecution is recorded when it starts, with the command as summary.

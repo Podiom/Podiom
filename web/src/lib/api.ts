@@ -17,6 +17,7 @@ import type {
   GoalPatchRequest,
   GoalRateLimitBlock,
   AgentQuestion,
+  CredentialInfo,
   WorkspaceTool,
   DreamResult,
   GitHubDevicePoll,
@@ -938,13 +939,17 @@ export async function listAccessRequests(goalId = "", status = ""): Promise<Acce
 }
 
 // approveAccessRequest approves and — for automatable kinds — executes the
-// grant; the returned request carries the outcome (executed/failed).
-export async function approveAccessRequest(id: string, note = ""): Promise<AccessRequest> {
+// grant; the returned request carries the outcome (executed/failed). For
+// env_var requests, a non-empty secretValue fulfills the credential: it is
+// sent once, stored on the daemon, and never returned by any API.
+export async function approveAccessRequest(id: string, note = "", secretValue = ""): Promise<AccessRequest> {
+  const body: { note: string; secret_value?: string } = { note };
+  if (secretValue) body.secret_value = secretValue;
   return asJSON(
     await request(`/api/access-requests/${id}/approve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note }),
+      body: JSON.stringify(body),
     }),
   );
 }
@@ -957,6 +962,17 @@ export async function denyAccessRequest(id: string, note = ""): Promise<AccessRe
       body: JSON.stringify({ note }),
     }),
   );
+}
+
+// --- Credentials ----------------------------------------------------------------
+
+// listCredentials returns stored credential metadata — names only, never values.
+export async function listCredentials(): Promise<CredentialInfo[]> {
+  return asJSON(await request("/api/credentials"));
+}
+
+export async function deleteCredential(name: string): Promise<void> {
+  await request(`/api/credentials/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
 
 // --- Workspace tools -----------------------------------------------------------

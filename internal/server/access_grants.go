@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/creds"
 	"github.com/Podiom/Podiom/internal/marketplace"
 	"github.com/Podiom/Podiom/internal/store"
 	podiomtools "github.com/Podiom/Podiom/internal/tools"
@@ -15,16 +16,21 @@ import (
 
 // executeAccessGrant runs the automatic grant for an approved access request
 // and records the outcome (executed, or failed with the error — a failed
-// request stays retryable in the UI). Acknowledge-only kinds (cli_tool,
-// env_var) terminate at approved: the user acts on the host themselves and the
-// agent re-detects availability at its next review.
-func (s *Server) executeAccessGrant(ctx context.Context, req store.AccessRequest) store.AccessRequest {
+// request stays retryable in the UI). Acknowledge-only kinds (host-only
+// cli_tool, env_var without a supplied value) terminate at approved: the user
+// acts on the host themselves and the agent re-detects availability at its
+// next review. An env_var approval carrying a secret value is fulfilled by
+// Podiom: the credential is stored and injected into agent subprocess
+// environments. The secret must never reach logs, the request row, or the
+// timeline — only the variable name may appear in evidence.
+func (s *Server) executeAccessGrant(ctx context.Context, req store.AccessRequest, secret string) store.AccessRequest {
 	var payload map[string]string
 	if err := json.Unmarshal([]byte(req.Payload), &payload); err != nil {
 		payload = map[string]string{}
 	}
 
 	var execErr error
+	var evidence string
 	switch req.Kind {
 	case store.AccessMCPServer:
 		execErr = s.assignMCPServer(ctx, req.AgentName, payload["server_name"])
@@ -44,8 +50,20 @@ func (s *Server) executeAccessGrant(ctx context.Context, req store.AccessRequest
 		s.runToolInstall(req, spec)
 		return req
 	case store.AccessEnvVar:
-		// Acknowledge-only: nothing to execute, approved is terminal.
-		return req
+		if strings.TrimSpace(secret) == "" {
+			// Acknowledge-only: the user sets the variable on the host
+			// themselves, approved is terminal.
+			return req
+		}
+		execErr = s.core.StoreCredential(ctx, creds.Credential{
+			Name:    payload["var_name"],
+			Value:   secret,
+			Purpose: payload["purpose"],
+			GoalID:  req.GoalID,
+		})
+		if execErr == nil {
+			evidence = "Credential granted — " + payload["var_name"] + " is now set in the agent's environment"
+		}
 	default:
 		execErr = fmt.Errorf("unknown access request kind %q", req.Kind)
 	}
@@ -54,7 +72,7 @@ func (s *Server) executeAccessGrant(ctx context.Context, req store.AccessRequest
 	if execErr != nil {
 		msg = execErr.Error()
 	}
-	marked, err := s.core.MarkAccessRequestExecuted(ctx, req.ID, msg, "")
+	marked, err := s.core.MarkAccessRequestExecuted(ctx, req.ID, msg, evidence)
 	if err != nil {
 		s.log.Warn("access grant bookkeeping failed", "event", "goal", "request", req.ID, "err", err)
 		return req

@@ -424,6 +424,90 @@ func TestAccessRequestGrantExecution(t *testing.T) {
 	}
 }
 
+func TestEnvVarGrantWithSecretValue(t *testing.T) {
+	paths, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	goal := createGoalViaCore(t, srv, store.Goal{})
+
+	file := func(body string) store.AccessRequest {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/access-requests", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		srv.handleAccessRequests(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("file request: %d %s", rr.Code, rr.Body.String())
+		}
+		var out store.AccessRequest
+		if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+	decide := func(id, body string) (store.AccessRequest, *httptest.ResponseRecorder) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/access-requests/"+id+"/approve", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		srv.handleAccessRequest(rr, req)
+		var out store.AccessRequest
+		_ = json.NewDecoder(rr.Body).Decode(&out)
+		return out, rr
+	}
+
+	// Approving with a secret value fulfills the request: credential stored,
+	// request executed, evidence names the variable but never the value.
+	withValue := file(`{"goal_id":"` + goal.ID + `","kind":"env_var","payload":{"var_name":"GITHUB_TOKEN","purpose":"gh API"},"reason":"repo access","agent_name":"atlas"}`)
+	granted, rr := decide(withValue.ID, `{"note":"here you go","secret_value":"tok_s3cret"}`)
+	if rr.Code != http.StatusOK || granted.Status != store.AccessExecuted {
+		t.Fatalf("grant = %+v (%d %s)", granted, rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "tok_s3cret") {
+		t.Fatalf("decide response leaks the secret: %s", rr.Body.String())
+	}
+
+	creds, err := srv.core.ListCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("list credentials: %v", err)
+	}
+	if len(creds) != 1 || creds[0].Name != "GITHUB_TOKEN" || creds[0].Value != "tok_s3cret" || creds[0].GoalID != goal.ID {
+		t.Fatalf("stored credentials = %+v", creds)
+	}
+	info, err := os.Stat(paths.CredentialsYAML)
+	if err != nil {
+		t.Fatalf("stat credentials file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("credentials file mode = %v, want 0600", info.Mode().Perm())
+	}
+
+	// The goal detail (request rows, timeline, evidence) must never carry the value.
+	req := httptest.NewRequest(http.MethodGet, "/api/goals/"+goal.ID, nil)
+	rec := httptest.NewRecorder()
+	srv.handleGoal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "tok_s3cret") {
+		t.Fatal("goal detail leaks the secret value")
+	}
+	if !strings.Contains(rec.Body.String(), "GITHUB_TOKEN is now set") {
+		t.Fatalf("evidence missing from goal detail: %s", rec.Body.String())
+	}
+
+	// Approving without a value stays acknowledge-only (approved is terminal).
+	bare := file(`{"goal_id":"` + goal.ID + `","kind":"env_var","payload":{"var_name":"OTHER_TOKEN"},"reason":"x","agent_name":"atlas"}`)
+	acked, _ := decide(bare.ID, `{"note":"set it myself"}`)
+	if acked.Status != store.AccessApproved {
+		t.Fatalf("bare approval = %+v, want approved", acked)
+	}
+
+	// An invalid name fails the grant and stays retryable.
+	bad := file(`{"goal_id":"` + goal.ID + `","kind":"env_var","payload":{"var_name":"PATH"},"reason":"x","agent_name":"atlas"}`)
+	failed, _ := decide(bad.ID, `{"secret_value":"v"}`)
+	if failed.Status != store.AccessFailed || failed.ExecutionError == "" {
+		t.Fatalf("reserved-name grant = %+v, want failed", failed)
+	}
+}
+
 func TestGoalDetailAndDelete(t *testing.T) {
 	_, srv, cleanup := newGoalTestServer(t)
 	defer cleanup()

@@ -683,6 +683,15 @@ export interface UserInputDecision {
   answers: Record<string, string[]>;
 }
 
+// CredentialInfo is the value-free projection of a stored credential
+// (GET /api/credentials). The secret value never leaves the daemon.
+export interface CredentialInfo {
+  name: string;
+  purpose?: string;
+  goal_id?: string;
+  created_at?: string;
+}
+
 export interface ActiveTurnSummary {
   session_id: string;
   turn_id: string;

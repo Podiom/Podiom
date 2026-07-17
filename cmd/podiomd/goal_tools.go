@@ -179,7 +179,9 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				"cli_tool requests are INSTALLABLE when you add installer fields — on approval Podiom installs the tool into YOUR workspace and puts it on your PATH: " +
 				"installer=npm{package,version?}, installer=uv{package,version?}, installer=go{package (module path)}, installer=binary{url (https),sha256}. " +
 				"Omit installer only for host-wide tools (e.g. brew) the user must install manually; install_hint is display-only context. " +
-				"NEVER put a secret value in an env_var request — name the variable and its purpose only.",
+				"env_var requests a credential/API token by NAME (e.g. GITHUB_TOKEN for gh/GitHub API access when you are blocked on missing auth). " +
+				"NEVER put the secret value in the request — name the variable and its purpose only; on approval the user enters the value privately in the Podiom UI and it is injected into your process environment for future runs. " +
+				"A request shown as executed means the variable is already set: use it directly, and never print or echo its value.",
 			InputSchema: objectSchema([]string{"goal_id", "kind", "reason"}, map[string]any{
 				"goal_id": strProp("Goal id this request unblocks."),
 				"kind":    strProp("Request kind: mcp_server, skill, cli_tool, env_var, or permission_mode."),

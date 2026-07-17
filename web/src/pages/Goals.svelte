@@ -108,7 +108,7 @@
   ];
 
   // Access-request decision dialog.
-  let dialog = $state<{ req: AccessRequest; action: "approve" | "deny"; note: string; busy: boolean } | null>(null);
+  let dialog = $state<{ req: AccessRequest; action: "approve" | "deny"; note: string; secret: string; busy: boolean } | null>(null);
 
   // Destructive confirmations.
   let pendingAbandon = $state<Goal | null>(null);
@@ -623,7 +623,7 @@
         }
         return { title: "Acknowledge — host tool", body: `Podiom can't install host-wide tools. Approving marks this acknowledged and shows you the command to run yourself; ${agent} resumes once it detects the tool.`, warn: false, confirmLabel: "Acknowledge" };
       case "env_var":
-        return { title: "Acknowledge — credential", body: `Podiom never stores secrets, and this request never contained the value. Approving acknowledges it; set the variable in your environment and ${agent} picks it up at the next review.`, warn: false, confirmLabel: "Acknowledge" };
+        return { title: `Grant credential — ${payloadOf(req).var_name || "env var"}`, body: `Enter the value below and Podiom stores it on this machine (readable only by your user) and injects it into ${agent}'s environment on future runs — the value is never shown again. Leave it empty to just acknowledge; you can instead set the variable yourself where podiomd runs.`, warn: false, confirmLabel: "Grant" };
     }
   }
 
@@ -632,7 +632,7 @@
     dialog = { ...dialog, busy: true };
     try {
       if (dialog.action === "approve") {
-        await approveAccessRequest(dialog.req.ID, dialog.note);
+        await approveAccessRequest(dialog.req.ID, dialog.note, dialog.secret);
       } else {
         await denyAccessRequest(dialog.req.ID, dialog.note);
       }
@@ -1141,8 +1141,8 @@
                     {/if}
                     {#if r.Status === "pending" || r.Status === "failed"}
                       <div class="req-actions">
-                        <button class="btn-approve" onclick={() => (dialog = { req: r, action: "approve", note: "", busy: false })}>Approve</button>
-                        <button class="btn-deny" onclick={() => (dialog = { req: r, action: "deny", note: "", busy: false })}>Deny</button>
+                        <button class="btn-approve" onclick={() => (dialog = { req: r, action: "approve", note: "", secret: "", busy: false })}>Approve</button>
+                        <button class="btn-deny" onclick={() => (dialog = { req: r, action: "deny", note: "", secret: "", busy: false })}>Deny</button>
                       </div>
                     {/if}
                   </div>
@@ -1450,6 +1450,10 @@
         </div>
         {#if installCommand(dialog.req)}
           <div class="req-cmd mono">$ {installCommand(dialog.req)}</div>
+        {/if}
+        {#if dialog.req.Kind === "env_var" && dialog.action === "approve"}
+          <div class="field-label mono">Value for {payloadOf(dialog.req).var_name || "the variable"} <span class="opt">· optional · stored on this machine, never shown again</span></div>
+          <input class="field" type="password" autocomplete="off" bind:value={dialog.secret} placeholder="Paste the token / secret value" />
         {/if}
         <div class="field-label mono">Note to agent <span class="opt">· optional · relayed at next review</span></div>
         <textarea class="field" rows="2" bind:value={dialog.note} placeholder="e.g. Approved — but keep DNS changes to the docs subdomain only."></textarea>

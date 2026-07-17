@@ -99,7 +99,7 @@ request appears on the goal:
 | `skill` | Installs the skill from the marketplace. |
 | `permission_mode` | Changes the agent's standing permission mode everywhere. Rarely relevant to goal work — goal runs already have full access — but still used to change the agent's mode outside goals. Granting `yolo` is security-sensitive and the dialog warns you. |
 | `cli_tool` | With installer fields: installs the tool into the agent's own workspace (see [workspace-tools.md](workspace-tools.md)). Without them (host-wide tools): approval acknowledges, and you run the shown install command yourself. Since goal runs are yolo, a goal agent can usually install a tool directly instead of requesting it. |
-| `env_var` | Acknowledges. Requests name the variable and purpose only — **the secret value never transits Podiom**; you set it where `podiomd` runs. |
+| `env_var` | Requests name the variable and purpose only — **the request never carries the value**. In the approval dialog you may enter the value once: Podiom stores it in `credentials.yaml` (readable only by your OS user) and injects it into agent environments on later runs; it is never shown again and never returned by the API. Leave the field empty to just acknowledge and set the variable yourself where `podiomd` runs. Stored credentials are managed under Settings → Credentials. |
 
 Approve or deny with an optional **note to the agent** — it is relayed
 verbatim at the agent's next review, so this is how you talk back ("approved,

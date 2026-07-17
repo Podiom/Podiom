@@ -32,7 +32,11 @@ var errCodexTransport = errors.New("codex app-server transport failed")
 type CodexOptions struct {
 	Discovery         podiomexec.Discovery
 	PermissionTimeout time.Duration
-	Logger            *slog.Logger
+	// ExtraEnv supplies additional NAME=value pairs for the app-server
+	// subprocess environment (user-granted credentials). Read at app-server
+	// spawn time. Nil means none.
+	ExtraEnv func() []string
+	Logger   *slog.Logger
 }
 
 // Codex drives a long-lived `codex app-server --listen stdio://` process.
@@ -43,6 +47,7 @@ type CodexOptions struct {
 type Codex struct {
 	bin               string
 	permissionTimeout time.Duration
+	extraEnv          func() []string
 
 	mu      sync.Mutex
 	clients map[string]*codexClient
@@ -62,6 +67,7 @@ func NewCodex(opts CodexOptions) (*Codex, error) {
 	return &Codex{
 		bin:               found.Path,
 		permissionTimeout: timeout,
+		extraEnv:          opts.ExtraEnv,
 		clients:           map[string]*codexClient{},
 		log:               loggerOrDefault(opts.Logger),
 	}, nil
@@ -296,7 +302,7 @@ func (c *Codex) client(profileDir, profileName, profileHash, profileConfig strin
 	key := profileDir + "|" + profileName + "|" + profileHash
 	client := c.clients[key]
 	if client == nil {
-		client = newCodexClient(c.bin, profileDir, profileName, profileHash, profileConfig, c.log)
+		client = newCodexClient(c.bin, profileDir, profileName, profileHash, profileConfig, c.extraEnv, c.log)
 		c.clients[key] = client
 	}
 	return client
@@ -400,6 +406,7 @@ type codexClient struct {
 	profileName   string
 	profileHash   string
 	profileConfig string
+	extraEnv      func() []string
 	log           *slog.Logger
 
 	initMu   sync.Mutex
@@ -475,13 +482,14 @@ type codexNativeAgentTrack struct {
 	nativeAgentTasks map[string]NativeAgentActivity
 }
 
-func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig string, log *slog.Logger) *codexClient {
+func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig string, extraEnv func() []string, log *slog.Logger) *codexClient {
 	return &codexClient{
 		bin:           bin,
 		profileDir:    profileDir,
 		profileName:   profileName,
 		profileHash:   profileHash,
 		profileConfig: profileConfig,
+		extraEnv:      extraEnv,
 		log: loggerOrDefault(log).With(
 			"provider", string(config.ProviderCodex),
 			"profile_dir_set", profileDir != "",
@@ -577,7 +585,7 @@ func (c *codexClient) startLocked() error {
 	}
 	args = append(args, "--listen", "stdio://")
 	cmd := podiomexec.Command(context.Background(), c.bin, args...)
-	cmd.Env = codexEnv(c.profileDir)
+	cmd.Env = applyExtraEnv(codexEnv(c.profileDir), c.extraEnv)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("codex stdin: %w", err)
@@ -2404,7 +2412,10 @@ func codexIDKey(raw json.RawMessage) string {
 // codexEnv builds the app-server environment. Note: the server is one
 // long-lived process per profile, so per-agent ToolPathDirs (workspace tool
 // installs §2.2) cannot be injected here — a documented v1 limitation; tools
-// are on disk but not on PATH for Codex-backed turns.
+// are on disk but not on PATH for Codex-backed turns. The same applies to
+// user-granted credentials (ExtraEnv): they are read at app-server spawn, so
+// a credential stored while an app-server is running reaches it only on
+// respawn or daemon restart (Claude picks it up next turn, spawning per turn).
 func codexEnv(profileDir string) []string {
 	env := os.Environ()
 	if profileDir == "" {

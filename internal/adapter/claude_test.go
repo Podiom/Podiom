@@ -657,3 +657,49 @@ func TestClaudeTurnUsageEvent(t *testing.T) {
 		t.Error("expected no turn usage event without usage")
 	}
 }
+
+func TestClaudeEnvAppliesExtraEnv(t *testing.T) {
+	t.Setenv("PODIOM_TEST_TOKEN", "inherited")
+
+	// Nil supplier is a no-op.
+	c := &Claude{}
+	for _, kv := range c.env("", nil) {
+		if kv == "PODIOM_TEST_TOKEN=stored" {
+			t.Fatal("nil supplier must not inject values")
+		}
+	}
+
+	// Supplier pairs are injected and a stored value wins over an inherited
+	// variable of the same name.
+	c = &Claude{extraEnv: func() []string {
+		return []string{"PODIOM_TEST_TOKEN=stored", "GITHUB_TOKEN=tok_123", "malformed"}
+	}}
+	env := c.env("/profile", nil)
+	var sawStored, sawInherited, sawNew, sawProfile bool
+	for _, kv := range env {
+		switch kv {
+		case "PODIOM_TEST_TOKEN=stored":
+			sawStored = true
+		case "PODIOM_TEST_TOKEN=inherited":
+			sawInherited = true
+		case "GITHUB_TOKEN=tok_123":
+			sawNew = true
+		case "CLAUDE_CONFIG_DIR=/profile":
+			sawProfile = true
+		}
+	}
+	if !sawStored || sawInherited {
+		t.Fatalf("stored value should replace inherited: stored=%v inherited=%v", sawStored, sawInherited)
+	}
+	if !sawNew {
+		t.Fatal("supplier pair missing from env")
+	}
+	if !sawProfile {
+		t.Fatal("CLAUDE_CONFIG_DIR handling must survive extra env injection")
+	}
+	for _, kv := range env {
+		if kv == "malformed" {
+			t.Fatal("malformed supplier pairs must be dropped")
+		}
+	}
+}

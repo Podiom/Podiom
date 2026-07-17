@@ -33,7 +33,11 @@ type ClaudeOptions struct {
 	PodiomHome        string
 	PermissionTimeout time.Duration
 	MCPCommand        string
-	Logger            *slog.Logger
+	// ExtraEnv supplies additional NAME=value pairs for the CLI subprocess
+	// environment (user-granted credentials). Called at spawn time so values
+	// stored mid-session reach the next turn. Nil means none.
+	ExtraEnv func() []string
+	Logger   *slog.Logger
 }
 
 // Claude drives Claude Code as a per-turn process.
@@ -43,6 +47,7 @@ type Claude struct {
 	podiomHome        string
 	permissionTimeout time.Duration
 	mcpCommand        string
+	extraEnv          func() []string
 	log               *slog.Logger
 }
 
@@ -68,6 +73,7 @@ func NewClaude(opts ClaudeOptions) (*Claude, error) {
 		podiomHome:        opts.PodiomHome,
 		permissionTimeout: timeout,
 		mcpCommand:        mcpCommand,
+		extraEnv:          opts.ExtraEnv,
 		log:               loggerOrDefault(opts.Logger),
 	}, nil
 }
@@ -570,10 +576,28 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 
 func (c *Claude) env(profileDir string, toolPathDirs []string) []string {
 	env := prependPath(os.Environ(), toolPathDirs)
+	env = applyExtraEnv(env, c.extraEnv)
 	if profileDir == "" {
 		return unsetEnv(env, "CLAUDE_CONFIG_DIR")
 	}
 	return append(unsetEnv(env, "CLAUDE_CONFIG_DIR"), "CLAUDE_CONFIG_DIR="+profileDir)
+}
+
+// applyExtraEnv overlays supplier pairs onto env; a stored value replaces an
+// inherited variable of the same name (matching MCP resolveEnvPairs
+// semantics). Nil supplier or malformed pairs are no-ops.
+func applyExtraEnv(env []string, supplier func() []string) []string {
+	if supplier == nil {
+		return env
+	}
+	for _, kv := range supplier() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			continue
+		}
+		env = append(unsetEnv(env, name), kv)
+	}
+	return env
 }
 
 // prependPath puts the agent's tool directories ahead of the inherited PATH so

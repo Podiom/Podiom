@@ -11,11 +11,12 @@
   import type { PushState } from "../lib/live.svelte";
   import type { Agent, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
   import AboutYou from "./AboutYou.svelte";
+  import Credentials from "./Credentials.svelte";
   import Agents from "./Agents.svelte";
   import Logs from "./Logs.svelte";
 
   type UpdateState = "idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed";
-  type SettingsTab = "global" | "agents" | "about-you" | "updates" | "notifications" | "logs";
+  type SettingsTab = "global" | "agents" | "about-you" | "credentials" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
     sessionId?: string;
@@ -467,6 +468,7 @@
       <button class:active={tab === "global"} onclick={() => (tab = "global")}>Global config</button>
       <button class:active={tab === "agents"} onclick={() => (tab = "agents")}>Agents</button>
       <button class:active={tab === "about-you"} onclick={() => (tab = "about-you")}>About you</button>
+      <button class:active={tab === "credentials"} onclick={() => (tab = "credentials")}>Credentials</button>
       <button class:active={tab === "updates"} onclick={() => (tab = "updates")}>Version &amp; Updates</button>
       <button class:active={tab === "notifications"} onclick={() => (tab = "notifications")}>Notifications</button>
       <button class:active={tab === "logs"} onclick={() => (tab = "logs")}>Logs</button>
@@ -732,6 +734,10 @@
     {:else if tab === "about-you"}
     <!-- ===== ABOUT YOU (USER.md) ===== -->
     <AboutYou {agents} onSaved={onUserProfileSaved} />
+
+    {:else if tab === "credentials"}
+    <!-- ===== CREDENTIALS ===== -->
+    <Credentials />
 
     {:else if tab === "updates"}
     <!-- ===== VERSION & UPDATES ===== -->

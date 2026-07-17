@@ -20,6 +20,7 @@ import (
 	"github.com/Podiom/Podiom/internal/buildinfo"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/creds"
 	"github.com/Podiom/Podiom/internal/dream"
 	"github.com/Podiom/Podiom/internal/gateway"
 	"github.com/Podiom/Podiom/internal/hamode"
@@ -149,11 +150,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	credsStore := creds.New(paths.CredentialsYAML)
 	adapters := map[config.Provider]adapter.Adapter{}
 	claude, err := adapter.NewClaude(adapter.ClaudeOptions{
 		DaemonAddr:        callbackAddr,
 		PodiomHome:        paths.Home,
 		PermissionTimeout: permissionTimeout,
+		ExtraEnv:          credsStore.EnvPairs,
 		Logger:            log,
 	})
 	if err != nil {
@@ -164,6 +167,7 @@ func run() error {
 	}
 	codex, err := adapter.NewCodex(adapter.CodexOptions{
 		PermissionTimeout: permissionTimeout,
+		ExtraEnv:          credsStore.EnvPairs,
 		Logger:            log,
 	})
 	if err != nil {
@@ -173,14 +177,15 @@ func run() error {
 		adapters[config.ProviderCodex] = codex
 	}
 	coreSvc, err := core.New(core.Options{
-		Paths:      paths,
-		Store:      db,
-		Adapter:    adapter.NewRouter(adapters),
-		Global:     cfg.Global,
-		Voice:      cfg.Voice,
-		Profiles:   cfg.Profiles,
-		DaemonAddr: callbackAddr,
-		Logger:     log,
+		Paths:       paths,
+		Store:       db,
+		Adapter:     adapter.NewRouter(adapters),
+		Global:      cfg.Global,
+		Voice:       cfg.Voice,
+		Profiles:    cfg.Profiles,
+		DaemonAddr:  callbackAddr,
+		Logger:      log,
+		Credentials: credsStore,
 	})
 	if err != nil {
 		return err

@@ -13,6 +13,7 @@ import (
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/creds"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -411,7 +412,7 @@ func newAgentAPITestServer(t *testing.T) (config.Paths, *Server, func()) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: adapter.NewFake()})
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: adapter.NewFake(), Credentials: creds.New(paths.CredentialsYAML)})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}

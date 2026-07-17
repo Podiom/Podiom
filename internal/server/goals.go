@@ -82,6 +82,12 @@ type accessRequestCreateRequest struct {
 
 type accessDecisionRequest struct {
 	Note string `json:"note,omitempty"`
+	// SecretValue optionally fulfills an env_var request at approval: the user
+	// enters the credential value once, it is stored in credentials.yaml and
+	// injected into agent subprocess environments. Human-only by construction
+	// (agents have no tool for this route). Never persisted on the request row
+	// and never logged.
+	SecretValue string `json:"secret_value,omitempty"`
 }
 
 // GoalDetail is the GET /api/goals/{id} response: the goal plus the audit
@@ -511,7 +517,7 @@ func (s *Server) handleAccessRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "approve" {
-		decided = s.executeAccessGrant(r.Context(), decided)
+		decided = s.executeAccessGrant(r.Context(), decided, req.SecretValue)
 	}
 	s.broadcastGoalPing(r.Context(), decided.GoalID)
 	writeJSON(w, decided, nil)

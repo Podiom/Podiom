@@ -105,10 +105,13 @@ the agent immediately, or change goal status/cadence.
 | `execution_error` | set when an automatic grant fails |
 | `decided_at`, `executed_at` | RFC3339 |
 
-**Secrets are never stored.** An `env_var` request carries the variable
-*name* and purpose only; validation rejects anything value-shaped. This is
-the same principle as the MCP spec: Podiom references secrets by name, never
-by value.
+**Requests never carry secrets.** An `env_var` request carries the variable
+*name* and purpose only; validation rejects anything value-shaped. The user
+may supply the value once at approval (human-only decide endpoint): it is
+stored in `credentials.yaml` (0600) and injected into agent subprocess
+environments — never persisted on the request row, never returned by any
+API response, and never logged. Approval without a value remains
+acknowledge-only (the user sets the variable on the host themselves).
 
 ## 3. Lifecycle & state machines
 
@@ -139,9 +142,11 @@ active ⇄ paused        active ── agent: propose ──► review
 `pending → approved | denied` (user decision, exactly once).
 Automatable kinds (`mcp_server`, `skill`, `permission_mode`) then run grant
 execution: `approved → executed | failed`. A `failed` request stays
-actionable in the UI (retryable approve). Acknowledge-only kinds
-(`cli_tool`, `env_var`) terminate at `approved`; the user acts manually and
-the agent re-detects availability at its next review.
+actionable in the UI (retryable approve). Acknowledge-only cases
+(host-only `cli_tool`, `env_var` approved without a value) terminate at
+`approved`; the user acts manually and the agent re-detects availability at
+its next review. An `env_var` approved **with** a value continues to
+`executed` (credential stored and injected) or `failed` (retryable).
 
 ## 4. Planning & review sessions
 
@@ -193,7 +198,7 @@ floor.
 | `skill` | `{"registry","id","url"}` | **yes** | Install from the skills marketplace via the existing install path. |
 | `permission_mode` | `{"mode"}` | **yes** | Set the agent's permission mode. Approving `yolo` is security-sensitive: the UI must show explicit warning copy. |
 | `cli_tool` | `{"tool","install_hint"}` (+ optional installer fields) | **yes, when installer fields are present** | With `installer` (`npm\|uv\|go\|binary`) the tool is installed into the requesting agent's own workspace and exposed on its PATH — see the workspace-tool-installs spec. Without `installer` (host-wide tools): approval acknowledges and the UI surfaces `install_hint` for the user to run manually. |
-| `env_var` | `{"var_name","purpose","target"}` | no | Approval acknowledges; the user sets the variable themselves. The value never transits Podiom. |
+| `env_var` | `{"var_name","purpose","target"}` | **yes, when the user enters the value at approval** | The value (supplied once in the approval dialog, human-only) is stored in `credentials.yaml` and injected into agent subprocess environments on later runs. Approving without a value acknowledges only; the user sets the variable themselves. The *request* never carries the value. |
 
 Both approve and deny accept an optional `decision_note`, relayed verbatim to
 the agent in its next review prompt.

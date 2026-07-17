@@ -53,6 +53,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/goal-rate-limits/", s.handleGoalRateLimit},
 		{"/api/agent-questions", s.handleAgentQuestions},
 		{"/api/agent-questions/", s.handleAgentQuestion},
+		{"/api/credentials", s.handleCredentials},
+		{"/api/credentials/", s.handleCredential},
 		{"/api/skills", s.handleSkills},
 		{"/api/skills/relink", s.handleSkillsRelink},
 		// Skill marketplace (Spec 07). Registered so the more specific

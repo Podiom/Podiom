@@ -507,8 +507,10 @@ const (
 	AccessSkill AccessRequestKind = "skill"
 	// AccessCLITool requests a host CLI tool install (acknowledge-only).
 	AccessCLITool AccessRequestKind = "cli_tool"
-	// AccessEnvVar requests a credential/env var by NAME — never by value
-	// (acknowledge-only).
+	// AccessEnvVar requests a credential/env var by NAME — never by value.
+	// Acknowledge-only when approved bare, or executed when the user supplies
+	// the value at approval (stored in credentials.yaml, injected into agent
+	// subprocess environments).
 	AccessEnvVar AccessRequestKind = "env_var"
 	// AccessPermissionMode requests an agent permission-mode change (automatable).
 	AccessPermissionMode AccessRequestKind = "permission_mode"
