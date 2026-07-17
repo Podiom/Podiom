@@ -23,6 +23,7 @@ type Paths struct {
 	ConfigYAML     string // config.yaml
 	MCPYAML        string // mcp.yaml
 	BaseAgents     string // AGENTS.md (Podiom-owned base instructions)
+	UserMD         string // USER.md (user profile injected into every agent's context)
 	DB             string // podiom.db (SQLite)
 	AgentsDir      string // agents/
 	ProjectsDir    string // projects/
@@ -66,6 +67,7 @@ func NewPaths(home string) Paths {
 		ConfigYAML:     filepath.Join(home, "config.yaml"),
 		MCPYAML:        filepath.Join(home, "mcp.yaml"),
 		BaseAgents:     filepath.Join(home, "AGENTS.md"),
+		UserMD:         filepath.Join(home, "USER.md"),
 		DB:             filepath.Join(home, "podiom.db"),
 		AgentsDir:      filepath.Join(home, "agents"),
 		ProjectsDir:    filepath.Join(home, "projects"),

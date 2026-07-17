@@ -90,6 +90,13 @@ func (c *FileComposer) Compose(ctx context.Context, agent store.Agent, mode Deli
 
 func (c *FileComposer) sources(paths AgentPaths, projectInstructions string) ([]InstructionSource, error) {
 	sources := []InstructionSource{{Label: "base AGENTS.md", Path: c.paths.BaseAgents}}
+	// USER.md describes the human the agent works with. It sits directly after
+	// the base layer so every agent reads it before its own identity. Like
+	// MEMORY.md it is skipped entirely when absent or blank, so composeClaude
+	// never emits a dangling @-import for a file that does not exist.
+	if useMemory(c.paths.UserMD) {
+		sources = append(sources, InstructionSource{Label: "USER.md", Path: c.paths.UserMD, Optional: true})
+	}
 	if _, err := os.Stat(paths.Agents); err == nil {
 		sources = append(sources, InstructionSource{Label: "agent AGENTS.md", Path: paths.Agents})
 	} else if !os.IsNotExist(err) {

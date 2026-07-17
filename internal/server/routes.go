@@ -76,6 +76,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/update", s.handleUpdate},
 		{"/api/update/apply", s.handleUpdateApply},
 		{"/api/config", s.handleConfig},
+		{"/api/user-profile", s.handleUserProfile},
 		{"/api/transcribe", s.handleTranscribe},
 		{"/api/provider-capabilities", s.handleProviderCapabilities},
 		{"/api/usage", s.handleUsage},

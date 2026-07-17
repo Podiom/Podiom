@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/gateway"
 	"github.com/Podiom/Podiom/internal/store"
@@ -190,6 +191,34 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		return writer.write(ctx, ServerMessage{Type: "history", RequestID: msg.RequestID, History: history})
 	case "send_turn":
 		go s.runWSTurn(ctx, writer, msg)
+		return nil
+	case "start_interview":
+		// "Get to know me": create an interview session and open it with the
+		// USER.md interview prompt. Subsequent answer turns arrive as normal
+		// send_turn messages from the interview panel.
+		if msg.AgentName == "" {
+			return errors.New("agent_name is required")
+		}
+		session, err := s.core.CreateSession(ctx, core.CreateSessionRequest{
+			AgentName:      msg.AgentName,
+			Origin:         store.OriginOnboarding,
+			Provider:       msg.Provider,
+			Profile:        msg.Profile,
+			Model:          msg.Model,
+			Effort:         msg.Effort,
+			PermissionMode: config.PermissionApprove,
+		})
+		if err != nil {
+			return err
+		}
+		current, err := s.core.ReadUserProfile()
+		if err != nil {
+			return err
+		}
+		next := msg
+		next.SessionID = session.ID
+		next.Message = core.UserProfileInterviewPrompt(current)
+		go s.runWSTurn(ctx, writer, next)
 		return nil
 	case "plan_approve":
 		go s.runWSPlanDecision(ctx, writer, msg, "approve")

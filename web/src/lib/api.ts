@@ -57,6 +57,7 @@ import type {
   UpdateApplyResult,
   UpdateStatus,
   UsageSnapshot,
+  UserProfileInfo,
 } from "./types";
 
 async function asJSON<T>(res: Response): Promise<T> {
@@ -422,6 +423,24 @@ export async function clearMemory(name: string): Promise<MemoryInfo> {
   return asJSON(
     await request(`/api/agents/${encodeURIComponent(name)}/memory`, { method: "DELETE" }),
   );
+}
+
+export async function getUserProfile(): Promise<UserProfileInfo> {
+  return asJSON(await request("/api/user-profile"));
+}
+
+export async function saveUserProfile(profile: string): Promise<UserProfileInfo> {
+  return asJSON(
+    await request("/api/user-profile", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile }),
+    }),
+  );
+}
+
+export async function deleteUserProfile(): Promise<void> {
+  await asJSON(await request("/api/user-profile", { method: "DELETE" }));
 }
 
 export async function dreamAgent(name: string): Promise<DreamResult> {

@@ -7,6 +7,7 @@
     getHealth,
     getOnboardingState,
     getOnboardingToken,
+    getUserProfile,
     hireAgent,
     listAgents,
     listProfiles,
@@ -30,7 +31,7 @@
   import type { PushState } from "./lib/live.svelte";
 
   type Route = "chat" | "roadmap" | "goals" | "projects" | "schedules" | "skills" | "terminal" | "settings";
-  type SettingsTab = "global" | "agents" | "updates" | "notifications" | "logs";
+  type SettingsTab = "global" | "agents" | "about-you" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
     sessionId?: string;
@@ -123,6 +124,29 @@
   // Notification opt-in state for the Web Push toggle.
   let pushState = $state<PushState>("idle");
 
+  // First-run "get to know me" invite: shown until a USER.md exists or the
+  // user dismisses it (dismissal persists per browser).
+  const PROFILE_INVITE_DISMISSED = "podiom.about-you-dismissed";
+  let profileInvite = $state(false);
+
+  async function refreshProfileInvite() {
+    if (localStorage.getItem(PROFILE_INVITE_DISMISSED) === "1") {
+      profileInvite = false;
+      return;
+    }
+    try {
+      const info = await getUserProfile();
+      profileInvite = !info.exists;
+    } catch {
+      profileInvite = false;
+    }
+  }
+
+  function dismissProfileInvite() {
+    localStorage.setItem(PROFILE_INVITE_DISMISSED, "1");
+    profileInvite = false;
+  }
+
   // Boot only once the gateway token is present (HA10): before it, nothing but
   // the token screen renders and no API/WS traffic is attempted. Re-runs after
   // a rotation (token cleared → re-entered) to reopen the socket and refresh.
@@ -194,6 +218,7 @@
     await refreshHealth();
     await refreshAgents();
     await refreshUpdate();
+    await refreshProfileInvite();
   }
 
   async function refreshPushStatus() {
@@ -525,6 +550,16 @@
           </div>
         </div>
       {/if}
+      {#if profileInvite}
+        <div class="profile-invite">
+          <div class="profile-invite-title">Help your agents get to know you</div>
+          <div class="profile-invite-note">A 2-minute interview teaches every agent who you are and how you like to work.</div>
+          <div class="profile-invite-actions">
+            <button class="update-btn primary" onclick={() => openSettings("about-you")}>Get started</button>
+            <button class="update-btn" onclick={dismissProfileInvite}>Dismiss</button>
+          </div>
+        </div>
+      {/if}
       {#if pushState !== "enabled"}
         <button
           class="push-reminder"
@@ -573,7 +608,8 @@
         onEnablePush={enablePush}
         onHireAgent={openHire}
         onOpenChat={openChat}
-        onAgentsChanged={refreshAgents} />
+        onAgentsChanged={refreshAgents}
+        onUserProfileSaved={() => (profileInvite = false)} />
     {/if}
   </div>
 
@@ -1002,6 +1038,30 @@
     background: var(--teal);
     border-color: var(--teal);
     color: #fff;
+  }
+
+  .profile-invite {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--surface-3);
+    border: 1px solid var(--line-3);
+  }
+
+  .profile-invite-title {
+    font: 700 12px "Hanken Grotesk";
+    color: var(--muted);
+  }
+
+  .profile-invite-note {
+    margin-top: 5px;
+    color: var(--faint);
+    font: 400 11px/1.35 "Hanken Grotesk";
+  }
+
+  .profile-invite-actions {
+    display: flex;
+    gap: 7px;
+    margin-top: 8px;
   }
 
   .hire-btn {

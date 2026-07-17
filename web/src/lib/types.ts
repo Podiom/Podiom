@@ -786,6 +786,12 @@ export interface NativeAgentActivity {
   status?: "started" | "completed" | "failed" | "cancelled" | "canceled" | string;
 }
 
+// UserProfileInfo mirrors the /api/user-profile view of the app-wide USER.md.
+export interface UserProfileInfo {
+  exists: boolean;
+  profile: string;
+}
+
 export type ClientMessage =
   | { type: "list"; request_id?: string }
   | { type: "attach_session"; request_id?: string; session_id: string }
@@ -823,6 +829,15 @@ export type ClientMessage =
       permission_mode?: PermissionMode;
       project_id?: string;
       create_plan_before_implementation?: boolean;
+    }
+  | {
+      type: "start_interview";
+      request_id: string;
+      agent_name: string;
+      provider?: Provider;
+      profile?: string;
+      model?: string;
+      effort?: string;
     }
   | { type: "plan_approve"; request_id: string; session_id: string }
   | { type: "plan_feedback"; request_id: string; session_id: string; feedback: string }

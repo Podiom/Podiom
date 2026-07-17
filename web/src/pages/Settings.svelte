@@ -10,11 +10,12 @@
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import type { PushState } from "../lib/live.svelte";
   import type { Agent, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
+  import AboutYou from "./AboutYou.svelte";
   import Agents from "./Agents.svelte";
   import Logs from "./Logs.svelte";
 
   type UpdateState = "idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed";
-  type SettingsTab = "global" | "agents" | "updates" | "notifications" | "logs";
+  type SettingsTab = "global" | "agents" | "about-you" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
     sessionId?: string;
@@ -38,6 +39,7 @@
     onHireAgent,
     onOpenChat,
     onAgentsChanged,
+    onUserProfileSaved = () => {},
   }: {
     health: Health | null;
     update: UpdateStatus | null;
@@ -54,6 +56,7 @@
     onHireAgent: () => void;
     onOpenChat: (t: ChatTarget) => void;
     onAgentsChanged: () => void;
+    onUserProfileSaved?: () => void;
   } = $props();
 
   const PERMISSIONS: PermissionMode[] = ["approve", "yolo"];
@@ -463,6 +466,7 @@
     <div class="tabs">
       <button class:active={tab === "global"} onclick={() => (tab = "global")}>Global config</button>
       <button class:active={tab === "agents"} onclick={() => (tab = "agents")}>Agents</button>
+      <button class:active={tab === "about-you"} onclick={() => (tab = "about-you")}>About you</button>
       <button class:active={tab === "updates"} onclick={() => (tab = "updates")}>Version &amp; Updates</button>
       <button class:active={tab === "notifications"} onclick={() => (tab = "notifications")}>Notifications</button>
       <button class:active={tab === "logs"} onclick={() => (tab = "logs")}>Logs</button>
@@ -724,6 +728,10 @@
     {:else if tab === "agents"}
     <!-- ===== AGENTS ===== -->
     <Agents embedded {agents} onHire={onHireAgent} {onOpenChat} onChanged={onAgentsChanged} />
+
+    {:else if tab === "about-you"}
+    <!-- ===== ABOUT YOU (USER.md) ===== -->
+    <AboutYou {agents} onSaved={onUserProfileSaved} />
 
     {:else if tab === "updates"}
     <!-- ===== VERSION & UPDATES ===== -->
