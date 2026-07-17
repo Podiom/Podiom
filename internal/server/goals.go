@@ -101,6 +101,7 @@ type GoalDetail struct {
 	RateLimitBlocks []store.GoalRateLimitBlock `json:"rate_limit_blocks"`
 	PendingQuestion *store.AgentQuestion       `json:"pending_question,omitempty"`
 	Usage           *tokenmeter.Estimate       `json:"usage,omitempty"`
+	RunningRun      *store.GoalRun             `json:"running_run,omitempty"`
 }
 
 type goalRunDetail struct {
@@ -374,7 +375,12 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 			writeJSON(w, nil, err)
 			return
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, Usage: s.goalUsageEstimate(r.Context(), id)}, nil)
+		running, err := s.core.RunningGoalRun(r.Context(), id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

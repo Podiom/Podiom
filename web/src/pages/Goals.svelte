@@ -72,6 +72,10 @@
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
   let busy = $state("");
+  // reviewBusy bridges the gap between clicking "Review now" and the review's
+  // run showing up on the detail response; after that, running_run drives the
+  // spinner until the run finishes (the finish ping refreshes the detail).
+  let reviewBusy = $state("");
   let feedbackOpen = $state(false);
   let feedbackBody = $state("");
   let feedbackBusy = $state(false);
@@ -376,6 +380,20 @@
     return relTime(g.NextReviewAt);
   }
 
+  // reviewButtonLabel names the review trigger by the next scheduled review
+  // ("Next review on Friday"); manual-only and overdue goals fall back to
+  // "Review now". Clicking it always starts a review immediately.
+  function reviewButtonLabel(g: Goal): string {
+    const d = parseTime(g.NextReviewAt);
+    if (!d || d.getTime() <= Date.now()) return "Review now";
+    const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((startOfDay(d) - startOfDay(new Date())) / 86_400_000);
+    if (days === 0) return "Next review today";
+    if (days === 1) return "Next review tomorrow";
+    if (days < 7) return `Next review on ${d.toLocaleDateString(undefined, { weekday: "long" })}`;
+    return `Next review ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  }
+
   function metricPct(m: GoalMetric): number {
     if (!m.target) return 0;
     return Math.max(0, Math.min(100, Math.round((m.current / m.target) * 100)));
@@ -578,6 +596,12 @@
       (detail.events[0].Kind === "planning_started" || detail.events[0].Kind === "created"),
   );
 
+  // A review run is in flight for the open goal — from click (reviewBusy)
+  // until the finish ping refreshes the detail and clears running_run.
+  const reviewRunning = $derived(
+    detail !== null && (reviewBusy === detail.goal.ID || detail.running_run?.Kind === "review"),
+  );
+
   // Open = needs the user (pending/failed) or is mid-install (approved
   // installable cli_tool — the async grant hasn't landed executed/failed yet).
   const detailOpenReqs = $derived(
@@ -611,14 +635,21 @@
   }
 
   async function reviewNow(goal: Goal) {
-    busy = goal.ID;
+    reviewBusy = goal.ID;
     try {
       await runGoalReview(goal.ID);
+      // The review starts in the background; hold the spinner until its run
+      // is visible on the detail response, then running_run takes over.
+      for (let i = 0; i < 10 && detail?.goal.ID === goal.ID; i++) {
+        await refreshDetail();
+        if (detail?.running_run) break;
+        await new Promise((r) => setTimeout(r, 300));
+      }
       error = null;
     } catch (e) {
       error = e instanceof Error ? e.message : "Couldn't start the review.";
     } finally {
-      busy = "";
+      reviewBusy = "";
     }
   }
 
@@ -1049,7 +1080,15 @@
         </div>
         <div class="detail-actions">
           {#if g.Status === "active"}
-            <button class="btn teal" disabled={busy === g.ID} onclick={() => reviewNow(g)}>Review now</button>
+            {#if reviewRunning}
+              <button class="btn teal reviewing" disabled>
+                <span class="btn-spinner" aria-hidden="true"></span>Reviewing…
+              </button>
+            {:else}
+              <button class="btn teal" disabled={busy === g.ID} title="Run a review now" onclick={() => reviewNow(g)}>
+                {reviewButtonLabel(g)}
+              </button>
+            {/if}
           {/if}
           {#if g.Status === "active" || g.Status === "paused"}
             <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, g.Status === "paused" ? "active" : "paused", g.Status === "paused" ? "Resumed by you." : "Paused by you.")}>
@@ -2318,6 +2357,25 @@
   }
   .btn.teal {
     color: var(--teal-deep);
+  }
+  .btn.reviewing {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .btn-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    border: 2px solid #d9ebe5;
+    border-top-color: var(--teal-deep);
+    animation: btn-spin 900ms linear infinite;
+    flex: none;
+  }
+  @keyframes btn-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .btn.icon {
     width: 38px;

@@ -550,6 +550,7 @@ export interface GoalDetail {
   rate_limit_blocks: GoalRateLimitBlock[];
   pending_question?: AgentQuestion;
   usage?: UsageEstimate;
+  running_run?: GoalRun;
 }
 
 export interface GoalCreateRequest {
