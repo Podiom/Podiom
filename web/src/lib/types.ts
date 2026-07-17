@@ -607,6 +607,7 @@ export interface ScheduleStatus {
   allowed_tools: string[];
   enabled: boolean;
   goal_id?: string;
+  body: string;
   next_run?: string;
   parse_error?: string;
   runs: ScheduleRun[];

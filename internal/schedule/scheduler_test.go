@@ -162,6 +162,31 @@ do not
 	}
 }
 
+func TestListIncludesScheduleBody(t *testing.T) {
+	ctx := context.Background()
+	s, _, paths, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	writeSchedule(t, paths.SchedulesDir, "morning.md", `---
+agent: jared
+cron: "0 7 * * *"
+enabled: true
+---
+Summarise the calendar.
+`)
+
+	statuses, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected one schedule, got %d: %+v", len(statuses), statuses)
+	}
+	if statuses[0].Body != "Summarise the calendar." {
+		t.Fatalf("body = %q", statuses[0].Body)
+	}
+}
+
 func TestRunNowFailsForMissingSchedule(t *testing.T) {
 	ctx := context.Background()
 	s, _, _, cleanup := newTestScheduler(t)

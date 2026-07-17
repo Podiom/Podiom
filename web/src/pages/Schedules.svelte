@@ -5,6 +5,7 @@
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
+  import { renderMarkdown } from "../lib/markdown";
   import { modeChip } from "../lib/theme";
   import type { AgentQuestion, Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
@@ -28,6 +29,7 @@
   let busy = $state<string>("");
   let hoverRun = $state<string>("");
   let goalGroupsOpen = $state<Record<string, boolean>>({});
+  let inspectingSchedule = $state<ScheduleStatus | null>(null);
 
   // Deferred-question answering (podiom_ask_user), keyed by question item id.
   let questionAnswers = $state<Record<string, string[]>>({});
@@ -250,103 +252,130 @@
     const errs = runs.filter((r) => r.Status === "error").length;
     return `${runs.length} run${runs.length === 1 ? "" : "s"} · ${errs ? errs + " failed" : "all clean"}`;
   }
+
+  function scheduleClickIgnored(event: Event): boolean {
+    const target = event.target;
+    return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a"));
+  }
+
+  function openScheduleInstructions(s: ScheduleStatus, event: Event) {
+    if (s.parse_error || scheduleClickIgnored(event)) return;
+    inspectingSchedule = s;
+  }
+
+  function openScheduleInstructionsWithKeyboard(s: ScheduleStatus, event: KeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (s.parse_error || scheduleClickIgnored(event)) return;
+    event.preventDefault();
+    inspectingSchedule = s;
+  }
 </script>
 
-{#snippet scheduleCard(s: ScheduleStatus)}
-  <article class="sched-card">
-    <div class="sched-top">
-      <AgentAvatar name={s.agent} size={34} radius={11} fontSize={14} />
-      <div class="sched-id">
-        <div class="sched-title">{s.name}</div>
-        <div class="sched-file mono">{s.path}</div>
+{#snippet scheduleCardContent(s: ScheduleStatus)}
+  <div class="sched-top">
+    <AgentAvatar name={s.agent} size={34} radius={11} fontSize={14} />
+    <div class="sched-id">
+      <div class="sched-title">{s.name}</div>
+      <div class="sched-file mono">{s.path}</div>
+    </div>
+    {#if s.parse_error}
+      <span style={modeChip("yolo")}>parse error</span>
+    {:else}
+      <span style={modeChip(s.run_permission === "yolo" ? "yolo" : "approve")}>{s.run_permission}</span>
+      <span class="sched-next">next {nextLabel(s)}</span>
+      <button class="sched-run" disabled={busy === s.name} onclick={() => runNow(s.name)}>{busy === s.name ? "Running…" : "Run now"}</button>
+    {/if}
+    <button class="sched-x" title="Delete schedule" aria-label="Delete schedule" onclick={() => (pendingDelete = s)}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+    </button>
+  </div>
+
+  {#if s.parse_error}
+    <div class="error-banner" style="margin-top:14px">{s.parse_error}</div>
+  {:else}
+    <div class="sched-fm">
+      <div class="sched-fm-row">
+        {#each frontmatter(s) as f}
+          <span class="fm-chip mono"><span class="fm-k">{f.k}</span><span class="fm-v">{f.v}</span></span>
+        {/each}
+        <span class="fm-chip mono"><span class="fm-k">enabled</span><span class="fm-v">{s.enabled ? "true" : "false"}</span></span>
       </div>
-      {#if s.parse_error}
-        <span style={modeChip("yolo")}>parse error</span>
-      {:else}
-        <span style={modeChip(s.run_permission === "yolo" ? "yolo" : "approve")}>{s.run_permission}</span>
-        <span class="sched-next">next {nextLabel(s)}</span>
-        <button class="sched-run" disabled={busy === s.name} onclick={() => runNow(s.name)}>{busy === s.name ? "Running…" : "Run now"}</button>
-      {/if}
-      <button class="sched-x" title="Delete schedule" aria-label="Delete schedule" onclick={() => (pendingDelete = s)}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-      </button>
     </div>
 
-    {#if s.parse_error}
-      <div class="error-banner" style="margin-top:14px">{s.parse_error}</div>
-    {:else}
-      <div class="sched-fm">
-        <div class="sched-fm-row">
-          {#each frontmatter(s) as f}
-            <span class="fm-chip mono"><span class="fm-k">{f.k}</span><span class="fm-v">{f.v}</span></span>
+    {#if s.pending_question}
+      {@const pq = s.pending_question}
+      <div class="sched-question">
+        <div class="sq-head">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
+          <span>{s.agent} asked a question — answer it to guide the next run</span>
+        </div>
+        {#each pq.Questions as item}
+          <div class="sq-block">
+            {#if item.header}<div class="sq-header">{item.header}</div>{/if}
+            <div class="sq-text">{item.question}</div>
+            {#if item.options && item.options.length > 0}
+              <div class="sq-options">
+                {#each item.options as option}
+                  <button class="sq-option" class:sel={qSelected(item.id, option.label)} onclick={() => qToggle(item, option.label)}>
+                    <span class="sq-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
+                    <span class="sq-option-text">
+                      <span>{option.label}</span>
+                      {#if option.description}<small>{option.description}</small>{/if}
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <input
+                class="sq-free"
+                type={item.is_secret ? "password" : "text"}
+                placeholder="Your answer"
+                value={(questionAnswers[item.id] ?? [])[0] ?? ""}
+                oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
+              />
+            {/if}
+          </div>
+        {/each}
+        <button class="sq-send" disabled={questionBusy === pq.ID || !qReady(pq)} onclick={() => submitQuestionAnswer(pq)}>
+          {questionBusy === pq.ID ? "Sending…" : "Send answer"}
+        </button>
+      </div>
+    {/if}
+
+    {#if s.runs && s.runs.length > 0}
+      <div class="sched-runs">
+        <div class="label-mono" style="font-size:10px;margin-bottom:9px">runs · {runsSummary(s)} · open any to see that session</div>
+        <div class="run-chips">
+          {#each s.runs as r (r.ID)}
+            {@const open = hoverRun === r.ID}
+            <button
+              class="run-chip"
+              title={runWhen(r)}
+              style="gap:{open ? '7px' : '0'};padding:5px {open ? '11px' : '7px'};border-color:{open ? '#E4D9CB' : '#EFE6DB'}"
+              onmouseenter={() => (hoverRun = r.ID)}
+              onmouseleave={() => (hoverRun = "")}
+              onclick={() => r.SessionID && onOpenChat({ sessionId: r.SessionID })}
+            >
+              <span class="run-dot" style="background:{runColor(r.Status)}"></span>
+              <span class="run-label" style="max-width:{open ? '160px' : '0'};opacity:{open ? '1' : '0'}">{runWhen(r)}</span>
+            </button>
           {/each}
-          <span class="fm-chip mono"><span class="fm-k">enabled</span><span class="fm-v">{s.enabled ? "true" : "false"}</span></span>
         </div>
       </div>
-
-      {#if s.pending_question}
-        {@const pq = s.pending_question}
-        <div class="sched-question">
-          <div class="sq-head">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
-            <span>{s.agent} asked a question — answer it to guide the next run</span>
-          </div>
-          {#each pq.Questions as item}
-            <div class="sq-block">
-              {#if item.header}<div class="sq-header">{item.header}</div>{/if}
-              <div class="sq-text">{item.question}</div>
-              {#if item.options && item.options.length > 0}
-                <div class="sq-options">
-                  {#each item.options as option}
-                    <button class="sq-option" class:sel={qSelected(item.id, option.label)} onclick={() => qToggle(item, option.label)}>
-                      <span class="sq-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
-                      <span class="sq-option-text">
-                        <span>{option.label}</span>
-                        {#if option.description}<small>{option.description}</small>{/if}
-                      </span>
-                    </button>
-                  {/each}
-                </div>
-              {:else}
-                <input
-                  class="sq-free"
-                  type={item.is_secret ? "password" : "text"}
-                  placeholder="Your answer"
-                  value={(questionAnswers[item.id] ?? [])[0] ?? ""}
-                  oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
-                />
-              {/if}
-            </div>
-          {/each}
-          <button class="sq-send" disabled={questionBusy === pq.ID || !qReady(pq)} onclick={() => submitQuestionAnswer(pq)}>
-            {questionBusy === pq.ID ? "Sending…" : "Send answer"}
-          </button>
-        </div>
-      {/if}
-
-      {#if s.runs && s.runs.length > 0}
-        <div class="sched-runs">
-          <div class="label-mono" style="font-size:10px;margin-bottom:9px">runs · {runsSummary(s)} · open any to see that session</div>
-          <div class="run-chips">
-            {#each s.runs as r (r.ID)}
-              {@const open = hoverRun === r.ID}
-              <button
-                class="run-chip"
-                title={runWhen(r)}
-                style="gap:{open ? '7px' : '0'};padding:5px {open ? '11px' : '7px'};border-color:{open ? '#E4D9CB' : '#EFE6DB'}"
-                onmouseenter={() => (hoverRun = r.ID)}
-                onmouseleave={() => (hoverRun = "")}
-                onclick={() => r.SessionID && onOpenChat({ sessionId: r.SessionID })}
-              >
-                <span class="run-dot" style="background:{runColor(r.Status)}"></span>
-                <span class="run-label" style="max-width:{open ? '160px' : '0'};opacity:{open ? '1' : '0'}">{runWhen(r)}</span>
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
     {/if}
-  </article>
+  {/if}
+{/snippet}
+
+{#snippet scheduleCard(s: ScheduleStatus)}
+  {#if s.parse_error}
+    <article class="sched-card">
+      {@render scheduleCardContent(s)}
+    </article>
+  {:else}
+    <div class="sched-card clickable" tabindex="0" role="button" aria-label={`View instructions for ${s.name}`} onclick={(e) => openScheduleInstructions(s, e)} onkeydown={(e) => openScheduleInstructionsWithKeyboard(s, e)}>
+      {@render scheduleCardContent(s)}
+    </div>
+  {/if}
 {/snippet}
 
 <div class="page">
@@ -459,6 +488,23 @@
         <pre class="ns-preview mono">{nsPreview}</pre>
 
         <button class="modal-cta" disabled={nsBusy || !nsName.trim() || !nsAgent || !nsBody.trim()} onclick={submitSchedule}>{nsBusy ? "Creating…" : "Create schedule file"}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if inspectingSchedule}
+  <div class="modal-backdrop" role="presentation" onclick={() => (inspectingSchedule = null)}>
+    <div class="modal-card instruction-modal" role="dialog" aria-modal="true" aria-label="Schedule instructions" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <div class="modal-head">
+        <div class="modal-title">{inspectingSchedule.name}</div>
+        <div class="modal-sub">
+          {timing(inspectingSchedule)} · {inspectingSchedule.agent} · {inspectingSchedule.path}
+        </div>
+      </div>
+      <div class="modal-body instruction-body">
+        <div class="instruction-content">{@html renderMarkdown(inspectingSchedule.body || "")}</div>
+        <button class="modal-cta instruction-close" onclick={() => (inspectingSchedule = null)}>Close</button>
       </div>
     </div>
   </div>
@@ -624,6 +670,19 @@
     border-radius: 18px;
     padding: 20px;
     box-shadow: 0 1px 2px rgba(43, 37, 32, 0.04), 0 14px 36px -26px rgba(43, 37, 32, 0.2);
+  }
+
+  .sched-card.clickable {
+    cursor: pointer;
+  }
+
+  .sched-card.clickable:hover {
+    border-color: #cfe3dd;
+  }
+
+  .sched-card.clickable:focus-visible {
+    outline: 2px solid #8bc8b8;
+    outline-offset: 3px;
   }
 
   .sched-top {
@@ -867,6 +926,50 @@
     transition:
       max-width 0.16s ease,
       opacity 0.14s ease;
+  }
+
+  .instruction-modal {
+    width: 620px;
+    max-width: 94vw;
+  }
+
+  .instruction-body {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  .instruction-content {
+    border: 1px solid var(--line-3);
+    border-radius: 13px;
+    background: var(--surface-3);
+    padding: 16px 18px;
+    color: #3d342c;
+    font: 400 14px/1.55 "Hanken Grotesk";
+  }
+
+  .instruction-content :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .instruction-content :global(:last-child) {
+    margin-bottom: 0;
+  }
+
+  .instruction-content :global(pre) {
+    overflow: auto;
+    border-radius: 10px;
+    padding: 12px;
+    background: #2b2520;
+    color: #e4d9c9;
+  }
+
+  .instruction-content :global(code) {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px;
+  }
+
+  .instruction-close {
+    margin-top: 16px;
   }
 
   @media (max-width: 768px) {
