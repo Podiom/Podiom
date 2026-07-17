@@ -316,6 +316,25 @@ func (c *Core) AddGoalFeedback(ctx context.Context, goalID, body string) (store.
 	return ev, nil
 }
 
+// UpdateGoalFeedback edits a user-authored goal feedback note until a later
+// goal planning/review session has started and consumed it.
+func (c *Core) UpdateGoalFeedback(ctx context.Context, goalID string, eventID int64, body string) (store.GoalEvent, error) {
+	goal, err := c.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return store.GoalEvent{}, fmt.Errorf("goal feedback body is required")
+	}
+	ev, err := c.store.UpdateUnreadGoalFeedback(ctx, goal.ID, eventID, body)
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	c.log.Info("goal feedback updated", "event", "goal", "goal", goal.ID, "feedback", eventID)
+	return ev, nil
+}
+
 // ListGoalRateLimitBlocks returns a goal's durable rate-limit attention items.
 func (c *Core) ListGoalRateLimitBlocks(ctx context.Context, goalID string) ([]store.GoalRateLimitBlock, error) {
 	if _, err := c.store.GetGoal(ctx, goalID); err != nil {

@@ -63,7 +63,8 @@ type goalProgressRequest struct {
 }
 
 type goalFeedbackRequest struct {
-	Body string `json:"body"`
+	EventID int64  `json:"event_id,omitempty"`
+	Body    string `json:"body"`
 }
 
 type goalProposeCompletionRequest struct {
@@ -424,7 +425,7 @@ func (s *Server) handleGoalEvents(w http.ResponseWriter, r *http.Request, id str
 }
 
 func (s *Server) handleGoalFeedback(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPost && r.Method != http.MethodPatch {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -433,7 +434,19 @@ func (s *Server) handleGoalFeedback(w http.ResponseWriter, r *http.Request, id s
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ev, err := s.core.AddGoalFeedback(r.Context(), id, req.Body)
+	var (
+		ev  store.GoalEvent
+		err error
+	)
+	if r.Method == http.MethodPatch {
+		if req.EventID <= 0 {
+			http.Error(w, "feedback event_id is required", http.StatusBadRequest)
+			return
+		}
+		ev, err = s.core.UpdateGoalFeedback(r.Context(), id, req.EventID, req.Body)
+	} else {
+		ev, err = s.core.AddGoalFeedback(r.Context(), id, req.Body)
+	}
 	if err != nil {
 		writeJSON(w, nil, err)
 		return

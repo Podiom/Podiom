@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -290,6 +291,36 @@ func TestGoalFeedbackEndpointRecordsUserEventOnly(t *testing.T) {
 	events, _ := srv.core.ListGoalEvents(context.Background(), goal.ID, 0, 0)
 	if len(events) != 2 || events[0].Kind != store.GoalEventUserFeedback || events[1].Kind != store.GoalEventCreated {
 		t.Fatalf("timeline after feedback = %+v", events)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/goals/"+goal.ID+"/feedback",
+		bytes.NewBufferString(`{"event_id":`+strconv.FormatInt(ev.ID, 10)+`,"body":"  Keep launch scope tiny.  "}`))
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("edit feedback: %d %s", rr.Code, rr.Body.String())
+	}
+	var edited store.GoalEvent
+	if err := json.NewDecoder(rr.Body).Decode(&edited); err != nil {
+		t.Fatalf("decode edited feedback event: %v", err)
+	}
+	if edited.ID != ev.ID || edited.Body != "Keep launch scope tiny." {
+		t.Fatalf("edited feedback = %+v", edited)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/goals/"+goal.ID+"/feedback", bytes.NewBufferString(`{"body":"hello"}`))
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code == http.StatusOK {
+		t.Fatalf("edit feedback without event_id should fail")
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/goals/"+goal.ID+"/feedback",
+		bytes.NewBufferString(`{"event_id":`+strconv.FormatInt(ev.ID, 10)+`,"body":"  "}`))
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code == http.StatusOK {
+		t.Fatalf("empty feedback edit should fail")
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/feedback", bytes.NewBufferString(`{"body":"  "}`))

@@ -16,6 +16,7 @@
     patchGoal,
     resolveGoalRateLimit,
     runGoalReview,
+    updateGoalFeedback,
   } from "../lib/api";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
@@ -71,6 +72,9 @@
   let feedbackOpen = $state(false);
   let feedbackBody = $state("");
   let feedbackBusy = $state(false);
+  let editingFeedbackID = $state(0);
+  let editingFeedbackBody = $state("");
+  let editingFeedbackBusy = $state(false);
   // Deferred-question answering (podiom_ask_user). Keyed by question item id.
   let questionAnswers = $state<Record<string, string[]>>({});
   let questionBusy = $state(false);
@@ -182,6 +186,8 @@
       questionAnswers = {};
       feedbackOpen = false;
       feedbackBody = "";
+      editingFeedbackID = 0;
+      editingFeedbackBody = "";
       view = "detail";
       menuOpen = false;
       void ensureProfiles();
@@ -435,6 +441,11 @@
     return rest;
   }
 
+  function canEditFeedback(ev: GoalEvent): boolean {
+    if (!detail || ev.Kind !== "user_feedback") return false;
+    return !detail.events.some((other) => other.ID > ev.ID && (other.Kind === "planning_started" || other.Kind === "review_started"));
+  }
+
   // ---- tool_use audit rendering ---------------------------------------------
 
   type ToolPayload = {
@@ -567,6 +578,32 @@
       error = e instanceof Error ? e.message : "Couldn't add feedback.";
     } finally {
       feedbackBusy = false;
+    }
+  }
+
+  function startEditFeedback(ev: GoalEvent) {
+    editingFeedbackID = ev.ID;
+    editingFeedbackBody = ev.Body;
+  }
+
+  function cancelEditFeedback() {
+    editingFeedbackID = 0;
+    editingFeedbackBody = "";
+  }
+
+  async function submitFeedbackEdit(goal: Goal, ev: GoalEvent) {
+    const body = editingFeedbackBody.trim();
+    if (!body || editingFeedbackBusy) return;
+    editingFeedbackBusy = true;
+    try {
+      await updateGoalFeedback(goal.ID, ev.ID, body);
+      cancelEditFeedback();
+      await refreshDetail();
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Couldn't update feedback.";
+    } finally {
+      editingFeedbackBusy = false;
     }
   }
 
@@ -1285,13 +1322,28 @@
                       <div class="event-top">
                         <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
                         <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                        {#if canEditFeedback(ev) && editingFeedbackID !== ev.ID}
+                          <button class="event-edit mono" onclick={() => startEditFeedback(ev)}>edit</button>
+                        {/if}
                       </div>
-                      <div class="event-title">{eventTitle(ev)}</div>
-                      {#if ev.Kind === "metric_update" && metricDelta(ev)}
-                        <div class="event-delta mono">{metricDelta(ev)}</div>
-                      {/if}
-                      {#if eventBody(ev)}
-                        <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
+                      {#if editingFeedbackID === ev.ID}
+                        <div class="feedback-edit">
+                          <textarea class="field" rows="3" bind:value={editingFeedbackBody}></textarea>
+                          <div class="feedback-actions">
+                            <button class="btn-primary" disabled={editingFeedbackBusy || !editingFeedbackBody.trim()} onclick={() => submitFeedbackEdit(g, ev)}>
+                              {editingFeedbackBusy ? "Saving…" : "Save changes"}
+                            </button>
+                            <button class="btn" disabled={editingFeedbackBusy} onclick={cancelEditFeedback}>Cancel</button>
+                          </div>
+                        </div>
+                      {:else}
+                        <div class="event-title">{eventTitle(ev)}</div>
+                        {#if ev.Kind === "metric_update" && metricDelta(ev)}
+                          <div class="event-delta mono">{metricDelta(ev)}</div>
+                        {/if}
+                        {#if eventBody(ev)}
+                          <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
+                        {/if}
                       {/if}
                       {#if ev.SessionID}
                         <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
@@ -2546,6 +2598,19 @@
     color: #b4a897;
     margin-left: auto;
   }
+  .event-edit {
+    border: 1px solid #eadfce;
+    border-radius: 8px;
+    background: #fff;
+    color: #7d6f5f;
+    padding: 3px 8px;
+    font-size: 10.5px;
+    cursor: pointer;
+  }
+  .event-edit:hover {
+    border-color: #d6c7b3;
+    color: var(--ink);
+  }
   .event-title {
     font-size: 14px;
     font-weight: 700;
@@ -2574,6 +2639,13 @@
   .event-body :global(p:last-child),
   .event-body :global(ul:last-child) {
     margin-bottom: 0;
+  }
+  .feedback-edit {
+    margin-top: 8px;
+  }
+  .feedback-edit textarea {
+    width: 100%;
+    resize: vertical;
   }
   /* tool_use command / file-path, shown in a compact terminal-style block */
   .event-cmd {

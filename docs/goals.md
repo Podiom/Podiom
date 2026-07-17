@@ -145,6 +145,7 @@ those goals first under **Needs you**.
 - `GET  /api/goals/<id>/events` (`?limit=&before=`) — timeline pagination
 - `POST /api/goals/<id>/events` — record progress / metric updates (agent tools)
 - `POST /api/goals/<id>/feedback` — add user feedback for the next goal run
+- `PATCH /api/goals/<id>/feedback` — edit feedback by `event_id` until a later planning/review session has read it
 - `POST /api/goals/<id>/propose-completion`
 - `POST /api/goals/<id>/review` — trigger a review now
 - `GET  /api/access-requests` (`?goal_id=&status=`), `POST /api/access-requests`

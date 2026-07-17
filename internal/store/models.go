@@ -381,8 +381,9 @@ const (
 	GoalEventQuestionAnswered GoalEventKind = "question_answered"
 )
 
-// GoalEvent is one append-only timeline entry — the goal's audit trail. Updates
-// are rejected at the schema level; rows are removed only by goal cascade.
+// GoalEvent is one timeline entry in the goal's audit trail. Entries are
+// immutable except for unread user feedback body edits; rows are removed only by
+// goal cascade.
 // SessionID links the event to the session that produced it ("" for user
 // actions from the UI), so every autonomous claim is attributable (§8).
 type GoalEvent struct {

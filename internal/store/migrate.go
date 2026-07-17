@@ -643,6 +643,26 @@ var migrations = []migration{
 
 		CREATE INDEX idx_agent_questions_ref ON agent_questions(origin, ref_id, status);`,
 	},
+	{
+		version: 23,
+		name:    "editable_unread_goal_feedback",
+		sql: `DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		WHEN NOT (
+			OLD.kind = 'user_feedback'
+			AND NEW.id = OLD.id
+			AND NEW.kind = OLD.kind
+			AND NEW.goal_id = OLD.goal_id
+			AND COALESCE(NEW.session_id, '') = COALESCE(OLD.session_id, '')
+			AND NEW.payload_json = OLD.payload_json
+			AND NEW.created_at = OLD.created_at
+		)
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

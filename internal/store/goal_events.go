@@ -7,9 +7,9 @@ import (
 	"fmt"
 )
 
-// AppendGoalEvent adds one entry to a goal's append-only timeline. There are
-// deliberately no update or delete methods — the schema rejects UPDATE via
-// trigger and rows leave only through the goal's ON DELETE CASCADE.
+// AppendGoalEvent adds one entry to a goal's timeline. Rows are immutable except
+// for unread user feedback body edits; rows leave only through the goal's
+// ON DELETE CASCADE.
 func (s *Store) AppendGoalEvent(ctx context.Context, ev GoalEvent) (GoalEvent, error) {
 	if ev.Payload == "" {
 		ev.Payload = "{}"
@@ -92,6 +92,36 @@ func (s *Store) GetGoalEvent(ctx context.Context, id int64) (GoalEvent, error) {
 		return GoalEvent{}, err
 	}
 	return ev, nil
+}
+
+// UpdateUnreadGoalFeedback edits a user feedback event only until a later
+// planning/review session has started, which is when feedback has been assembled
+// into an agent prompt.
+func (s *Store) UpdateUnreadGoalFeedback(ctx context.Context, goalID string, eventID int64, body string) (GoalEvent, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE goal_events
+		SET body = ?
+		WHERE id = ?
+			AND goal_id = ?
+			AND kind = ?
+			AND NOT EXISTS (
+				SELECT 1 FROM goal_events later
+				WHERE later.goal_id = goal_events.goal_id
+					AND later.id > goal_events.id
+					AND later.kind IN (?, ?)
+			)`,
+		body, eventID, goalID, GoalEventUserFeedback, GoalEventPlanningStarted, GoalEventReviewStarted,
+	)
+	if err != nil {
+		return GoalEvent{}, fmt.Errorf("update goal feedback %d for %q: %w", eventID, goalID, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return GoalEvent{}, fmt.Errorf("update goal feedback %d for %q rows affected: %w", eventID, goalID, err)
+	}
+	if changed == 0 {
+		return GoalEvent{}, fmt.Errorf("goal feedback %d for %q: %w", eventID, goalID, ErrNotFound)
+	}
+	return s.GetGoalEvent(ctx, eventID)
 }
 
 // ListGoalEvents returns a goal's timeline, newest first. A limit <= 0 returns

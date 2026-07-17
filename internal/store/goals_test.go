@@ -153,18 +153,26 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 		t.Fatalf("events = %+v, want 5 newest-first", events)
 	}
 
-	var feedbackMigration string
+	var feedbackMigration, editableFeedbackMigration string
 	for _, m := range migrations {
 		if m.version == 20 {
 			feedbackMigration = m.sql
-			break
+		}
+		if m.version == 23 {
+			editableFeedbackMigration = m.sql
 		}
 	}
 	if feedbackMigration == "" {
 		t.Fatal("missing v20 feedback migration")
 	}
+	if editableFeedbackMigration == "" {
+		t.Fatal("missing v23 editable feedback migration")
+	}
 	if _, err := db.db.ExecContext(ctx, feedbackMigration); err != nil {
 		t.Fatalf("replay v20 feedback migration: %v", err)
+	}
+	if _, err := db.db.ExecContext(ctx, editableFeedbackMigration); err != nil {
+		t.Fatalf("replay v23 editable feedback migration: %v", err)
 	}
 	events, err = db.ListGoalEvents(ctx, goal.ID, 0, 0)
 	if err != nil {
@@ -193,9 +201,22 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 		t.Fatalf("page = %+v, want the rate-limit-resolved event", page)
 	}
 
-	// Append-only: UPDATE is rejected at the schema level.
-	if _, err := db.db.ExecContext(ctx, `UPDATE goal_events SET body = 'tampered' WHERE id = ?`, feedback[0].ID); err == nil {
-		t.Fatalf("goal_events UPDATE should be rejected by trigger")
+	updated, err := db.UpdateUnreadGoalFeedback(ctx, goal.ID, feedback[0].ID, "nudge launch")
+	if err != nil {
+		t.Fatalf("update unread feedback: %v", err)
+	}
+	if updated.Body != "nudge launch" {
+		t.Fatalf("updated feedback body = %q", updated.Body)
+	}
+
+	if _, err := db.db.ExecContext(ctx, `UPDATE goal_events SET body = 'tampered' WHERE id = ?`, page[0].ID); err == nil {
+		t.Fatalf("non-feedback goal event UPDATE should be rejected by trigger")
+	}
+	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
+		t.Fatalf("append review started: %v", err)
+	}
+	if _, err := db.UpdateUnreadGoalFeedback(ctx, goal.ID, feedback[0].ID, "too late"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update read feedback err = %v, want ErrNotFound", err)
 	}
 
 	// Metric application is transactional with the event append.

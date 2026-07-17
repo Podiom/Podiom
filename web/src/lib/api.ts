@@ -897,6 +897,16 @@ export async function addGoalFeedback(id: string, body: string): Promise<GoalEve
   );
 }
 
+export async function updateGoalFeedback(id: string, eventId: number, body: string): Promise<GoalEvent> {
+  return asJSON(
+    await request(`/api/goals/${id}/feedback`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_id: eventId, body }),
+    }),
+  );
+}
+
 // runGoalReview triggers an unattended review session now; it returns as soon
 // as the review is started (results land on the timeline).
 export async function runGoalReview(id: string): Promise<{ status: string; goal_id: string }> {
