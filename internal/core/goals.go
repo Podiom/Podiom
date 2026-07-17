@@ -162,11 +162,17 @@ func (c *Core) UpdateGoal(ctx context.Context, id string, patch GoalPatch) (stor
 	if patch.Metrics != nil {
 		goal.Metrics = *patch.Metrics
 	}
+	previousLead := goal.LeadAgent
 	if patch.LeadAgent != nil {
 		if _, err := c.store.GetAgent(ctx, *patch.LeadAgent); err != nil {
 			return store.Goal{}, fmt.Errorf("lead agent %q: %w", *patch.LeadAgent, err)
 		}
 		goal.LeadAgent = *patch.LeadAgent
+		if goal.LeadAgent != previousLead {
+			// Sessions are agent/workspace-bound. Preserve the old transcript as
+			// history and lazily create one handoff conversation for the new lead.
+			goal.LeadSessionID = ""
+		}
 	}
 	if patch.ProjectID != nil {
 		if *patch.ProjectID != "" {
@@ -435,7 +441,7 @@ func (c *Core) ResolveGoalRateLimit(ctx context.Context, in ResolveGoalRateLimit
 
 // ReconcileGoalRateLimits backfills pending recovery items for old goal runs
 // that already persisted a rate-limit error before durable recovery existed.
-// It is idempotent because goal_rate_limits.session_id is unique.
+// It is idempotent because goal_rate_limits.run_id is unique.
 func (c *Core) ReconcileGoalRateLimits(ctx context.Context) ([]store.GoalRateLimitBlock, error) {
 	goals, err := c.store.ListGoals(ctx, "")
 	if err != nil {
@@ -453,7 +459,11 @@ func (c *Core) ReconcileGoalRateLimits(ctx context.Context) ([]store.GoalRateLim
 		activeGoals[goal.ID] = goal
 	}
 
-	phaseBySession := map[string]store.GoalRateLimitPhase{}
+	type runPhase struct {
+		phase store.GoalRateLimitPhase
+		runID string
+	}
+	phaseBySession := map[string]runPhase{}
 	for goalID := range activeGoals {
 		events, err := c.store.ListGoalEvents(ctx, goalID, 0, 0)
 		if err != nil {
@@ -462,9 +472,9 @@ func (c *Core) ReconcileGoalRateLimits(ctx context.Context) ([]store.GoalRateLim
 		for _, ev := range events {
 			switch ev.Kind {
 			case store.GoalEventPlanningStarted:
-				phaseBySession[ev.SessionID] = store.GoalRateLimitPlanning
+				phaseBySession[ev.SessionID] = runPhase{phase: store.GoalRateLimitPlanning, runID: ev.RunID}
 			case store.GoalEventReviewStarted:
-				phaseBySession[ev.SessionID] = store.GoalRateLimitReview
+				phaseBySession[ev.SessionID] = runPhase{phase: store.GoalRateLimitReview, runID: ev.RunID}
 			}
 		}
 	}
@@ -488,11 +498,14 @@ func (c *Core) ReconcileGoalRateLimits(ctx context.Context) ([]store.GoalRateLim
 			if msg.Kind != store.KindError || !IsRateLimitErrorMessage(msg.Content) {
 				continue
 			}
-			phase := phaseBySession[sess.ID]
-			if phase == "" {
-				phase = store.GoalRateLimitReview
+			info := phaseBySession[sess.ID]
+			if info.phase == "" {
+				info.phase = store.GoalRateLimitReview
 			}
-			block, err := c.ensureGoalRateLimitBlock(ctx, goal, sess, phase, msg.Content)
+			if info.runID == "" {
+				info.runID = "legacy-session:" + sess.ID
+			}
+			block, err := c.ensureGoalRateLimitBlock(ctx, goal, sess, info.runID, info.phase, msg.Content)
 			if err != nil {
 				return nil, err
 			}
@@ -540,12 +553,14 @@ func (c *Core) RecordGoalProgress(ctx context.Context, req RecordGoalProgressReq
 	if strings.TrimSpace(req.Body) == "" && len(req.MetricUpdates) == 0 {
 		return nil, fmt.Errorf("a progress entry needs a body or metric updates")
 	}
+	runID := c.goalRunForAgentEvent(ctx, goal.ID, req.SessionID)
 
 	var events []store.GoalEvent
 	if strings.TrimSpace(req.Body) != "" {
 		ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 			GoalID:    goal.ID,
 			SessionID: req.SessionID,
+			RunID:     runID,
 			Kind:      kind,
 			Body:      req.Body,
 		})
@@ -581,6 +596,7 @@ func (c *Core) RecordGoalProgress(ctx context.Context, req RecordGoalProgressReq
 		ev, err := c.store.AppendGoalEventWithMetrics(ctx, store.GoalEvent{
 			GoalID:    goal.ID,
 			SessionID: req.SessionID,
+			RunID:     runID,
 			Kind:      store.GoalEventMetricUpdate,
 			Payload:   string(payload),
 		}, metrics)
@@ -616,6 +632,7 @@ func (c *Core) ProposeGoalCompletion(ctx context.Context, goalID, sessionID, clo
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    updated.ID,
 		SessionID: sessionID,
+		RunID:     c.goalRunForAgentEvent(ctx, updated.ID, sessionID),
 		Kind:      store.GoalEventCompletionProposed,
 		Body:      closingReport,
 	}); err != nil {
@@ -722,6 +739,7 @@ func (c *Core) CreateAccessRequest(ctx context.Context, in CreateAccessRequestIn
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: in.SessionID,
+		RunID:     c.goalRunForAgentEvent(ctx, goal.ID, in.SessionID),
 		Kind:      store.GoalEventAccessRequested,
 		Body:      req.Reason,
 		Payload:   string(evPayload),

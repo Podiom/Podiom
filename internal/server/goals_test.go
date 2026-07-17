@@ -102,6 +102,56 @@ func TestGoalCreateKicksPlanningSession(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 }
 
+func TestGoalRunDetailIsBoundToGoalAndTurn(t *testing.T) {
+	_, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	goal := createGoalViaCore(t, srv, store.Goal{})
+	other := createGoalViaCore(t, srv, store.Goal{Title: "Other"})
+	sess, err := srv.core.CreateSession(ctx, core.CreateSessionRequest{AgentName: "atlas", Origin: store.OriginGoal, GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	run, err := srv.core.Store().CreateGoalRun(ctx, store.GoalRun{GoalID: goal.ID, SessionID: sess.ID, Kind: store.GoalRunReview, AgentName: "atlas"})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	messages, err := srv.core.Store().AppendMessages(ctx, sess.ID, []store.Message{{Role: store.RoleUser, Content: "review"}, {Role: store.RoleAssistant, Content: "done"}})
+	if err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+	if _, err := srv.core.Store().SetGoalRunTurn(ctx, run.ID, messages[0].ID); err != nil {
+		t.Fatalf("set run turn: %v", err)
+	}
+	if _, err := srv.core.Store().AppendGoalEvent(ctx, store.GoalEvent{GoalID: goal.ID, SessionID: sess.ID, RunID: run.ID, Kind: store.GoalEventProgress, Body: "shipped"}); err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+	if _, err := srv.core.Store().FinishGoalRun(ctx, run.ID, store.GoalRunSucceeded, ""); err != nil {
+		t.Fatalf("finish run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/goals/"+goal.ID+"/runs/"+run.ID, nil)
+	rr := httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("run detail status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var detail goalRunDetail
+	if err := json.NewDecoder(rr.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode run detail: %v", err)
+	}
+	if detail.Run.ID != run.ID || len(detail.Messages) != 2 || len(detail.Events) != 1 || !detail.TranscriptAvailable {
+		t.Fatalf("run detail = %+v", detail)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/goals/"+other.ID+"/runs/"+run.ID, nil)
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-goal run status = %d, want 404", rr.Code)
+	}
+}
+
 func TestGoalRateLimitAPIListsAndResolves(t *testing.T) {
 	_, srv, cleanup := newGoalTestServer(t)
 	defer cleanup()

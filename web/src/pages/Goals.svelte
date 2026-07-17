@@ -8,6 +8,7 @@
     deleteGoal,
     denyAccessRequest,
     getGoal,
+    getGoalRun,
     listAccessRequests,
     listGoalEvents,
     listGoals,
@@ -38,7 +39,9 @@
     GoalEventKind,
     GoalMetric,
     GoalRateLimitBlock,
+    GoalRunDetail,
     GoalStatus,
+    Message,
     ProfileInfo,
     Project,
   } from "../lib/types";
@@ -78,6 +81,10 @@
   // Deferred-question answering (podiom_ask_user). Keyed by question item id.
   let questionAnswers = $state<Record<string, string[]>>({});
   let questionBusy = $state(false);
+  let selectedRunEvent = $state<GoalEvent | null>(null);
+  let runDetail = $state<GoalRunDetail | null>(null);
+  let runLoading = $state(false);
+  let runError = $state<string | null>(null);
 
   // Create form.
   let cTitle = $state("");
@@ -188,6 +195,7 @@
       feedbackBody = "";
       editingFeedbackID = 0;
       editingFeedbackBody = "";
+      closeRun();
       view = "detail";
       menuOpen = false;
       void ensureProfiles();
@@ -268,10 +276,16 @@
         if (detail && ev.GoalID === detail.goal.ID && !detail.events.some((e) => e.ID === ev.ID)) {
           detail = { ...detail, events: [ev, ...detail.events] };
         }
+		if (runDetail && ev.RunID === runDetail.run.ID && !runDetail.events.some((e) => e.ID === ev.ID)) {
+		  runDetail = { ...runDetail, events: [...runDetail.events, ev] };
+		}
         return;
       }
       void refreshAll();
       if (detail && ev.GoalID === detail.goal.ID) void refreshDetail();
+	  if (runDetail && ev.RunID === runDetail.run.ID) {
+		void getGoalRun(ev.GoalID, ev.RunID).then((next) => (runDetail = next)).catch(() => {});
+	  }
     });
     return unsubscribe;
   });
@@ -471,6 +485,49 @@
     }
   }
 
+  function canViewRun(ev: GoalEvent): boolean {
+    return !!ev.RunID && !["created", "user_feedback", "access_decided", "status_change", "rate_limit_resolved", "question_answered"].includes(ev.Kind);
+  }
+
+  async function openRun(ev: GoalEvent) {
+    if (!detail || !canViewRun(ev)) return;
+    selectedRunEvent = ev;
+    runDetail = null;
+    runError = null;
+    runLoading = true;
+    try {
+      runDetail = await getGoalRun(detail.goal.ID, ev.RunID);
+    } catch (e) {
+      runError = e instanceof Error ? e.message : "Couldn't load this run.";
+    } finally {
+      runLoading = false;
+    }
+  }
+
+  function closeRun() {
+    selectedRunEvent = null;
+    runDetail = null;
+    runError = null;
+    runLoading = false;
+  }
+
+  function runKindLabel(kind: GoalRunDetail["run"]["Kind"]): string {
+    switch (kind) {
+      case "planning": return "Planning run";
+      case "review": return "Review run";
+      case "task": return "Task run";
+      case "schedule": return "Schedule run";
+      default: return "Goal run";
+    }
+  }
+
+  function messageLabel(message: Message): string {
+    if (message.Role === "user") return "Run request";
+    if (message.Kind === "reasoning") return "Reasoning";
+    if (message.Kind === "error") return "Run error";
+    return "Agent response";
+  }
+
   // A rendered timeline row is either a normal event or a collapsed run of
   // consecutive read-only tool calls (Read/Grep/WebFetch…), which the goal chain
   // can emit in bulk. Keeping them grouped keeps the audit trail scannable while
@@ -493,6 +550,7 @@
     };
     for (const ev of evs) {
       if (ev.Kind === "tool_use" && toolPayload(ev).read_only) {
+		if (group.length > 0 && group[0].RunID !== ev.RunID) flush();
         group.push(ev);
       } else {
         flush();
@@ -1284,6 +1342,11 @@
                           {/each}
                         </div>
                       {/if}
+                      {#if canViewRun(item.events[0])}
+                        <button class="event-session mono" onclick={() => openRun(item.events[0])}>
+                          view run <span class="arrow">↗</span>
+                        </button>
+                      {/if}
                     </div>
                   </div>
                 {:else if item.ev.Kind === "tool_use"}
@@ -1303,10 +1366,10 @@
                       {#if tp.summary}
                         <div class="event-cmd mono">{tp.summary}{#if tp.input_truncated}<span class="tool-trunc"> …truncated</span>{/if}</div>
                       {/if}
-                      {#if ev.SessionID}
-                        <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
+					  {#if canViewRun(ev)}
+						<button class="event-session mono" onclick={() => openRun(ev)}>
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                          open session <span class="arrow">↗</span>
+						  view run <span class="arrow">↗</span>
                         </button>
                       {/if}
                     </div>
@@ -1345,10 +1408,10 @@
                           <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
                         {/if}
                       {/if}
-                      {#if ev.SessionID}
-                        <button class="event-session mono" onclick={() => onOpenChat({ sessionId: ev.SessionID })}>
+					  {#if canViewRun(ev)}
+						<button class="event-session mono" onclick={() => openRun(ev)}>
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                          open session <span class="arrow">↗</span>
+						  view run <span class="arrow">↗</span>
                         </button>
                       {/if}
                     </div>
@@ -1475,6 +1538,83 @@
   {/if}
 </div>
 
+{#if selectedRunEvent}
+  <button class="run-backdrop" aria-label="Close run details" onclick={closeRun}></button>
+  <div class="run-drawer" role="dialog" aria-modal="true" aria-label="Goal run details">
+    <div class="run-drawer-head">
+      <div>
+        <div class="section-label mono">Focused activity</div>
+        <div class="run-drawer-title">{runDetail ? runKindLabel(runDetail.run.Kind) : "Goal run"}</div>
+      </div>
+      <button class="run-close" onclick={closeRun} aria-label="Close">×</button>
+    </div>
+
+    <div class="run-selected">
+      <div class="run-selected-top mono">
+        <span>{EK[selectedRunEvent.Kind]?.label ?? selectedRunEvent.Kind}</span>
+        <span>{relTime(selectedRunEvent.CreatedAt)}</span>
+      </div>
+      <strong>{eventTitle(selectedRunEvent)}</strong>
+      {#if eventBody(selectedRunEvent)}
+        <div class="md">{@html renderMarkdown(eventBody(selectedRunEvent))}</div>
+      {/if}
+    </div>
+
+    {#if runLoading}
+      <div class="run-state mono">Loading the exact run…</div>
+    {:else if runError}
+      <div class="run-state bad">{runError}</div>
+    {:else if runDetail}
+      <div class="run-meta mono">
+        <span>{runDetail.run.AgentName}</span>
+        <span>{runDetail.run.Status.replace("_", " ")}</span>
+        {#if runDetail.run.SourceID}<span>{runDetail.run.SourceID}</span>{/if}
+        {#if runDetail.session}<span>{runDetail.session.Provider}{runDetail.session.Model ? ` · ${runDetail.session.Model}` : ""}</span>{/if}
+      </div>
+
+      {#if runDetail.run.Legacy}
+        <div class="run-legacy">This activity predates exact turn tracking. The transcript may include the full historical session.</div>
+      {/if}
+
+      <section class="run-section">
+        <h3>Run activity</h3>
+        <div class="run-event-list">
+          {#each runDetail.events as ev (ev.ID)}
+            <div class="run-event" class:selected={ev.ID === selectedRunEvent.ID}>
+              <div class="run-event-top mono"><span>{EK[ev.Kind]?.label ?? ev.Kind}</span><span>{relTime(ev.CreatedAt)}</span></div>
+              <div>{eventTitle(ev)}</div>
+            </div>
+          {/each}
+        </div>
+      </section>
+
+      <section class="run-section">
+        <h3>Conversation for this run</h3>
+        {#if !runDetail.transcript_available}
+          <div class="run-state">Transcript unavailable. The referenced session has been deleted.</div>
+        {:else if runDetail.messages.length === 0}
+          <div class="run-state">No transcript messages were stored for this run.</div>
+        {:else}
+          <div class="run-messages">
+            {#each runDetail.messages as message (message.ID)}
+              <article class="run-message" class:agent={message.Role === "assistant"} class:error={message.Kind === "error"}>
+                <div class="run-message-label mono">{messageLabel(message)}</div>
+                <div class="md">{@html renderMarkdown(message.Content)}</div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      {#if runDetail.session}
+        <button class="btn run-full" onclick={() => onOpenChat({ sessionId: runDetail?.session?.ID })}>
+          Open full conversation <span class="arrow">↗</span>
+        </button>
+      {/if}
+    {/if}
+  </div>
+{/if}
+
 <!-- ================= ACCESS DECISION DIALOG ================= -->
 {#if dialog}
   {@const copy = dialogCopy(dialog.req, dialog.action)}
@@ -1543,6 +1683,143 @@
 {/if}
 
 <style>
+  .run-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    border: 0;
+    background: rgba(29, 24, 43, 0.34);
+    cursor: default;
+  }
+  .run-drawer {
+    position: fixed;
+    z-index: 81;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(580px, 92vw);
+    overflow-y: auto;
+    padding: 24px;
+    background: #fcfbff;
+    border-left: 1px solid #ddd4ef;
+    box-shadow: -18px 0 48px rgba(37, 29, 61, 0.18);
+  }
+  .run-drawer-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+  .run-drawer-title {
+    margin-top: 4px;
+    font-size: 24px;
+    font-weight: 760;
+    color: #2c2736;
+  }
+  .run-close {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #ddd7e7;
+    border-radius: 10px;
+    background: white;
+    color: #766d83;
+    font-size: 22px;
+    cursor: pointer;
+  }
+  .run-selected {
+    padding: 16px;
+    border: 1px solid #bfb1e8;
+    border-radius: 14px;
+    background: #f3effd;
+    color: #342d4a;
+  }
+  .run-selected-top,
+  .run-event-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+    color: #6e609a;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+  .run-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 14px 0;
+  }
+  .run-meta span {
+    padding: 5px 8px;
+    border: 1px solid #ded8e8;
+    border-radius: 999px;
+    background: white;
+    color: #70667c;
+    font-size: 10px;
+  }
+  .run-legacy,
+  .run-state {
+    margin: 14px 0;
+    padding: 12px;
+    border-radius: 10px;
+    background: #f3f0ea;
+    color: #796c5f;
+    font-size: 12px;
+  }
+  .run-state.bad {
+    background: #faebe6;
+    color: #a54a2c;
+  }
+  .run-section {
+    margin-top: 24px;
+  }
+  .run-section h3 {
+    margin: 0 0 10px;
+    color: #3f374c;
+    font-size: 14px;
+  }
+  .run-event-list,
+  .run-messages {
+    display: grid;
+    gap: 8px;
+  }
+  .run-event {
+    padding: 11px 12px;
+    border: 1px solid #e3dee9;
+    border-radius: 10px;
+    background: white;
+    font-size: 12px;
+  }
+  .run-event.selected {
+    border-color: #8b78cf;
+    box-shadow: 0 0 0 2px rgba(105, 84, 185, 0.09);
+  }
+  .run-message {
+    padding: 13px;
+    border: 1px solid #e4dfe9;
+    border-radius: 12px;
+    background: white;
+    font-size: 13px;
+  }
+  .run-message.agent {
+    background: #f4f8f6;
+    border-color: #d9e8e1;
+  }
+  .run-message.error {
+    background: #fff2ed;
+    border-color: #efcbbd;
+  }
+  .run-message-label {
+    margin-bottom: 8px;
+    color: #796f84;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+  .run-full {
+    width: 100%;
+    margin-top: 22px;
+  }
   .goals-scroll {
     height: 100%;
     overflow-y: auto;
@@ -1557,6 +1834,16 @@
   }
   .page.form-page {
     max-width: 660px;
+  }
+  @media (max-width: 700px) {
+    .run-drawer {
+      top: 12vh;
+      width: 100%;
+      padding: 18px;
+      border-top: 1px solid #ddd4ef;
+      border-left: 0;
+      border-radius: 18px 18px 0 0;
+    }
   }
   .mono {
     font-family: "JetBrains Mono", monospace;

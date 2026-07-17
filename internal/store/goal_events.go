@@ -15,9 +15,9 @@ func (s *Store) AppendGoalEvent(ctx context.Context, ev GoalEvent) (GoalEvent, e
 		ev.Payload = "{}"
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO goal_events
-		(goal_id, session_id, kind, body, payload_json)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?)`,
-		ev.GoalID, ev.SessionID, ev.Kind, ev.Body, ev.Payload,
+		(goal_id, session_id, run_id, kind, body, payload_json)
+		VALUES (?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)`,
+		ev.GoalID, ev.SessionID, ev.RunID, ev.Kind, ev.Body, ev.Payload,
 	)
 	if err != nil {
 		return GoalEvent{}, fmt.Errorf("append goal event for %q: %w", ev.GoalID, err)
@@ -49,9 +49,9 @@ func (s *Store) AppendGoalEventWithMetrics(ctx context.Context, ev GoalEvent, me
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx, `INSERT INTO goal_events
-		(goal_id, session_id, kind, body, payload_json)
-		VALUES (?, NULLIF(?, ''), ?, ?, ?)`,
-		ev.GoalID, ev.SessionID, ev.Kind, ev.Body, ev.Payload,
+		(goal_id, session_id, run_id, kind, body, payload_json)
+		VALUES (?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)`,
+		ev.GoalID, ev.SessionID, ev.RunID, ev.Kind, ev.Body, ev.Payload,
 	)
 	if err != nil {
 		return GoalEvent{}, fmt.Errorf("append goal event for %q: %w", ev.GoalID, err)
@@ -212,7 +212,7 @@ func (s *Store) ListGoalEventsByKind(ctx context.Context, goalID string, kind Go
 	return events, rows.Err()
 }
 
-const goalEventSelect = `SELECT id, goal_id, COALESCE(session_id, ''), kind, body, payload_json, created_at FROM goal_events`
+const goalEventSelect = `SELECT id, goal_id, COALESCE(session_id, ''), COALESCE(run_id, ''), kind, body, payload_json, created_at FROM goal_events`
 
 func scanGoalEvent(row scanner) (GoalEvent, error) {
 	var ev GoalEvent
@@ -220,6 +220,7 @@ func scanGoalEvent(row scanner) (GoalEvent, error) {
 		&ev.ID,
 		&ev.GoalID,
 		&ev.SessionID,
+		&ev.RunID,
 		&ev.Kind,
 		&ev.Body,
 		&ev.Payload,

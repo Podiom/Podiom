@@ -323,7 +323,10 @@ type Goal struct {
 	Profile     string
 	Model       string
 	Effort      string
-	Status      GoalStatus
+	// LeadSessionID is the continuing planning/review conversation for the
+	// current lead agent. It is replaced only for an explicit lead handoff.
+	LeadSessionID string
+	Status        GoalStatus
 	// NextReviewAt is when the scheduler should fire the next unattended review.
 	// Empty when paused/terminal or when automatic reviews are disabled.
 	NextReviewAt string
@@ -390,12 +393,51 @@ type GoalEvent struct {
 	ID        int64
 	GoalID    string
 	SessionID string
+	RunID     string
 	Kind      GoalEventKind
 	// Body is human-readable markdown.
 	Body string
 	// Payload is kind-specific JSON (metric deltas, request id, old/new status…).
 	Payload   string
 	CreatedAt string
+}
+
+// GoalRunKind identifies the execution shape behind a goal activity.
+type GoalRunKind string
+
+const (
+	GoalRunPlanning     GoalRunKind = "planning"
+	GoalRunReview       GoalRunKind = "review"
+	GoalRunTask         GoalRunKind = "task"
+	GoalRunSchedule     GoalRunKind = "schedule"
+	GoalRunConversation GoalRunKind = "conversation"
+)
+
+// GoalRunStatus is the durable lifecycle of one goal-linked turn.
+type GoalRunStatus string
+
+const (
+	GoalRunRunning     GoalRunStatus = "running"
+	GoalRunSucceeded   GoalRunStatus = "succeeded"
+	GoalRunFailed      GoalRunStatus = "failed"
+	GoalRunRateLimited GoalRunStatus = "rate_limited"
+	GoalRunInterrupted GoalRunStatus = "interrupted"
+)
+
+// GoalRun binds a goal activity to an exact turn within a durable session.
+type GoalRun struct {
+	ID            string
+	GoalID        string
+	SessionID     string
+	TurnMessageID int64
+	Kind          GoalRunKind
+	AgentName     string
+	SourceID      string
+	Status        GoalRunStatus
+	Legacy        bool
+	Error         string
+	StartedAt     string
+	FinishedAt    string
 }
 
 // GoalRateLimitStatus is the lifecycle state of a goal-level rate-limit block.
@@ -424,6 +466,7 @@ type GoalRateLimitBlock struct {
 	ID               string
 	GoalID           string
 	SessionID        string
+	RunID            string
 	Phase            GoalRateLimitPhase
 	Provider         config.Provider
 	Profile          string

@@ -663,6 +663,150 @@ var migrations = []migration{
 			SELECT RAISE(ABORT, 'goal events are append-only');
 		END;`,
 	},
+	{
+		version: 24,
+		name:    "goal_runs_and_lead_session",
+		sql: `ALTER TABLE goals ADD COLUMN lead_session_id TEXT NOT NULL DEFAULT '';
+
+		CREATE TABLE goal_runs (
+			id              TEXT PRIMARY KEY,
+			goal_id         TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id      TEXT NOT NULL DEFAULT '',
+			turn_message_id INTEGER,
+			kind            TEXT NOT NULL CHECK (kind IN ('planning', 'review', 'task', 'schedule', 'conversation')),
+			agent_name      TEXT NOT NULL DEFAULT '',
+			source_id       TEXT NOT NULL DEFAULT '',
+			status          TEXT NOT NULL DEFAULT 'running'
+				CHECK (status IN ('running', 'succeeded', 'failed', 'rate_limited', 'interrupted')),
+			legacy          INTEGER NOT NULL DEFAULT 0,
+			error           TEXT NOT NULL DEFAULT '',
+			started_at      TEXT NOT NULL DEFAULT (datetime('now')),
+			finished_at     TEXT
+		);
+
+		CREATE INDEX idx_goal_runs_goal ON goal_runs(goal_id, started_at DESC);
+		CREATE INDEX idx_goal_runs_session ON goal_runs(session_id, started_at DESC);
+		CREATE UNIQUE INDEX idx_goal_runs_running_session ON goal_runs(session_id)
+			WHERE status = 'running' AND session_id != '';
+		CREATE UNIQUE INDEX idx_goal_runs_running_lead ON goal_runs(goal_id)
+			WHERE status = 'running' AND kind IN ('planning', 'review');
+
+		INSERT INTO goal_runs
+			(id, goal_id, session_id, turn_message_id, kind, agent_name, source_id, status, legacy, started_at, finished_at)
+		SELECT
+			'legacy:' || ge.goal_id || ':' || ge.session_id,
+			ge.goal_id,
+			ge.session_id,
+			CASE WHEN (SELECT COUNT(*) FROM messages m WHERE m.session_id = ge.session_id AND m.role = 'user') = 1
+				THEN (SELECT MIN(m.id) FROM messages m WHERE m.session_id = ge.session_id AND m.role = 'user')
+				ELSE NULL END,
+			CASE
+				WHEN MAX(CASE WHEN ge.kind = 'planning_started' THEN 1 ELSE 0 END) = 1 THEN 'planning'
+				WHEN MAX(CASE WHEN ge.kind = 'review_started' THEN 1 ELSE 0 END) = 1 THEN 'review'
+				WHEN COALESCE(s.origin, '') = 'roadmap' THEN 'task'
+				WHEN COALESCE(s.origin, '') = 'schedule' THEN 'schedule'
+				ELSE 'conversation'
+			END,
+			COALESCE(s.agent_name, ''),
+			CASE WHEN COALESCE(s.origin, '') = 'roadmap' THEN COALESCE(s.task_id, '')
+				WHEN COALESCE(s.origin, '') = 'schedule' THEN COALESCE(s.schedule_id, '')
+				ELSE '' END,
+			CASE WHEN MAX(CASE WHEN ge.kind = 'rate_limited' THEN 1 ELSE 0 END) = 1 THEN 'rate_limited' ELSE 'succeeded' END,
+			1,
+			MIN(ge.created_at),
+			MAX(ge.created_at)
+		FROM goal_events ge
+		LEFT JOIN sessions s ON s.id = ge.session_id
+		WHERE COALESCE(ge.session_id, '') != ''
+			AND ge.kind NOT IN ('created', 'user_feedback', 'access_decided', 'status_change', 'rate_limit_resolved', 'question_answered')
+		GROUP BY ge.goal_id, ge.session_id;
+
+		DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TABLE goal_events_new (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			run_id       TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'user_feedback', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed', 'rate_limited', 'rate_limit_resolved', 'tool_use',
+				'question_asked', 'question_answered')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		INSERT INTO goal_events_new (id, goal_id, session_id, run_id, kind, body, payload_json, created_at)
+		SELECT id, goal_id, session_id,
+			CASE WHEN COALESCE(session_id, '') != ''
+				AND kind NOT IN ('created', 'user_feedback', 'access_decided', 'status_change', 'rate_limit_resolved', 'question_answered')
+				THEN 'legacy:' || goal_id || ':' || session_id ELSE NULL END,
+			kind, body, payload_json, created_at
+		FROM goal_events;
+
+		DROP TABLE goal_events;
+		ALTER TABLE goal_events_new RENAME TO goal_events;
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+		CREATE INDEX idx_goal_events_run ON goal_events(run_id, id);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		WHEN NOT (
+			OLD.kind = 'user_feedback'
+			AND NEW.id = OLD.id
+			AND NEW.kind = OLD.kind
+			AND NEW.goal_id = OLD.goal_id
+			AND COALESCE(NEW.session_id, '') = COALESCE(OLD.session_id, '')
+			AND COALESCE(NEW.run_id, '') = COALESCE(OLD.run_id, '')
+			AND NEW.payload_json = OLD.payload_json
+			AND NEW.created_at = OLD.created_at
+		)
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;
+
+		CREATE TABLE goal_rate_limits_new (
+			id                TEXT PRIMARY KEY,
+			goal_id           TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id        TEXT NOT NULL,
+			run_id            TEXT NOT NULL UNIQUE,
+			phase             TEXT NOT NULL CHECK (phase IN ('planning', 'review')),
+			provider          TEXT NOT NULL CHECK (provider IN ('claude', 'codex')),
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			error             TEXT NOT NULL DEFAULT '',
+			status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved')),
+			resolved_provider TEXT NOT NULL DEFAULT '' CHECK (resolved_provider IN ('', 'claude', 'codex')),
+			resolved_profile  TEXT NOT NULL DEFAULT '',
+			resolved_model    TEXT NOT NULL DEFAULT '',
+			resolved_effort   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			resolved_at       TEXT
+		);
+
+		INSERT INTO goal_rate_limits_new
+			(id, goal_id, session_id, run_id, phase, provider, profile, model, effort, error, status,
+			 resolved_provider, resolved_profile, resolved_model, resolved_effort, created_at, resolved_at)
+		SELECT id, goal_id, session_id,
+			COALESCE((SELECT gr.id FROM goal_runs gr WHERE gr.goal_id = goal_rate_limits.goal_id
+				AND gr.session_id = goal_rate_limits.session_id ORDER BY gr.started_at DESC LIMIT 1), 'legacy-rate:' || id),
+			phase, provider, profile, model, effort, error, status, resolved_provider, resolved_profile,
+			resolved_model, resolved_effort, created_at, resolved_at
+		FROM goal_rate_limits;
+
+		DROP TABLE goal_rate_limits;
+		ALTER TABLE goal_rate_limits_new RENAME TO goal_rate_limits;
+		CREATE INDEX idx_goal_rate_limits_goal ON goal_rate_limits(goal_id, created_at DESC);
+		CREATE INDEX idx_goal_rate_limits_status ON goal_rate_limits(status);
+
+		UPDATE goals SET lead_session_id = COALESCE((
+			SELECT s.id FROM sessions s
+			WHERE s.goal_id = goals.id AND s.origin = 'goal' AND s.agent_name = goals.lead_agent
+			ORDER BY s.created_at DESC, s.id DESC LIMIT 1
+		), '');`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

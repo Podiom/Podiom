@@ -74,6 +74,7 @@ func (c *Core) CreateAgentQuestion(ctx context.Context, sessionID string, items 
 		ev, aerr := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 			GoalID:    goal.ID,
 			SessionID: sess.ID,
+			RunID:     c.goalRunForAgentEvent(ctx, goal.ID, sess.ID),
 			Kind:      store.GoalEventQuestionAsked,
 			Body:      agentQuestionSummary(items),
 			Payload:   string(payload),
@@ -103,11 +104,10 @@ func (c *Core) AnswerAgentQuestion(ctx context.Context, id string, answers map[s
 		}
 		payload, _ := json.Marshal(map[string]string{"question_id": q.ID})
 		ev, aerr := c.store.AppendGoalEvent(ctx, store.GoalEvent{
-			GoalID:    q.RefID,
-			SessionID: q.SessionID,
-			Kind:      store.GoalEventQuestionAnswered,
-			Body:      agentAnswerSummary(q),
-			Payload:   string(payload),
+			GoalID:  q.RefID,
+			Kind:    store.GoalEventQuestionAnswered,
+			Body:    agentAnswerSummary(q),
+			Payload: string(payload),
 		})
 		if aerr == nil {
 			res.Event = &ev

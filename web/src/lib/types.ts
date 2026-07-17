@@ -430,6 +430,7 @@ export interface Goal {
   Profile: string;
   Model: string;
   Effort: string;
+  LeadSessionID: string;
   Status: GoalStatus;
   NextReviewAt: string;
   ClosingReport: string;
@@ -465,6 +466,7 @@ export interface GoalEvent {
   ID: number;
   GoalID: string;
   SessionID: string;
+  RunID: string;
   Kind: GoalEventKind;
   Body: string;
   Payload: string;
@@ -498,6 +500,7 @@ export interface GoalRateLimitBlock {
   ID: string;
   GoalID: string;
   SessionID: string;
+  RunID: string;
   Phase: GoalRateLimitPhase;
   Provider: Provider;
   Profile: string;
@@ -511,6 +514,32 @@ export interface GoalRateLimitBlock {
   ResolvedEffort: string;
   CreatedAt: string;
   ResolvedAt: string;
+}
+
+export type GoalRunKind = "planning" | "review" | "task" | "schedule" | "conversation";
+export type GoalRunStatus = "running" | "succeeded" | "failed" | "rate_limited" | "interrupted";
+
+export interface GoalRun {
+  ID: string;
+  GoalID: string;
+  SessionID: string;
+  TurnMessageID: number;
+  Kind: GoalRunKind;
+  AgentName: string;
+  SourceID: string;
+  Status: GoalRunStatus;
+  Legacy: boolean;
+  Error: string;
+  StartedAt: string;
+  FinishedAt: string;
+}
+
+export interface GoalRunDetail {
+  run: GoalRun;
+  session?: Session;
+  messages: Message[];
+  events: GoalEvent[];
+  transcript_available: boolean;
 }
 
 // GoalDetail is the GET /api/goals/<id> response.

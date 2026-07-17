@@ -174,6 +174,12 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, editableFeedbackMigration); err != nil {
 		t.Fatalf("replay v23 editable feedback migration: %v", err)
 	}
+	// v24 adds run provenance after the historical table-rebuild migrations.
+	// Replaying v20 above intentionally recreates that older shape, so restore
+	// the later column before exercising the current store queries.
+	if _, err := db.db.ExecContext(ctx, `ALTER TABLE goal_events ADD COLUMN run_id TEXT`); err != nil {
+		t.Fatalf("restore v24 run_id after replay: %v", err)
+	}
 	events, err = db.ListGoalEvents(ctx, goal.ID, 0, 0)
 	if err != nil {
 		t.Fatalf("list events after v20 replay: %v", err)

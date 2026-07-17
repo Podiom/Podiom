@@ -3,6 +3,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -162,6 +163,9 @@ func New(opts Options) (*Core, error) {
 	}
 	for _, profile := range opts.Profiles {
 		c.profiles[profile.Name] = profile
+	}
+	if err := c.store.InterruptRunningGoalRuns(context.Background()); err != nil {
+		return nil, err
 	}
 	return c, nil
 }

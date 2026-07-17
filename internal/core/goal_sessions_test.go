@@ -108,15 +108,45 @@ func TestGoalFeedbackIsUserOnlyContextForGoalRuns(t *testing.T) {
 		t.Fatalf("feedback changed goal lifecycle: before next=%q after=%+v", before, unchanged)
 	}
 
-	if _, err := c.StartGoalPlanning(ctx, goal.ID); err != nil {
+	planningSession, err := c.StartGoalPlanning(ctx, goal.ID)
+	if err != nil {
 		t.Fatalf("start planning: %v", err)
 	}
 	if len(fake.Requests) == 0 || !strings.Contains(fake.Requests[len(fake.Requests)-1].Message, "Bias toward staged rollout.") {
 		t.Fatalf("planning prompt did not include feedback: requests=%+v", fake.Requests)
 	}
 
-	if _, err := c.RunGoalReview(ctx, goal.ID); err != nil {
+	reviewSession, err := c.RunGoalReview(ctx, goal.ID)
+	if err != nil {
 		t.Fatalf("run review: %v", err)
+	}
+	if reviewSession.ID != planningSession.ID {
+		t.Fatalf("review session = %q, want continuing lead session %q", reviewSession.ID, planningSession.ID)
+	}
+	events, err := c.ListGoalEvents(ctx, goal.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	var planningRun, reviewRun string
+	for _, event := range events {
+		switch event.Kind {
+		case store.GoalEventPlanningStarted:
+			planningRun = event.RunID
+		case store.GoalEventReviewStarted:
+			reviewRun = event.RunID
+		}
+	}
+	if planningRun == "" || reviewRun == "" || planningRun == reviewRun {
+		t.Fatalf("planning/review run ids = %q/%q, want distinct non-empty ids", planningRun, reviewRun)
+	}
+	for _, runID := range []string{planningRun, reviewRun} {
+		run, sess, messages, _, err := c.GetGoalRunDetail(ctx, goal.ID, runID)
+		if err != nil {
+			t.Fatalf("get run %q: %v", runID, err)
+		}
+		if run.SessionID != planningSession.ID || sess.ID != planningSession.ID || len(messages) < 2 {
+			t.Fatalf("run detail = run %+v session %+v messages %d", run, sess, len(messages))
+		}
 	}
 	if len(fake.Requests) < 2 || !strings.Contains(fake.Requests[len(fake.Requests)-1].Message, "Recent user feedback") ||
 		!strings.Contains(fake.Requests[len(fake.Requests)-1].Message, "Bias toward staged rollout.") {
@@ -220,5 +250,33 @@ func TestReconcileGoalRateLimitsBackfillsOldSessionOnce(t *testing.T) {
 	}
 	if len(created) != 0 {
 		t.Fatalf("second reconcile created duplicates: %+v", created)
+	}
+}
+
+func TestGoalQuestionAnswerIsHumanActivityWithoutProducerSession(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Decide", LeadAgent: "lead"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	sess, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "lead", Origin: store.OriginGoal, GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	asked, err := c.CreateAgentQuestion(ctx, sess.ID, []store.AgentQuestionItem{{ID: "choice", Question: "Which path?", Options: []store.AgentQuestionOption{{Label: "A"}, {Label: "B"}}}})
+	if err != nil {
+		t.Fatalf("ask question: %v", err)
+	}
+	answered, err := c.AnswerAgentQuestion(ctx, asked.Question.ID, map[string][]string{"choice": {"A"}})
+	if err != nil {
+		t.Fatalf("answer question: %v", err)
+	}
+	if answered.Event == nil || answered.Event.SessionID != "" || answered.Event.RunID != "" {
+		t.Fatalf("question answer event = %+v, want human activity without producer provenance", answered.Event)
 	}
 }

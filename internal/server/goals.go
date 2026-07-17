@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -100,6 +101,14 @@ type GoalDetail struct {
 	RateLimitBlocks []store.GoalRateLimitBlock `json:"rate_limit_blocks"`
 	PendingQuestion *store.AgentQuestion       `json:"pending_question,omitempty"`
 	Usage           *tokenmeter.Estimate       `json:"usage,omitempty"`
+}
+
+type goalRunDetail struct {
+	Run                 store.GoalRun     `json:"run"`
+	Session             *store.Session    `json:"session,omitempty"`
+	Messages            []store.Message   `json:"messages"`
+	Events              []store.GoalEvent `json:"events"`
+	TranscriptAvailable bool              `json:"transcript_available"`
 }
 
 // goalListItem is a goal in the list response with its rolled-up usage estimate.
@@ -220,8 +229,13 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/goals/")
-	id, action, _ := strings.Cut(rest, "/")
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/goals/"), "/")
+	parts := strings.Split(rest, "/")
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
 	if id == "" {
 		http.Error(w, "goal id is required", http.StatusBadRequest)
 		return
@@ -234,6 +248,12 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 		s.handleGoalEvents(w, r, id)
 	case "feedback":
 		s.handleGoalFeedback(w, r, id)
+	case "runs":
+		if len(parts) != 3 || parts[2] == "" {
+			http.Error(w, "goal run id is required", http.StatusBadRequest)
+			return
+		}
+		s.handleGoalRun(w, r, id, parts[2])
 	case "propose-completion":
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -268,6 +288,13 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "only an active goal can be reviewed", http.StatusBadRequest)
 			return
 		}
+		if running, err := s.core.RunningGoalRun(r.Context(), goal.ID); err != nil {
+			writeJSON(w, nil, err)
+			return
+		} else if running != nil {
+			writeJSON(w, map[string]string{"status": "already_running", "goal_id": goal.ID, "run_id": running.ID}, nil)
+			return
+		}
 		go func(goalID string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
@@ -281,6 +308,33 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "unknown goal action", http.StatusNotFound)
 	}
+}
+
+func (s *Server) handleGoalRun(w http.ResponseWriter, r *http.Request, goalID, runID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	run, sess, messages, events, err := s.core.GetGoalRunDetail(r.Context(), goalID, runID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "goal run not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, nil, err)
+		return
+	}
+	if messages == nil {
+		messages = []store.Message{}
+	}
+	if events == nil {
+		events = []store.GoalEvent{}
+	}
+	var session *store.Session
+	if sess.ID != "" {
+		session = &sess
+	}
+	writeJSON(w, goalRunDetail{Run: run, Session: session, Messages: messages, Events: events, TranscriptAvailable: session != nil}, nil)
 }
 
 func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id string) {

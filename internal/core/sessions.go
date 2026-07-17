@@ -347,6 +347,9 @@ type TurnOptions struct {
 	// AllowedTools select the provider's preapproved policy (§7.7).
 	Unattended   bool
 	AllowedTools []string
+	// GoalRunID binds this turn to a run created by the goal planner/reviewer.
+	// Goal-linked task and schedule turns omit it and are assigned automatically.
+	GoalRunID string
 }
 
 // TurnEvent is streamed by core while an adapter turn is running.
@@ -395,8 +398,29 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 	if err != nil {
 		return nil, err
 	}
+	var goalRun store.GoalRun
+	if sess.GoalID != "" {
+		if opts.GoalRunID != "" {
+			goalRun, err = c.store.GetGoalRun(ctx, opts.GoalRunID)
+			if err != nil || goalRun.GoalID != sess.GoalID || goalRun.SessionID != sess.ID || goalRun.Status != store.GoalRunRunning {
+				if err == nil {
+					err = fmt.Errorf("goal run %q does not belong to session %q", opts.GoalRunID, sess.ID)
+				}
+				return nil, err
+			}
+		} else {
+			goalRun, err = c.beginGoalRun(ctx, sess, "", "")
+			if err != nil {
+				return nil, err
+			}
+			opts.GoalRunID = goalRun.ID
+		}
+	}
 	history, err := c.store.ListMessages(ctx, sessionID)
 	if err != nil {
+		if goalRun.ID != "" {
+			_, _ = c.store.FinishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
+		}
 		return nil, err
 	}
 	userMessages, err := c.store.AppendMessages(ctx, sessionID, []store.Message{{
@@ -404,11 +428,32 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 		Content: userMessage,
 	}})
 	if err != nil {
+		if goalRun.ID != "" {
+			_, _ = c.store.FinishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
+		}
 		return nil, err
+	}
+	if goalRun.ID != "" {
+		goalRun, err = c.store.SetGoalRunTurn(ctx, goalRun.ID, userMessages[0].ID)
+		if err != nil {
+			_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), goalRun.ID, store.GoalRunFailed, err.Error())
+			return nil, err
+		}
 	}
 	streamOut := make(chan TurnEvent, 16)
 	go func() {
 		defer close(streamOut)
+		runStatus := store.GoalRunFailed
+		runError := "Run ended before completion."
+		if goalRun.ID != "" {
+			defer func() {
+				if ctx.Err() != nil && runStatus == store.GoalRunFailed {
+					runStatus = store.GoalRunInterrupted
+					runError = ctx.Err().Error()
+				}
+				_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), goalRun.ID, runStatus, runError)
+			}()
+		}
 		for _, msg := range userMessages {
 			msg := msg
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "message_stored", Message: &msg}) {
@@ -477,7 +522,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.GoalID, current.Provider, current.Profile, current.ProviderHandle, events)
+			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.GoalID, goalRun.ID, current.Provider, current.Profile, current.ProviderHandle, events)
 			if !ok {
 				runLog.Info("turn aborted", "provider", string(current.Provider))
 				return
@@ -502,6 +547,8 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 					}
 					runLog.Warn("turn failed", "stage", "fallback", "from", targetLabel(current.Provider, current.Profile), "error", err)
 					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, reportErr.Error())
+					runStatus = store.GoalRunRateLimited
+					runError = reportErr.Error()
 					return
 				}
 				runLog.Info("turn fallback",
@@ -516,6 +563,8 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}
 			duration := time.Since(startedAt)
 			if output.assistant == "" && output.reasoning == "" {
+				runStatus = store.GoalRunSucceeded
+				runError = ""
 				runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", 0, "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
 				return
 			}
@@ -551,6 +600,8 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				}
 			}
 			_ = sendTurnEvent(ctx, streamOut, TurnEvent{Kind: adapter.EventTurnDone})
+			runStatus = store.GoalRunSucceeded
+			runError = ""
 			return
 		}
 	}()
@@ -784,7 +835,7 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 	return assigned, cat.Servers, nil
 }
 
-func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
+func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID, goalRunID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
 	var assistant, reasoning strings.Builder
 	currentProviderHandle := providerHandle
 	for event := range events {
@@ -899,7 +950,7 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				// the audit counterweight to yolo. Best effort: a failed append is
 				// logged, never aborting the turn.
 				if goalID != "" {
-					c.appendGoalToolUseEvent(ctx, goalID, sessionID, *event.ToolUse)
+					c.appendGoalToolUseEvent(ctx, goalID, sessionID, goalRunID, *event.ToolUse)
 				}
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ToolUse: event.ToolUse}) {
 					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false

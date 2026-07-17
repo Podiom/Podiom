@@ -79,6 +79,8 @@
   const activeTurns = $derived(live.activeTurns);
   let activeSession = $state<Session | null>(null);
   let projectName = $state<string>("");
+  let historyLoadToken = 0;
+  let explicitTargetSeen = false;
 
   // Session delete confirmation.
   let pendingDelete = $state<Session | null>(null);
@@ -307,6 +309,7 @@
   }
 
   onMount(() => {
+	if (target) explicitTargetSeen = true;
     const mq = window.matchMedia("(max-width: 768px)");
     const syncPhone = () => {
       isPhone = mq.matches;
@@ -327,7 +330,7 @@
     void loadGoals();
     listProjects().then((p) => (projects = p)).catch(() => {});
     listProfiles().then((p) => (profiles = p)).catch(() => {});
-    restoreLastSession();
+    if (!explicitTargetSeen) restoreLastSession();
     countdown = window.setInterval(updatePermissionRemaining, 1000);
     return () => {
       mq.removeEventListener("change", syncPhone);
@@ -350,6 +353,7 @@
   $effect(() => {
     const t = target;
     if (!t) return;
+    explicitTargetSeen = true;
     onConsumeTarget();
     void openTarget(t);
   });
@@ -369,7 +373,7 @@
   async function openTarget(t: ChatTarget) {
     if (t.sessionId) {
       const session = sessions.find((s) => s.ID === t.sessionId) ?? ({ ID: t.sessionId } as Session);
-      await loadHistory(session);
+	  await loadHistory(session, true);
     } else if (t.agentName) {
       selectedAgent = t.agentName;
       newSession();
@@ -996,11 +1000,18 @@
     }
   }
 
-  async function loadHistory(session: Session) {
+  async function loadHistory(session: Session, explicit = false) {
+	const loadToken = ++historyLoadToken;
     error = null;
     permissionYoloConfirmOpen = false;
+	if (explicit) {
+	  activeSession = null;
+	  messages = [];
+	  projectName = "";
+	}
     try {
       const detail = await getSession(session.ID);
+	  if (loadToken !== historyLoadToken) return;
       activeSession = detail.session;
       selectedAgent = detail.session.AgentName;
       live.setSessionUsage(detail.session.ID, detail.usage);
@@ -1022,7 +1033,7 @@
       void scrollMessagesToBottom("auto");
       if (isPhone) sessOpen = false;
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+	  if (loadToken === historyLoadToken) error = e instanceof Error ? e.message : String(e);
     }
   }
 

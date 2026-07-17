@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateGoalRateLimitBlock inserts a pending goal rate-limit block. SessionID
-// is unique so reconciliation/backfill can safely call this more than once for
-// the same failed session; the existing row is returned on conflict.
+// CreateGoalRateLimitBlock inserts a pending goal rate-limit block. RunID is
+// unique so reconciliation can safely call this more than once for the same
+// failed run even when later reviews reuse its session.
 func (s *Store) CreateGoalRateLimitBlock(ctx context.Context, block GoalRateLimitBlock) (GoalRateLimitBlock, error) {
 	if block.ID == "" {
 		block.ID = uuid.NewString()
@@ -20,11 +20,14 @@ func (s *Store) CreateGoalRateLimitBlock(ctx context.Context, block GoalRateLimi
 	if block.Status == "" {
 		block.Status = GoalRateLimitPending
 	}
+	if block.RunID == "" {
+		block.RunID = "legacy-session:" + block.SessionID
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO goal_rate_limits
-		(id, goal_id, session_id, phase, provider, profile, model, effort, error, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(session_id) DO NOTHING`,
-		block.ID, block.GoalID, block.SessionID, block.Phase, block.Provider, block.Profile,
+		(id, goal_id, session_id, run_id, phase, provider, profile, model, effort, error, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(run_id) DO NOTHING`,
+		block.ID, block.GoalID, block.SessionID, block.RunID, block.Phase, block.Provider, block.Profile,
 		block.Model, block.Effort, block.Error, block.Status)
 	if err != nil {
 		return GoalRateLimitBlock{}, fmt.Errorf("create goal rate limit for %q: %w", block.GoalID, err)
@@ -36,7 +39,7 @@ func (s *Store) CreateGoalRateLimitBlock(ctx context.Context, block GoalRateLimi
 	if !errors.Is(err, ErrNotFound) {
 		return GoalRateLimitBlock{}, err
 	}
-	return s.GetGoalRateLimitBlockBySession(ctx, block.SessionID)
+	return s.GetGoalRateLimitBlockByRun(ctx, block.RunID)
 }
 
 // GetGoalRateLimitBlock fetches one rate-limit block by ID.
@@ -54,11 +57,23 @@ func (s *Store) GetGoalRateLimitBlock(ctx context.Context, id string) (GoalRateL
 
 // GetGoalRateLimitBlockBySession fetches the block created for a failed session.
 func (s *Store) GetGoalRateLimitBlockBySession(ctx context.Context, sessionID string) (GoalRateLimitBlock, error) {
-	row := s.db.QueryRowContext(ctx, goalRateLimitSelect+` WHERE session_id = ?`, sessionID)
+	row := s.db.QueryRowContext(ctx, goalRateLimitSelect+` WHERE session_id = ? ORDER BY created_at DESC LIMIT 1`, sessionID)
 	block, err := scanGoalRateLimitBlock(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return GoalRateLimitBlock{}, fmt.Errorf("goal rate limit for session %q: %w", sessionID, ErrNotFound)
+		}
+		return GoalRateLimitBlock{}, err
+	}
+	return block, nil
+}
+
+func (s *Store) GetGoalRateLimitBlockByRun(ctx context.Context, runID string) (GoalRateLimitBlock, error) {
+	row := s.db.QueryRowContext(ctx, goalRateLimitSelect+` WHERE run_id = ?`, runID)
+	block, err := scanGoalRateLimitBlock(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return GoalRateLimitBlock{}, fmt.Errorf("goal rate limit for run %q: %w", runID, ErrNotFound)
 		}
 		return GoalRateLimitBlock{}, err
 	}
@@ -121,7 +136,7 @@ func (s *Store) ResolveGoalRateLimitBlock(ctx context.Context, id string, provid
 	return s.GetGoalRateLimitBlock(ctx, id)
 }
 
-const goalRateLimitSelect = `SELECT id, goal_id, session_id, phase, provider, profile, model, effort, error,
+const goalRateLimitSelect = `SELECT id, goal_id, session_id, run_id, phase, provider, profile, model, effort, error,
 	status, resolved_provider, resolved_profile, resolved_model, resolved_effort, created_at, COALESCE(resolved_at, '')
 	FROM goal_rate_limits`
 
@@ -143,6 +158,7 @@ func scanGoalRateLimitBlock(row scanner) (GoalRateLimitBlock, error) {
 		&block.ID,
 		&block.GoalID,
 		&block.SessionID,
+		&block.RunID,
 		&block.Phase,
 		&block.Provider,
 		&block.Profile,

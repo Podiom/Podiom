@@ -236,6 +236,22 @@ func (s *Store) UpdateSessionMetadata(ctx context.Context, id, name, description
 	return s.GetSession(ctx, id)
 }
 
+// UpdateSessionGoalBinding changes the lead conversation's agent/project
+// binding and clears its provider handle so the next turn starts in the right
+// workspace. Existing canonical messages remain intact.
+func (s *Store) UpdateSessionGoalBinding(ctx context.Context, id, agentName, projectID string) (Session, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET agent_name = ?, project_id = ?, provider_handle = '', context_tokens = 0, updated_at = datetime('now')
+		WHERE id = ?`, agentName, projectID, id)
+	if err != nil {
+		return Session{}, fmt.Errorf("update session %q goal binding: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
+	}
+	return s.GetSession(ctx, id)
+}
+
 // UpdateSessionProviderHandle stores the latest provider-owned resume handle.
 func (s *Store) UpdateSessionProviderHandle(ctx context.Context, id, handle string) (Session, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE sessions

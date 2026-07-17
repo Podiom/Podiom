@@ -82,6 +82,9 @@ func TestGoalRunRecordsToolUseEvents(t *testing.T) {
 	if len(tools) != 2 {
 		t.Fatalf("tool_use events = %d, want 2", len(tools))
 	}
+	if tools[0].RunID == "" || tools[1].RunID != tools[0].RunID {
+		t.Fatalf("tool events should share one exact run id: %+v", tools)
+	}
 	// Newest first: Read (read-only), then Bash (side-effecting).
 	var readPayload, bashPayload map[string]any
 	if err := json.Unmarshal([]byte(tools[0].Payload), &readPayload); err != nil {

@@ -14,6 +14,7 @@ import type {
   GoalCreateRequest,
   GoalDetail,
   GoalEvent,
+  GoalRunDetail,
   GoalPatchRequest,
   GoalRateLimitBlock,
   AgentQuestion,
@@ -862,6 +863,10 @@ export async function createGoal(body: GoalCreateRequest): Promise<Goal> {
 // getGoal returns the goal plus its recent timeline and access requests.
 export async function getGoal(id: string): Promise<GoalDetail> {
   return asJSON(await request(`/api/goals/${id}`));
+}
+
+export async function getGoalRun(goalId: string, runId: string): Promise<GoalRunDetail> {
+  return asJSON(await request(`/api/goals/${encodeURIComponent(goalId)}/runs/${encodeURIComponent(runId)}`));
 }
 
 export async function patchGoal(id: string, patch: GoalPatchRequest): Promise<Goal> {

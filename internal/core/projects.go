@@ -654,6 +654,11 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 	if err != nil {
 		return store.Session{}, err
 	}
+	if task.GoalID != "" {
+		if named, nameErr := c.store.UpdateSessionMetadata(ctx, sess.ID, "Task: "+task.Title, "Goal task execution.", false); nameErr == nil {
+			sess = named
+		}
+	}
 	permission := "inherited"
 	if goalLinked {
 		permission = "yolo"

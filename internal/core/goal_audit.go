@@ -44,7 +44,7 @@ var goalToolContentFields = []string{"content", "new_string", "old_string", "new
 // timeline. It runs on a detached, short-lived context (like appendFinalMessages)
 // so a client that disconnects mid-turn never loses the audit row, and it never
 // returns an error to the caller: a failed append is logged, not fatal.
-func (c *Core) appendGoalToolUseEvent(ctx context.Context, goalID, sessionID string, tu adapter.ToolUse) {
+func (c *Core) appendGoalToolUseEvent(ctx context.Context, goalID, sessionID, runID string, tu adapter.ToolUse) {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 
@@ -71,6 +71,7 @@ func (c *Core) appendGoalToolUseEvent(ctx context.Context, goalID, sessionID str
 	ev, err := c.store.AppendGoalEvent(writeCtx, store.GoalEvent{
 		GoalID:    goalID,
 		SessionID: sessionID,
+		RunID:     runID,
 		Kind:      store.GoalEventToolUse,
 		Body:      body,
 		Payload:   string(payload),

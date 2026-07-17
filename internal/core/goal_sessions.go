@@ -174,35 +174,40 @@ func writeAnsweredQuestions(b *strings.Builder, answers []store.AgentQuestion) {
 // on the goal timeline (EventToolUse → goal_events) as the audit counterweight.
 func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.GoalEventKind, prompt string) (store.Session, error) {
 	phase := goalRateLimitPhase(kind)
-	sess, err := c.CreateSession(ctx, CreateSessionRequest{
-		AgentName:      goal.LeadAgent,
-		Origin:         store.OriginGoal,
-		Provider:       goal.Provider,
-		Profile:        goal.Profile,
-		Model:          goal.Model,
-		Effort:         goal.Effort,
-		PermissionMode: config.PermissionYolo,
-		GoalID:         goal.ID,
-		ProjectID:      goal.ProjectID,
-	})
+	sess, goal, err := c.ensureGoalLeadSession(ctx, goal)
 	if err != nil {
 		return store.Session{}, err
+	}
+	if kind == store.GoalEventReviewStarted {
+		sess = c.compactGoalSessionIfNeeded(ctx, sess)
+	}
+	runKind := store.GoalRunReview
+	if kind == store.GoalEventPlanningStarted {
+		runKind = store.GoalRunPlanning
+	}
+	run, err := c.beginGoalRun(ctx, sess, runKind, "")
+	if err != nil {
+		return sess, fmt.Errorf("goal already has an active run: %w", err)
 	}
 	payload, _ := json.Marshal(map[string]string{"session_id": sess.ID})
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: sess.ID,
+		RunID:     run.ID,
 		Kind:      kind,
 		Payload:   string(payload),
 	}); err != nil {
+		_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
 		return sess, err
 	}
 
 	events, err := c.StreamTurn(ctx, sess.ID, prompt, TurnOptions{
 		PermissionTurnID: sess.ID,
 		Unattended:       true,
+		GoalRunID:        run.ID,
 	})
 	if err != nil {
+		_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
 		return sess, err
 	}
 	var turnErr string
@@ -213,13 +218,97 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 	}
 	if turnErr != "" {
 		if IsRateLimitErrorMessage(turnErr) {
-			if _, err := c.ensureGoalRateLimitBlock(ctx, goal, sess, phase, turnErr); err != nil {
+			if _, err := c.ensureGoalRateLimitBlock(ctx, goal, sess, run.ID, phase, turnErr); err != nil {
 				c.log.Warn("goal rate-limit block failed", "event", "goal", "goal", goal.ID, "session", sess.ID, "err", err)
 			}
 		}
 		return sess, &ScheduledRunError{Message: turnErr}
 	}
 	return sess, nil
+}
+
+// ensureGoalLeadSession returns the single continuing planning/review
+// conversation for the current lead. An agent handoff creates a replacement;
+// project/target changes safely rebind the existing canonical conversation.
+func (c *Core) ensureGoalLeadSession(ctx context.Context, goal store.Goal) (store.Session, store.Goal, error) {
+	var sess store.Session
+	if goal.LeadSessionID != "" {
+		candidate, err := c.store.GetSession(ctx, goal.LeadSessionID)
+		if err == nil && candidate.Origin == store.OriginGoal && candidate.GoalID == goal.ID && candidate.AgentName == goal.LeadAgent {
+			sess = candidate
+		}
+	}
+	if sess.ID == "" {
+		created, err := c.CreateSession(ctx, CreateSessionRequest{
+			AgentName:      goal.LeadAgent,
+			Origin:         store.OriginGoal,
+			Provider:       goal.Provider,
+			Profile:        goal.Profile,
+			Model:          goal.Model,
+			Effort:         goal.Effort,
+			PermissionMode: config.PermissionYolo,
+			GoalID:         goal.ID,
+			ProjectID:      goal.ProjectID,
+		})
+		if err != nil {
+			return store.Session{}, goal, err
+		}
+		sess, _ = c.store.UpdateSessionMetadata(ctx, created.ID, "Goal: "+goal.Title, "Planning and review conversation for this goal.", false)
+		if sess.ID == "" {
+			sess = created
+		}
+		goal.LeadSessionID = sess.ID
+		updated, err := c.store.UpdateGoal(ctx, goal)
+		if err != nil {
+			return store.Session{}, goal, err
+		}
+		goal = updated
+	}
+	if sess.ProjectID != goal.ProjectID {
+		updated, err := c.store.UpdateSessionGoalBinding(ctx, sess.ID, sess.AgentName, goal.ProjectID)
+		if err != nil {
+			return store.Session{}, goal, err
+		}
+		sess = updated
+	}
+	if sess.Name != "Goal: "+goal.Title {
+		if updated, err := c.store.UpdateSessionMetadata(ctx, sess.ID, "Goal: "+goal.Title, "Planning and review conversation for this goal.", false); err == nil {
+			sess = updated
+		}
+	}
+	agent, err := c.store.GetAgent(ctx, goal.LeadAgent)
+	if err != nil {
+		return store.Session{}, goal, err
+	}
+	target, err := c.resolveRunTarget(agent, goalRunTarget(goal))
+	if err != nil {
+		return store.Session{}, goal, err
+	}
+	if sess.Provider != target.Provider || sess.Profile != target.Profile || sess.Model != target.Model || sess.Effort != target.Effort || sess.PermissionMode != config.PermissionYolo {
+		handle := sess.ProviderHandle
+		if sess.Provider != target.Provider || sess.Profile != target.Profile {
+			handle = ""
+		}
+		sess, err = c.store.UpdateSessionRuntime(ctx, sess.ID, target.Provider, target.Profile, target.Model, target.Effort, config.PermissionYolo, handle)
+		if err != nil {
+			return store.Session{}, goal, err
+		}
+	}
+	return sess, goal, nil
+}
+
+func (c *Core) compactGoalSessionIfNeeded(ctx context.Context, sess store.Session) store.Session {
+	if sess.ContextLimit <= 0 || sess.ContextTokens*100 < sess.ContextLimit*80 {
+		return sess
+	}
+	updated, err := c.CompactSession(ctx, sess.ID)
+	if err != nil {
+		if !errors.Is(err, ErrNothingToCompact) {
+			c.log.Warn("goal session auto-compaction failed", "event", "goal", "goal", sess.GoalID, "session", sess.ID, "err", err)
+		}
+		return sess
+	}
+	return updated
 }
 
 func goalRateLimitPhase(kind store.GoalEventKind) store.GoalRateLimitPhase {
@@ -229,8 +318,8 @@ func goalRateLimitPhase(kind store.GoalEventKind) store.GoalRateLimitPhase {
 	return store.GoalRateLimitReview
 }
 
-func (c *Core) ensureGoalRateLimitBlock(ctx context.Context, goal store.Goal, sess store.Session, phase store.GoalRateLimitPhase, message string) (store.GoalRateLimitBlock, error) {
-	if existing, err := c.store.GetGoalRateLimitBlockBySession(ctx, sess.ID); err == nil {
+func (c *Core) ensureGoalRateLimitBlock(ctx context.Context, goal store.Goal, sess store.Session, runID string, phase store.GoalRateLimitPhase, message string) (store.GoalRateLimitBlock, error) {
+	if existing, err := c.store.GetGoalRateLimitBlockByRun(ctx, runID); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.GoalRateLimitBlock{}, err
@@ -238,6 +327,7 @@ func (c *Core) ensureGoalRateLimitBlock(ctx context.Context, goal store.Goal, se
 	block, err := c.store.CreateGoalRateLimitBlock(ctx, store.GoalRateLimitBlock{
 		GoalID:    goal.ID,
 		SessionID: sess.ID,
+		RunID:     runID,
 		Phase:     phase,
 		Provider:  sess.Provider,
 		Profile:   sess.Profile,
@@ -262,6 +352,7 @@ func (c *Core) ensureGoalRateLimitBlock(ctx context.Context, goal store.Goal, se
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: sess.ID,
+		RunID:     runID,
 		Kind:      store.GoalEventRateLimited,
 		Body:      body,
 		Payload:   string(payload),

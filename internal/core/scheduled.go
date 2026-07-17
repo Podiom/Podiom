@@ -105,6 +105,11 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 	if err != nil {
 		return store.Session{}, err
 	}
+	if req.GoalID != "" {
+		if named, nameErr := c.store.UpdateSessionMetadata(ctx, sess.ID, "Schedule: "+req.ScheduleName, "Goal schedule execution.", false); nameErr == nil {
+			sess = named
+		}
+	}
 
 	events, err := c.StreamTurn(ctx, sess.ID, req.Task, TurnOptions{
 		PermissionTurnID: req.RunID,

@@ -24,8 +24,9 @@ From the **Goals** page in the web UI, a goal has:
 - **Review cadence** — how often the agent reviews the goal unattended
   (e.g. every 24h; floor 15m). Empty disables automatic reviews.
 
-The moment the goal is created, the lead agent runs a **planning session** in
-the background: it decomposes the goal into roadmap tasks and/or schedules
+The moment the goal is created, the lead agent starts a continuing **goal
+conversation** and runs its first **planning turn** in the background: it
+decomposes the goal into roadmap tasks and/or schedules
 (visible on the Roadmap and Schedules pages), records its plan on the goal
 timeline, and files access requests for anything it is missing. You can leave
 immediately.
@@ -61,8 +62,10 @@ every session the agent ran.
 
 Active goals are reviewed unattended on their cadence (driven by the embedded
 scheduler, like scheduled task pickup — see [scheduling.md](scheduling.md)).
-Each review is an ordinary session with `origin = goal`, so you can open its
-full transcript from the timeline. In a review the agent assesses progress
+Planning and reviews share one lead-agent session with `origin = goal`; every
+review is also recorded as its own durable goal run, so the timeline can open
+the exact turn that produced an activity. Delegated roadmap tasks and schedules
+keep their own execution sessions. In a review the agent assesses progress
 against the criteria, adjusts its tasks/schedules, records a progress entry
 with evidence and metric updates, reads your answers to its access requests,
 and proposes completion when everything is met. **Review now** on the goal
@@ -110,12 +113,14 @@ endpoints.
 
 ## The timeline (audit trail)
 
-Every goal has an append-only activity timeline: planning and review sessions,
+Every goal has an append-only activity timeline: planning and review runs,
 your feedback, progress entries with evidence, metric changes (old → new), plan
 changes, access requests and your decisions, status changes, and the completion
-proposal. Each agent-produced entry links to the session that produced it, so
-any claim of progress is one click from its full transcript. Append-only is
-enforced in the database schema, not by convention.
+proposal. Each agent-produced entry links to the exact run that produced it.
+**View run** opens that activity, the other events from the same turn, and only
+that turn's transcript; opening the full continuing conversation remains a
+secondary action. Append-only is enforced in the database schema, not by
+convention.
 
 Because the goal chain runs in yolo mode, the timeline also records a
 `tool_use` entry for **every tool call** the goal, its tasks, and its schedules
@@ -143,6 +148,7 @@ those goals first under **Needs you**.
 - `PATCH /api/goals/<id>` — edit fields; status transitions ride the same body
 - `DELETE /api/goals/<id>`
 - `GET  /api/goals/<id>/events` (`?limit=&before=`) — timeline pagination
+- `GET  /api/goals/<id>/runs/<run-id>` — exact run metadata, events, and bounded transcript
 - `POST /api/goals/<id>/events` — record progress / metric updates (agent tools)
 - `POST /api/goals/<id>/feedback` — add user feedback for the next goal run
 - `PATCH /api/goals/<id>/feedback` — edit feedback by `event_id` until a later planning/review session has read it
