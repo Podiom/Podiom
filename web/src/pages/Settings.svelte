@@ -8,6 +8,7 @@
     modelOptions as capabilityModelOptions,
   } from "../lib/capabilities";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
+  import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import type { PushState } from "../lib/live.svelte";
   import type { Agent, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
   import AboutYou from "./AboutYou.svelte";
@@ -77,7 +78,7 @@
   let npDir = $state("");
 
   // Editable default config + fallback.
-  let provider = $state<Provider>("claude");
+  let provider = $state<Provider>(DEFAULT_PROVIDER);
   let profile = $state(""); // "" = default global login
   let model = $state(""); // "" = provider default
   let effort = $state("medium");
@@ -150,14 +151,12 @@
   }
 
   function pathForProfile(p: ProfileInfo): string {
-    return p.Provider === "codex" ? (p.HomeDir ?? "") : (p.ConfigDir ?? "");
+    return p[providerMeta(p.Provider).profileDir.infoKey] ?? "";
   }
 
   // Profiles selectable for the current default provider (chips).
   const profileChips = $derived(profiles.filter((p) => p.Provider === provider).map((p) => p.Name));
-  const npDirPh = $derived(
-    provider === "codex" ? "CODEX_HOME — optional" : "CLAUDE_CONFIG_DIR — optional",
-  );
+  const npDirPh = $derived(providerMeta(provider).profileDir.placeholder);
 
   function setProfile(name: string) {
     profile = name;
@@ -197,8 +196,9 @@
       const body = {
         name,
         provider,
-        config_dir: provider === "claude" ? npDir.trim() : "",
-        home_dir: provider === "codex" ? npDir.trim() : "",
+        config_dir: "",
+        home_dir: "",
+        [providerMeta(provider).profileDir.bodyKey]: npDir.trim(),
       };
       if (npEditing) {
         await updateProfile(npEditing, body);
@@ -249,7 +249,7 @@
       fbProfile = null;
     } else {
       const first = fb[0];
-      if (first === "claude" || first === "codex") {
+      if (isProvider(first)) {
         fbTarget = first;
         fbProfile = null;
       } else if (first === "default") {
@@ -257,7 +257,7 @@
         fbProfile = null;
       } else {
         const prof = profiles.find((p) => p.Name === first);
-        fbTarget = prof ? prof.Provider : "claude";
+        fbTarget = prof ? prof.Provider : DEFAULT_PROVIDER;
         fbProfile = first;
       }
     }
@@ -494,12 +494,11 @@
           <div class="row">
             <span class="row-key">provider</span>
             <div class="seg-group">
-              <button class="seg provider-choice" class:on={provider === "claude"} onclick={() => setProvider("claude")}>
-                <ProviderLogo provider="claude" />Claude
-              </button>
-              <button class="seg provider-choice" class:on={provider === "codex"} onclick={() => setProvider("codex")}>
-                <ProviderLogo provider="codex" />Codex
-              </button>
+              {#each PROVIDERS as p (p.id)}
+                <button class="seg provider-choice" class:on={provider === p.id} onclick={() => setProvider(p.id)}>
+                  <ProviderLogo provider={p.id} />{p.label}
+                </button>
+              {/each}
             </div>
           </div>
           <div class="row top">
@@ -640,12 +639,11 @@
           <span class="row-key">route to</span>
           <div class="seg-group">
             <button class="seg" class:on={fbTarget === "none"} onclick={() => setFbTarget("none")}>None</button>
-            <button class="seg provider-choice" class:on={fbTarget === "claude"} onclick={() => setFbTarget("claude")}>
-              <ProviderLogo provider="claude" />Claude
-            </button>
-            <button class="seg provider-choice" class:on={fbTarget === "codex"} onclick={() => setFbTarget("codex")}>
-              <ProviderLogo provider="codex" />Codex
-            </button>
+            {#each PROVIDERS as p (p.id)}
+              <button class="seg provider-choice" class:on={fbTarget === p.id} onclick={() => setFbTarget(p.id)}>
+                <ProviderLogo provider={p.id} />{p.label}
+              </button>
+            {/each}
           </div>
         </div>
         {#if fbTarget !== "none" && fbHasProfiles}

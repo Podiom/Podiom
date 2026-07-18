@@ -155,14 +155,21 @@ func LoadCatalogue(path string) (Catalogue, error) {
 	}
 	servers = append(servers, user...)
 	if home, err := os.UserHomeDir(); err == nil {
-		if imported, err := ImportClaude(filepath.Join(home, ".claude.json")); err == nil {
-			servers = append(servers, imported...)
-		}
-		if imported, err := ImportCodex(filepath.Join(home, ".codex", "config.toml")); err == nil {
-			servers = append(servers, imported...)
+		for _, load := range nativeImports {
+			if imported, err := load(home); err == nil {
+				servers = append(servers, imported...)
+			}
 		}
 	}
 	return Catalogue{Servers: dedupe(servers)}, nil
+}
+
+// nativeImports lists the provider-native MCP config files merged (read-only)
+// into the catalogue, in stable order. Adding a provider with a native MCP
+// config means one entry here.
+var nativeImports = []func(home string) ([]Server, error){
+	func(home string) ([]Server, error) { return ImportClaude(filepath.Join(home, ".claude.json")) },
+	func(home string) ([]Server, error) { return ImportCodex(filepath.Join(home, ".codex", "config.toml")) },
 }
 
 func LoadUserFile(path string) ([]Server, error) {

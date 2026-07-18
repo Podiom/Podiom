@@ -24,6 +24,7 @@
   import { renderMarkdown } from "../lib/markdown";
   import MemoryPanel from "../lib/MemoryPanel.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
+  import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import { avatars } from "../lib/avatars.svelte";
   import { modeChip, providerChip } from "../lib/theme";
@@ -191,7 +192,7 @@
   // Edit modal state.
   let editOpen = $state(false);
   let edName = $state("");
-  let edProvider = $state("claude");
+  let edProvider = $state<string>(DEFAULT_PROVIDER);
   let edModel = $state("");
   let edEffort = $state("high");
   let edProfile = $state("");
@@ -223,13 +224,13 @@
   const edProfileOptions = $derived(profiles.filter((p) => p.Provider === edProvider));
 
   $effect(() => {
-    if (editOpen && (edProvider === "claude" || edProvider === "codex")) {
+    if (editOpen && isProvider(edProvider)) {
       void ensureCapabilities(edProvider, edProfile);
     }
   });
 
   async function ensureCapabilities(provider: string, profile = "") {
-    if (provider !== "claude" && provider !== "codex") return;
+    if (!isProvider(provider)) return;
     const key = capabilityKey(provider, profile);
     if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
     loadingCapabilities.add(key);
@@ -252,7 +253,7 @@
   // profile-less row pinned to that provider.
   function decodeFallback(tokens: string[], agentProvider: string): FbRow[] {
     return (tokens ?? []).map((tok) => {
-      if (tok === "claude" || tok === "codex") return { provider: tok, profile: "" };
+      if (isProvider(tok)) return { provider: tok, profile: "" };
       if (tok === "default") return { provider: agentProvider, profile: "" };
       const p = profiles.find((pr) => pr.Name === tok);
       return { provider: p ? p.Provider : agentProvider, profile: tok };
@@ -387,8 +388,9 @@
       const created = await createProfile({
         name: inlineProfileName.trim(),
         provider: edProvider,
-        config_dir: edProvider === "claude" ? inlineProfilePath.trim() : "",
-        home_dir: edProvider === "codex" ? inlineProfilePath.trim() : "",
+        config_dir: "",
+        home_dir: "",
+        [providerMeta(edProvider).profileDir.bodyKey]: inlineProfilePath.trim(),
       });
       profiles = [created, ...profiles.filter((p) => p.Name !== created.Name)];
       edProfile = created.Name;
@@ -637,12 +639,11 @@
 
         <div class="label-mono" style="margin-bottom:8px">provider</div>
         <div style="display:flex;gap:9px">
-          <button class="provider-choice" style={seg(edProvider === "claude")} onclick={() => setProvider("claude")}>
-            <ProviderLogo provider="claude" />Claude
-          </button>
-          <button class="provider-choice" style={seg(edProvider === "codex")} onclick={() => setProvider("codex")}>
-            <ProviderLogo provider="codex" />Codex
-          </button>
+          {#each PROVIDERS as p (p.id)}
+            <button class="provider-choice" style={seg(edProvider === p.id)} onclick={() => setProvider(p.id)}>
+              <ProviderLogo provider={p.id} />{p.label}
+            </button>
+          {/each}
         </div>
 
         <div class="ed-row">
@@ -678,7 +679,7 @@
               <div class="inline-profile">
                 <div class="np-title">new profile · uses selected provider</div>
                 <input class="field-input" bind:value={inlineProfileName} placeholder="profile name" />
-                <input class="field-input mono" bind:value={inlineProfilePath} placeholder={edProvider === "claude" ? "CLAUDE_CONFIG_DIR — optional" : "CODEX_HOME — optional"} />
+                <input class="field-input mono" bind:value={inlineProfilePath} placeholder={providerMeta(edProvider).profileDir.placeholder} />
                 <div class="np-actions">
                   <button class="np-create" disabled={inlineProfileSaving || !inlineProfileName.trim()} onclick={createInlineProfile}>
                     {inlineProfileSaving ? "Saving…" : "Create & select"}
@@ -695,12 +696,11 @@
         {#each edFallback as row, i (i)}
           <div class="fb-row">
             <div class="fb-provs">
-              <button class="provider-choice" style={chip(row.provider === "claude")} onclick={() => setRowProvider(i, "claude")}>
-                <ProviderLogo provider="claude" size={13} />claude
-              </button>
-              <button class="provider-choice" style={chip(row.provider === "codex")} onclick={() => setRowProvider(i, "codex")}>
-                <ProviderLogo provider="codex" size={13} />codex
-              </button>
+              {#each PROVIDERS as p (p.id)}
+                <button class="provider-choice" style={chip(row.provider === p.id)} onclick={() => setRowProvider(i, p.id)}>
+                  <ProviderLogo provider={p.id} size={13} />{p.id}
+                </button>
+              {/each}
             </div>
             <select class="fb-select" bind:value={row.profile}>
               <option value="">no profile</option>

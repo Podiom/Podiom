@@ -182,7 +182,7 @@ func Load(path string) (*Config, error) {
 // config.yaml still produces a working configuration.
 func (c *Config) applyDefaults() {
 	if c.Global.Provider == "" {
-		c.Global.Provider = ProviderClaude
+		c.Global.Provider = providerInfos[0].ID
 	}
 	if c.Global.Effort == "" {
 		c.Global.Effort = "medium"
@@ -275,7 +275,7 @@ func (c *Config) Validate() error {
 		if p.Name == "" {
 			return fmt.Errorf("profiles[%d]: name is required", i)
 		}
-		if p.Name == "default" || p.Name == string(ProviderClaude) || p.Name == string(ProviderCodex) {
+		if reservedProfileName(p.Name) {
 			return fmt.Errorf("profiles[%d]: profile name %q is reserved", i, p.Name)
 		}
 		if _, dup := profileNames[p.Name]; dup {
@@ -284,15 +284,8 @@ func (c *Config) Validate() error {
 		if err := validateProvider(p.Provider); err != nil {
 			return fmt.Errorf("profiles[%d] (%s): %w", i, p.Name, err)
 		}
-		switch p.Provider {
-		case ProviderClaude:
-			if p.ConfigDir == "" {
-				return fmt.Errorf("profiles[%d] (%s): claude profile needs config_dir", i, p.Name)
-			}
-		case ProviderCodex:
-			if p.HomeDir == "" {
-				return fmt.Errorf("profiles[%d] (%s): codex profile needs home_dir", i, p.Name)
-			}
+		if err := validateProfileDir(p); err != nil {
+			return fmt.Errorf("profiles[%d] (%s): %w", i, p.Name, err)
 		}
 		profileNames[p.Name] = p.Provider
 	}
@@ -462,7 +455,7 @@ func ValidateProfile(p Profile, existing map[string]Provider) error {
 	if p.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-	if p.Name == "default" || p.Name == string(ProviderClaude) || p.Name == string(ProviderCodex) {
+	if reservedProfileName(p.Name) {
 		return fmt.Errorf("profile name %q is reserved", p.Name)
 	}
 	if existing != nil {
@@ -473,26 +466,34 @@ func ValidateProfile(p Profile, existing map[string]Provider) error {
 	if err := validateProvider(p.Provider); err != nil {
 		return err
 	}
-	switch p.Provider {
-	case ProviderClaude:
-		if p.ConfigDir == "" {
-			return fmt.Errorf("claude profile needs config_dir")
-		}
-	case ProviderCodex:
-		if p.HomeDir == "" {
-			return fmt.Errorf("codex profile needs home_dir")
-		}
+	return validateProfileDir(p)
+}
+
+// reservedProfileName reports whether name collides with "default" or a bare
+// provider token, both of which have fixed meanings in fallback chains.
+func reservedProfileName(name string) bool {
+	if name == "default" {
+		return true
+	}
+	return KnownProvider(Provider(name))
+}
+
+func validateProfileDir(p Profile) error {
+	info, ok := ProviderInfoFor(p.Provider)
+	if !ok {
+		return nil
+	}
+	if p.Dir() == "" {
+		return fmt.Errorf("%s profile needs %s", info.ID, info.ProfileDirKey)
 	}
 	return nil
 }
 
 func validateProvider(p Provider) error {
-	switch p {
-	case ProviderClaude, ProviderCodex:
+	if KnownProvider(p) {
 		return nil
-	default:
-		return fmt.Errorf("unknown provider %q (want claude|codex)", p)
 	}
+	return fmt.Errorf("unknown provider %q (want %s)", p, ProviderIDsLabel())
 }
 
 func validatePermission(m PermissionMode) error {
@@ -533,7 +534,7 @@ func validateFallbackEntry(entry string, profileNames map[string]Provider) error
 	}
 	// "default" = agent's own provider; a bare provider token = that provider
 	// with no profile. Both resolve without referencing a named profile.
-	if entry == "default" || entry == string(ProviderClaude) || entry == string(ProviderCodex) {
+	if entry == "default" || KnownProvider(Provider(entry)) {
 		return nil
 	}
 	if _, ok := profileNames[entry]; !ok {

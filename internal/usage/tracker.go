@@ -4,13 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
-	"github.com/Podiom/Podiom/internal/claudeauth"
 	"github.com/Podiom/Podiom/internal/config"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 )
@@ -166,19 +164,15 @@ func sortSnapshots(s []Snapshot) {
 	})
 }
 
-// targets enumerates the two implicit defaults plus every named profile.
+// targets enumerates the per-provider implicit defaults plus every named profile.
 func (t *Tracker) targets() []target {
-	out := []target{
-		{key: string(config.ProviderClaude), provider: config.ProviderClaude, isDefault: true},
-		{key: string(config.ProviderCodex), provider: config.ProviderCodex, isDefault: true},
+	var out []target
+	for _, id := range config.ProviderIDs() {
+		out = append(out, target{key: string(id), provider: id, isDefault: true})
 	}
 	if t.profiles != nil {
 		for _, p := range t.profiles() {
-			dir := p.ConfigDir
-			if p.Provider == config.ProviderCodex {
-				dir = p.HomeDir
-			}
-			out = append(out, target{key: p.Name, provider: p.Provider, dir: dir})
+			out = append(out, target{key: p.Name, provider: p.Provider, dir: p.Dir()})
 		}
 	}
 	for i := range out {
@@ -190,14 +184,10 @@ func (t *Tracker) targets() []target {
 // credentialPath resolves the on-disk credential file for a provider/dir. It is
 // the dedupe key: two profiles resolving to the same path share one fetch.
 func credentialPath(provider config.Provider, dir string) string {
-	switch provider {
-	case config.ProviderClaude:
-		return claudeauth.CredentialPath(dir)
-	case config.ProviderCodex:
-		return filepath.Join(codexHomeDir(dir), "auth.json")
-	default:
-		return dir
+	if p, ok := usageProviders[provider]; ok {
+		return p.credentialPath(dir)
 	}
+	return dir
 }
 
 // Refresh fetches usage for all targets and returns the resulting snapshots.
@@ -354,14 +344,10 @@ func (t *Tracker) recordBackoff(path string, snap Snapshot) {
 }
 
 func (t *Tracker) fetch(ctx context.Context, provider config.Provider, dir string) Snapshot {
-	switch provider {
-	case config.ProviderClaude:
-		return FetchClaude(ctx, t.hc, dir)
-	case config.ProviderCodex:
-		return FetchCodex(ctx, t.hc, dir)
-	default:
-		return Snapshot{Provider: provider, Status: StatusUnsupported, Error: "unknown provider", FetchedAt: time.Now()}
+	if p, ok := usageProviders[provider]; ok {
+		return p.fetch(ctx, t.hc, dir)
 	}
+	return Snapshot{Provider: provider, Status: StatusUnsupported, Error: "unknown provider", FetchedAt: time.Now()}
 }
 
 func (t *Tracker) logFetch(tg target, snap Snapshot, force bool, dur time.Duration) {

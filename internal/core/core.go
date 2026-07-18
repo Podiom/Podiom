@@ -130,7 +130,7 @@ func New(opts Options) (*Core, error) {
 	}
 	global := opts.Global
 	if global.Provider == "" {
-		global.Provider = config.ProviderClaude
+		global.Provider = config.Providers()[0].ID
 	}
 	if global.Effort == "" {
 		global.Effort = "medium"
@@ -213,14 +213,7 @@ func (c *Core) profileDir(provider config.Provider, name string) string {
 	if !ok || profile.Provider != provider {
 		return ""
 	}
-	switch provider {
-	case config.ProviderClaude:
-		return profile.ConfigDir
-	case config.ProviderCodex:
-		return profile.HomeDir
-	default:
-		return ""
-	}
+	return profile.Dir()
 }
 
 // ProfileInfo is the credential-free projection of a configured profile, safe

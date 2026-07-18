@@ -19,6 +19,7 @@
   import TokenGate from "./pages/TokenGate.svelte";
   import HAOnboarding from "./pages/HAOnboarding.svelte";
   import ProviderLogo from "./lib/ProviderLogo.svelte";
+  import { DEFAULT_PROVIDER, PROVIDERS, providerMeta } from "./lib/providers";
   import type { Agent, Health, PermissionMode, ProfileInfo, Provider, UpdateStatus } from "./lib/types";
   import Chat from "./pages/Chat.svelte";
   import Roadmap from "./pages/Roadmap.svelte";
@@ -111,7 +112,7 @@
   // Hire modal.
   let hireOpen = $state(false);
   let hireName = $state("");
-  let hireProvider = $state<Provider>("claude");
+  let hireProvider = $state<Provider>(DEFAULT_PROVIDER);
   let hireProfile = $state("");
   let hirePermission = $state<PermissionMode>("approve");
   let hireError = $state<string | null>(null);
@@ -362,7 +363,7 @@
 
   function openHire() {
     hireName = "";
-    hireProvider = "claude";
+    hireProvider = DEFAULT_PROVIDER;
     hireProfile = "";
     hirePermission = "approve";
     hireError = null;
@@ -399,8 +400,9 @@
       const created = await createProfile({
         name: profileName.trim(),
         provider: hireProvider,
-        config_dir: hireProvider === "claude" ? profilePath.trim() : "",
-        home_dir: hireProvider === "codex" ? profilePath.trim() : "",
+        config_dir: "",
+        home_dir: "",
+        [providerMeta(hireProvider).profileDir.bodyKey]: profilePath.trim(),
       });
       profiles = [created, ...profiles.filter((p) => p.Name !== created.Name)];
       hireProfile = created.Name;
@@ -628,12 +630,11 @@
 
           <div class="label-mono" style="margin:18px 0 8px">backend</div>
           <div style="display:flex;gap:9px">
-            <button class="provider-choice" style={seg(hireProvider === "claude")} onclick={() => { hireProvider = "claude"; hireProfile = ""; profileCreateOpen = false; }}>
-              <ProviderLogo provider="claude" />Claude
-            </button>
-            <button class="provider-choice" style={seg(hireProvider === "codex")} onclick={() => { hireProvider = "codex"; hireProfile = ""; profileCreateOpen = false; }}>
-              <ProviderLogo provider="codex" />Codex
-            </button>
+            {#each PROVIDERS as p (p.id)}
+              <button class="provider-choice" style={seg(hireProvider === p.id)} onclick={() => { hireProvider = p.id; hireProfile = ""; profileCreateOpen = false; }}>
+                <ProviderLogo provider={p.id} />{p.label}
+              </button>
+            {/each}
           </div>
 
           <div class="label-mono" style="margin:18px 0 8px">profile</div>
@@ -651,7 +652,7 @@
             <div class="inline-create">
               <div class="np-title">new profile · uses selected provider</div>
               <input class="field-input" bind:value={profileName} placeholder="profile name" />
-              <input class="field-input mono" bind:value={profilePath} placeholder={hireProvider === "claude" ? "CLAUDE_CONFIG_DIR — optional" : "CODEX_HOME — optional"} />
+              <input class="field-input mono" bind:value={profilePath} placeholder={providerMeta(hireProvider).profileDir.placeholder} />
               <div class="np-actions">
                 <button class="np-create" disabled={profileSaving || !profileName.trim()} onclick={submitProfileFromHire}>
                   {profileSaving ? "Saving…" : "Create & select"}

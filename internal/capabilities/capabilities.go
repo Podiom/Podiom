@@ -71,19 +71,10 @@ func Fallback(provider config.Provider, profile string) ProviderCapabilities {
 		Stale:     true,
 		Efforts:   CloneEfforts(DefaultEfforts),
 	}
-	switch provider {
-	case config.ProviderCodex:
-		caps.Models = []ModelOption{
-			model("gpt-5.1", "GPT-5.1", "Recommended full-size Codex model.", true),
-			model("gpt-5.1-mini", "GPT-5.1 mini", "Faster, lower-cost Codex model.", false),
-			model("o4", "o4", "Reasoning-oriented OpenAI model.", false),
-		}
-	case config.ProviderClaude:
-		caps.Models = []ModelOption{
-			model("claude-opus-4-8", "Claude Opus 4.8", "Claude Opus 4.8.", true),
-			model("claude-sonnet-5", "Claude Sonnet 5", "Claude Sonnet 5.", false),
-			model("claude-haiku-4-5", "Claude Haiku 4.5", "Claude Haiku 4.5.", false),
-			model("claude-fable-5", "Claude Fable 5", "Claude Fable 5.", false),
+	if info, ok := config.ProviderInfoFor(provider); ok {
+		caps.Models = make([]ModelOption, 0, len(info.FallbackModels))
+		for _, m := range info.FallbackModels {
+			caps.Models = append(caps.Models, model(m.ID, m.DisplayName, m.Description, m.Default))
 		}
 	}
 	return caps

@@ -26,23 +26,49 @@ const (
 	SourceCodex Source = "codex"
 )
 
+// nativeRoots lists each provider's native personal-skill root as a home-relative
+// directory, in stable output order. Adding a provider with native skills means
+// one entry here (plus its Source constant above).
+var nativeRoots = []struct {
+	Src Source
+	Dir string // home-relative, e.g. ".claude"
+}{
+	{SourceClaude, ".claude"},
+	{SourceCodex, ".codex"},
+}
+
 // order is the stable source ordering used everywhere output is produced
-// (canonical union first, then the two providers).
-var order = []Source{SourceAgents, SourceClaude, SourceCodex}
+// (canonical union first, then the provider roots).
+var order = func() []Source {
+	out := []Source{SourceAgents}
+	for _, n := range nativeRoots {
+		out = append(out, n.Src)
+	}
+	return out
+}()
+
+// NativeSources returns the provider-native skill sources in stable order.
+func NativeSources() []Source {
+	out := make([]Source, 0, len(nativeRoots))
+	for _, n := range nativeRoots {
+		out = append(out, n.Src)
+	}
+	return out
+}
 
 // EnvHome overrides the home directory the three skill roots are derived from.
 // It exists so tests can point discovery at a scratch directory; production
 // resolves the real user home. It is intentionally NOT PODIOM_HOME.
 const EnvHome = "PODIOM_SKILLS_HOME"
 
-// Roots holds the three skill directories discovery reads.
+// Roots holds the skill directories discovery reads: the canonical union plus
+// one native root per provider.
 type Roots struct {
-	Agents string // ~/.agents/skills  (canonical union, labelled "shared")
-	Claude string // ~/.claude/skills
-	Codex  string // ~/.codex/skills
+	Agents string            // ~/.agents/skills  (canonical union, labelled "shared")
+	Native map[Source]string // provider-native roots, e.g. ~/.claude/skills
 }
 
-// DefaultRoots resolves the three skill roots from the user home (or EnvHome).
+// DefaultRoots resolves the skill roots from the user home (or EnvHome).
 func DefaultRoots() (Roots, error) {
 	home := strings.TrimSpace(os.Getenv(EnvHome))
 	if home == "" {
@@ -52,24 +78,22 @@ func DefaultRoots() (Roots, error) {
 		}
 		home = h
 	}
-	return Roots{
+	roots := Roots{
 		Agents: filepath.Join(home, ".agents", "skills"),
-		Claude: filepath.Join(home, ".claude", "skills"),
-		Codex:  filepath.Join(home, ".codex", "skills"),
-	}, nil
+		Native: map[Source]string{},
+	}
+	for _, n := range nativeRoots {
+		roots.Native[n.Src] = filepath.Join(home, n.Dir, "skills")
+	}
+	return roots, nil
 }
 
 // dir returns the root path for a given source ("" for an unknown source).
 func (r Roots) dir(src Source) string {
-	switch src {
-	case SourceAgents:
+	if src == SourceAgents {
 		return r.Agents
-	case SourceClaude:
-		return r.Claude
-	case SourceCodex:
-		return r.Codex
 	}
-	return ""
+	return r.Native[src]
 }
 
 // Location is one place a skill name was found, with the user-facing path to its

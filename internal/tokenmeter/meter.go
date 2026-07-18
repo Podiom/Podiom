@@ -212,10 +212,7 @@ func profileKey(provider config.Provider, profile string) string {
 // windowKeyPair returns the (5-hour, weekly) window keys for a provider, mirroring
 // the mapping used by the usage UI (UsageChip).
 func windowKeyPair(provider config.Provider) (string, string) {
-	if provider == config.ProviderCodex {
-		return usage.WindowPrimary, usage.WindowSecondary
-	}
-	return usage.WindowFiveHour, usage.WindowSevenDay
+	return usage.WindowKeyPair(provider)
 }
 
 func windowKeys(provider config.Provider) []string {

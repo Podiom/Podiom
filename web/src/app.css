@@ -193,25 +193,6 @@ button:disabled {
   display: inline-block;
 }
 
-.claude-logo {
-  stroke: #d3663f;
-  stroke-width: 1.65;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.claude-logo circle {
-  fill: #d3663f;
-  stroke: none;
-}
-
-.codex-logo {
-  stroke: #2f6e60;
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .provider-choice .provider-logo {
   margin-top: -1px;
 }

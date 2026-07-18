@@ -74,7 +74,7 @@ func (c *Core) ensureSessionInstructions(ctx context.Context, sess store.Session
 }
 
 func (c *Core) switchSessionTarget(ctx context.Context, sess store.Session, provider config.Provider, profile string) (store.Session, error) {
-	if provider != config.ProviderClaude && provider != config.ProviderCodex {
+	if !config.KnownProvider(provider) {
 		return store.Session{}, fmt.Errorf("unknown provider %q", provider)
 	}
 	if profile != "" {
@@ -179,8 +179,9 @@ func (c *Core) availableFallbackTargets(agent store.Agent, current store.Session
 		})
 	}
 	add(agent.Provider, "")
-	add(config.ProviderClaude, "")
-	add(config.ProviderCodex, "")
+	for _, id := range config.ProviderIDs() {
+		add(id, "")
+	}
 	for _, name := range c.ListProfiles() {
 		add(name.Provider, name.Name)
 	}
@@ -252,7 +253,7 @@ func (c *Core) resolveFallbackTarget(agent store.Agent, entry string) (config.Pr
 		return agent.Provider, "", nil
 	}
 	// A bare provider token falls back to that provider with no profile env.
-	if entry == string(config.ProviderClaude) || entry == string(config.ProviderCodex) {
+	if config.KnownProvider(config.Provider(entry)) {
 		return config.Provider(entry), "", nil
 	}
 	profile, ok := c.profiles[entry]

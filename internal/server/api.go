@@ -251,17 +251,10 @@ func (s *Server) saveProfile(w http.ResponseWriter, r *http.Request, currentName
 }
 
 func profileLogFields(p config.Profile) map[string]string {
-	pathSet := ""
-	switch p.Provider {
-	case config.ProviderCodex:
-		pathSet = boolLogString(p.HomeDir != "")
-	default:
-		pathSet = boolLogString(p.ConfigDir != "")
-	}
 	return map[string]string{
 		"name":     p.Name,
 		"provider": string(p.Provider),
-		"path_set": pathSet,
+		"path_set": boolLogString(p.Dir() != ""),
 	}
 }
 
@@ -299,32 +292,28 @@ func (s *Server) profileFromRequest(req profileRequest) (config.Profile, error) 
 		Provider: req.Provider,
 	}
 	if p.Provider == "" {
-		p.Provider = config.ProviderClaude
+		p.Provider = config.Providers()[0].ID
 	}
-	switch p.Provider {
-	case config.ProviderClaude:
-		p.ConfigDir = strings.TrimSpace(req.ConfigDir)
-		if p.ConfigDir == "" && p.Name != "" {
-			p.ConfigDir = filepath.Join(s.paths.Home, "profiles", "claude-"+p.Name)
-		}
-	case config.ProviderCodex:
-		p.HomeDir = strings.TrimSpace(req.HomeDir)
-		if p.HomeDir == "" && p.Name != "" {
-			p.HomeDir = filepath.Join(s.paths.Home, "profiles", "codex-"+p.Name)
-		}
-	default:
+	info, ok := config.ProviderInfoFor(p.Provider)
+	if !ok {
 		// Let config.ValidateProfile produce the canonical provider error.
 		p.ConfigDir = strings.TrimSpace(req.ConfigDir)
 		p.HomeDir = strings.TrimSpace(req.HomeDir)
+		return p, nil
 	}
+	dir := strings.TrimSpace(req.ConfigDir)
+	if info.ProfileDirKey == "home_dir" {
+		dir = strings.TrimSpace(req.HomeDir)
+	}
+	if dir == "" && p.Name != "" {
+		dir = filepath.Join(s.paths.Home, "profiles", string(p.Provider)+"-"+p.Name)
+	}
+	p.SetDir(dir)
 	return p, nil
 }
 
 func (s *Server) profileDir(p config.Profile) string {
-	if p.Provider == config.ProviderCodex {
-		return p.HomeDir
-	}
-	return p.ConfigDir
+	return p.Dir()
 }
 
 func (s *Server) profileByName(name string) (config.Profile, bool) {

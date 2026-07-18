@@ -122,10 +122,8 @@ func (s Schedule) validate() error {
 	if s.Agent == "" {
 		return fmt.Errorf("agent is required")
 	}
-	switch s.Provider {
-	case "", config.ProviderClaude, config.ProviderCodex:
-	default:
-		return fmt.Errorf("invalid provider %q (want claude|codex)", s.Provider)
+	if s.Provider != "" && !config.KnownProvider(s.Provider) {
+		return fmt.Errorf("invalid provider %q (want %s)", s.Provider, config.ProviderIDsLabel())
 	}
 	if s.Cron == "" && s.Every == "" {
 		return fmt.Errorf("a cron or every value is required")

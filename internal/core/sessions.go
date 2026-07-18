@@ -212,8 +212,8 @@ func (c *Core) resolveRunTarget(agent store.Agent, requested RunTarget) (RunTarg
 	}
 	if provider == "" {
 		provider = agent.Provider
-	} else if provider != config.ProviderClaude && provider != config.ProviderCodex {
-		return RunTarget{}, fmt.Errorf("unknown provider %q (want claude|codex)", provider)
+	} else if !config.KnownProvider(provider) {
+		return RunTarget{}, fmt.Errorf("unknown provider %q (want %s)", provider, config.ProviderIDsLabel())
 	}
 	if profile == "" && provider == agent.Provider {
 		profile = agent.Profile
@@ -979,18 +979,16 @@ func (c *Core) ComposeInstructions(ctx context.Context, agent store.Agent) (Inst
 // specific provider target. It is used when a session switches provider while
 // staying bound to the same Podiom agent.
 func (c *Core) ComposeInstructionsForProvider(ctx context.Context, agent store.Agent, provider config.Provider, projectCtx projectExecutionContext) (InstructionPayload, error) {
-	switch provider {
-	case "claude":
-		return c.composer.Compose(ctx, agent, DeliveryClaudeImport, projectCtx.Instructions)
-	case "codex":
-		return c.composer.Compose(ctx, agent, DeliveryCodexBundle, projectCtx.Instructions)
-	default:
+	info, ok := config.ProviderInfoFor(provider)
+	if !ok {
 		return InstructionPayload{}, fmt.Errorf("unknown provider %q", provider)
 	}
+	return c.composer.Compose(ctx, agent, DeliveryMode(info.InstructionDelivery), projectCtx.Instructions)
 }
 
 func providerInstructionsForAdapter(provider config.Provider, projectCtx projectExecutionContext, instructions []byte) []byte {
-	if provider == config.ProviderCodex && strings.TrimSpace(projectCtx.ProjectDir) == "" {
+	info, _ := config.ProviderInfoFor(provider)
+	if info.InstructionsNeedProjectDir && strings.TrimSpace(projectCtx.ProjectDir) == "" {
 		return nil
 	}
 	return instructions

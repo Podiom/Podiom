@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getMCP, removeMCPServer, saveMCPServer, setMCPAssignment, testMCPServer } from "../lib/api";
+  import { PROVIDERS } from "../lib/providers";
   import type { MCPAgent, MCPEnvVar, MCPSnapshot, MCPServer, MCPSource, MCPTestResult, SkillDetail, SkillSummary } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import Discover from "./skills/Discover.svelte";
@@ -115,11 +116,15 @@
   }
 
   // --- MCP (unchanged) ------------------------------------------------------
-  const MCP_SRC: Record<MCPSource, { label: string; fg: string; bg: string; bd: string; glyph: string }> = {
+  const MCP_SRC = {
     podiom: { label: "podiom", fg: "#2F6E60", bg: "#E7F0EC", bd: "#C7DBD2", glyph: "circle" },
-    claude: { label: "claude", fg: "#B0572F", bg: "#F8EBE2", bd: "#ECD3C2", glyph: "square" },
-    codex: { label: "codex", fg: "#4B5560", bg: "#EAEEF1", bd: "#D6DCE2", glyph: "diamond" },
-  };
+    ...Object.fromEntries(
+      PROVIDERS.map((p) => [
+        p.id,
+        { label: p.id, fg: p.accent.ink, bg: p.accent.bg, bd: p.accent.bd, glyph: p.badgeGlyph },
+      ]),
+    ),
+  } as Record<MCPSource, { label: string; fg: string; bg: string; bd: string; glyph: string }>;
 
   function dot(color: string, glyph = "circle"): string {
     const shape = glyph === "circle" ? "border-radius:99px" : glyph === "square" ? "border-radius:2px" : "border-radius:1px;transform:rotate(45deg)";

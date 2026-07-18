@@ -4,6 +4,7 @@
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { randomID } from "../lib/id";
   import { live } from "../lib/live.svelte";
+  import { DEFAULT_PROVIDER, providerMeta, questionEndsTurn } from "../lib/providers";
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import ContextRing from "../lib/ContextRing.svelte";
@@ -228,7 +229,7 @@
   const sessionTitle = $derived(
     activeSession ? activeSession.Name || activeSession.AgentName : selectedAgent || "New session",
   );
-  const draftOrAgentProvider = $derived(draftProvider || activeAgent?.Provider || "claude");
+  const draftOrAgentProvider = $derived(draftProvider || activeAgent?.Provider || DEFAULT_PROVIDER);
   const selectedProvider = $derived(activeSession?.Provider ?? draftOrAgentProvider);
   const selectedProfile = $derived(
     activeSession?.Profile ?? (draftProvider ? draftProfile : activeAgent?.Profile ?? ""),
@@ -532,7 +533,7 @@
           markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
           pendingPermission = null;
           resetApprovalForm();
-          if (pendingUserInput?.provider !== "claude") pendingUserInput = null;
+          if (pendingUserInput && !questionEndsTurn(pendingUserInput.provider)) pendingUserInput = null;
           setPendingFallback(null);
           sending = false;
         }
@@ -557,9 +558,10 @@
             notice = "The approval request expired.";
             sending = false;
           } else if (msg.error === "user input request not found") {
-            // Benign: Claude questions are answered by a follow-up turn, so the
-            // broker has no pending entry by the time the decision lands. Nothing
-            // failed (the follow-up turn is running) — swallow it silently.
+            // Benign: turn-ending providers' questions are answered by a
+            // follow-up turn, so the broker has no pending entry by the time the
+            // decision lands. Nothing failed (the follow-up turn is running) —
+            // swallow it silently.
           } else {
             const lastMessage = messages[messages.length - 1];
             const durableErrorVisible =
@@ -579,15 +581,15 @@
 
   // clearPendingRequests dismisses stale approve/answer modals when the agent
   // resumes producing output (delta/assistant/message) — at that point it is no
-  // longer blocked, so acting on the modal would hit a dead request. Claude's
-  // question modal is intentionally preserved (its answer is a follow-up turn),
-  // matching the "done" handler's semantics.
+  // longer blocked, so acting on the modal would hit a dead request. Question
+  // modals from turn-ending providers are intentionally preserved (their answer
+  // is a follow-up turn), matching the "done" handler's semantics.
   function clearPendingRequests() {
     markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
     pendingPermission = null;
     permissionRemaining = 0;
     resetApprovalForm();
-    if (pendingUserInput?.provider !== "claude") pendingUserInput = null;
+    if (pendingUserInput && !questionEndsTurn(pendingUserInput.provider)) pendingUserInput = null;
     setPendingFallback(null);
   }
 
@@ -757,7 +759,7 @@
   }
 
   function nativeAgentActivityLabel(activity: NativeAgentActivity): string {
-    const provider = activity.provider === "codex" ? "Codex" : "Claude";
+    const provider = providerMeta(activity.provider).label;
     const agent =
       activity.display_name ||
       activity.podiom_agent_name ||
@@ -1444,7 +1446,7 @@
     const decision = { answers: userInputAnswers };
     if (!send({ type: "user_input_decision", request_id: req.id, input: decision })) return;
     pendingUserInput = null;
-    if (req.provider === "claude") {
+    if (questionEndsTurn(req.provider)) {
       sendTurn(formatUserInputFollowup(req, userInputAnswers));
       return;
     }

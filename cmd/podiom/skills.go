@@ -130,9 +130,10 @@ func newSkillsPathsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("canonical (shared): %s\n", roots.Agents)
-			fmt.Printf("claude:             %s\n", roots.Claude)
-			fmt.Printf("codex:              %s\n", roots.Codex)
+			fmt.Printf("%-19s %s\n", "canonical (shared):", roots.Agents)
+			for _, src := range skills.NativeSources() {
+				fmt.Printf("%-19s %s\n", string(src)+":", roots.Native[src])
+			}
 			fmt.Println("\nunion topology:")
 			entries, err := os.ReadDir(roots.Agents)
 			if err != nil {

@@ -300,6 +300,17 @@ func (c *Core) GetTask(ctx context.Context, id string) (store.Task, error) {
 	return c.store.GetTask(ctx, id)
 }
 
+// validateTaskProvider rejects unknown provider overrides on a task. Assigned
+// tasks are also covered by ValidateRunTargetForAgent; this guard keeps
+// unassigned tasks from persisting a bogus provider (the store no longer
+// enforces it via a CHECK constraint).
+func validateTaskProvider(task store.Task) error {
+	if task.Provider != "" && !config.KnownProvider(task.Provider) {
+		return fmt.Errorf("unknown provider %q (want %s)", task.Provider, config.ProviderIDsLabel())
+	}
+	return nil
+}
+
 // CreateTask creates a roadmap task. A title is required; status defaults to
 // backlog.
 func (c *Core) CreateTask(ctx context.Context, task store.Task) (store.Task, error) {
@@ -310,6 +321,9 @@ func (c *Core) CreateTask(ctx context.Context, task store.Task) (store.Task, err
 		if _, err := c.store.GetGoal(ctx, task.GoalID); err != nil {
 			return store.Task{}, fmt.Errorf("goal %q: %w", task.GoalID, err)
 		}
+	}
+	if err := validateTaskProvider(task); err != nil {
+		return store.Task{}, err
 	}
 	if task.AssignedAgent != "" {
 		if _, err := c.store.GetAgent(ctx, task.AssignedAgent); err != nil {
@@ -347,6 +361,9 @@ func (c *Core) UpdateTask(ctx context.Context, task store.Task) (store.Task, err
 		return store.Task{}, err
 	} else if hasSession && taskChangesLockedFields(existing, task) {
 		return store.Task{}, fmt.Errorf("task %q already has a session; only status can be changed", task.ID)
+	}
+	if err := validateTaskProvider(task); err != nil {
+		return store.Task{}, err
 	}
 	if task.AssignedAgent != "" && (task.AssignedAgent != existing.AssignedAgent || taskRunTargetChanged(existing, task)) {
 		if _, err := c.store.GetAgent(ctx, task.AssignedAgent); err != nil {

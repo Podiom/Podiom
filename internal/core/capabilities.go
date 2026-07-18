@@ -18,8 +18,8 @@ func (c *Core) ProviderCapabilities(ctx context.Context, provider config.Provide
 	if provider == "" {
 		provider = c.GetGlobal().Provider
 	}
-	if provider != config.ProviderClaude && provider != config.ProviderCodex {
-		return capabilities.ProviderCapabilities{}, fmt.Errorf("unknown provider %q (want claude|codex)", provider)
+	if !config.KnownProvider(provider) {
+		return capabilities.ProviderCapabilities{}, fmt.Errorf("unknown provider %q (want %s)", provider, config.ProviderIDsLabel())
 	}
 	if profile == "default" {
 		profile = ""
@@ -70,8 +70,5 @@ func (c *Core) capabilityProfileDir(provider config.Provider, profile string) (s
 	if p.Provider != provider {
 		return "", fmt.Errorf("profile %q belongs to provider %q, not %q", profile, p.Provider, provider)
 	}
-	if provider == config.ProviderCodex {
-		return p.HomeDir, nil
-	}
-	return p.ConfigDir, nil
+	return p.Dir(), nil
 }

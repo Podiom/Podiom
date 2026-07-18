@@ -24,16 +24,16 @@ type Report struct {
 	Actions   []LinkAction `json:"actions"`
 }
 
-// Provision ensures the three skill roots exist so the feature works regardless
+// Provision ensures every skill root exists so the feature works regardless
 // of install order (S24). It never clobbers existing real dirs.
 func Provision() error {
 	roots, err := DefaultRoots()
 	if err != nil {
 		return err
 	}
-	for _, dir := range []string{roots.Agents, roots.Claude, roots.Codex} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
+	for _, src := range order {
+		if err := os.MkdirAll(roots.dir(src), 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", roots.dir(src), err)
 		}
 	}
 	return nil
@@ -59,7 +59,8 @@ func RelinkRoots(roots Roots) (Report, error) {
 	if err := os.MkdirAll(roots.Agents, 0o755); err != nil {
 		return rep, fmt.Errorf("create union dir %s: %w", roots.Agents, err)
 	}
-	for _, src := range []Source{SourceClaude, SourceCodex} {
+	for _, n := range nativeRoots {
+		src := n.Src
 		ents, err := readSkillDir(src, roots.dir(src))
 		if err != nil {
 			return rep, err

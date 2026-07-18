@@ -2,6 +2,7 @@
 // has no avatar/gradient/soul fields, so we derive a stable gradient and
 // initial from the agent name — same name always maps to the same look.
 
+import { providerMeta } from "./providers";
 import type { Provider, PermissionMode, SessionOrigin } from "./types";
 
 export const GRADIENTS = [
@@ -66,9 +67,8 @@ export function avatarStyle(grad: string, size: number, radius: number, fs: numb
 export function providerChip(p: Provider | string): string {
   const base =
     "padding:3px 9px;border-radius:999px;font:600 10px 'JetBrains Mono',monospace;";
-  return p === "codex"
-    ? base + "background:#E2F0EC;border:1px solid #C7E2DA;color:#2F6E60"
-    : base + "background:#FBEAE0;border:1px solid #F2D6C5;color:#B14E2A";
+  const chip = providerMeta(p).chip;
+  return base + `background:${chip.bg};border:1px solid ${chip.bd};color:${chip.ink}`;
 }
 
 export function modeChip(m: PermissionMode | string): string {

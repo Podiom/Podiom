@@ -27,7 +27,7 @@ func rootsIn(t *testing.T) Roots {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{r.Agents, r.Claude, r.Codex} {
+	for _, d := range []string{r.Agents, r.Native[SourceClaude], r.Native[SourceCodex]} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -49,12 +49,12 @@ func TestScanSourcesAndDedup(t *testing.T) {
 	// A genuinely shared skill (real folder in the union).
 	writeSkill(t, r.Agents, "shared-one", "shared skill", "")
 	// A claude skill, also union-linked → should show both agents + claude.
-	writeSkill(t, r.Claude, "from-claude", "claude skill", "")
+	writeSkill(t, r.Native[SourceClaude], "from-claude", "claude skill", "")
 	if _, err := RelinkRoots(r); err != nil {
 		t.Fatal(err)
 	}
 	// A codex-only skill (not yet linked).
-	writeSkill(t, r.Codex, "from-codex", "codex skill", "")
+	writeSkill(t, r.Native[SourceCodex], "from-codex", "codex skill", "")
 
 	got, err := ScanRoots(r)
 	if err != nil {
@@ -93,8 +93,8 @@ func TestScanSourcesAndDedup(t *testing.T) {
 
 func TestConflictDetection(t *testing.T) {
 	r := rootsIn(t)
-	writeSkill(t, r.Claude, "dup", "claude variant", "claude body")
-	writeSkill(t, r.Codex, "dup", "codex variant", "codex body")
+	writeSkill(t, r.Native[SourceClaude], "dup", "claude variant", "claude body")
+	writeSkill(t, r.Native[SourceCodex], "dup", "codex variant", "codex body")
 
 	got, err := ScanRoots(r)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestEnsureClaudeWorkspaceLink(t *testing.T) {
 
 func TestRelinkIdempotentAndNoClobber(t *testing.T) {
 	r := rootsIn(t)
-	writeSkill(t, r.Claude, "linkme", "to link", "")
+	writeSkill(t, r.Native[SourceClaude], "linkme", "to link", "")
 	// A genuinely shared real folder that must never be clobbered.
 	writeSkill(t, r.Agents, "real-shared", "real", "original")
 
@@ -160,7 +160,7 @@ func TestRelinkIdempotentAndNoClobber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := filepath.EvalSymlinks(filepath.Join(r.Claude, "linkme"))
+	want, _ := filepath.EvalSymlinks(filepath.Join(r.Native[SourceClaude], "linkme"))
 	if target != want {
 		t.Errorf("linkme resolves to %q, want %q", target, want)
 	}

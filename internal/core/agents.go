@@ -132,8 +132,8 @@ func (c *Core) UpdateAgent(ctx context.Context, agent store.Agent) (store.Agent,
 // provider; fallback entries may be a profile name, a bare provider token, or
 // "default" (and a profile entry may target a different provider).
 func (c *Core) validateAgentTargets(agent store.Agent) error {
-	if agent.Provider != config.ProviderClaude && agent.Provider != config.ProviderCodex {
-		return fmt.Errorf("unknown provider %q (want claude|codex)", agent.Provider)
+	if !config.KnownProvider(agent.Provider) {
+		return fmt.Errorf("unknown provider %q (want %s)", agent.Provider, config.ProviderIDsLabel())
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -150,7 +150,7 @@ func (c *Core) validateAgentTargets(agent store.Agent) error {
 		if entry == "" {
 			return fmt.Errorf("fallback entry is required")
 		}
-		if entry == "default" || entry == string(config.ProviderClaude) || entry == string(config.ProviderCodex) {
+		if entry == "default" || config.KnownProvider(config.Provider(entry)) {
 			continue
 		}
 		if _, ok := c.profiles[entry]; !ok {

@@ -50,7 +50,8 @@ export interface LogStreamEvent {
   line?: string;
 }
 
-export type Provider = "claude" | "codex";
+export type { Provider } from "./providers";
+import type { Provider } from "./providers";
 export type PermissionMode = "approve" | "yolo";
 
 export interface EffortOption {
@@ -328,7 +329,7 @@ export interface AgentDetail extends Agent {
   Soul: string;
 }
 
-export type MCPSource = "podiom" | "claude" | "codex";
+export type MCPSource = "podiom" | Provider;
 export type MCPTransport = "http" | "stdio";
 
 export interface MCPEnvStatus {
@@ -953,7 +954,7 @@ export type DreamPhase =
 
 // Skills catalogue (read-only). Mirrors internal/skills.Skill. `agents` is the
 // shared union (~/.agents/skills); `claude`/`codex` are the providers' own dirs.
-export type SkillSource = "agents" | "claude" | "codex";
+export type SkillSource = "agents" | Provider;
 
 export interface SkillLocation {
   source: SkillSource;

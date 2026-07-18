@@ -3,6 +3,7 @@
   import { deleteSession, getUserProfile, listProfiles, saveUserProfile } from "../lib/api";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
+  import { questionEndsTurn } from "../lib/providers";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import type {
@@ -237,8 +238,8 @@
     pendingInput = null;
     assistantBuf = "";
     thinking = true;
-    if ((req.provider ?? sessionProvider) === "claude") {
-      // Claude's question ended the turn; the answer arrives as a follow-up turn.
+    if (questionEndsTurn(req.provider ?? sessionProvider)) {
+      // The provider's question ended the turn; the answer arrives as a follow-up turn.
       requestId = crypto.randomUUID();
       live.send({
         type: "send_turn",

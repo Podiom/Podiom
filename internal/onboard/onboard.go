@@ -787,14 +787,10 @@ func controllingTTY(in io.Reader) *os.File {
 }
 
 func titleProvider(provider config.Provider) string {
-	switch provider {
-	case config.ProviderClaude:
-		return "Claude"
-	case config.ProviderCodex:
-		return "Codex"
-	default:
-		return string(provider)
+	if info, ok := config.ProviderInfoFor(provider); ok {
+		return info.DisplayName
 	}
+	return string(provider)
 }
 
 func firstNonEmpty(values ...string) string {

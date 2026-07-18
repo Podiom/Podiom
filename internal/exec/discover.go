@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Discovery locates a provider CLI binary on the host.
@@ -72,14 +73,7 @@ func candidateNames(name string) []string {
 }
 
 func envOverride(name string) string {
-	switch name {
-	case "claude":
-		return "CLAUDE_BIN"
-	case "codex":
-		return "CODEX_BIN"
-	default:
-		return name + "_BIN"
-	}
+	return strings.ToUpper(name) + "_BIN"
 }
 
 // resolveExecutable returns the absolute path if the file exists and is

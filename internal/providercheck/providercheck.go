@@ -68,46 +68,59 @@ func Check(ctx context.Context, provider config.Provider, opts Options) Status {
 		status.Version = firstLine(version)
 	}
 
-	switch provider {
-	case config.ProviderClaude:
-		if out, err := runCapture(ctx, timeout, found.Path, "auth", "status"); parseClaudeAuthStatus(out, &status) {
-			status.Ready = status.Version != ""
-			return status
-		} else if err != nil && status.Error == "" && !errors.Is(err, context.DeadlineExceeded) {
-			status.Error = err.Error()
-		}
-
-		out, err := runCapture(ctx, timeout, found.Path, "doctor")
-		status.Doctor = trimOutput(out)
-		if err == nil {
-			status.Ready = true
-			return status
-		}
-		if status.Error == "" {
-			status.Error = err.Error()
-		}
-		// Older/newer Claude builds may not expose a non-interactive doctor. A
-		// discovered, version-reporting binary is enough to let onboarding offer
-		// the native login flow and then perform the real LLM generation.
-		status.Ready = status.Version != ""
-	case config.ProviderCodex:
-		out, err := runCapture(ctx, timeout, found.Path, "login", "status")
-		status.LoginChecked = true
-		if err == nil {
-			status.LoggedIn = true
-		} else if errors.Is(err, context.DeadlineExceeded) || looksLikeMissingSubcommand(out) {
-			status.LoginChecked = false
-			if status.Error == "" {
-				status.Error = err.Error()
-			}
-		} else if status.Error == "" {
-			status.Error = err.Error()
-		}
-		status.Ready = status.Version != ""
-	default:
+	if probe, ok := authProbes[provider]; ok {
+		probe(ctx, timeout, found.Path, &status)
+	} else {
 		status.Error = fmt.Sprintf("unknown provider %q", provider)
 	}
 	return status
+}
+
+// authProbes holds the per-provider credential-safe login/readiness probes.
+// A provider without an entry is reported as unknown; a new provider whose CLI
+// has no probe can use a version-only probe (Ready = Version != "").
+var authProbes = map[config.Provider]func(ctx context.Context, timeout time.Duration, path string, status *Status){
+	config.ProviderClaude: probeClaude,
+	config.ProviderCodex:  probeCodex,
+}
+
+func probeClaude(ctx context.Context, timeout time.Duration, path string, status *Status) {
+	if out, err := runCapture(ctx, timeout, path, "auth", "status"); parseClaudeAuthStatus(out, status) {
+		status.Ready = status.Version != ""
+		return
+	} else if err != nil && status.Error == "" && !errors.Is(err, context.DeadlineExceeded) {
+		status.Error = err.Error()
+	}
+
+	out, err := runCapture(ctx, timeout, path, "doctor")
+	status.Doctor = trimOutput(out)
+	if err == nil {
+		status.Ready = true
+		return
+	}
+	if status.Error == "" {
+		status.Error = err.Error()
+	}
+	// Older/newer Claude builds may not expose a non-interactive doctor. A
+	// discovered, version-reporting binary is enough to let onboarding offer
+	// the native login flow and then perform the real LLM generation.
+	status.Ready = status.Version != ""
+}
+
+func probeCodex(ctx context.Context, timeout time.Duration, path string, status *Status) {
+	out, err := runCapture(ctx, timeout, path, "login", "status")
+	status.LoginChecked = true
+	if err == nil {
+		status.LoggedIn = true
+	} else if errors.Is(err, context.DeadlineExceeded) || looksLikeMissingSubcommand(out) {
+		status.LoginChecked = false
+		if status.Error == "" {
+			status.Error = err.Error()
+		}
+	} else if status.Error == "" {
+		status.Error = err.Error()
+	}
+	status.Ready = status.Version != ""
 }
 
 func parseClaudeAuthStatus(out string, status *Status) bool {
@@ -134,12 +147,14 @@ func looksLikeMissingSubcommand(out string) bool {
 		strings.Contains(lower, "usage:")
 }
 
-// CheckAll inspects Claude and Codex.
+// CheckAll inspects every registered provider.
 func CheckAll(ctx context.Context, opts Options) []Status {
-	return []Status{
-		Check(ctx, config.ProviderClaude, opts),
-		Check(ctx, config.ProviderCodex, opts),
+	ids := config.ProviderIDs()
+	out := make([]Status, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, Check(ctx, id, opts))
 	}
+	return out
 }
 
 // RunNativeLogin starts the provider's own login flow in the current terminal.
@@ -157,14 +172,10 @@ func RunNativeLogin(ctx context.Context, provider config.Provider, path string) 
 
 // InstallPackage returns the npm package used to install a provider CLI.
 func InstallPackage(provider config.Provider) (string, error) {
-	switch provider {
-	case config.ProviderClaude:
-		return "@anthropic-ai/claude-code", nil
-	case config.ProviderCodex:
-		return "@openai/codex", nil
-	default:
-		return "", fmt.Errorf("unknown provider %q", provider)
+	if info, ok := config.ProviderInfoFor(provider); ok && info.InstallPackage != "" {
+		return info.InstallPackage, nil
 	}
+	return "", fmt.Errorf("unknown provider %q", provider)
 }
 
 // NpmPath returns npm's executable path, or an empty string when unavailable.
@@ -196,14 +207,10 @@ func RunInstall(ctx context.Context, provider config.Provider) error {
 // LoginArgs returns login commands that are safe inside containers and HA
 // Ingress: device/terminal auth instead of localhost callback URLs.
 func LoginArgs(provider config.Provider) ([]string, error) {
-	switch provider {
-	case config.ProviderClaude:
-		return []string{"/login"}, nil
-	case config.ProviderCodex:
-		return []string{"login", "--device-auth"}, nil
-	default:
-		return nil, fmt.Errorf("unknown provider %q", provider)
+	if info, ok := config.ProviderInfoFor(provider); ok && len(info.LoginArgs) > 0 {
+		return append([]string(nil), info.LoginArgs...), nil
 	}
+	return nil, fmt.Errorf("unknown provider %q", provider)
 }
 
 func runCapture(ctx context.Context, timeout time.Duration, bin string, args ...string) (string, error) {
@@ -240,26 +247,22 @@ func trimOutput(s string) string {
 }
 
 func installHint(provider config.Provider) string {
-	switch provider {
-	case config.ProviderClaude:
-		return "Install Claude Code with Anthropic's current instructions, commonly: npm install -g @anthropic-ai/claude-code"
-	case config.ProviderCodex:
-		return "Install Codex CLI with OpenAI's current instructions, commonly: npm install -g @openai/codex"
-	default:
+	info, ok := config.ProviderInfoFor(provider)
+	if !ok {
 		return ""
 	}
+	return info.InstallHint
 }
 
 func loginHint(provider config.Provider) string {
-	switch provider {
-	case config.ProviderClaude:
-		if runtime.GOOS == "windows" {
-			return "Run claude /login and follow the browser/device login prompts."
-		}
-		return "Run claude /login and follow the native Claude Code login prompts."
-	case config.ProviderCodex:
-		return "Run codex login --device-auth and follow the OpenAI account prompts."
-	default:
+	// Claude's browser-based login needs different phrasing on Windows; the
+	// registry carries the common hint, this override stays OS-local.
+	if provider == config.ProviderClaude && runtime.GOOS == "windows" {
+		return "Run claude /login and follow the browser/device login prompts."
+	}
+	info, ok := config.ProviderInfoFor(provider)
+	if !ok {
 		return ""
 	}
+	return info.LoginHint
 }

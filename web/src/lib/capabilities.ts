@@ -1,10 +1,11 @@
 import { getProviderCapabilities } from "./api";
+import { DEFAULT_PROVIDER } from "./providers";
 import type { EffortOption, ModelOption, Provider, ProviderCapabilities } from "./types";
 
 const cache = new Map<string, Promise<ProviderCapabilities>>();
 
 export function capabilityKey(provider: Provider | string, profile = ""): string {
-  return `${provider || "claude"}|${profile}`;
+  return `${provider || DEFAULT_PROVIDER}|${profile}`;
 }
 
 export function loadProviderCapabilities(

@@ -807,6 +807,210 @@ var migrations = []migration{
 			ORDER BY s.created_at DESC, s.id DESC LIMIT 1
 		), '');`,
 	},
+	{
+		// Provider validity is enforced in Go against the config provider
+		// registry (config.KnownProvider); baking the provider list into CHECK
+		// constraints made every new provider a schema migration. This rebuilds
+		// the five affected tables identically minus the provider/
+		// resolved_provider CHECK clauses. All other constraints, indexes, and
+		// triggers are recreated verbatim.
+		version: 25,
+		name:    "drop_provider_checks",
+		sql: `CREATE TABLE agents_new (
+			name            TEXT PRIMARY KEY,
+			provider        TEXT NOT NULL,
+			profile         TEXT NOT NULL DEFAULT '',
+			model           TEXT NOT NULL DEFAULT '',
+			effort          TEXT NOT NULL DEFAULT '',
+			permission_mode TEXT NOT NULL CHECK (permission_mode IN ('approve', 'yolo')),
+			fallback_json   TEXT NOT NULL DEFAULT '[]',
+			mcp_config      TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+			mcp_servers_json TEXT NOT NULL DEFAULT '[]',
+			avatar_updated_at TEXT NOT NULL DEFAULT ''
+		);
+
+		INSERT INTO agents_new
+			(name, provider, profile, model, effort, permission_mode, fallback_json, mcp_config,
+			 created_at, updated_at, mcp_servers_json, avatar_updated_at)
+		SELECT name, provider, profile, model, effort, permission_mode, fallback_json, mcp_config,
+			 created_at, updated_at, mcp_servers_json, avatar_updated_at
+		FROM agents;
+
+		DROP TABLE agents;
+		ALTER TABLE agents_new RENAME TO agents;
+
+		CREATE TABLE sessions_new (
+			id                TEXT PRIMARY KEY,
+			agent_name        TEXT NOT NULL REFERENCES agents(name) ON UPDATE CASCADE ON DELETE RESTRICT,
+			provider          TEXT NOT NULL,
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			permission_mode   TEXT NOT NULL CHECK (permission_mode IN ('approve', 'yolo')),
+			origin            TEXT NOT NULL CHECK (origin IN ('web', 'cli', 'onboarding', 'schedule', 'roadmap', 'goal')),
+			schedule_id       TEXT,
+			run_id            TEXT,
+			rolling_summary   TEXT NOT NULL DEFAULT '',
+			provider_handle   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			name              TEXT NOT NULL DEFAULT '',
+			description       TEXT NOT NULL DEFAULT '',
+			auto_named        INTEGER NOT NULL DEFAULT 0,
+			task_id           TEXT,
+			project_id        TEXT NOT NULL DEFAULT '',
+			dreamed_at        TEXT,
+			plan_state        TEXT NOT NULL DEFAULT 'none'
+				CHECK (plan_state IN ('none', 'pending_submission', 'awaiting_approval')),
+			plan_explicit     INTEGER NOT NULL DEFAULT 0,
+			plan_file_path    TEXT NOT NULL DEFAULT '',
+			plan_markdown     TEXT NOT NULL DEFAULT '',
+			plan_submitted_at TEXT NOT NULL DEFAULT '',
+			plan_updated_at   TEXT NOT NULL DEFAULT '',
+			context_tokens    INTEGER NOT NULL DEFAULT 0,
+			context_limit     INTEGER NOT NULL DEFAULT 0,
+			goal_id           TEXT,
+			usage_input_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_output_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_cache_write_tokens INTEGER NOT NULL DEFAULT 0
+		);
+
+		INSERT INTO sessions_new
+			(id, agent_name, provider, profile, model, effort, permission_mode, origin, schedule_id,
+			 run_id, rolling_summary, provider_handle, created_at, updated_at, name, description,
+			 auto_named, task_id, project_id, dreamed_at, plan_state, plan_explicit, plan_file_path,
+			 plan_markdown, plan_submitted_at, plan_updated_at, context_tokens, context_limit, goal_id,
+			 usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens)
+		SELECT id, agent_name, provider, profile, model, effort, permission_mode, origin, schedule_id,
+			 run_id, rolling_summary, provider_handle, created_at, updated_at, name, description,
+			 auto_named, task_id, project_id, dreamed_at, plan_state, plan_explicit, plan_file_path,
+			 plan_markdown, plan_submitted_at, plan_updated_at, context_tokens, context_limit, goal_id,
+			 usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens
+		FROM sessions;
+
+		DROP TABLE sessions;
+		ALTER TABLE sessions_new RENAME TO sessions;
+
+		CREATE INDEX idx_sessions_agent_name ON sessions(agent_name);
+		CREATE INDEX idx_sessions_dreamed ON sessions(agent_name, dreamed_at);
+		CREATE INDEX idx_sessions_goal_id ON sessions(goal_id);
+		CREATE INDEX idx_sessions_origin ON sessions(origin);
+		CREATE INDEX idx_sessions_plan_state ON sessions(plan_state);
+		CREATE INDEX idx_sessions_project_id ON sessions(project_id);
+		CREATE INDEX idx_sessions_schedule_id ON sessions(schedule_id);
+		CREATE INDEX idx_sessions_task_id ON sessions(task_id);
+
+		CREATE TRIGGER sessions_origin_immutable
+		BEFORE UPDATE OF origin ON sessions
+		BEGIN
+			SELECT RAISE(ABORT, 'session origin is immutable');
+		END;
+
+		CREATE TABLE tasks_new (
+			id             TEXT PRIMARY KEY,
+			project_id     TEXT NOT NULL DEFAULT '',
+			title          TEXT NOT NULL,
+			body           TEXT NOT NULL DEFAULT '',
+			assigned_agent TEXT NOT NULL DEFAULT '',
+			status         TEXT NOT NULL CHECK (status IN ('backlog', 'in_progress', 'review', 'done')),
+			pickup_at      TEXT,
+			created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+			plan_required  INTEGER NOT NULL DEFAULT 0,
+			provider       TEXT NOT NULL DEFAULT '',
+			profile        TEXT NOT NULL DEFAULT '',
+			model          TEXT NOT NULL DEFAULT '',
+			effort         TEXT NOT NULL DEFAULT '',
+			goal_id        TEXT NOT NULL DEFAULT ''
+		);
+
+		INSERT INTO tasks_new
+			(id, project_id, title, body, assigned_agent, status, pickup_at, created_at, updated_at,
+			 plan_required, provider, profile, model, effort, goal_id)
+		SELECT id, project_id, title, body, assigned_agent, status, pickup_at, created_at, updated_at,
+			 plan_required, provider, profile, model, effort, goal_id
+		FROM tasks;
+
+		DROP TABLE tasks;
+		ALTER TABLE tasks_new RENAME TO tasks;
+
+		CREATE INDEX idx_tasks_goal ON tasks(goal_id);
+		CREATE INDEX idx_tasks_project ON tasks(project_id);
+		CREATE INDEX idx_tasks_status ON tasks(status);
+
+		CREATE TABLE goals_new (
+			id               TEXT PRIMARY KEY,
+			title            TEXT NOT NULL,
+			description      TEXT NOT NULL DEFAULT '',
+			success_criteria TEXT NOT NULL DEFAULT '',
+			metrics_json     TEXT NOT NULL DEFAULT '[]',
+			review_every     TEXT NOT NULL DEFAULT '',
+			lead_agent       TEXT NOT NULL,
+			project_id       TEXT NOT NULL DEFAULT '',
+			status           TEXT NOT NULL DEFAULT 'active'
+				CHECK (status IN ('active', 'paused', 'review', 'done', 'abandoned')),
+			next_review_at   TEXT,
+			closing_report   TEXT NOT NULL DEFAULT '',
+			created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+			provider         TEXT NOT NULL DEFAULT '',
+			profile          TEXT NOT NULL DEFAULT '',
+			model            TEXT NOT NULL DEFAULT '',
+			effort           TEXT NOT NULL DEFAULT '',
+			lead_session_id  TEXT NOT NULL DEFAULT ''
+		);
+
+		INSERT INTO goals_new
+			(id, title, description, success_criteria, metrics_json, review_every, lead_agent,
+			 project_id, status, next_review_at, closing_report, created_at, updated_at,
+			 provider, profile, model, effort, lead_session_id)
+		SELECT id, title, description, success_criteria, metrics_json, review_every, lead_agent,
+			 project_id, status, next_review_at, closing_report, created_at, updated_at,
+			 provider, profile, model, effort, lead_session_id
+		FROM goals;
+
+		DROP TABLE goals;
+		ALTER TABLE goals_new RENAME TO goals;
+
+		CREATE INDEX idx_goals_due_review ON goals(status, next_review_at);
+		CREATE INDEX idx_goals_status ON goals(status);
+
+		CREATE TABLE goal_rate_limits_new (
+			id                TEXT PRIMARY KEY,
+			goal_id           TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id        TEXT NOT NULL,
+			run_id            TEXT NOT NULL UNIQUE,
+			phase             TEXT NOT NULL CHECK (phase IN ('planning', 'review')),
+			provider          TEXT NOT NULL,
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			error             TEXT NOT NULL DEFAULT '',
+			status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved')),
+			resolved_provider TEXT NOT NULL DEFAULT '',
+			resolved_profile  TEXT NOT NULL DEFAULT '',
+			resolved_model    TEXT NOT NULL DEFAULT '',
+			resolved_effort   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			resolved_at       TEXT
+		);
+
+		INSERT INTO goal_rate_limits_new
+			(id, goal_id, session_id, run_id, phase, provider, profile, model, effort, error, status,
+			 resolved_provider, resolved_profile, resolved_model, resolved_effort, created_at, resolved_at)
+		SELECT id, goal_id, session_id, run_id, phase, provider, profile, model, effort, error, status,
+			 resolved_provider, resolved_profile, resolved_model, resolved_effort, created_at, resolved_at
+		FROM goal_rate_limits;
+
+		DROP TABLE goal_rate_limits;
+		ALTER TABLE goal_rate_limits_new RENAME TO goal_rate_limits;
+
+		CREATE INDEX idx_goal_rate_limits_goal ON goal_rate_limits(goal_id, created_at DESC);
+		CREATE INDEX idx_goal_rate_limits_status ON goal_rate_limits(status);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

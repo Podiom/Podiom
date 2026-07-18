@@ -8,6 +8,7 @@
     modelOptions,
   } from "./capabilities";
   import ProviderLogo from "./ProviderLogo.svelte";
+  import { DEFAULT_PROVIDER, PROVIDERS, providerMeta } from "./providers";
   import type { Agent, ProfileInfo, Provider, ProviderCapabilities } from "./types";
 
   export interface RunTargetValue {
@@ -39,7 +40,7 @@
   let loading = new Set<string>();
 
   const explicit = $derived(!!(value.provider || value.profile || value.model || value.effort));
-  const effectiveProvider = $derived((value.provider || agent?.Provider || "claude") as Provider);
+  const effectiveProvider = $derived((value.provider || agent?.Provider || DEFAULT_PROVIDER) as Provider);
   const effectiveProfile = $derived(value.profile ?? (value.provider ? "" : agent?.Profile ?? ""));
   const effectiveModel = $derived(value.model || agent?.Model || "");
   const effectiveEffort = $derived(value.effort || agent?.Effort || "medium");
@@ -190,10 +191,19 @@
     };
     add("", "", "Agent default", true, "Agent default", "Inherit colleague settings");
     if (agent) add(agent.Provider, "", `${agent.Provider} default`, false, cap(agent.Provider), "Default account");
-    add("claude", "", "Claude default", false, "Claude", "Default account");
-    add("codex", "", "Codex default", false, "Codex", "Default account");
+    for (const p of PROVIDERS) add(p.id, "", `${p.label} default`, false, p.label, "Default account");
     for (const p of profiles) add(p.Provider, p.Name, "", false, cap(p.Provider), p.Name);
     return out;
+  }
+
+  // Compact provider dot: color and shape come from the registry (claude:
+  // circle, codex: rotated square rendered via border-radius+transform).
+  function dotStyle(p: string): string {
+    const m = providerMeta(p);
+    return (
+      `background:${m.accent.ink}` +
+      (m.dotShape === "diamond" ? ";border-radius:2px;transform:rotate(45deg)" : "")
+    );
   }
 </script>
 
@@ -304,7 +314,7 @@
     {#if !readonlyAccount && showAccount}
       <div class="rt-dd">
         <button class="rt-chip account" type="button" onclick={() => toggle("account")}>
-          <span class="rt-dot" class:codex={effectiveProvider === "codex"}></span>
+          <span class="rt-dot" style={dotStyle(effectiveProvider)}></span>
           {accountLabel}<span class="chev">▾</span>
         </button>
         {#if open === "account"}
@@ -319,7 +329,7 @@
       </div>
     {:else}
       <span class="rt-chip account readonly">
-        <span class="rt-dot" class:codex={effectiveProvider === "codex"}></span>
+        <span class="rt-dot" style={dotStyle(effectiveProvider)}></span>
         {accountLabel}
       </span>
     {/if}
@@ -607,12 +617,6 @@
   .rt-row-head .rt-dot {
     width: 7px;
     height: 7px;
-  }
-
-  .rt-dot.codex {
-    border-radius: 2px;
-    background: #4b5560;
-    transform: rotate(45deg);
   }
 
   .chev {

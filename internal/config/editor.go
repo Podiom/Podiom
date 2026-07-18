@@ -343,16 +343,10 @@ func profileNode(profile Profile) *yaml.Node {
 		&yaml.Node{Kind: yaml.ScalarNode, Value: "provider"},
 		&yaml.Node{Kind: yaml.ScalarNode, Value: string(profile.Provider)},
 	)
-	switch profile.Provider {
-	case ProviderClaude:
+	if info, ok := ProviderInfoFor(profile.Provider); ok {
 		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "config_dir"},
-			&yaml.Node{Kind: yaml.ScalarNode, Value: profile.ConfigDir},
-		)
-	case ProviderCodex:
-		node.Content = append(node.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "home_dir"},
-			&yaml.Node{Kind: yaml.ScalarNode, Value: profile.HomeDir},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: info.ProfileDirKey},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: profile.Dir()},
 		)
 	}
 	return node
@@ -381,14 +375,15 @@ func profileNodeEqual(node *yaml.Node, profile Profile) bool {
 	if values["name"] != profile.Name || values["provider"] != string(profile.Provider) {
 		return false
 	}
-	switch profile.Provider {
-	case ProviderClaude:
-		return values["config_dir"] == profile.ConfigDir && values["home_dir"] == ""
-	case ProviderCodex:
-		return values["home_dir"] == profile.HomeDir && values["config_dir"] == ""
-	default:
+	info, ok := ProviderInfoFor(profile.Provider)
+	if !ok {
 		return false
 	}
+	otherKey := "home_dir"
+	if info.ProfileDirKey == "home_dir" {
+		otherKey = "config_dir"
+	}
+	return values[info.ProfileDirKey] == profile.Dir() && values[otherKey] == ""
 }
 
 func agentNodeName(node *yaml.Node) string {

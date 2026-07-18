@@ -712,10 +712,7 @@ func newProfilesDeleteCmd(addr *string) *cobra.Command {
 }
 
 func profilePath(profile config.Profile) string {
-	if profile.Provider == config.ProviderCodex {
-		return profile.HomeDir
-	}
-	return profile.ConfigDir
+	return profile.Dir()
 }
 
 func newAgentsListCmd(addr *string) *cobra.Command {
@@ -1036,13 +1033,13 @@ func runCLIChat(ctx context.Context, c *client.Client, chatReq client.ChatReques
 					if err != nil {
 						return err
 					}
-					if event.Input.Provider == config.ProviderClaude {
-						if err := c.DecideUserInput(ctx, event.Input.ID, decision); err != nil {
-							return err
-						}
-						followup = text
-					} else if err := c.DecideUserInput(ctx, event.Input.ID, decision); err != nil {
+					if err := c.DecideUserInput(ctx, event.Input.ID, decision); err != nil {
 						return err
+					}
+					// Turn-ending providers need the answer re-sent as a
+					// follow-up turn; blocking providers resume on the decision.
+					if info, ok := config.ProviderInfoFor(event.Input.Provider); ok && info.QuestionEndsTurn {
+						followup = text
 					}
 				}
 			case "error":

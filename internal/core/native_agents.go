@@ -60,19 +60,18 @@ func (c *Core) nativeAgentForProvider(provider config.Provider, agent store.Agen
 		native.Model = agent.Model
 		native.Effort = agent.Effort
 	}
-	if provider == config.ProviderCodex {
-		native.ConfigPath = filepath.Join(c.AgentPaths(agent.Name).Workspace, ".podiom", "native-agents", "codex", name+".toml")
+	if info, ok := config.ProviderInfoFor(provider); ok && info.NativeAgentConfigDir != "" {
+		native.ConfigPath = filepath.Join(c.AgentPaths(agent.Name).Workspace, ".podiom", "native-agents", info.NativeAgentConfigDir, name+".toml")
 	}
 	return native, nil
 }
 
 func nativeAgentName(provider config.Provider, podiomName string) string {
 	separator := "-"
-	prefix := "podiom-"
-	if provider == config.ProviderCodex {
-		separator = "_"
-		prefix = "podiom_"
+	if info, ok := config.ProviderInfoFor(provider); ok && info.NativeAgentSep != "" {
+		separator = info.NativeAgentSep
 	}
+	prefix := "podiom" + separator
 	stem := strings.ToLower(strings.TrimSpace(podiomName))
 	stem = nativeNamePart.ReplaceAllString(stem, separator)
 	stem = strings.Trim(stem, separator)

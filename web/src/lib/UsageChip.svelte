@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { providerMeta } from "./providers";
   import type { Provider, UsageSnapshot, UsageWindow } from "./types";
 
   let {
@@ -29,16 +30,13 @@
     return () => clearInterval(id);
   });
 
-  const PROVIDER_COLORS: Record<string, { ink: string; bg: string; bd: string }> = {
-    claude: { ink: "#B0572F", bg: "#F8EBE2", bd: "#ECD3C2" },
-    codex: { ink: "#4B5560", bg: "#EAEEF1", bd: "#D6DCE2" },
-  };
-  const pc = $derived(PROVIDER_COLORS[provider] ?? PROVIDER_COLORS.claude);
+  const meta = $derived(providerMeta(provider));
+  const pc = $derived(meta.accent);
 
-  const sessionKeys = $derived(provider === "codex" ? ["primary"] : ["five_hour"]);
-  const weeklyKeys = $derived(provider === "codex" ? ["secondary"] : ["seven_day"]);
+  const sessionKeys = $derived(meta.usage.sessionKeys);
+  const weeklyKeys = $derived(meta.usage.weeklyKeys);
 
-  function pick(keys: string[]): UsageWindow | undefined {
+  function pick(keys: readonly string[]): UsageWindow | undefined {
     return snapshot?.windows?.find((w) => keys.includes(w.key));
   }
   const sessionWin = $derived(pick(sessionKeys));
@@ -99,11 +97,7 @@
     return `${date} · ${time}`;
   }
 
-  const footerNote = $derived(
-    provider === "codex"
-      ? "Counts usage across ChatGPT, Codex & Podiom for this profile."
-      : "Counts usage across claude.ai, Claude Code & Podiom for this profile.",
-  );
+  const footerNote = $derived(meta.usage.footnote);
 
   function refresh(event: MouseEvent) {
     event.stopPropagation();

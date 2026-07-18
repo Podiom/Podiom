@@ -336,16 +336,25 @@ func isPlanSubmitTool(req adapter.PermissionRequest) bool {
 	return strings.Contains(name, "podiom_submit_plan") || strings.Contains(name, "podiom_plan")
 }
 
+// planReadOnlyTools is the union of every registered provider's read-only tool
+// names. The plan gate has no per-session provider context, and the default is
+// deny, so a union of allow-names is safe: mutating tools are expressed by
+// omission from ProviderInfo.PlanReadOnlyTools.
+var planReadOnlyTools = func() map[string]bool {
+	set := map[string]bool{}
+	for _, info := range config.Providers() {
+		for _, tool := range info.PlanReadOnlyTools {
+			set[strings.ToLower(tool)] = true
+		}
+	}
+	return set
+}()
+
 func isReadOnlyTool(req adapter.PermissionRequest) bool {
 	name := strings.ToLower(req.ToolName)
-	switch {
-	case name == "read", name == "ls", name == "glob", name == "grep", name == "webfetch", name == "websearch":
+	if planReadOnlyTools[name] {
 		return true
-	case strings.Contains(name, ".read"), strings.Contains(name, ".search"), strings.Contains(name, ".list"):
-		return true
-	case strings.Contains(name, "codex.command"), strings.Contains(name, "codex.file_change"), strings.Contains(name, "applypatch"):
-		return false
-	default:
-		return false
 	}
+	// MCP-style suffixes are provider-neutral read patterns.
+	return strings.Contains(name, ".read") || strings.Contains(name, ".search") || strings.Contains(name, ".list")
 }
