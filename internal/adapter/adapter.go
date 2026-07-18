@@ -245,6 +245,16 @@ type Adapter interface {
 	Capabilities(context.Context, capabilities.Request) (capabilities.ProviderCapabilities, error)
 }
 
+// CredentialRefresher is implemented by adapters that cache ExtraEnv in a
+// long-lived provider process. RefreshCredentials asks the adapter to pick up
+// newly stored credentials at the next safe point (a turn boundary), without
+// aborting an in-flight turn. Per-turn adapters (Claude) re-read credentials on
+// every turn and need not implement this — the interface is optional and
+// callers type-assert for it.
+type CredentialRefresher interface {
+	RefreshCredentials()
+}
+
 // PermissionRequest is the provider-neutral approval payload surfaced to a user.
 type PermissionRequest struct {
 	ID          string          `json:"id"`

@@ -298,13 +298,15 @@ func filterTasks(body, projectID, status, assignedAgent string) (string, error) 
 	}
 	kept := make([]map[string]json.RawMessage, 0, len(tasks))
 	for _, t := range tasks {
-		if projectID != "" && argString(t, "project_id") != projectID {
+		// The /api/tasks endpoint serializes store.Task with Go's default
+		// marshaling (no JSON tags), so the response keys are PascalCase.
+		if projectID != "" && argString(t, "ProjectID") != projectID {
 			continue
 		}
-		if status != "" && argString(t, "status") != status {
+		if status != "" && argString(t, "Status") != status {
 			continue
 		}
-		if assignedAgent != "" && argString(t, "assigned_agent") != assignedAgent {
+		if assignedAgent != "" && argString(t, "AssignedAgent") != assignedAgent {
 			continue
 		}
 		kept = append(kept, t)

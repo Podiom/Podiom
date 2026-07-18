@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/creds"
 )
 
@@ -32,6 +33,16 @@ func (c *Core) StoreCredential(ctx context.Context, cred creds.Credential) error
 	}
 	c.log.Info("credential stored", "event", "credentials", "name", cred.Name, "goal", cred.GoalID)
 	return nil
+}
+
+// RefreshCredentials asks the adapter to propagate newly stored credentials
+// into any long-lived provider process. Per-turn adapters (Claude) re-read
+// credentials on their next turn and need no action; adapters that do not
+// implement adapter.CredentialRefresher are a no-op.
+func (c *Core) RefreshCredentials() {
+	if cr, ok := c.adapter.(adapter.CredentialRefresher); ok {
+		cr.RefreshCredentials()
+	}
 }
 
 // DeleteCredential removes a stored credential by name.

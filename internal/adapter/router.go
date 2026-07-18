@@ -66,6 +66,20 @@ func (r *Router) Capabilities(ctx context.Context, req capabilities.Request) (ca
 	return ad.Capabilities(ctx, req)
 }
 
+// RefreshCredentials fans out to every adapter that caches credentials in a
+// long-lived process. Adapters that do not implement CredentialRefresher (the
+// per-turn Claude adapter, Fake, Unavailable) are skipped.
+func (r *Router) RefreshCredentials() {
+	if r == nil {
+		return
+	}
+	for _, ad := range r.adapters {
+		if cr, ok := ad.(CredentialRefresher); ok {
+			cr.RefreshCredentials()
+		}
+	}
+}
+
 func (r *Router) adapter(provider config.Provider) (Adapter, error) {
 	if provider == "" {
 		return nil, fmt.Errorf("provider is required")

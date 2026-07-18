@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/creds"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/store"
@@ -586,6 +588,81 @@ func TestEnvVarGrantWithSecretValue(t *testing.T) {
 	failed, _ := decide(bad.ID, `{"secret_value":"v"}`)
 	if failed.Status != store.AccessFailed || failed.ExecutionError == "" {
 		t.Fatalf("reserved-name grant = %+v, want failed", failed)
+	}
+}
+
+// refreshCounterAdapter is a Fake that also records RefreshCredentials calls,
+// so the grant path's credential-propagation call can be asserted.
+type refreshCounterAdapter struct {
+	*adapter.Fake
+	calls atomic.Int64
+}
+
+func (r *refreshCounterAdapter) RefreshCredentials() { r.calls.Add(1) }
+
+func TestEnvVarGrantRefreshesCredentials(t *testing.T) {
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	spy := &refreshCounterAdapter{Fake: adapter.NewFake()}
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: spy, Credentials: creds.New(paths.CredentialsYAML)})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, Core: coreSvc, Paths: paths})
+	if _, err := coreSvc.CreateAgent(context.Background(), core.CreateAgentRequest{Name: "atlas", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal := createGoalViaCore(t, srv, store.Goal{})
+
+	file := func(body string) store.AccessRequest {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/access-requests", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		srv.handleAccessRequests(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("file request: %d %s", rr.Code, rr.Body.String())
+		}
+		var out store.AccessRequest
+		if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+	approve := func(id, body string) store.AccessRequest {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/access-requests/"+id+"/approve", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		srv.handleAccessRequest(rr, req)
+		var out store.AccessRequest
+		_ = json.NewDecoder(rr.Body).Decode(&out)
+		return out
+	}
+
+	// Approving with a secret stores the credential and must refresh so a
+	// running provider process picks it up.
+	withValue := file(`{"goal_id":"` + goal.ID + `","kind":"env_var","payload":{"var_name":"GITHUB_TOKEN","purpose":"gh"},"reason":"repo","agent_name":"atlas"}`)
+	if granted := approve(withValue.ID, `{"secret_value":"tok_s3cret"}`); granted.Status != store.AccessExecuted {
+		t.Fatalf("grant = %+v, want executed", granted)
+	}
+	if got := spy.calls.Load(); got != 1 {
+		t.Fatalf("RefreshCredentials called %d times after credential grant, want 1", got)
+	}
+
+	// Approving without a secret is acknowledge-only: nothing stored, no refresh.
+	bare := file(`{"goal_id":"` + goal.ID + `","kind":"env_var","payload":{"var_name":"OTHER_TOKEN"},"reason":"x","agent_name":"atlas"}`)
+	if acked := approve(bare.ID, `{"note":"set it myself"}`); acked.Status != store.AccessApproved {
+		t.Fatalf("bare approval = %+v, want approved", acked)
+	}
+	if got := spy.calls.Load(); got != 1 {
+		t.Fatalf("RefreshCredentials called %d times; a value-free grant must not refresh", got)
 	}
 }
 

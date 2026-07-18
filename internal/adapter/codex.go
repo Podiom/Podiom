@@ -147,6 +147,9 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 		return nil, err
 	}
 	client := c.client(req.Settings.ProfileDir, profileName, profileHash, profileConfig)
+	// Respawn the app-server here if a credential was stored since it started —
+	// this is a turn boundary (before thread/turn RPCs and registerTurn).
+	client.maybeRespawnForCredentials()
 	threadID := req.Handle.ID
 	firstEvents := []Event{}
 	startedFresh := threadID == ""
@@ -308,6 +311,21 @@ func (c *Codex) client(profileDir, profileName, profileHash, profileConfig strin
 	return client
 }
 
+// RefreshCredentials asks every live app-server client to respawn with fresh
+// ExtraEnv at a safe turn boundary, so newly stored credentials reach the
+// long-lived process. Implements adapter.CredentialRefresher.
+func (c *Codex) RefreshCredentials() {
+	c.mu.Lock()
+	clients := make([]*codexClient, 0, len(c.clients))
+	for _, cl := range c.clients {
+		clients = append(clients, cl)
+	}
+	c.mu.Unlock()
+	for _, cl := range clients {
+		cl.refreshCredentials()
+	}
+}
+
 var errCodexNativeAgents = errors.New("codex native agents projection failed")
 
 func (c *Codex) ensureProfile(profileDir, agentName string, assigned, all []podiommcp.Server, nativeAgents []NativeAgent) (string, string, string, bool, error) {
@@ -413,10 +431,11 @@ type codexClient struct {
 	mu       sync.Mutex
 	stderrMu sync.Mutex
 
-	cmd         *osProcess
-	stdin       io.WriteCloser
-	nextID      int64
-	initialized bool
+	cmd          *osProcess
+	stdin        io.WriteCloser
+	nextID       int64
+	initialized  bool
+	needsRespawn bool
 
 	pending     map[string]chan codexCallResponse
 	loaded      map[string]string
@@ -838,6 +857,46 @@ func (c *codexClient) dispatchThreadStartedNotification(msg codexRPCMessage) boo
 	}
 	c.mu.Unlock()
 	return true
+}
+
+// refreshCredentials marks the app-server for respawn so it re-reads ExtraEnv
+// (extraEnv is a live func ref, so the next spawn picks up freshly stored
+// credentials). If no turn is registered it respawns immediately; otherwise the
+// respawn is deferred to the next turn boundary (maybeRespawnForCredentials).
+func (c *codexClient) refreshCredentials() {
+	c.mu.Lock()
+	if c.stdin == nil {
+		// No process running; the next spawn reads current ExtraEnv anyway.
+		c.needsRespawn = false
+		c.mu.Unlock()
+		return
+	}
+	c.needsRespawn = true
+	idle := len(c.active) == 0
+	c.mu.Unlock()
+	if idle {
+		// reset() acquires c.mu itself; ensureProcess respawns on the next call.
+		c.reset()
+		c.mu.Lock()
+		c.needsRespawn = false
+		c.mu.Unlock()
+	}
+}
+
+// maybeRespawnForCredentials respawns the app-server before a turn starts when a
+// credential refresh is pending and no turn is currently registered. It is
+// called at the top of Codex.SendTurn, before this turn is registered in
+// c.active, so it never aborts an in-flight turn. A turn still in its startup
+// RPC phase that races this reset simply retries on errCodexTransport.
+func (c *codexClient) maybeRespawnForCredentials() {
+	c.mu.Lock()
+	if !c.needsRespawn || c.stdin == nil || len(c.active) > 0 {
+		c.mu.Unlock()
+		return
+	}
+	c.needsRespawn = false
+	c.mu.Unlock()
+	c.reset()
 }
 
 func (c *codexClient) reset() {
@@ -2412,10 +2471,10 @@ func codexIDKey(raw json.RawMessage) string {
 // codexEnv builds the app-server environment. Note: the server is one
 // long-lived process per profile, so per-agent ToolPathDirs (workspace tool
 // installs §2.2) cannot be injected here — a documented v1 limitation; tools
-// are on disk but not on PATH for Codex-backed turns. The same applies to
-// user-granted credentials (ExtraEnv): they are read at app-server spawn, so
-// a credential stored while an app-server is running reaches it only on
-// respawn or daemon restart (Claude picks it up next turn, spawning per turn).
+// are on disk but not on PATH for Codex-backed turns. User-granted credentials
+// (ExtraEnv) are read at app-server spawn, but RefreshCredentials respawns the
+// server at the next turn boundary (or immediately when idle) after a credential
+// is stored, so it reaches Codex-backed turns without a daemon restart.
 func codexEnv(profileDir string) []string {
 	env := os.Environ()
 	if profileDir == "" {

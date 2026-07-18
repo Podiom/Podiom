@@ -249,10 +249,12 @@ func TestListTasksFiltersClientSide(t *testing.T) {
 	rec, c := newRecordingServer(t)
 	rec.respond = func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		// PascalCase keys mirror the real /api/tasks contract: store.Task has
+		// no JSON tags, so Go's default marshaling emits exported field names.
 		_, _ = w.Write([]byte(`[
-			{"id":"a","status":"backlog","project_id":"p1"},
-			{"id":"b","status":"done","project_id":"p1"},
-			{"id":"c","status":"backlog","project_id":"p2"}
+			{"ID":"a","Status":"backlog","ProjectID":"p1"},
+			{"ID":"b","Status":"done","ProjectID":"p1"},
+			{"ID":"c","Status":"backlog","ProjectID":"p2"}
 		]`))
 	}
 	out, err := callTool(t, c, "podiom_list_tasks", map[string]any{"status": "backlog", "project_id": "p1"})
@@ -263,7 +265,7 @@ func TestListTasksFiltersClientSide(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("decode filtered output: %v", err)
 	}
-	if len(got) != 1 || got[0]["id"] != "a" {
+	if len(got) != 1 || got[0]["ID"] != "a" {
 		t.Fatalf("expected only task a, got %v", got)
 	}
 }

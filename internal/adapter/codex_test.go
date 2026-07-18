@@ -420,6 +420,81 @@ func TestCodexStreamsTurnAndRelaysUserInput(t *testing.T) {
 	}
 }
 
+var _ CredentialRefresher = (*Codex)(nil)
+var _ CredentialRefresher = (*Router)(nil)
+
+type refreshWriteCloser struct{}
+
+func (refreshWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (refreshWriteCloser) Close() error                { return nil }
+
+func TestCodexRefreshCredentialsRespawnsWhenIdle(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client.stdin = refreshWriteCloser{} // simulate a running app-server, no active turn
+
+	client.refreshCredentials()
+
+	if client.stdin != nil {
+		t.Fatal("idle refresh should tear down the app-server so it respawns with fresh env")
+	}
+	if client.needsRespawn {
+		t.Fatal("needsRespawn should be cleared after an immediate idle respawn")
+	}
+}
+
+func TestCodexRefreshCredentialsDefersDuringActiveTurn(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client.stdin = refreshWriteCloser{}
+	key := codexTurnKey{threadID: "t1", turnID: "turn-1"}
+	client.active[key] = codexActiveTurn{}
+
+	client.refreshCredentials()
+
+	if client.stdin == nil {
+		t.Fatal("refresh must not tear down the app-server during an active turn")
+	}
+	if !client.needsRespawn {
+		t.Fatal("refresh should set needsRespawn to defer the respawn")
+	}
+
+	// Still no-op while the turn remains registered.
+	client.maybeRespawnForCredentials()
+	if client.stdin == nil {
+		t.Fatal("boundary check must not tear down while a turn is still active")
+	}
+
+	// Turn finishes: the next boundary respawns with fresh env.
+	delete(client.active, key)
+	client.maybeRespawnForCredentials()
+	if client.stdin != nil {
+		t.Fatal("boundary check should respawn once the turn has drained")
+	}
+	if client.needsRespawn {
+		t.Fatal("needsRespawn should be cleared after the boundary respawn")
+	}
+}
+
+type refreshSpyAdapter struct {
+	Fake
+	calls int
+}
+
+func (r *refreshSpyAdapter) RefreshCredentials() { r.calls++ }
+
+func TestRouterRefreshCredentialsFansOut(t *testing.T) {
+	spy := &refreshSpyAdapter{}
+	r := NewRouter(map[config.Provider]Adapter{
+		config.ProviderCodex:  spy,
+		config.ProviderClaude: &Fake{}, // does not implement CredentialRefresher; must be skipped
+	})
+
+	r.RefreshCredentials()
+
+	if spy.calls != 1 {
+		t.Fatalf("expected refresher adapter called once, got %d", spy.calls)
+	}
+}
+
 func TestCodexResumesThreadAfterAppServerRestart(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "normal")
 	codex := newTestCodex(t)

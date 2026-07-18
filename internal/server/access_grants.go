@@ -62,6 +62,10 @@ func (s *Server) executeAccessGrant(ctx context.Context, req store.AccessRequest
 			GoalID:  req.GoalID,
 		})
 		if execErr == nil {
+			// Propagate the new credential into any long-lived provider process
+			// (Codex app-server) so a running session picks it up without a
+			// restart; Claude re-reads it on its next turn.
+			s.core.RefreshCredentials()
 			evidence = "Credential granted — " + payload["var_name"] + " is now set in the agent's environment"
 		}
 	default:
