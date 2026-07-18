@@ -28,3 +28,36 @@ Two process models behind one interface (D7):
 - **Codex — long-lived app-server.** A single `codex app-server --listen
   stdio://` process; lifecycle via `thread/start` / `thread/resume` /
   `turn/start`; resume via a persisted `threadId`.
+
+## Adding a provider
+
+Provider knowledge is consolidated so a third provider is a handful of
+registrations, not a codebase-wide sweep. The boundary:
+
+- **Behavior** — one new adapter file in `internal/adapter/` implementing the
+  five-method `Adapter` interface, plus a wiring block in
+  `cmd/podiomd/main.go` (the composition root).
+- **Identity & data** — one `ProviderInfo` entry in
+  `internal/config/provider.go`: display name, profile-dir key, install/login
+  data, instruction delivery mode, native-agent projection, plan-gate
+  read-only tools, fallback model catalogue, question-turn semantics. The doc
+  comment on `providerInfos` is the authoritative checklist.
+- **Per-layer tables** — one-line entries where behavior can't live in config:
+  `usage.usageProviders` (usage endpoint), `providercheck.authProbes` (login
+  probe), and optionally `mcp.nativeImports` / `skills.nativeRoots` when the
+  provider has native MCP config or skill directories.
+- **Frontend** — one `PROVIDERS` entry in `web/src/lib/providers.ts` plus a
+  logo component in `web/src/lib/logos/`.
+- **Store** — nothing. Provider validity is Go-side (`config.KnownProvider`);
+  migration 25 removed the provider CHECK constraints, so no schema change.
+- **Contract doc** — add `<provider>.md` here describing the integration
+  contract, and a row to the table above.
+
+Everything else (config validation, core, server, schedule, onboarding,
+tokenmeter, capabilities, CLI) derives from these registries and must not
+branch on provider identity. This is enforced by
+`TestProviderKnowledgeStaysInRegistry` in
+`internal/config/provider_drift_test.go`, which fails when `"claude"`/
+`"codex"` literals or the `Provider*` constants appear outside the sanctioned
+locations — if it fires, move the logic into a registry/table rather than
+extending its allowlist.

@@ -62,4 +62,40 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ---
 
+## 5. Podiom Provider Architecture (project boundary)
+
+**Provider identity lives in registries. Never branch on `"claude"`/`"codex"` outside them.**
+
+Podiom supports multiple AI-agent providers behind a deliberate seam:
+
+- **Behavior** (spawning, protocol, events, permissions, credentials) lives in
+  `internal/adapter/` behind the `Adapter` interface, dispatched by `Router`.
+- **Identity & metadata** live in the registry `internal/config/provider.go`
+  (`ProviderInfo`) and, for the UI, `web/src/lib/providers.ts` (`PROVIDERS`).
+- Behavior that can't live in config uses small per-layer tables keyed by
+  provider: `usage.usageProviders`, `providercheck.authProbes`,
+  `mcp.nativeImports`, `skills.nativeRoots`.
+
+Rules when changing code:
+
+- Need a per-provider value (label, dir, color, model list, window keys,
+  question semantics)? Add a field to the registry — do not write
+  `if provider == "codex"` at the call site.
+- Need per-provider behavior in a subsystem? Add or extend that subsystem's
+  table — do not switch on provider constants in shared code.
+- Adding a provider? Follow the checklist in the doc comment on
+  `config.providerInfos` (one adapter + wiring block + registry entries).
+- Do not re-add provider CHECK constraints to the SQLite schema; validity is
+  enforced in Go via `config.KnownProvider` (migration 25 dropped them).
+
+This boundary is enforced: `TestProviderKnowledgeStaysInRegistry`
+(`internal/config/provider_drift_test.go`) fails the build when provider
+literals appear outside the sanctioned locations. If it fires on your change,
+route the logic through a registry — extending its allowlist is correct only
+for a genuinely new sanctioned location, not for a convenient branch.
+
+Details: `docs/integrations/README.md` ("Adding a provider").
+
+---
+
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.

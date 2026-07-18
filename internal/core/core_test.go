@@ -1150,7 +1150,7 @@ func TestStreamTurnUsesCurrentGlobalPermissionTimeout(t *testing.T) {
 	defer db.Close()
 	fake := adapter.NewFake()
 	fake.PermissionTool = "Bash"
-	c, err := New(Options{Paths: paths, Store: db, Adapter: fake})
+	c, err := New(Options{Paths: paths, Store: db, Adapter: fake, DisableBackgroundWork: true})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}
@@ -1206,7 +1206,10 @@ func newTestCore(t *testing.T) (*Core, func()) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	c, err := New(Options{Paths: paths, Store: db, Adapter: adapter.NewFake()})
+	// DisableBackgroundWork keeps post-turn goroutines (auto-name, rolling
+	// summary) from writing to the store after the test returns, which would
+	// race t.TempDir's RemoveAll cleanup into a "directory not empty" failure.
+	c, err := New(Options{Paths: paths, Store: db, Adapter: adapter.NewFake(), DisableBackgroundWork: true})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}

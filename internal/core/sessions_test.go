@@ -30,7 +30,10 @@ func newTestCoreAdapter(t *testing.T) (*Core, *adapter.Fake, func()) {
 		t.Fatalf("open store: %v", err)
 	}
 	fake := adapter.NewFake()
-	c, err := New(Options{Paths: paths, Store: db, Adapter: fake})
+	// Disable post-turn background goroutines (auto-name, rolling summary): they
+	// keep writing to the store after the test body returns and race t.TempDir's
+	// RemoveAll cleanup into a "directory not empty" failure.
+	c, err := New(Options{Paths: paths, Store: db, Adapter: fake, DisableBackgroundWork: true})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}
@@ -56,7 +59,7 @@ func newTestCoreAdapterWithDaemon(t *testing.T) (*Core, *adapter.Fake, func()) {
 		t.Fatalf("open store: %v", err)
 	}
 	fake := adapter.NewFake()
-	c, err := New(Options{Paths: paths, Store: db, Adapter: fake, DaemonAddr: "127.0.0.1:8787"})
+	c, err := New(Options{Paths: paths, Store: db, Adapter: fake, DaemonAddr: "127.0.0.1:8787", DisableBackgroundWork: true})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}
