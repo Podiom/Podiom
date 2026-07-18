@@ -39,6 +39,7 @@ var notManageable = map[string]string{
 	"/api/logs/follow":           "never-terminating stream; podiom_read_logs polls instead",
 	"/api/permission-decisions/": "permission relay plumbing",
 	"/api/user-input-decisions/": "user-input relay plumbing",
+	"/api/interviews/":           "USER.md interview relay plumbing",
 	"/api/permissions/":          "permission relay plumbing",
 	"/api/update":                "self-update, HA/human-managed",
 	"/api/update/apply":          "self-update, HA/human-managed",

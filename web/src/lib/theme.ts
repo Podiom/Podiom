@@ -83,6 +83,7 @@ const ORIGIN_MAP: Record<string, string> = {
   web: "background:#FBEAE0;color:#B14E2A",
   cli: "background:#EEEAFB;color:#5847B8",
   onboarding: "background:#EAF1ED;color:#3F7A5F",
+  interview: "background:#EAF1ED;color:#3F7A5F",
   schedule: "background:#FBF1DD;color:#9A6E1E",
   roadmap: "background:#E3F1EC;color:#2F6E60",
   goal: "background:#EEEAFB;color:#5847B8",
@@ -98,6 +99,7 @@ export function originStyle(o: SessionOrigin | string): string {
 
 export function originLabel(o: SessionOrigin | string): string {
   if (o === "onboarding") return "✦ onboarding";
+  if (o === "interview") return "✦ interview";
   if (o === "schedule") return "⟳ schedule";
   if (o === "roadmap") return "▤ roadmap";
   if (o === "goal") return "◎ goal";

@@ -639,6 +639,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
+		s.interviews.remove(id)
 		s.log.Info("session delete requested", "event", "run", "session", id)
 		writeJSON(w, map[string]string{"deleted": id}, nil)
 		return
@@ -946,6 +947,15 @@ func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request)
 		sess, err := s.core.GetSession(r.Context(), sessionID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if sess.Origin == store.OriginInterview {
+			decision, err := core.NewInterviewGateRelay(s.log).RequestPermission(r.Context(), req, timeout)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, decision, nil)
 			return
 		}
 		if core.PlanGateActive(sess) {

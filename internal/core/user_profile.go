@@ -1,10 +1,15 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/Podiom/Podiom/internal/adapter"
 )
 
 // userProfileMaxBytes caps USER.md at write time. The file is injected into
@@ -46,32 +51,146 @@ func (c *Core) DeleteUserProfile() error {
 	return nil
 }
 
+const interviewGateMessage = "This session may only use podiom_ask_profile_question and podiom_submit_user_profile."
+
+type InterviewTopic string
+
+const (
+	InterviewTopicIdentityContext   InterviewTopic = "identity_context"
+	InterviewTopicCommunication     InterviewTopic = "communication"
+	InterviewTopicOutputPreferences InterviewTopic = "output_preferences"
+	InterviewTopicTechnicalDepth    InterviewTopic = "technical_depth"
+	InterviewTopicCollaboration     InterviewTopic = "collaboration"
+)
+
+var RequiredInterviewTopics = []InterviewTopic{
+	InterviewTopicIdentityContext,
+	InterviewTopicCommunication,
+	InterviewTopicOutputPreferences,
+	InterviewTopicTechnicalDepth,
+	InterviewTopicCollaboration,
+}
+
+func ValidInterviewTopic(topic InterviewTopic) bool {
+	for _, candidate := range RequiredInterviewTopics {
+		if topic == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 // UserProfileInterviewPrompt builds the opening prompt for a "Get to know me"
-// interview session: the agent interviews the user with its native question
-// tool, then emits the finished USER.md as its final message.
+// interview session. Podiom owns the interview state; the provider may adapt
+// questions, but it must ask and submit through the dedicated internal tools.
 func UserProfileInterviewPrompt(current string) string {
 	var b strings.Builder
 	b.WriteString("You are conducting a short, friendly interview to write USER.md: a profile of the human you are talking to. USER.md is injected into every Podiom agent's context so all agents understand who this person is and how they like to work. It is about the USER — it is not SOUL.md and says nothing about you.\n\n")
 	b.WriteString("Interview rules:\n")
-	b.WriteString("- Ask 5 to 8 questions total, strictly ONE question at a time, and ONLY through your question tool (the tool that presents selectable options). Never ask a question as plain message text.\n")
-	b.WriteString("- Give each question 3 to 5 concrete, distinct selectable options. Keep questions light and quick to answer; the user should mostly click.\n")
-	b.WriteString("- Adapt later questions to earlier answers instead of following a fixed script.\n")
-	b.WriteString("- Cover, roughly: who they are (role, context, what they work on); how they like to be spoken to (tone, directness, formality); how much detail and what format they want in answers; their technical depth; how they want decisions and feedback handled; and anything that annoys them.\n")
-	b.WriteString("- Use no other tools. Do not read or write any files. Do not browse.\n\n")
-	b.WriteString("When the interview is complete, reply with ONLY the finished USER.md markdown — no code fences, no commentary before or after. Use exactly these sections:\n\n")
-	b.WriteString("# About the user\n\nOne short paragraph introducing who this person is.\n\n")
-	b.WriteString("## Who they are\n\n- 2 to 4 bullets: role, context, what they spend their time on.\n\n")
-	b.WriteString("## How to communicate\n\n- 3 to 5 bullets: tone, directness, formality, technical depth to assume.\n\n")
-	b.WriteString("## Output preferences\n\n- 3 to 5 bullets: verbosity, structure and format of answers, what to lead with.\n\n")
-	b.WriteString("## Working together\n\n- 3 to 5 bullets: how they want decisions, feedback, and disagreement handled; what to avoid.\n\n")
-	b.WriteString("Write the profile in the third person (\"they\"), specific enough that an agent reading it could predict how this person wants a new conversation to go.\n")
+	b.WriteString("- Ask exactly one question at a time by calling podiom_ask_profile_question. Never use a provider-native question tool and never ask in plain message text.\n")
+	b.WriteString("- The first five questions must cover each required topic once: identity_context, communication, output_preferences, technical_depth, and collaboration. Podiom enforces this.\n")
+	b.WriteString("- Give each question 3 to 5 concrete, distinct selectable options. Adapt later questions to earlier answers. After the five required topics, ask at most three useful follow-ups.\n")
+	b.WriteString("- Use no other tools. Do not read or write files, browse, or emit a Markdown profile as assistant text.\n")
+	b.WriteString("- Once the five required topics are covered and you have enough detail, call podiom_submit_user_profile with labeled facts. Values must be concise facts or directives, not sentences referring to the user as they/them. Podiom renders the final Markdown.\n")
+	b.WriteString("- After podiom_submit_user_profile succeeds, stop.\n")
 	if strings.TrimSpace(current) != "" {
-		b.WriteString("\nA USER.md already exists. Treat this interview as a refresh: keep what still holds, update what the new answers change.\n")
+		b.WriteString("\nA USER.md already exists. Treat this interview as a refresh: reconfirm every required topic, keep what still holds, and update what the new answers change.\n")
 		b.WriteString("```markdown\n")
 		b.WriteString(strings.TrimSpace(current))
 		b.WriteString("\n```\n")
 	}
 	return b.String()
+}
+
+// UserProfileFact is one server-rendered labeled fact in USER.md.
+type UserProfileFact struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// UserProfileDraft is the structured payload accepted from the interview MCP.
+// The provider supplies facts; Podiom owns all Markdown headings and layout.
+type UserProfileDraft struct {
+	IdentityContext   []UserProfileFact `json:"identity_context"`
+	Communication     []UserProfileFact `json:"communication"`
+	OutputPreferences []UserProfileFact `json:"output_preferences"`
+	TechnicalContext  []UserProfileFact `json:"technical_context"`
+	WorkingTogether   []UserProfileFact `json:"working_together"`
+}
+
+// RenderUserProfileDraft validates and renders a deterministic, pronoun-free
+// USER.md draft. Values are flattened to one line so a tool argument cannot
+// inject its own Markdown structure.
+func RenderUserProfileDraft(draft UserProfileDraft) (string, error) {
+	sections := []struct {
+		heading string
+		facts   []UserProfileFact
+	}{
+		{"Identity and context", draft.IdentityContext},
+		{"Communication", draft.Communication},
+		{"Output preferences", draft.OutputPreferences},
+		{"Technical context", draft.TechnicalContext},
+		{"Working together", draft.WorkingTogether},
+	}
+	var b strings.Builder
+	b.WriteString(userProfileHeading + "\n")
+	for _, section := range sections {
+		if len(section.facts) == 0 || len(section.facts) > 5 {
+			return "", fmt.Errorf("section %q must contain 1 to 5 facts", section.heading)
+		}
+		b.WriteString("\n## " + section.heading + "\n\n")
+		seen := map[string]bool{}
+		for _, fact := range section.facts {
+			label := flattenProfileFact(fact.Label)
+			value := flattenProfileFact(fact.Value)
+			if label == "" || value == "" {
+				return "", fmt.Errorf("section %q contains a blank label or value", section.heading)
+			}
+			if len(label) > 64 || len(value) > 320 {
+				return "", fmt.Errorf("section %q contains an oversized fact", section.heading)
+			}
+			key := strings.ToLower(label)
+			if seen[key] {
+				return "", fmt.Errorf("section %q contains duplicate label %q", section.heading, label)
+			}
+			seen[key] = true
+			fmt.Fprintf(&b, "- **%s:** %s\n", label, value)
+		}
+	}
+	return b.String(), nil
+}
+
+func flattenProfileFact(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+// InterviewGateRelay mechanically limits an interview session to its two
+// internal tools. Codex calls this relay directly; Claude reaches the same gate
+// through the daemon's HTTP permission callback.
+type InterviewGateRelay struct {
+	log *slog.Logger
+}
+
+func NewInterviewGateRelay(loggers ...*slog.Logger) *InterviewGateRelay {
+	log := slog.Default()
+	if len(loggers) > 0 && loggers[0] != nil {
+		log = loggers[0]
+	}
+	return &InterviewGateRelay{log: log}
+}
+
+func (r *InterviewGateRelay) RequestPermission(_ context.Context, req adapter.PermissionRequest, _ time.Duration) (adapter.PermissionDecision, error) {
+	if IsInterviewTool(req.ToolName) {
+		r.log.Info("interview gate allowed tool", "event", "permission", "turn", req.TurnID, "request", req.ID, "tool_name", req.ToolName)
+		return adapter.PermissionDecision{Behavior: "allow", UpdatedInput: req.Input}, nil
+	}
+	r.log.Info("interview gate denied tool", "event", "permission", "turn", req.TurnID, "request", req.ID, "tool_name", req.ToolName)
+	return adapter.PermissionDecision{Behavior: "deny", Message: interviewGateMessage}, nil
+}
+
+func IsInterviewTool(name string) bool {
+	name = strings.ToLower(name)
+	return strings.Contains(name, "podiom_ask_profile_question") || strings.Contains(name, "podiom_submit_user_profile")
 }
 
 // userProfileHeading is the required top-level heading of USER.md; the frontend

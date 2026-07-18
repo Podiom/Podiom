@@ -1011,6 +1011,77 @@ var migrations = []migration{
 		CREATE INDEX idx_goal_rate_limits_goal ON goal_rate_limits(goal_id, created_at DESC);
 		CREATE INDEX idx_goal_rate_limits_status ON goal_rate_limits(status);`,
 	},
+	{
+		version: 26,
+		name:    "interview_origin",
+		sql: `CREATE TABLE sessions_new (
+			id                TEXT PRIMARY KEY,
+			agent_name        TEXT NOT NULL REFERENCES agents(name) ON UPDATE CASCADE ON DELETE RESTRICT,
+			provider          TEXT NOT NULL,
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			permission_mode   TEXT NOT NULL CHECK (permission_mode IN ('approve', 'yolo')),
+			origin            TEXT NOT NULL CHECK (origin IN ('web', 'cli', 'onboarding', 'interview', 'schedule', 'roadmap', 'goal')),
+			schedule_id       TEXT,
+			run_id            TEXT,
+			rolling_summary   TEXT NOT NULL DEFAULT '',
+			provider_handle   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			name              TEXT NOT NULL DEFAULT '',
+			description       TEXT NOT NULL DEFAULT '',
+			auto_named        INTEGER NOT NULL DEFAULT 0,
+			task_id           TEXT,
+			project_id        TEXT NOT NULL DEFAULT '',
+			dreamed_at        TEXT,
+			plan_state        TEXT NOT NULL DEFAULT 'none'
+				CHECK (plan_state IN ('none', 'pending_submission', 'awaiting_approval')),
+			plan_explicit     INTEGER NOT NULL DEFAULT 0,
+			plan_file_path    TEXT NOT NULL DEFAULT '',
+			plan_markdown     TEXT NOT NULL DEFAULT '',
+			plan_submitted_at TEXT NOT NULL DEFAULT '',
+			plan_updated_at   TEXT NOT NULL DEFAULT '',
+			context_tokens    INTEGER NOT NULL DEFAULT 0,
+			context_limit     INTEGER NOT NULL DEFAULT 0,
+			goal_id           TEXT,
+			usage_input_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_output_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_cache_write_tokens INTEGER NOT NULL DEFAULT 0
+		);
+
+		INSERT INTO sessions_new
+			(id, agent_name, provider, profile, model, effort, permission_mode, origin, schedule_id,
+			 run_id, rolling_summary, provider_handle, created_at, updated_at, name, description,
+			 auto_named, task_id, project_id, dreamed_at, plan_state, plan_explicit, plan_file_path,
+			 plan_markdown, plan_submitted_at, plan_updated_at, context_tokens, context_limit, goal_id,
+			 usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens)
+		SELECT id, agent_name, provider, profile, model, effort, permission_mode, origin, schedule_id,
+			 run_id, rolling_summary, provider_handle, created_at, updated_at, name, description,
+			 auto_named, task_id, project_id, dreamed_at, plan_state, plan_explicit, plan_file_path,
+			 plan_markdown, plan_submitted_at, plan_updated_at, context_tokens, context_limit, goal_id,
+			 usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens
+		FROM sessions;
+
+		DROP TABLE sessions;
+		ALTER TABLE sessions_new RENAME TO sessions;
+
+		CREATE INDEX idx_sessions_agent_name ON sessions(agent_name);
+		CREATE INDEX idx_sessions_dreamed ON sessions(agent_name, dreamed_at);
+		CREATE INDEX idx_sessions_goal_id ON sessions(goal_id);
+		CREATE INDEX idx_sessions_origin ON sessions(origin);
+		CREATE INDEX idx_sessions_plan_state ON sessions(plan_state);
+		CREATE INDEX idx_sessions_project_id ON sessions(project_id);
+		CREATE INDEX idx_sessions_schedule_id ON sessions(schedule_id);
+		CREATE INDEX idx_sessions_task_id ON sessions(task_id);
+
+		CREATE TRIGGER sessions_origin_immutable
+		BEFORE UPDATE OF origin ON sessions
+		BEGIN
+			SELECT RAISE(ABORT, 'session origin is immutable');
+		END;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

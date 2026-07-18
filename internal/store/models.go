@@ -14,6 +14,8 @@ const (
 	// OriginOnboarding marks the first-run birth session that helps shape an
 	// agent's SOUL.md.
 	OriginOnboarding SessionOrigin = "onboarding"
+	// OriginInterview marks a disposable USER.md interview session.
+	OriginInterview SessionOrigin = "interview"
 	// OriginSchedule marks a session created by a scheduled run.
 	OriginSchedule SessionOrigin = "schedule"
 	// OriginRoadmap marks a session created from a roadmap task.

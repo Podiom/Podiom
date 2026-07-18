@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { deleteSession, getUserProfile, listProfiles, saveUserProfile } from "../lib/api";
+  import { deleteSession, getSession, getUserProfile, listProfiles, saveUserProfile } from "../lib/api";
   import { live } from "../lib/live.svelte";
   import { renderMarkdown } from "../lib/markdown";
-  import { questionEndsTurn } from "../lib/providers";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import type {
     Agent,
+    InterviewState,
     ProfileInfo,
     ServerMessage,
     UserInputQuestion,
@@ -22,8 +22,9 @@
     onSaved?: () => void;
   } = $props();
 
-  const PROFILE_HEADING = "# About the user";
   const MAX_PROGRESS_DOTS = 8;
+  const REQUIRED_TOPICS = 5;
+  const SESSION_STORAGE_KEY = "podiom:about-you-interview-session";
 
   type Phase = "loading" | "view" | "intro" | "interviewing" | "review";
 
@@ -40,15 +41,13 @@
   // Interview session state.
   let requestId = "";
   let sessionId = $state("");
-  let sessionProvider = $state("");
   let pendingInput = $state<UserInputRequest | null>(null);
   let answers = $state<Record<string, string[]>>({});
+  let otherAnswers = $state<Record<string, string>>({});
   let answered = $state(0);
   let thinking = $state(false);
   let stalled = $state(false);
-  let assistantBuf = "";
-  let lastReply = $state("");
-  let deleteAfterTurn = false;
+  let recoveryRequested = false;
 
   // Review / edit.
   let draft = $state("");
@@ -66,7 +65,26 @@
       const [info, profs] = await Promise.all([getUserProfile(), listProfiles()]);
       profile = info.profile;
       profiles = profs ?? [];
-      phase = info.exists ? "view" : "intro";
+      const storedSession = sessionStorage.getItem(SESSION_STORAGE_KEY) ?? "";
+      if (storedSession) {
+        try {
+          const detail = await getSession(storedSession);
+          if (detail.session.Origin === "interview") {
+            sessionId = storedSession;
+            phase = "interviewing";
+            thinking = true;
+            live.send({ type: "attach_session", session_id: storedSession });
+          } else {
+            sessionStorage.removeItem(SESSION_STORAGE_KEY);
+            phase = info.exists ? "view" : "intro";
+          }
+        } catch {
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          phase = info.exists ? "view" : "intro";
+        }
+      } else {
+        phase = info.exists ? "view" : "intro";
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       phase = "intro";
@@ -90,15 +108,16 @@
     wasOffline = false;
   });
 
-  function startInterview() {
+  async function startInterview() {
     if (!agentName) return;
+    await disposeInterviewSession();
     error = null;
     stalled = false;
     pendingInput = null;
     answered = 0;
-    assistantBuf = "";
-    lastReply = "";
-    sessionId = "";
+    answers = {};
+    otherAnswers = {};
+    recoveryRequested = false;
     thinking = true;
     requestId = crypto.randomUUID();
     phase = "interviewing";
@@ -117,26 +136,27 @@
     if (phase !== "interviewing") return;
     if (msg.type === "session" && msg.request_id === requestId && msg.session && !sessionId) {
       sessionId = msg.session.ID;
-      sessionProvider = msg.session.Provider;
+      sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
       return;
     }
     if (!sessionId || msg.session_id !== sessionId) return;
     switch (msg.type) {
       case "delta":
         thinking = true;
-        assistantBuf += msg.delta ?? "";
         break;
       case "assistant":
-        if (msg.delta) assistantBuf = msg.delta;
         break;
       case "user_input_request":
         pendingInput = msg.input ?? null;
         answers = initialAnswers(pendingInput);
+        otherAnswers = {};
         thinking = false;
         stalled = false;
+        recoveryRequested = false;
         break;
       case "permission_request":
-        // The interview needs no tools; keep the agent moving without user noise.
+        // The server gate normally resolves this. Deny defensively if a
+        // provider surfaces an unrelated tool request to the browser anyway.
         if (msg.request) {
           live.send({
             type: "permission_decision",
@@ -144,7 +164,7 @@
             decision: {
               behavior: "deny",
               message:
-                "This interview doesn't use tools — continue asking questions with your question tool, then output the final USER.md.",
+                "Use only podiom_ask_profile_question and podiom_submit_user_profile for this interview.",
             },
           });
         }
@@ -153,18 +173,21 @@
         if (msg.turn_state?.pending_user_input) {
           pendingInput = msg.turn_state.pending_user_input;
           answers = initialAnswers(pendingInput);
+          otherAnswers = {};
+          thinking = false;
+          stalled = false;
+        } else if (msg.turn_state?.status === "stopped") {
           thinking = false;
         }
+        break;
+      case "interview_state":
+        if (msg.interview) applyInterviewState(msg.interview);
         break;
       case "done":
         onTurnDone();
         break;
       case "error":
         thinking = false;
-        if (deleteAfterTurn) {
-          void discardSession();
-          break;
-        }
         error = msg.error ?? "The interview failed.";
         stalled = true;
         break;
@@ -173,31 +196,37 @@
 
   function onTurnDone() {
     thinking = false;
-    if (deleteAfterTurn) {
-      void discardSession();
-      return;
+    if (pendingInput || phase !== "interviewing" || !sessionId) return;
+    if (!recoveryRequested) {
+      recoveryRequested = true;
+      thinking = true;
+      live.send({ type: "resume_interview", request_id: crypto.randomUUID(), session_id: sessionId });
     }
-    const text = assistantBuf.trim();
-    if (text) lastReply = text;
-    assistantBuf = "";
-    if (text.includes(PROFILE_HEADING)) {
-      draft = cleanDraft(text);
+  }
+
+  function applyInterviewState(state: InterviewState) {
+    answered = state.answered;
+    if (state.status === "draft" && state.draft) {
+      draft = state.draft;
+      pendingInput = null;
+      thinking = false;
+      stalled = false;
       showPreview = false;
       phase = "review";
       return;
     }
-    // Claude's question tool ends the turn; the pending question card keeps the
-    // interview alive. Anything else means the agent stalled.
-    if (!pendingInput) stalled = true;
-  }
-
-  // cleanDraft strips code fences and any preamble before the profile heading
-  // (the server cleans again on save).
-  function cleanDraft(raw: string): string {
-    let s = raw.trim();
-    const idx = s.indexOf(PROFILE_HEADING);
-    if (idx > 0) s = s.slice(idx);
-    return s.replaceAll(/^```[a-z]*\n|\n```$/g, "").trim();
+    if (state.status === "failed") {
+      thinking = false;
+      stalled = true;
+      error = state.error || "The interview could not be completed.";
+      return;
+    }
+    if (state.status === "recovering") {
+      pendingInput = null;
+      thinking = true;
+      stalled = false;
+      recoveryRequested = false;
+    }
   }
 
   function initialAnswers(req: UserInputRequest | null): Record<string, string[]> {
@@ -222,86 +251,63 @@
     answers = { ...answers, [q.id]: value.trim() ? [value] : [] };
   }
 
+  function setOtherAnswer(q: UserInputQuestion, value: string) {
+    otherAnswers = { ...otherAnswers, [q.id]: value };
+  }
+
   function answerSelected(q: UserInputQuestion, value: string) {
     return (answers[q.id] ?? []).includes(value);
   }
 
   const answersReady = $derived(
-    !!pendingInput && pendingInput.questions.every((q) => (answers[q.id] ?? []).some((v) => v.trim())),
+    !!pendingInput &&
+      pendingInput.questions.every(
+        (q) => (answers[q.id] ?? []).some((v) => v.trim()) || !!otherAnswers[q.id]?.trim(),
+      ),
   );
 
   function submitAnswers() {
     const req = pendingInput;
     if (!req || !answersReady) return;
-    live.send({ type: "user_input_decision", request_id: req.id, input: { answers } });
-    answered += 1;
+    const submitted: Record<string, string[]> = {};
+    for (const q of req.questions) {
+      const selected = answers[q.id] ?? [];
+      const other = otherAnswers[q.id]?.trim();
+      submitted[q.id] = other ? (q.multi_select ? [...selected, other] : [other]) : selected;
+    }
+    live.send({ type: "user_input_decision", request_id: req.id, input: { answers: submitted } });
     pendingInput = null;
-    assistantBuf = "";
     thinking = true;
-    if (questionEndsTurn(req.provider ?? sessionProvider)) {
-      // The provider's question ended the turn; the answer arrives as a follow-up turn.
-      requestId = crypto.randomUUID();
-      live.send({
-        type: "send_turn",
-        request_id: requestId,
-        session_id: sessionId,
-        message: formatFollowup(req, answers),
-      });
-    }
   }
 
-  function formatFollowup(req: UserInputRequest, a: Record<string, string[]>): string {
-    if (req.questions.length === 1) {
-      const q = req.questions[0];
-      return `Answer to "${q.question}": ${(a[q.id] ?? []).join(", ")}`;
-    }
-    return ["Answers:", ...req.questions.map((q) => `- ${q.question}: ${(a[q.id] ?? []).join(", ")}`)].join("\n");
-  }
-
-  function useLastReply() {
-    if (!lastReply) return;
-    draft = cleanDraft(lastReply);
-    showPreview = false;
-    phase = "review";
-  }
-
-  function cancelInterview() {
-    if (sessionId) {
-      if (thinking) {
-        // A turn is running: stop it first, delete once it winds down.
-        deleteAfterTurn = true;
-        live.send({ type: "stop_turn", session_id: sessionId });
-        window.setTimeout(() => {
-          if (deleteAfterTurn) void discardSession();
-        }, 2000);
-      } else {
-        void discardSession();
-      }
-    }
+  async function cancelInterview() {
+    await disposeInterviewSession();
     resetInterview();
     phase = profile.trim() ? "view" : "intro";
   }
 
-  async function discardSession() {
+  async function disposeInterviewSession() {
     const id = sessionId;
-    deleteAfterTurn = false;
-    sessionId = "";
     if (!id) return;
+    live.send({ type: "stop_turn", session_id: id });
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
     try {
       await deleteSession(id);
     } catch {
       // The interview session is disposable; a failed cleanup is harmless.
     }
+    if (sessionId === id) sessionId = "";
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
   }
 
   function resetInterview() {
     pendingInput = null;
     answers = {};
+    otherAnswers = {};
     answered = 0;
     thinking = false;
     stalled = false;
-    assistantBuf = "";
-    lastReply = "";
+    recoveryRequested = false;
     error = null;
   }
 
@@ -312,7 +318,7 @@
     try {
       const info = await saveUserProfile(draft);
       profile = info.profile;
-      await discardSession();
+      await disposeInterviewSession();
       resetInterview();
       phase = "view";
       onSaved();
@@ -323,8 +329,8 @@
     }
   }
 
-  function discardDraft() {
-    void discardSession();
+  async function discardDraft() {
+    await disposeInterviewSession();
     resetInterview();
     draft = "";
     phase = profile.trim() ? "view" : "intro";
@@ -406,7 +412,11 @@
         <span class="dot" class:on={i < Math.min(answered, MAX_PROGRESS_DOTS)}></span>
       {/each}
       <span class="progress-text">
-        {answered === 0 ? "Warming up…" : `${answered} answered`}
+        {answered === 0
+          ? "Warming up…"
+          : answered <= REQUIRED_TOPICS
+            ? `${answered}/${REQUIRED_TOPICS} core topics`
+            : `${answered} answered`}
       </span>
     </div>
 
@@ -427,6 +437,14 @@
                 </button>
               {/each}
             </div>
+            {#if q.is_other}
+              <input
+                class="q-free"
+                type="text"
+                placeholder="Something else…"
+                value={otherAnswers[q.id] ?? ""}
+                oninput={(e) => setOtherAnswer(q, e.currentTarget.value)} />
+            {/if}
           {:else}
             <input
               class="q-free"
@@ -446,14 +464,11 @@
         {error ?? "The agent stopped without asking a question or finishing the profile."}
       </div>
       <div class="actions">
-        {#if lastReply}
-          <button class="primary" onclick={useLastReply}>Use last reply as draft</button>
-        {/if}
         <button class="ghost" onclick={startInterview}>Retry</button>
         <button class="ghost" onclick={cancelInterview}>Cancel</button>
       </div>
     {:else}
-      <div class="note thinking">
+      <div class="note" class:thinking={thinking}>
         <span class="pulse"></span>
         {answered === 0 ? "The interviewer is preparing the first question…" : "Thinking about the next question…"}
       </div>

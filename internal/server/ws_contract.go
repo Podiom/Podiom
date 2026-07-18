@@ -52,6 +52,7 @@ type ServerMessage struct {
 	Fallback    *core.FallbackRequest        `json:"fallback,omitempty"`
 	NativeAgent *adapter.NativeAgentActivity `json:"native_agent,omitempty"`
 	TurnState   *TurnState                   `json:"turn_state,omitempty"`
+	Interview   *InterviewState              `json:"interview,omitempty"`
 	Context     *ContextUsage                `json:"context,omitempty"`
 	// SessionUsage is a session's cumulative billed-token total expressed as an
 	// estimated share of the 5-hour and weekly limits. Sent with a "session"

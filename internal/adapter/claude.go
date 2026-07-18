@@ -190,10 +190,15 @@ func (c *Claude) consumeProcess(ctx context.Context, req TurnRequest, run claude
 	}()
 	go c.trackClaudeStream(ctx, req, parsed, out, trackc)
 	go func() { stderrc <- collectStderr(run.stderr, claudeStderrTailLimit) }()
-	waitErr := run.cmd.Wait()
+	// os/exec's Wait closes the stdout/stderr pipes the instant the process
+	// exits, so calling it while the readers above are still draining races
+	// into "read |0: file already closed" and drops the parsed output. Drain
+	// every pipe reader first, then reap. The readers reach EOF when the
+	// process closes its fds on exit, so this cannot deadlock against Wait.
 	parseErr := <-parsec
 	track := <-trackc
 	stderrResult := <-stderrc
+	waitErr := run.cmd.Wait()
 	if ctx.Err() != nil {
 		c.providerLog(req).Info("provider process canceled", "event", "provider", "stage", "wait", podiomlog.DurationMS("duration_ms", time.Since(run.startedAt)))
 		return

@@ -201,7 +201,7 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		}
 		session, err := s.core.CreateSession(ctx, core.CreateSessionRequest{
 			AgentName:      msg.AgentName,
-			Origin:         store.OriginOnboarding,
+			Origin:         store.OriginInterview,
 			Provider:       msg.Provider,
 			Profile:        msg.Profile,
 			Model:          msg.Model,
@@ -211,6 +211,7 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		if err != nil {
 			return err
 		}
+		s.interviews.start(session.ID)
 		current, err := s.core.ReadUserProfile()
 		if err != nil {
 			return err
@@ -238,8 +239,54 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		if msg.SessionID == "" {
 			return errors.New("session_id is required")
 		}
+		attached := false
 		if state, ok := s.turns.attach(msg.SessionID, writer); ok {
-			return writer.write(ctx, ServerMessage{Type: "turn_state", RequestID: msg.RequestID, SessionID: msg.SessionID, TurnState: &state})
+			attached = true
+			if err := writer.write(ctx, ServerMessage{Type: "turn_state", RequestID: msg.RequestID, SessionID: msg.SessionID, TurnState: &state}); err != nil {
+				return err
+			}
+		}
+		if interview, ok := s.interviews.get(msg.SessionID); ok {
+			if !attached && interview.Status != "draft" && interview.Status != "failed" {
+				state, prompt, retry := s.interviews.recover(msg.SessionID)
+				if err := writer.write(ctx, ServerMessage{Type: "interview_state", RequestID: msg.RequestID, SessionID: msg.SessionID, Interview: &state}); err != nil {
+					return err
+				}
+				if retry {
+					next := msg
+					next.Type = "send_turn"
+					next.Message = prompt
+					go s.runWSTurn(ctx, writer, next)
+				}
+				return nil
+			}
+			return writer.write(ctx, ServerMessage{Type: "interview_state", RequestID: msg.RequestID, SessionID: msg.SessionID, Interview: &interview})
+		}
+		if session, err := s.core.GetSession(ctx, msg.SessionID); err == nil && session.Origin == store.OriginInterview {
+			expired := InterviewState{SessionID: msg.SessionID, Status: "failed", Error: "Interview state expired. Start a new interview."}
+			return writer.write(ctx, ServerMessage{Type: "interview_state", RequestID: msg.RequestID, SessionID: msg.SessionID, Interview: &expired})
+		}
+		return nil
+	case "resume_interview":
+		if msg.SessionID == "" {
+			return errors.New("session_id is required")
+		}
+		session, err := s.core.GetSession(ctx, msg.SessionID)
+		if err != nil {
+			return err
+		}
+		if session.Origin != store.OriginInterview {
+			return errors.New("session is not a USER.md interview")
+		}
+		state, prompt, retry := s.interviews.recover(msg.SessionID)
+		if err := writer.write(ctx, ServerMessage{Type: "interview_state", RequestID: msg.RequestID, SessionID: msg.SessionID, Interview: &state}); err != nil {
+			return err
+		}
+		if retry {
+			next := msg
+			next.Type = "send_turn"
+			next.Message = prompt
+			go s.runWSTurn(ctx, writer, next)
 		}
 		return nil
 	case "stop_turn":
@@ -247,6 +294,9 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 			return errors.New("session_id is required")
 		}
 		if !s.turns.stop(msg.SessionID) {
+			if session, err := s.core.GetSession(ctx, msg.SessionID); err == nil && session.Origin == store.OriginInterview {
+				return nil
+			}
 			return errors.New("active turn not found")
 		}
 		return nil

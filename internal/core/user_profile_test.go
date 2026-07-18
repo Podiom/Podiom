@@ -5,7 +5,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 )
 
@@ -122,15 +124,12 @@ func TestUserProfileComposesAsSecondLayer(t *testing.T) {
 func TestUserProfileInterviewPrompt(t *testing.T) {
 	prompt := UserProfileInterviewPrompt("")
 	for _, want := range []string{
-		"ONE question at a time",
-		"question tool",
+		"exactly one question at a time",
+		"podiom_ask_profile_question",
 		"3 to 5 concrete, distinct selectable options",
-		"# About the user",
-		"## Who they are",
-		"## How to communicate",
-		"## Output preferences",
-		"## Working together",
-		"no code fences",
+		"identity_context",
+		"podiom_submit_user_profile",
+		"Podiom renders the final Markdown",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("interview prompt missing %q:\n%s", want, prompt)
@@ -146,6 +145,56 @@ func TestUserProfileInterviewPrompt(t *testing.T) {
 	}
 	if !strings.Contains(redo, "refresh") {
 		t.Fatalf("redo prompt should frame the interview as a refresh")
+	}
+}
+
+func TestRenderUserProfileDraft(t *testing.T) {
+	draft := UserProfileDraft{
+		IdentityContext:   []UserProfileFact{{Label: "Name", Value: "Marcus"}},
+		Communication:     []UserProfileFact{{Label: "Tone", Value: "Direct and conversational"}},
+		OutputPreferences: []UserProfileFact{{Label: "Structure", Value: "Lead with the outcome"}},
+		TechnicalContext:  []UserProfileFact{{Label: "Depth", Value: "Expert-level implementation detail"}},
+		WorkingTogether:   []UserProfileFact{{Label: "Feedback", Value: "Challenge shaky assumptions"}},
+	}
+	got, err := RenderUserProfileDraft(draft)
+	if err != nil {
+		t.Fatalf("render draft: %v", err)
+	}
+	for _, want := range []string{
+		"# About the user",
+		"## Identity and context",
+		"- **Name:** Marcus",
+		"## Technical context",
+		"## Working together",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered profile missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(strings.ToLower(got), "they") {
+		t.Fatalf("rendered labeled facts unexpectedly use third-person pronouns:\n%s", got)
+	}
+
+	draft.Communication = nil
+	if _, err := RenderUserProfileDraft(draft); err == nil {
+		t.Fatal("expected empty section to be rejected")
+	}
+}
+
+func TestInterviewGateAllowsOnlyInterviewTools(t *testing.T) {
+	gate := NewInterviewGateRelay()
+	for _, tool := range []string{
+		"mcp__podiom_interview__podiom_ask_profile_question",
+		"mcp__podiom_interview__podiom_submit_user_profile",
+	} {
+		decision, err := gate.RequestPermission(context.Background(), adapter.PermissionRequest{ToolName: tool}, time.Second)
+		if err != nil || decision.Behavior != "allow" {
+			t.Fatalf("tool %q should be allowed: decision=%+v err=%v", tool, decision, err)
+		}
+	}
+	decision, err := gate.RequestPermission(context.Background(), adapter.PermissionRequest{ToolName: "Bash"}, time.Second)
+	if err != nil || decision.Behavior != "deny" {
+		t.Fatalf("Bash should be denied: decision=%+v err=%v", decision, err)
 	}
 }
 

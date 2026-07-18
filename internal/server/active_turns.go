@@ -38,6 +38,7 @@ type TurnState struct {
 	PendingPermission     *adapter.PermissionRequest    `json:"pending_permission,omitempty"`
 	PendingUserInput      *adapter.UserInputRequest     `json:"pending_user_input,omitempty"`
 	PendingFallback       *core.FallbackRequest         `json:"pending_fallback,omitempty"`
+	Interview             *InterviewState               `json:"interview,omitempty"`
 	NativeAgentActivities []adapter.NativeAgentActivity `json:"native_agent_activities,omitempty"`
 	Error                 string                        `json:"error,omitempty"`
 }
@@ -52,6 +53,7 @@ type activeTurn struct {
 	pendingPermission     *adapter.PermissionRequest
 	pendingUserInput      *adapter.UserInputRequest
 	pendingFallback       *core.FallbackRequest
+	interview             *InterviewState
 	nativeAgentActivities []adapter.NativeAgentActivity
 	err                   string
 	cancel                context.CancelFunc
@@ -173,6 +175,16 @@ func (h *activeTurnHub) sessionForTurn(turnID string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (h *activeTurnHub) turnIDForSession(sessionID string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	turn := h.turns[sessionID]
+	if turn == nil || turn.status != turnStatusRunning {
+		return "", false
+	}
+	return turn.turnID, true
 }
 
 func (h *activeTurnHub) attach(sessionID string, writer *wsWriter) (TurnState, bool) {
@@ -399,6 +411,25 @@ func (h *activeTurnHub) recordUserInput(sessionID string, req *adapter.UserInput
 	h.notifyAttention(sessionID, "question", nil)
 }
 
+func (h *activeTurnHub) recordInterviewState(sessionID string, state *InterviewState) {
+	if state == nil {
+		return
+	}
+	h.mu.Lock()
+	turn := h.turns[sessionID]
+	if turn == nil {
+		h.mu.Unlock()
+		return
+	}
+	cp := *state
+	cp.CoveredTopics = append([]core.InterviewTopic(nil), state.CoveredTopics...)
+	turn.interview = &cp
+	writers := activeTurnWritersLocked(turn)
+	requestID := turn.requestID
+	h.mu.Unlock()
+	h.broadcast(writers, ServerMessage{Type: "interview_state", RequestID: requestID, SessionID: sessionID, Interview: &cp})
+}
+
 func (h *activeTurnHub) recordFallback(sessionID string, req *core.FallbackRequest) {
 	h.mu.Lock()
 	turn := h.turns[sessionID]
@@ -499,9 +530,19 @@ func activeTurnStateLocked(turn *activeTurn) TurnState {
 		PendingPermission:     clonePermissionRequest(turn.pendingPermission),
 		PendingUserInput:      cloneUserInputRequest(turn.pendingUserInput),
 		PendingFallback:       cloneFallbackRequest(turn.pendingFallback),
+		Interview:             cloneInterviewStatePtr(turn.interview),
 		NativeAgentActivities: cloneNativeAgentActivities(turn.nativeAgentActivities),
 		Error:                 turn.err,
 	}
+}
+
+func cloneInterviewStatePtr(state *InterviewState) *InterviewState {
+	if state == nil {
+		return nil
+	}
+	cp := *state
+	cp.CoveredTopics = append([]core.InterviewTopic(nil), state.CoveredTopics...)
+	return &cp
 }
 
 func activeTurnPendingLocked(turn *activeTurn) string {

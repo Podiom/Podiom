@@ -87,6 +87,9 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	if req.PermissionMode != "" {
 		sess.PermissionMode = req.PermissionMode
 	}
+	if sess.Origin == store.OriginInterview {
+		sess.PermissionMode = config.PermissionApprove
+	}
 	if sess.Origin == "" {
 		return store.Session{}, fmt.Errorf("session origin is required")
 	}
@@ -104,12 +107,20 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	if err != nil {
 		return store.Session{}, err
 	}
-	mcpServers, mcpAll, err := c.agentMCPServers(agent)
-	if err != nil {
-		return store.Session{}, err
+	var mcpServers, mcpAll []podiommcp.Server
+	if created.Origin != store.OriginInterview {
+		mcpServers, mcpAll, err = c.agentMCPServers(agent)
+		if err != nil {
+			return store.Session{}, err
+		}
 	}
 	mcpServers, mcpAll = c.withInternalMCPServers(created, created.ID, mcpServers, mcpAll)
-	nativeAgentName, nativeAgents, nativeErr := c.nativeAgentsForProvider(ctx, created.Provider, agent.Name)
+	var nativeAgentName string
+	var nativeAgents []adapter.NativeAgent
+	var nativeErr error
+	if created.Origin != store.OriginInterview {
+		nativeAgentName, nativeAgents, nativeErr = c.nativeAgentsForProvider(ctx, created.Provider, agent.Name)
+	}
 	if nativeErr != nil {
 		c.log.Warn("native agent projection failed",
 			"event", "provider",
@@ -498,7 +509,12 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			nativeAgentName, nativeAgents, nativeErr := c.nativeAgentsForProvider(ctx, current.Provider, current.AgentName)
+			var nativeAgentName string
+			var nativeAgents []adapter.NativeAgent
+			var nativeErr error
+			if current.Origin != store.OriginInterview {
+				nativeAgentName, nativeAgents, nativeErr = c.nativeAgentsForProvider(ctx, current.Provider, current.AgentName)
+			}
 			if nativeErr != nil {
 				runLog.Warn("native agent projection failed",
 					"stage", "native_agents",
@@ -710,7 +726,10 @@ func (c *Core) sessionExtraWorkspaceDirs(workspaceDir, agentWorkspace string, pr
 func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, instructions []byte, nativeAgentName string, nativeAgents []adapter.NativeAgent, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
 	effectivePermission := sess.PermissionMode
 	relay := opts.PermissionRelay
-	if PlanGateActive(sess) {
+	if sess.Origin == store.OriginInterview {
+		effectivePermission = config.PermissionApprove
+		relay = NewInterviewGateRelay(c.log)
+	} else if PlanGateActive(sess) {
 		effectivePermission = config.PermissionApprove
 		relay = NewPlanGateRelay(c.log)
 	}
@@ -754,11 +773,10 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 	}
 }
 
-// withInternalMCPServers appends Podiom's built-in stdio MCP servers to a
-// session's assigned set: the plan-submission helper and the self-management
-// helper (roadmap/projects/schedules/skills/mcp/config/logs/agents). Both are
-// appended unconditionally after catalogue resolution, so an agent cannot
-// un-inject them by changing its own MCP assignments.
+// withInternalMCPServers projects Podiom's built-in stdio MCP servers. USER.md
+// interviews receive only their dedicated helper; every other session gets the
+// plan-submission and self-management helpers appended after catalogue
+// resolution, so an agent cannot un-inject them through MCP assignments.
 //
 // Every arg here must be session-stable (never per-turn): Codex stores freshly
 // created thread rollouts in the profile-scoped app-server, so a profile that
@@ -773,6 +791,21 @@ func (c *Core) withInternalMCPServers(sess store.Session, turnID string, assigne
 	}
 	if turnID == "" {
 		turnID = sess.ID
+	}
+	if sess.Origin == store.OriginInterview {
+		interview := podiommcp.Server{
+			Name:      "podiom_interview",
+			Transport: podiommcp.TransportStdio,
+			Command:   exe,
+			Args: []string{
+				"interview-mcp",
+				"--addr", c.daemonAddr,
+				"--session", sess.ID,
+			},
+			EnvVars: podiommcp.EnvVars{{Name: config.EnvHome, Value: c.paths.Home}},
+			Sources: []podiommcp.Source{podiommcp.SourcePodiom},
+		}
+		return []podiommcp.Server{interview}, []podiommcp.Server{interview}
 	}
 	plan := podiommcp.Server{
 		Name:      "podiom_plan",
@@ -816,6 +849,9 @@ func (c *Core) permissionTimeout() time.Duration {
 }
 
 func (c *Core) sessionMCPServers(ctx context.Context, sess store.Session) ([]podiommcp.Server, []podiommcp.Server, error) {
+	if sess.Origin == store.OriginInterview {
+		return nil, nil, nil
+	}
 	agent, err := c.store.GetAgent(ctx, sess.AgentName)
 	if err != nil {
 		return nil, nil, err

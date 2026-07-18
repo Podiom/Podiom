@@ -207,6 +207,44 @@ func TestSessionStartIncludesInternalManageMCP(t *testing.T) {
 	}
 }
 
+func TestInterviewSessionReceivesOnlyInterviewMCP(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapterWithDaemon(t)
+	defer cleanup()
+
+	agent, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "interviewer", Provider: config.ProviderCodex})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:      agent.Name,
+		Origin:         store.OriginInterview,
+		PermissionMode: config.PermissionYolo,
+	})
+	if err != nil {
+		t.Fatalf("create interview session: %v", err)
+	}
+	if session.PermissionMode != config.PermissionApprove {
+		t.Fatalf("interview permission = %q, want approve", session.PermissionMode)
+	}
+	req := startRequestFor(t, fake, session.ID)
+	if len(req.MCPServers) != 1 || req.MCPServers[0].Name != "podiom_interview" {
+		t.Fatalf("interview MCP servers = %+v", req.MCPServers)
+	}
+	if len(req.MCPAllServers) != 1 || req.MCPAllServers[0].Name != "podiom_interview" {
+		t.Fatalf("interview all MCP servers = %+v", req.MCPAllServers)
+	}
+	if len(req.NativeAgents) != 0 || req.NativeAgentName != "" {
+		t.Fatalf("interview should not project native agents: %+v", req.NativeAgents)
+	}
+	args := strings.Join(req.MCPServers[0].Args, " ")
+	for _, want := range []string{"interview-mcp", "--session " + session.ID} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("interview MCP args missing %q: %v", want, req.MCPServers[0].Args)
+		}
+	}
+}
+
 func envValue(vars podiommcp.EnvVars, name string) string {
 	for _, kv := range vars {
 		if kv.Name == name {

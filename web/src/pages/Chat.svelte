@@ -1654,7 +1654,7 @@
           </button>
           {#if openDropdown === "fOrigin"}
             <div class="dd-menu">
-              {#each ["all", "web", "cli", "onboarding", "schedule", "roadmap", "goal"] as o}
+              {#each ["all", "web", "cli", "onboarding", "interview", "schedule", "roadmap", "goal"] as o}
                 <button class="dd-opt" class:sel={originFilter === o} onclick={() => { originFilter = o as SessionOrigin | "all"; openDropdown = null; }}>{o === "all" ? "all origins" : o}</button>
               {/each}
             </div>

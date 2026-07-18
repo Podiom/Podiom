@@ -117,6 +117,7 @@ automatically along the configured chain.
 | `user_input_request` | Provider/user clarification request. |
 | `fallback_request` | Session limit reached; the user must pick how to continue. Carries the rate-limited target, the configured next fallback, and the selectable `targets`. |
 | `turn_state` | Current active-turn snapshot for a session. |
+| `interview_state` | USER.md interview progress (`answered`, covered topics, status) and the server-rendered review draft when ready. |
 | `notice` | Non-history UI notice, usually from slash commands. |
 | `done` | Turn complete. |
 | `error` | Error string. |
@@ -125,6 +126,12 @@ Session payloads include display metadata (`Name`, `Description`, `AutoNamed`)
 and current settings (`Model`, `Effort`, `PermissionMode`). Permission requests
 include `expires_at` when a timeout is active so clients can show an auto-deny
 countdown.
+
+USER.md interviews start with `start_interview`, use the same
+`user_input_decision` response shape as chat questions, and can be reattached
+with `attach_session`. If an interviewer ends before using its dedicated MCP
+tools, the client sends `resume_interview`; the daemon permits one controlled
+recovery turn. Interview assistant prose is never treated as a draft.
 
 ## REST Support
 

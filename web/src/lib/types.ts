@@ -114,7 +114,7 @@ export interface GlobalConfigPatch {
   fallback?: string[];
   voice?: { openai_api_key?: string };
 }
-export type SessionOrigin = "web" | "cli" | "onboarding" | "schedule" | "roadmap" | "goal";
+export type SessionOrigin = "web" | "cli" | "onboarding" | "interview" | "schedule" | "roadmap" | "goal";
 export type MessageRole = "user" | "assistant";
 export type MessageKind = "message" | "error" | "reasoning";
 export type PlanState = "none" | "pending_submission" | "awaiting_approval";
@@ -814,6 +814,7 @@ export interface TurnState {
   pending_user_input?: UserInputRequest;
   pending_fallback?: FallbackRequest;
   native_agent_activities?: NativeAgentActivity[];
+  interview?: InterviewState;
   error?: string;
 }
 
@@ -834,9 +835,26 @@ export interface UserProfileInfo {
   profile: string;
 }
 
+export type InterviewTopic =
+  | "identity_context"
+  | "communication"
+  | "output_preferences"
+  | "technical_depth"
+  | "collaboration";
+
+export interface InterviewState {
+  session_id: string;
+  status: "interviewing" | "awaiting_answer" | "recovering" | "draft" | "failed";
+  answered: number;
+  covered_topics: InterviewTopic[];
+  draft?: string;
+  error?: string;
+}
+
 export type ClientMessage =
   | { type: "list"; request_id?: string }
   | { type: "attach_session"; request_id?: string; session_id: string }
+  | { type: "resume_interview"; request_id?: string; session_id: string }
   | { type: "stop_turn"; request_id?: string; session_id: string }
   | {
       type: "update_session_settings";
@@ -905,6 +923,7 @@ export interface ServerMessage {
     | "fallback_request"
     | "native_agent_activity"
     | "turn_state"
+    | "interview_state"
     | "context"
     | "session_usage"
     | "notice"
@@ -930,6 +949,7 @@ export interface ServerMessage {
   fallback?: FallbackRequest;
   native_agent?: NativeAgentActivity;
   turn_state?: TurnState;
+  interview?: InterviewState;
   context?: ContextUsage;
   // session_usage: the session's updated token-usage estimate, pushed after a turn.
   session_usage?: UsageEstimate;

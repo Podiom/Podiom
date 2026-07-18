@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -185,6 +186,65 @@ func TestHTTPPermissionRequestUsesPlanGateBeforeBroker(t *testing.T) {
 	select {
 	case delivered := <-requests:
 		t.Fatalf("plan-gated request should not reach broker/UI: %+v", delivered)
+	default:
+	}
+}
+
+func TestHTTPPermissionRequestUsesInterviewGateBeforeBroker(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: adapter.NewFake(), DisableBackgroundWork: true})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "interviewer", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := coreSvc.CreateSession(ctx, core.CreateSessionRequest{AgentName: "interviewer", Origin: store.OriginInterview})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, Core: coreSvc, Paths: paths})
+	srv.broker.attachTurn("turn-1", sess.ID)
+	defer srv.broker.detachTurn("turn-1")
+	requests, unsubscribe := srv.broker.subscribe("turn-1")
+	defer unsubscribe()
+
+	for _, tc := range []struct {
+		tool string
+		want string
+	}{
+		{"mcp__podiom_interview__podiom_ask_profile_question", "allow"},
+		{"Bash", "deny"},
+	} {
+		body := fmt.Sprintf(`{"id":"perm-%s","tool_name":%q}`, tc.want, tc.tool)
+		req := httptest.NewRequest(http.MethodPost, "/api/permissions/turn-1", strings.NewReader(body)).WithContext(ctx)
+		rr := httptest.NewRecorder()
+		srv.handlePermissionRequest(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", tc.tool, rr.Code, rr.Body.String())
+		}
+		var decision adapter.PermissionDecision
+		if err := json.NewDecoder(rr.Body).Decode(&decision); err != nil {
+			t.Fatalf("decode %s decision: %v", tc.tool, err)
+		}
+		if decision.Behavior != tc.want {
+			t.Fatalf("%s decision = %+v, want %s", tc.tool, decision, tc.want)
+		}
+	}
+	select {
+	case delivered := <-requests:
+		t.Fatalf("interview-gated request should not reach broker/UI: %+v", delivered)
 	default:
 	}
 }

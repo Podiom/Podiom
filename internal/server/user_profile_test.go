@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/store"
@@ -113,8 +115,8 @@ func TestWebSocketStartInterview(t *testing.T) {
 			if msg.Session == nil {
 				t.Fatalf("session message without session")
 			}
-			if msg.Session.Origin != store.OriginOnboarding {
-				t.Fatalf("interview session origin = %q, want %q", msg.Session.Origin, store.OriginOnboarding)
+			if msg.Session.Origin != store.OriginInterview {
+				t.Fatalf("interview session origin = %q, want %q", msg.Session.Origin, store.OriginInterview)
 			}
 			if msg.Session.PermissionMode != config.PermissionApprove {
 				t.Fatalf("interview permission mode = %q, want approve", msg.Session.PermissionMode)
@@ -144,4 +146,116 @@ func TestWebSocketStartInterview(t *testing.T) {
 	if !sawPrompt {
 		t.Fatalf("interview prompt not found in session history")
 	}
+	// Assistant Markdown is never accepted as an interview draft. Reattaching
+	// after the premature turn asks the server for one controlled recovery.
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "attach_session", SessionID: sessionID}); err != nil {
+		t.Fatalf("reattach interview: %v", err)
+	}
+	state := readWSTestUntil(t, conn, "interview recovery state", func(msg ServerMessage) bool {
+		return msg.Type == "interview_state" && msg.Interview != nil
+	})
+	if state.Interview.Status == "draft" || state.Interview.Draft != "" {
+		t.Fatalf("plain assistant Markdown became a draft: %+v", state.Interview)
+	}
+	_ = wsjson.Write(ctx, conn, ClientMessage{Type: "stop_turn", SessionID: sessionID})
+}
+
+func TestWebSocketInterviewBridgeProducesStructuredDraft(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	coreSvc, fake, wsURL, cleanup := newWSTestHarness(t)
+	defer cleanup()
+	fake.ResponseDelay = 5 * time.Second
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "interviewer", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	conn := dialWSTest(t, wsURL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "start_interview", RequestID: "start", AgentName: "interviewer"}); err != nil {
+		t.Fatalf("start interview: %v", err)
+	}
+	sessionMsg := readWSTestUntil(t, conn, "interview session", func(msg ServerMessage) bool {
+		return msg.Type == "session" && msg.Session != nil && msg.Session.Origin == store.OriginInterview
+	})
+	sessionID := sessionMsg.Session.ID
+	httpBase := "http" + strings.TrimPrefix(strings.TrimSuffix(wsURL, "/api/ws"), "ws")
+
+	for _, topic := range core.RequiredInterviewTopics {
+		body, _ := json.Marshal(map[string]any{
+			"topic":    topic,
+			"header":   "Preference",
+			"question": "Which option fits best?",
+			"options": []map[string]string{
+				{"label": "One", "description": "First choice."},
+				{"label": "Two", "description": "Second choice."},
+				{"label": "Three", "description": "Third choice."},
+			},
+		})
+		result := make(chan *http.Response, 1)
+		errCh := make(chan error, 1)
+		go func() {
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, httpBase+"/api/interviews/"+sessionID+"/questions", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			result <- resp
+		}()
+		question := readWSTestUntil(t, conn, "interview question", func(msg ServerMessage) bool {
+			return msg.Type == "user_input_request" && msg.Input != nil
+		})
+		if len(question.Input.Questions) != 1 || !question.Input.Questions[0].IsOther {
+			t.Fatalf("unexpected relayed question: %+v", question.Input)
+		}
+		if err := wsjson.Write(ctx, conn, ClientMessage{
+			Type:      "user_input_decision",
+			RequestID: question.Input.ID,
+			Input:     &adapter.UserInputDecision{Answers: map[string][]string{"answer": {"One"}}},
+		}); err != nil {
+			t.Fatalf("answer question: %v", err)
+		}
+		select {
+		case err := <-errCh:
+			t.Fatalf("question bridge: %v", err)
+		case resp := <-result:
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("question status = %d", resp.StatusCode)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+
+	draftBody, _ := json.Marshal(validProfileDraft())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, httpBase+"/api/interviews/"+sessionID+"/draft", bytes.NewReader(draftBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("submit draft: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("draft status = %d", resp.StatusCode)
+	}
+	draftMsg := readWSTestUntil(t, conn, "interview draft", func(msg ServerMessage) bool {
+		return msg.Type == "interview_state" && msg.Interview != nil && msg.Interview.Status == "draft"
+	})
+	if !strings.Contains(draftMsg.Interview.Draft, "**Name:** Marcus") {
+		t.Fatalf("unexpected draft: %s", draftMsg.Interview.Draft)
+	}
+	reconnected := dialWSTest(t, wsURL)
+	defer reconnected.Close(websocket.StatusNormalClosure, "")
+	if err := wsjson.Write(ctx, reconnected, ClientMessage{Type: "attach_session", SessionID: sessionID}); err != nil {
+		t.Fatalf("reattach completed interview: %v", err)
+	}
+	replayed := readWSTestUntil(t, reconnected, "replayed interview draft", func(msg ServerMessage) bool {
+		return msg.Type == "interview_state" && msg.Interview != nil && msg.Interview.Status == "draft"
+	})
+	if replayed.Interview.Draft != draftMsg.Interview.Draft {
+		t.Fatalf("replayed draft changed:\n%s\nwant:\n%s", replayed.Interview.Draft, draftMsg.Interview.Draft)
+	}
+	_ = wsjson.Write(ctx, conn, ClientMessage{Type: "stop_turn", SessionID: sessionID})
 }

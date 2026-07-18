@@ -45,6 +45,7 @@ type Server struct {
 	marketplace *marketplace.Service
 	broker      *permissionBroker
 	input       *userInputBroker
+	interviews  *interviewCoordinator
 	fallback    *fallbackBroker
 	turns       *activeTurnHub
 	paths       config.Paths
@@ -124,6 +125,7 @@ func New(opts Options) *Server {
 		github:      podiomgithub.New(podiomgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
 		broker:      newPermissionBroker(log),
 		input:       newUserInputBroker(log),
+		interviews:  newInterviewCoordinator(),
 		fallback:    newFallbackBroker(log),
 		turns:       newActiveTurnHub(),
 		paths:       opts.Paths,
