@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -388,6 +390,10 @@ type taskArchiveDoneRequest struct {
 	ProjectID string `json:"project_id,omitempty"`
 }
 
+type taskStartRequest struct {
+	Unattended bool `json:"unattended"`
+}
+
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	if s.core == nil {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
@@ -484,7 +490,12 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		session, err := s.core.StartTask(r.Context(), core.StartTaskRequest{TaskID: id})
+		var req taskStartRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		session, err := s.core.StartTask(r.Context(), core.StartTaskRequest{TaskID: id, Unattended: req.Unattended})
 		if err == nil {
 			s.log.Info("task start requested", "event", "task", "task", id, "session", session.ID, "agent", session.AgentName, "project", session.ProjectID)
 		}

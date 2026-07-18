@@ -75,8 +75,8 @@ detail triggers one immediately.
 
 A goal exists to reach an outcome **without** you in the loop, so the whole goal
 chain runs with full autonomous access (yolo): the lead agent's planning and
-review sessions, **and every roadmap task and schedule the goal creates**,
-execute with no per-action approval prompts (Claude `--permission-mode
+review sessions, **and every started roadmap task and schedule the goal
+creates**, execute with no per-action approval prompts (Claude `--permission-mode
 bypassPermissions`; Codex `approvalPolicy: never` + `sandbox:
 danger-full-access`). The agent can run shell commands, edit files, install
 tools, and reach the network directly.
@@ -84,8 +84,9 @@ tools, and reach the network directly.
 This is deliberate and clearly disclosed: the goal-creation form shows a
 full-access warning before you create the goal, and the goal detail view carries
 a persistent **autonomous · full access** badge. Tasks a goal creates carry its
-`goal_id` (their runs are forced yolo even if the task was plan-gated), and
-schedules a goal creates are written with `run_permission: yolo`.
+`goal_id` (their runs are forced yolo even if the task was plan-gated), and the
+lead starts task work with `podiom_start_task` when it should begin. Schedules a
+goal creates are written with `run_permission: yolo`.
 
 The counterweight is a complete audit trail: every tool call the goal chain
 makes is recorded on the goal timeline (see below).
@@ -172,8 +173,10 @@ yolo, audited on the goal timeline).
 - No spend/token budgets or caps on how many tasks/schedules a goal may spawn —
   the audit trail is the control.
 - Tasks and schedules the agent creates for the goal carry its `goal_id`, so
-  their runs are autonomous (yolo) and recorded on the goal timeline. Work the
-  agent creates without a `goal_id` is not linked and runs under the normal
-  (stricter) unattended policy.
+  their started runs are autonomous (yolo) and recorded on the goal timeline.
+  Creating a task does not start it; the lead starts task work with
+  `podiom_start_task` when execution should begin. Work the agent creates
+  without a `goal_id` is not linked and runs under the normal (stricter)
+  unattended policy.
 - Reviews only fire while `podiomd` is running; an overdue review fires on the
   next scheduler tick after restart.

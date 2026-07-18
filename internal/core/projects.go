@@ -317,6 +317,9 @@ func (c *Core) CreateTask(ctx context.Context, task store.Task) (store.Task, err
 	if strings.TrimSpace(task.Title) == "" {
 		return store.Task{}, fmt.Errorf("task title is required")
 	}
+	if task.Status == store.TaskInProgress {
+		return store.Task{}, fmt.Errorf("task cannot be created in_progress; start the task to create a session")
+	}
 	if task.GoalID != "" {
 		if _, err := c.store.GetGoal(ctx, task.GoalID); err != nil {
 			return store.Task{}, fmt.Errorf("goal %q: %w", task.GoalID, err)
@@ -357,9 +360,14 @@ func (c *Core) UpdateTask(ctx context.Context, task store.Task) (store.Task, err
 	if err != nil {
 		return store.Task{}, err
 	}
-	if hasSession, err := c.taskHasSession(ctx, task.ID); err != nil {
+	hasSession, err := c.taskHasSession(ctx, task.ID)
+	if err != nil {
 		return store.Task{}, err
-	} else if hasSession && taskChangesLockedFields(existing, task) {
+	}
+	if task.Status == store.TaskInProgress && !hasSession {
+		return store.Task{}, fmt.Errorf("task %q cannot be marked in_progress without starting a session", task.ID)
+	}
+	if hasSession && taskChangesLockedFields(existing, task) {
 		return store.Task{}, fmt.Errorf("task %q already has a session; only status can be changed", task.ID)
 	}
 	if err := validateTaskProvider(task); err != nil {

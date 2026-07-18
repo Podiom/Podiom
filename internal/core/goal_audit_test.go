@@ -211,6 +211,13 @@ func TestGoalLinkedTaskRunsYolo(t *testing.T) {
 	if req.Relay != nil {
 		t.Fatalf("yolo goal-linked task run must not attach a permission relay")
 	}
+	history, err := c.History(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 || history[0].Role != store.RoleUser || history[1].Content != "worked" {
+		t.Fatalf("unexpected goal-linked task history: %+v", history)
+	}
 }
 
 func TestGoalLinkedScheduleForcesYolo(t *testing.T) {

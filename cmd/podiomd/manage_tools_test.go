@@ -178,6 +178,23 @@ func TestUpdateTaskPatchOmitsAbsentKeys(t *testing.T) {
 	}
 }
 
+func TestStartTaskPostsUnattendedByDefault(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	if _, err := callTool(t, c, "podiom_start_task", map[string]any{"id": "t1"}); err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/api/tasks/t1/start" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	var unattended bool
+	if err := json.Unmarshal(rec.body["unattended"], &unattended); err != nil {
+		t.Fatalf("decode unattended: %v body=%v", err, rec.body)
+	}
+	if !unattended {
+		t.Fatalf("start task should default unattended, body=%v", rec.body)
+	}
+}
+
 func TestDeleteTaskRequiresConfirmBeforeHTTP(t *testing.T) {
 	rec, c := newRecordingServer(t)
 	_, err := callTool(t, c, "podiom_delete_task", map[string]any{"id": "t1"})

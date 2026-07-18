@@ -187,7 +187,7 @@ func taskTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_create_task",
 			APIRoutes:   []string{"/api/tasks"},
-			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup.",
+			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup. To move work to in_progress, call podiom_start_task instead of setting status directly.",
 			InputSchema: objectSchema([]string{"title"}, map[string]any{
 				"project_id":     strProp("Project id this task belongs to."),
 				"title":          strProp("Short task title."),
@@ -197,10 +197,10 @@ func taskTools(c *manageClient) []mcpTool {
 				"profile":        strProp("Profile override. Omit for agent default."),
 				"model":          strProp("Model override. Required with any run target override."),
 				"effort":         strProp("Effort override. Required with any run target override."),
-				"status":         strProp("Initial status (defaults to backlog): backlog, in_progress, review, done."),
+				"status":         strProp("Initial status (defaults to backlog): backlog, review, done. in_progress is only valid after starting a task."),
 				"plan_required":  boolProp("Require plan mode for this task."),
 				"pickup_at":      strProp("RFC3339 time to auto-start the task; empty = on-demand."),
-				"goal_id":        strProp("Goal id when this task is part of a goal's plan. REQUIRED for tasks you create for a goal: it links the task's runs to the goal timeline and runs them autonomously (yolo)."),
+				"goal_id":        strProp("Goal id when this task is part of a goal's plan. REQUIRED for tasks you create for a goal: it links started task runs to the goal timeline and runs them autonomously (yolo)."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -217,7 +217,7 @@ func taskTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_update_task",
 			APIRoutes:   []string{"/api/tasks/"},
-			Description: "Update fields of an existing roadmap item (task). Only the fields you pass are changed.",
+			Description: "Update fields of an existing roadmap item (task). Only the fields you pass are changed. To move backlog work to in_progress, call podiom_start_task instead of setting status directly.",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":             strProp("Task id."),
 				"project_id":     strProp("New project id."),
@@ -228,10 +228,10 @@ func taskTools(c *manageClient) []mcpTool {
 				"profile":        strProp("Profile override. Empty string returns to agent default."),
 				"model":          strProp("Model override. Empty string returns to agent default only when the whole target is empty."),
 				"effort":         strProp("Effort override. Empty string returns to agent default only when the whole target is empty."),
-				"status":         strProp("New status: backlog, in_progress, review, done."),
+				"status":         strProp("New status: backlog, review, done. in_progress is only valid for tasks that already have a started session."),
 				"plan_required":  boolProp("Toggle plan mode."),
 				"pickup_at":      strProp("RFC3339 scheduled pickup time; empty string clears it."),
-				"goal_id":        strProp("Goal id to link this task to a goal (its runs become autonomous and audited on the goal timeline); empty string unlinks it."),
+				"goal_id":        strProp("Goal id to link this task to a goal (started runs become autonomous and audited on the goal timeline); empty string unlinks it."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -270,8 +270,11 @@ func taskTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_start_task",
 			APIRoutes:   []string{"/api/tasks/"},
-			Description: "Start a roadmap item (task) now: creates a session for its assigned agent and moves it to in_progress.",
-			InputSchema: objectSchema([]string{"id"}, map[string]any{"id": strProp("Task id.")}),
+			Description: "Start a roadmap item (task) now: creates a session for its assigned agent, moves it to in_progress, and by default runs the first turn unattended. Goal-linked tasks run yolo.",
+			InputSchema: objectSchema([]string{"id"}, map[string]any{
+				"id":         strProp("Task id."),
+				"unattended": boolProp("Run the first turn server-side. Defaults to true for agent/tool starts."),
+			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
 				if err != nil {
@@ -280,7 +283,11 @@ func taskTools(c *manageClient) []mcpTool {
 				if err := requireField(m, "id"); err != nil {
 					return "", err
 				}
-				return c.post(ctx, "/api/tasks/"+url.PathEscape(argString(m, "id"))+"/start", nil)
+				unattended := true
+				if _, ok := m["unattended"]; ok {
+					unattended = argBool(m, "unattended")
+				}
+				return c.post(ctx, "/api/tasks/"+url.PathEscape(argString(m, "id"))+"/start", map[string]bool{"unattended": unattended})
 			},
 		},
 	}

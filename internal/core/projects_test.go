@@ -223,6 +223,44 @@ func TestCreateTaskRejectsIncompleteRunTarget(t *testing.T) {
 	}
 }
 
+func TestGoalLinkedTaskCannotBeMarkedInProgressWithoutSession(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "worker", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "worker"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := c.CreateTask(ctx, store.Task{
+		Title:         "Direct start",
+		AssignedAgent: "worker",
+		GoalID:        goal.ID,
+		Status:        store.TaskInProgress,
+	}); err == nil {
+		t.Fatal("expected direct in_progress create to fail")
+	}
+
+	task, err := c.CreateTask(ctx, store.Task{
+		Title:         "Move directly",
+		AssignedAgent: "worker",
+		GoalID:        goal.ID,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	task.Status = store.TaskInProgress
+	if _, err := c.UpdateTask(ctx, task); err == nil {
+		t.Fatal("expected direct in_progress update without session to fail")
+	}
+	if _, ok, err := c.TaskSession(ctx, task.ID); err != nil || ok {
+		t.Fatalf("task should still have no session: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestCreateSessionStoresProjectAndRejectsUnknownProject(t *testing.T) {
 	ctx := context.Background()
 	c, _, cleanup := newScheduledTestCore(t)

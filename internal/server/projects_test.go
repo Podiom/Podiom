@@ -72,6 +72,38 @@ func TestTaskDescribeEndpointsReturnBody(t *testing.T) {
 	}
 }
 
+func TestTaskStartEndpointRunsUnattendedWhenRequested(t *testing.T) {
+	ctx := context.Background()
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	if _, err := srv.core.CreateAgent(ctx, core.CreateAgentRequest{Name: "worker", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	task, err := srv.core.CreateTask(ctx, store.Task{Title: "Run it", AssignedAgent: "worker"})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+task.ID+"/start", bytes.NewBufferString(`{"unattended":true}`))
+	rr := httptest.NewRecorder()
+	srv.handleTask(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var sess store.Session
+	if err := json.NewDecoder(rr.Body).Decode(&sess); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	history, err := srv.core.History(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 2 || history[0].Role != store.RoleUser {
+		t.Fatalf("unexpected started history: %+v", history)
+	}
+}
+
 func TestProjectInstructionsEndpointReadsAndWrites(t *testing.T) {
 	ctx := context.Background()
 	_, srv, cleanup := newAgentAPITestServer(t)

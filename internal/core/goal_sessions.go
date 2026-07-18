@@ -29,7 +29,7 @@ exactly what you did while they were away.
 ## Your job right now (planning session)
 
 1. Decompose the goal into concrete work:
-   - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable). Pass goal_id (this goal's ID, above) so the task's runs are linked to this goal, run autonomously, and are audited on this timeline.
+   - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable). Pass goal_id (this goal's ID, above) so any started task runs are linked to this goal, run autonomously, and are audited on this timeline. Leave new tasks in backlog unless work should start immediately; when it should start, call podiom_start_task rather than setting status to in_progress.
    - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id so they run as part of this goal's autonomous chain.
 2. Do quick setup and investigation directly (install a CLI tool, read the repo, run a probe command) — but push the substantial and recurring work into the tasks and schedules above so it is tracked and survives this session.
 3. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
@@ -91,7 +91,7 @@ tool-call entries to stay readable; the full record is on the goal page.)
 
 ## Your job right now (review session)
 
-1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted.
+1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted. Start backlog tasks with podiom_start_task when autonomous work should begin; do not move a task to in_progress by editing status directly.
 2. Consider the user's recent feedback above as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
 3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed.
 4. Take direct corrective action when it is quick and unblocks progress (run a command, fix a file, unstick a task); push larger or recurring work into tasks and schedules (with goal_id) so it is tracked.
