@@ -11,12 +11,29 @@
 
 # Podiom
 
-A thin orchestration layer for local LLM agents (Claude Code, OpenAI Codex atm.).
+A thin orchestration layer for local LLM agents (Claude Code and OpenAI Codex).
 Podiom shells out to the native `claude` and `codex` CLIs and leans on *their*
 MCP, tools, and skills, while owning its own durable truth: named agents, durable
 chat sessions, a canonical history that replays onto a fresh backing CLI session
 on any profile/provider switch, an embedded scheduler, and a shared project
 ledger. It ships as a single Go binary with an embedded Svelte web UI.
+
+## Why Podiom?
+
+Managing multiple local agents is easy to start and hard to keep coherent. Podiom
+stays thin on purpose:
+
+- Durable sessions that survive provider and profile changes.
+- A shared project ledger so work does not get lost between runs.
+- Built-in scheduling for recurring work and follow-ups.
+- Native integration with the tools you already use instead of replacing them.
+
+## Who is this for?
+
+- Developers already using Claude Code or OpenAI Codex locally.
+- Open-source builders who want persistent, reviewable agent work.
+- Operators and tinkerers who prefer local-first workflows over cloud lock-in.
+- Maintainers who need a lightweight control plane around existing agent tools.
 
 ## Quick start (dev)
 
