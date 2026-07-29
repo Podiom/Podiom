@@ -58,7 +58,9 @@ RUN npm install -g \
     && npm cache clean --force
 
 RUN PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
-    pipx install "mcp-proxy==${MCP_PROXY_VERSION}"
+    pipx install "mcp-proxy==${MCP_PROXY_VERSION}" && \
+    PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin \
+    pipx inject mcp-proxy 'mcp<2'
 
 # uv ships both `uv` and `uvx`; uvx runs MCP servers distributed as Python
 # packages (e.g. unifi-mcp) without a persistent install. pipx exposes both
