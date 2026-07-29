@@ -122,3 +122,63 @@ func TestProjectInstructionsEndpointReadsAndWrites(t *testing.T) {
 		t.Fatalf("missing project should fail, body=%s", rr.Body.String())
 	}
 }
+func TestProjectGitPatchPersistsToLedger(t *testing.T) {
+	ctx := context.Background()
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	const remote = "git@github.com:acme/mission-control.git"
+	if _, err := srv.core.CreateProject(ctx, projects.Project{
+		ID:   "mission-control",
+		Name: "Mission Control",
+		Git:  &projects.Git{Enabled: true, Remote: remote},
+	}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/mission-control", bytes.NewBufferString(`{
+		"git": {
+			"enabled": false,
+			"remote": "git@github.com:acme/mission-control.git",
+			"default_branch": "trunk",
+			"branching": "branch-per-task",
+			"branch_prefixes": {
+				"feature": "feat/",
+				"spike": "spike/"
+			},
+			"commit": "auto"
+		}
+	}`))
+	rr := httptest.NewRecorder()
+	srv.handleProject(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	var response projects.Project
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Git == nil || response.Git.Remote != remote || response.Git.DefaultBranch != "trunk" {
+		t.Fatalf("response git = %#v", response.Git)
+	}
+
+	// Read through a fresh ledger to prove the PATCH reached projects.yaml,
+	// rather than only updating the response object.
+	persisted, err := projects.New(paths.ProjectsDir).Get("mission-control")
+	if err != nil {
+		t.Fatalf("read persisted project: %v", err)
+	}
+	if persisted.Git == nil {
+		t.Fatal("persisted git block is missing")
+	}
+	if persisted.Git.Enabled ||
+		persisted.Git.Remote != remote ||
+		persisted.Git.DefaultBranch != "trunk" ||
+		persisted.Git.Branching != projects.BranchingPerTask ||
+		persisted.Git.Commit != projects.CommitAuto ||
+		persisted.Git.BranchPrefixes["feature"] != "feat/" ||
+		persisted.Git.BranchPrefixes["spike"] != "spike/" {
+		t.Fatalf("persisted git block = %#v", persisted.Git)
+	}
+}

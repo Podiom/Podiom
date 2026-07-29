@@ -21,7 +21,7 @@
   } from "../lib/api";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import { PROJECT_COLORS, projectColor } from "../lib/theme";
-  import type { Agent, GitHubDeviceStart, GitHubRepo, GitHubStatus, Project, Task } from "../lib/types";
+  import type { Agent, GitHubDeviceStart, GitHubRepo, GitHubStatus, Project, ProjectGit, Task } from "../lib/types";
 
   interface ChatTarget {
     sessionId?: string;
@@ -42,6 +42,21 @@
   let instructionDrafts = $state<Record<string, string>>({});
   let instructionDraftsSaved = $state<Record<string, string>>({});
   let instructionPaths = $state<Record<string, string>>({});
+  interface GitPrefixDraft {
+    kind: string;
+    prefix: string;
+  }
+  interface GitDraft {
+    enabled: boolean;
+    remote: string;
+    default_branch: string;
+    branching: ProjectGit["branching"];
+    branch_prefixes: GitPrefixDraft[];
+    commit: ProjectGit["commit"];
+  }
+  let gitDrafts = $state<Record<string, GitDraft>>({});
+  let savingGit = $state("");
+  let gitErrors = $state<Record<string, string>>({});
   let busyDescribe = $state<string>("");
   let savingDesc = $state<string>("");
   let savingInstructions = $state<string>("");
@@ -131,6 +146,7 @@
       instructionDrafts = Object.fromEntries(instructionInfos.map((info) => [info.project_id, info.instructions]));
       instructionDraftsSaved = Object.fromEntries(instructionInfos.map((info) => [info.project_id, info.instructions]));
       instructionPaths = Object.fromEntries(instructionInfos.map((info) => [info.project_id, info.path]));
+      gitDrafts = Object.fromEntries(projects.map((p) => [p.id, gitDraftFor(p)]));
       if (!writerAgent && agents.length) writerAgent = agents[0].Name;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -162,6 +178,127 @@
   function instructionsDirty(p: Project): boolean {
     const path = instructionPaths[p.id];
     return Boolean(path) && (instructionDrafts[p.id] ?? "") !== (instructionDraftsSaved[p.id] ?? "");
+  }
+
+  function gitDraftFor(p: Project): GitDraft {
+    const prefixes = p.git?.branch_prefixes ?? {
+      feature: "feature/",
+      bugfix: "fix/",
+      chore: "chore/",
+    };
+    return {
+      enabled: p.git?.enabled ?? false,
+      remote: p.git?.remote ?? "",
+      default_branch: p.git?.default_branch || "main",
+      branching: p.git?.branching ?? "direct",
+      branch_prefixes: Object.entries(prefixes)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([kind, prefix]) => ({ kind, prefix })),
+      commit: p.git?.commit ?? "ask",
+    };
+  }
+
+  function comparableGit(draft: GitDraft): string {
+    return JSON.stringify({
+      enabled: draft.enabled,
+      remote: draft.remote,
+      default_branch: draft.default_branch.trim(),
+      branching: draft.branching,
+      branch_prefixes: draft.branch_prefixes
+        .map(({ kind, prefix }) => ({ kind: kind.trim(), prefix: prefix.trim() }))
+        .sort((a, b) => a.kind.localeCompare(b.kind) || a.prefix.localeCompare(b.prefix)),
+      commit: draft.commit,
+    });
+  }
+
+  function gitDirty(p: Project): boolean {
+    const draft = gitDrafts[p.id];
+    return Boolean(draft) && comparableGit(draft) !== comparableGit(gitDraftFor(p));
+  }
+
+  function gitDraftError(draft: GitDraft): string {
+    if (!draft.default_branch.trim()) return "Default branch is required.";
+    if (draft.branch_prefixes.some(({ kind, prefix }) => !kind.trim() || !prefix.trim())) {
+      return "Each branch prefix needs both a work kind and a prefix.";
+    }
+    const kinds = draft.branch_prefixes.map(({ kind }) => kind.trim().toLowerCase());
+    if (new Set(kinds).size !== kinds.length) return "Branch prefix kinds must be unique.";
+    return "";
+  }
+
+  function updateGitDraft(id: string, patch: Partial<Omit<GitDraft, "branch_prefixes">>) {
+    const current = gitDrafts[id];
+    if (!current) return;
+    gitDrafts = { ...gitDrafts, [id]: { ...current, ...patch } };
+    gitErrors = { ...gitErrors, [id]: "" };
+  }
+
+  function updateGitPrefix(id: string, index: number, field: keyof GitPrefixDraft, value: string) {
+    const current = gitDrafts[id];
+    if (!current) return;
+    const prefixes = current.branch_prefixes.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry));
+    gitDrafts = { ...gitDrafts, [id]: { ...current, branch_prefixes: prefixes } };
+    gitErrors = { ...gitErrors, [id]: "" };
+  }
+
+  function addGitPrefix(id: string) {
+    const current = gitDrafts[id];
+    if (!current) return;
+    gitDrafts = {
+      ...gitDrafts,
+      [id]: { ...current, branch_prefixes: [...current.branch_prefixes, { kind: "", prefix: "" }] },
+    };
+    gitErrors = { ...gitErrors, [id]: "" };
+  }
+
+  function removeGitPrefix(id: string, index: number) {
+    const current = gitDrafts[id];
+    if (!current) return;
+    gitDrafts = {
+      ...gitDrafts,
+      [id]: { ...current, branch_prefixes: current.branch_prefixes.filter((_, i) => i !== index) },
+    };
+    gitErrors = { ...gitErrors, [id]: "" };
+  }
+
+  function resetGit(p: Project) {
+    gitDrafts = { ...gitDrafts, [p.id]: gitDraftFor(p) };
+    gitErrors = { ...gitErrors, [p.id]: "" };
+  }
+
+  async function saveGit(p: Project) {
+    const draft = gitDrafts[p.id];
+    if (!draft) return;
+    const validationError = gitDraftError(draft);
+    if (validationError) {
+      gitErrors = { ...gitErrors, [p.id]: validationError };
+      return;
+    }
+    savingGit = p.id;
+    gitErrors = { ...gitErrors, [p.id]: "" };
+    try {
+      const branchPrefixes = Object.fromEntries(
+        draft.branch_prefixes.map(({ kind, prefix }) => [kind.trim(), prefix.trim()]),
+      );
+      const updated = await updateProject(p.id, {
+        git: {
+          enabled: draft.enabled,
+          // The remote is intentionally read-only in the UI. Always use the
+          // latest saved project value rather than anything from form state.
+          remote: p.git?.remote ?? "",
+          default_branch: draft.default_branch.trim(),
+          branching: draft.branching,
+          branch_prefixes: branchPrefixes,
+          commit: draft.commit,
+        },
+      });
+      projects = projects.map((project) => (project.id === p.id ? updated : project));
+      gitDrafts = { ...gitDrafts, [p.id]: gitDraftFor(updated) };
+    } catch (e) {
+      gitErrors = { ...gitErrors, [p.id]: e instanceof Error ? e.message : String(e) };
+    } finally {
+      savingGit = "";
+    }
   }
 
   async function setColor(p: Project, c: string) {
@@ -605,6 +742,117 @@
           </div>
         {/if}
 
+        {@const gitDraft = gitDrafts[p.id]}
+        {#if gitDraft}
+          <section class="pc-git">
+            <div class="git-head">
+              <div>
+                <div class="label-mono">source control</div>
+                <div class="repo-meta mono">{gitDraft.enabled ? "git enabled" : "git disabled"}</div>
+              </div>
+              <label class="git-toggle">
+                <input
+                  type="checkbox"
+                  checked={gitDraft.enabled}
+                  onchange={(e) => updateGitDraft(p.id, { enabled: e.currentTarget.checked })}
+                />
+                <span>Use Git</span>
+              </label>
+            </div>
+
+            <div class="git-field">
+              <label class="label-mono" for="git-remote-{p.id}">remote (read-only)</label>
+              <div id="git-remote-{p.id}" class="git-readonly mono">
+                {gitDraft.remote || "No remote — local repository"}
+              </div>
+            </div>
+
+            <div class="git-fields">
+              <label class="git-field">
+                <span class="label-mono">default branch</span>
+                <input
+                  class="field-input mono"
+                  value={gitDraft.default_branch}
+                  oninput={(e) => updateGitDraft(p.id, { default_branch: e.currentTarget.value })}
+                  placeholder="main"
+                />
+              </label>
+              <label class="git-field">
+                <span class="label-mono">branching</span>
+                <select
+                  class="field-input"
+                  value={gitDraft.branching}
+                  onchange={(e) => updateGitDraft(p.id, { branching: e.currentTarget.value as ProjectGit["branching"] })}
+                >
+                  <option value="direct">Direct</option>
+                  <option value="branch-per-task">Branch per task</option>
+                </select>
+              </label>
+              <label class="git-field">
+                <span class="label-mono">commits</span>
+                <select
+                  class="field-input"
+                  value={gitDraft.commit}
+                  onchange={(e) => updateGitDraft(p.id, { commit: e.currentTarget.value as ProjectGit["commit"] })}
+                >
+                  <option value="ask">Only when asked</option>
+                  <option value="auto">Agent may commit</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="git-prefix-head">
+              <span class="label-mono">branch prefixes</span>
+              <button class="link-btn" type="button" onclick={() => addGitPrefix(p.id)}>Add prefix</button>
+            </div>
+            <div class="git-prefixes">
+              {#each gitDraft.branch_prefixes as entry, index}
+                <div class="git-prefix-row">
+                  <input
+                    class="field-input mono"
+                    value={entry.kind}
+                    oninput={(e) => updateGitPrefix(p.id, index, "kind", e.currentTarget.value)}
+                    aria-label="Work kind"
+                    placeholder="feature"
+                  />
+                  <input
+                    class="field-input mono"
+                    value={entry.prefix}
+                    oninput={(e) => updateGitPrefix(p.id, index, "prefix", e.currentTarget.value)}
+                    aria-label="Branch prefix"
+                    placeholder="feature/"
+                  />
+                  <button
+                    class="git-prefix-remove"
+                    type="button"
+                    aria-label="Remove branch prefix"
+                    title="Remove branch prefix"
+                    onclick={() => removeGitPrefix(p.id, index)}
+                  >×</button>
+                </div>
+              {/each}
+              {#if gitDraft.branch_prefixes.length === 0}
+                <div class="repo-meta mono">No custom prefixes. Saving uses the standard defaults.</div>
+              {/if}
+            </div>
+
+            {#if gitErrors[p.id] || (gitDirty(p) && gitDraftError(gitDraft))}
+              <div class="git-error">{gitErrors[p.id] || gitDraftError(gitDraft)}</div>
+            {/if}
+            {#if gitDirty(p)}
+              <div class="pc-save-row">
+                <button class="pc-cancel" type="button" onclick={() => resetGit(p)}>Reset</button>
+                <button
+                  class="pc-save"
+                  type="button"
+                  disabled={savingGit === p.id || !!gitDraftError(gitDraft)}
+                  onclick={() => saveGit(p)}
+                >{savingGit === p.id ? "Saving…" : "Save Git settings"}</button>
+              </div>
+            {/if}
+          </section>
+        {/if}
+
         <div class="pc-repo">
           <div>
             <div class="label-mono">github repo</div>
@@ -1045,6 +1293,89 @@
     color: #8a7560;
   }
 
+  .pc-git {
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid #dce9e3;
+    border-radius: 10px;
+    background: #f7fbf9;
+  }
+
+  .git-head,
+  .git-prefix-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .git-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--teal-deep);
+    font: 700 12px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .git-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    margin-top: 12px;
+  }
+
+  .git-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .git-readonly {
+    min-height: 38px;
+    padding: 9px 10px;
+    border: 1px solid #dce4df;
+    border-radius: 9px;
+    background: #eef3f0;
+    color: #6f7d76;
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
+
+  .git-prefix-head {
+    margin-top: 14px;
+  }
+
+  .git-prefixes {
+    display: grid;
+    gap: 7px;
+    margin-top: 8px;
+  }
+
+  .git-prefix-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .git-prefix-remove {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--field-line);
+    border-radius: 8px;
+    background: #fff;
+    color: #a05252;
+    font: 700 17px/1 "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .git-error {
+    margin-top: 9px;
+    color: #a05252;
+    font: 600 11.5px/1.4 "Hanken Grotesk";
+  }
+
   .pc-repo {
     display: flex;
     gap: 12px;
@@ -1409,6 +1740,23 @@
 
     .repo-actions {
       justify-content: stretch;
+    }
+
+    .git-head {
+      align-items: flex-start;
+    }
+
+    .git-prefix-row {
+      grid-template-columns: minmax(0, 1fr) 30px;
+    }
+
+    .git-prefix-row input:nth-child(2) {
+      grid-column: 1;
+    }
+
+    .git-prefix-remove {
+      grid-column: 2;
+      grid-row: 1 / span 2;
     }
   }
 
