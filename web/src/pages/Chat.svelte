@@ -4911,17 +4911,6 @@
       height: 34px;
     }
 
-    .composer-meta {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      padding-bottom: 2px;
-      scrollbar-width: none;
-    }
-
-    .composer-meta::-webkit-scrollbar {
-      display: none;
-    }
-
     .composer-meta .dd-wrap,
     .chip-btn {
       flex: none;
