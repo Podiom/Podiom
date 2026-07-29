@@ -3,7 +3,9 @@ package git
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -169,6 +171,52 @@ func TestCheckReportsIdentityState(t *testing.T) {
 	if !status.Ready && status.Hint == "" {
 		t.Fatal("a not-ready status must say what is missing")
 	}
+}
+
+// A key under $HOME is Podiom's first choice, ahead of the passwd home. The
+// empty case is deliberately not asserted here: the developer machine running
+// this test usually has a real key in the passwd home, and finding it is the
+// correct behaviour.
+func TestPublicKeyPrefersTheHomeSSHDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.UserHomeDir reads USERPROFILE on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI0000000000000000000000000000000000000000000 test@example.invalid"
+	if err := os.WriteFile(filepath.Join(sshDir, "id_ed25519.pub"), []byte(key+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := PublicKey(); got != key {
+		t.Fatalf("public key: got %q want %q", got, key)
+	}
+}
+
+// OpenSSH ignores $HOME and expands ~ from the passwd entry, so on the Home
+// Assistant add-on (HOME=/data/home, root's passwd home /root) ssh-keygen
+// writes a key Podiom would otherwise never see. Both homes must be searched.
+func TestSSHDirsIncludesTheOpenSSHHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.UserHomeDir reads USERPROFILE on Windows")
+	}
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		t.Skip("no passwd home available")
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	want := filepath.Join(u.HomeDir, ".ssh")
+	for _, dir := range sshDirs() {
+		if dir == want {
+			return
+		}
+	}
+	t.Fatalf("sshDirs() = %v, missing the OpenSSH home %q", sshDirs(), want)
 }
 
 // Podiom must never invent git credentials from the GitHub App token it holds

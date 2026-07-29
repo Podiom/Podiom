@@ -32,6 +32,15 @@ ENV PODIOM_HOME=/data/podiom \
     DISABLE_AUTOUPDATER=1 \
     PODIOM_TERMINAL_PROXY=http://127.0.0.1:7681
 
+# OpenSSH ignores $HOME and expands ~ from the passwd entry, so with root's
+# default home every ssh-keygen/ssh would use /root/.ssh — off /data, and
+# therefore lost on every add-on update. Point root's passwd home at the same
+# /data/home the ENV above sets: one home for ssh, git and podiomd alike. The
+# getent guard fails the build loudly if a base-image change breaks the edit.
+RUN set -eu; \
+    sed -i 's|^root:\(.*\):/root:|root:\1:/data/home:|' /etc/passwd; \
+    getent passwd root | grep -q ':/data/home:'
+
 # Fail early if the pins were not passed (versions.env is the source of truth).
 RUN set -eu; \
     for v in "$NODE_MAJOR" "$CLAUDE_CODE_VERSION" "$CODEX_VERSION" \

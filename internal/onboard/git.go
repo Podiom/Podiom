@@ -63,9 +63,9 @@ func offerGitSetup(ctx context.Context, u *ui, out io.Writer) error {
 	}
 
 	if key := podiomgit.PublicKey(); key != "" {
-		fmt.Fprintln(out, dividerStyle.Render("  an SSH key is present in ~/.ssh"))
+		fmt.Fprintln(out, dividerStyle.Render("  an SSH key is present"))
 	} else {
-		fmt.Fprintln(out, dividerStyle.Render("  no SSH key found in ~/.ssh — create one with ssh-keygen and add it to your git host,"))
+		fmt.Fprintln(out, dividerStyle.Render("  no SSH key found — create one with ssh-keygen and add it to your git host,"))
 		fmt.Fprintln(out, dividerStyle.Render("  or configure a credential helper. Podiom uses whatever you set up."))
 	}
 	fmt.Fprintln(out, dividerStyle.Render("  You can revisit this any time in Settings → Git."))

@@ -8,6 +8,7 @@
 #   - podiomd serves /healthz on 8099
 #   - claude / codex / mcp-proxy / uvx / ttyd are present at their pinned versions
 #   - yq is absent (profile login dispatch no longer needs it)
+#   - ssh-keygen's default key lands in /data/home/.ssh, and podiomd sees it
 #   - ttyd is listening on 127.0.0.1:7681
 #   - token-sync (no-supervisor mode) never prints a stubbed token value,
 #     and the real gateway token never appears in the container log
@@ -75,6 +76,30 @@ if docker exec "${cid}" bash -lc 'command -v yq' >/dev/null 2>&1; then
     fail "yq should not be bundled in the HA image"
 fi
 pass "yq is not bundled"
+
+echo "== ssh and \$HOME agree on one persistent home"
+# OpenSSH expands ~ from the passwd entry, not $HOME: without the image's
+# passwd fix ssh-keygen would write to /root/.ssh, off /data, and the key would
+# be lost on every add-on update. Generating a key at ssh-keygen's *default*
+# path is the version-proof proof of where OpenSSH thinks home is.
+docker exec "${cid}" getent passwd root | grep -q ':/data/home:' \
+    || fail "root's passwd home is not /data/home"
+docker exec "${cid}" bash -c "printf '\n' | ssh-keygen -q -t ed25519 -N '' >/dev/null 2>&1" \
+    || fail "ssh-keygen failed"
+docker exec "${cid}" test -f /data/home/.ssh/id_ed25519.pub \
+    || fail "ssh-keygen wrote its default key outside /data/home/.ssh"
+pass "ssh-keygen's default key lands in /data/home/.ssh (persists on /data)"
+
+echo "== podiomd reports the generated key"
+git_token="$(docker exec "${cid}" cat /data/podiom/gateway.token 2>/dev/null || true)"
+if [ -n "${git_token}" ]; then
+    docker exec "${cid}" curl -fsS -H "Authorization: Bearer ${git_token}" \
+        http://127.0.0.1:8099/api/git/status | grep -q '"ssh_key":"ssh-ed25519 ' \
+        || fail "/api/git/status does not report the SSH key"
+    pass "/api/git/status reports the SSH key"
+else
+    echo "  skip: no gateway.token on disk"
+fi
 
 echo "== ttyd listening on 127.0.0.1:7681"
 docker exec "${cid}" bash -c 'exec 3<>/dev/tcp/127.0.0.1/7681' \

@@ -782,7 +782,7 @@
               </div>
             {:else}
               <div class="git-step-sub">
-                No SSH key found in <span class="mono">~/.ssh</span>. Create one with
+                No SSH key found. Create one with
                 <span class="mono">ssh-keygen -t ed25519 -C "{gitEmail || "you@example.com"}"</span>
                 and add the public half to your git host — or configure a credential helper. Podiom uses whatever you set up.
               </div>

@@ -77,12 +77,14 @@ start and copied into the browser at the end of setup.
 
 Everything Podiom knows lives on `/data`: sessions and history, agent
 SOUL/MEMORY files, plans, projects, schedules, skills, profiles, the CLI
-logins, and the gateway token. Home Assistant's native backups therefore
-capture and restore a **complete** Podiom state with no extra setup — treat
-this as a feature and back up regularly.
+logins, the gateway token, and your git SSH key (`/data/home/.ssh` — root's
+home is pointed there so `ssh-keygen` writes somewhere updates cannot wipe).
+Home Assistant's native backups therefore capture and restore a **complete**
+Podiom state with no extra setup — treat this as a feature and back up
+regularly.
 
-Because those backups contain **CLI credentials and the gateway token**, we
-strongly recommend **password-protected backups**
+Because those backups contain **CLI credentials, your git SSH private key, and
+the gateway token**, we strongly recommend **password-protected backups**
 (Settings → System → Backups).
 
 ## Security honesty notes

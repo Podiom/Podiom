@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -208,17 +209,33 @@ func IsRepo(dir string) bool {
 // files exists, so Settings can show what to paste into GitHub. Private keys
 // are never read.
 func PublicKey() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	for _, name := range []string{"id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"} {
-		raw, err := os.ReadFile(filepath.Join(home, ".ssh", name))
-		if err == nil && len(bytes.TrimSpace(raw)) > 0 {
-			return strings.TrimSpace(string(raw))
+	for _, dir := range sshDirs() {
+		for _, name := range []string{"id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"} {
+			raw, err := os.ReadFile(filepath.Join(dir, name))
+			if err == nil && len(bytes.TrimSpace(raw)) > 0 {
+				return strings.TrimSpace(string(raw))
+			}
 		}
 	}
 	return ""
+}
+
+// sshDirs returns the .ssh directories a key may live in. $HOME is Podiom's
+// (and git's) idea of home; OpenSSH deliberately ignores $HOME and expands ~
+// from the passwd entry, so on a container that sets HOME — the Home Assistant
+// add-on sets /data/home while running as root — ssh-keygen writes under the
+// passwd home instead. Check both, so the key is found wherever ssh put it.
+func sshDirs() []string {
+	var dirs []string
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		dirs = append(dirs, filepath.Join(home, ".ssh"))
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		if dir := filepath.Join(u.HomeDir, ".ssh"); len(dirs) == 0 || dir != dirs[0] {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
 }
 
 func (r *Runner) capture(ctx context.Context, dir string, args ...string) (string, error) {

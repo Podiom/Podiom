@@ -91,5 +91,16 @@ will use.
 `git` and `openssh-client` are both installed in the add-on image. `openssh-client`
 is only a *Recommends* of `git`, and the image installs with
 `--no-install-recommends`, so it is listed explicitly — without it every SSH
-remote would fail. `HOME=/data/home`, so `~/.ssh` and `~/.gitconfig` persist
-across add-on restarts.
+remote would fail.
+
+The image sets `HOME=/data/home` so state lands on the persistent volume, and
+that is where git looks for `~/.gitconfig`. OpenSSH does **not** follow `$HOME`:
+it expands `~` from the passwd entry instead. Left alone, the add-on's root user
+would send `ssh` and `ssh-keygen` to `/root/.ssh` — off `/data`, and therefore
+wiped by every add-on update. The image edits root's passwd home to `/data/home`
+so there is exactly one home: `~/.ssh` and `~/.gitconfig` both persist, and
+`ssh-keygen` with no arguments writes a key that survives updates.
+
+Podiom itself reads the public key from either home (`sshDirs` in
+`internal/git/git.go`), so a key sitting in a passwd home Podiom's `$HOME` does
+not point at is still found and shown in Settings → Git.
