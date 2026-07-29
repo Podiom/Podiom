@@ -106,13 +106,19 @@ pickup time.
 
 - **Start on demand** (a backlog card with an assigned agent): creates a durable
   **roadmap-origin session** bound to the agent, linked back to the task, and
-  seeds it with the task as the first turn. The chat shows a "part of `<project>`"
-  provenance banner. If the project has a connected repo, each provider turn in
-  that project-linked session receives project details, repo metadata, and the
-  local source snapshot path. The visible chat history stores only the user's
-  actual messages. The task moves to **In Progress**.
+  seeds it with the task as the first turn — the web client sends that turn
+  itself. The chat shows a "part of `<project>`" provenance banner. If the
+  project has a connected repo, each provider turn in that project-linked session
+  receives project details, repo metadata, and the local source snapshot path.
+  The visible chat history stores only the user's actual messages. The task moves
+  to **In Progress**.
 - **Open in chat** (an already-started card): reopens the task's existing session
   to continue manually.
+- **Agent-initiated start** (`podiom_start_task`, typically from a goal review):
+  same session and provenance, but the first turn runs **server-side in the
+  background** — there is no browser to send it. The call returns as soon as the
+  session exists. A goal-linked task runs under the goal's yolo posture; a task
+  with no goal runs under the same **preapproved** policy as scheduled pickup.
 - **Scheduled pickup**: a task with a pickup time is started automatically by the
   embedded scheduler when that time arrives, running unattended under the
   stricter **preapproved** permission policy (§7.7) — side effects are denied
@@ -128,7 +134,9 @@ add tasks with **+ New task**. Observe tasks with `podiom tasks list`.
 - `GET /api/projects/<id>/instructions`, `PUT /api/projects/<id>/instructions`
 - `GET /api/tasks`, `POST /api/tasks`
 - `PATCH /api/tasks/<id>` (assign / move / edit / set pickup)
-- `POST /api/tasks/<id>/start` — start on demand → returns the session
+- `POST /api/tasks/<id>/start` — start on demand → returns the session. With no
+  body (or `{"unattended": false}`) the caller sends the first turn itself; with
+  `{"unattended": true}` the server runs the task prompt in the background.
 - `GET  /api/tasks/<id>/session` — the task's latest session (404 if not started)
 - `GET /api/github/status`
 - `POST /api/github/device/start`

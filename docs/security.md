@@ -69,10 +69,11 @@ The mandatory `approve` auto-deny timeout (`global.permission_timeout`) ensures 
 blocked permission prompt never hangs an agent indefinitely (R8.18): if no human
 decision arrives in time, the broker returns *deny*.
 
-### Unattended runs (scheduler / roadmap pickup)
+### Unattended runs (scheduler / roadmap pickup / agent-initiated starts)
 
-Scheduled fires and server-side task pickups have no human to answer a prompt
-(§7.7), so they never use the interactive relay. They run either:
+Scheduled fires, server-side task pickups, and agent-initiated task starts
+(`podiom_start_task`, typically from a goal review) have no human to answer a
+prompt (§7.7), so they never use the interactive relay. They run either:
 
 - `yolo` — whole-machine, deliberate; or
 - `preapproved` *(default, stricter)* — an allow-list. Claude enforces it

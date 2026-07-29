@@ -392,6 +392,13 @@ type taskArchiveDoneRequest struct {
 	ProjectID string `json:"project_id,omitempty"`
 }
 
+// taskStartRequest opts a caller into running the task's first turn server-side.
+// The web client leaves it false and sends the first turn interactively; agents
+// (podiom_start_task) set it, because there is no browser to send the prompt.
+type taskStartRequest struct {
+	Unattended bool `json:"unattended,omitempty"`
+}
+
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	if s.core == nil {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
@@ -488,9 +495,26 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		var req taskStartRequest
+		// An empty body is valid: the web client starts a task attended.
+		_ = json.NewDecoder(r.Body).Decode(&req)
 		session, err := s.core.StartTask(r.Context(), core.StartTaskRequest{TaskID: id})
 		if err == nil {
-			s.log.Info("task start requested", "event", "task", "task", id, "session", session.ID, "agent", session.AgentName, "project", session.ProjectID)
+			s.log.Info("task start requested", "event", "task", "task", id, "session", session.ID, "agent", session.AgentName, "project", session.ProjectID, "unattended", req.Unattended)
+			if req.Unattended {
+				// The caller has no browser to send the first turn, so run it here.
+				// Detached from the request context, which ends with the response.
+				go func(sess store.Session) {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+					defer cancel()
+					if err := s.core.RunTaskTurn(ctx, sess); err != nil {
+						s.log.Warn("unattended task run failed", "event", "task", "task", sess.TaskID, "session", sess.ID, "err", err)
+					}
+					if sess.GoalID != "" {
+						s.broadcastGoalPing(ctx, sess.GoalID)
+					}
+				}(session)
+			}
 		}
 		writeJSON(w, session, err)
 		return

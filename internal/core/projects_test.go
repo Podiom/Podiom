@@ -66,6 +66,94 @@ func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
 	}
 }
 
+// TestStartTaskUnattendedPersistsTaskPrompt guards the contract an agent start
+// relies on: an unattended start seeds the session with the task prompt, so the
+// task actually runs and the chat is not empty.
+func TestStartTaskUnattendedPersistsTaskPrompt(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"on it"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	task, err := c.CreateTask(ctx, store.Task{
+		ProjectID:     "mission-control",
+		Title:         "Add dark mode",
+		Body:          "Follow the existing theme tokens.",
+		AssignedAgent: "jared",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	sess, err := c.StartTask(ctx, StartTaskRequest{TaskID: task.ID, Unattended: true})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+
+	history, err := c.History(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) == 0 {
+		t.Fatal("unattended start left the session with no history")
+	}
+	if history[0].Role != store.RoleUser {
+		t.Fatalf("first message role = %q, want %q", history[0].Role, store.RoleUser)
+	}
+	// Exact match: a title-only prompt would silently drop the task body.
+	if history[0].Content != TaskPrompt(task) {
+		t.Fatalf("first message = %q, want %q", history[0].Content, TaskPrompt(task))
+	}
+}
+
+// TestStartTaskAttendedLeavesFirstTurnToCaller pins the other half of the
+// contract: the web client sends the first turn itself, so an attended start
+// must not send one — otherwise the browser would duplicate it.
+func TestStartTaskAttendedLeavesFirstTurnToCaller(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"on it"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	task, err := c.CreateTask(ctx, store.Task{
+		ProjectID:     "mission-control",
+		Title:         "Add dark mode",
+		Body:          "Follow the existing theme tokens.",
+		AssignedAgent: "jared",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	sess, err := c.StartTask(ctx, StartTaskRequest{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+
+	history, err := c.History(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("attended start should leave history empty, got %d messages", len(history))
+	}
+	if len(fake.Requests) != 0 {
+		t.Fatalf("attended start should not run a turn, got %d", len(fake.Requests))
+	}
+}
+
 func TestProjectInstructionsApplyToProjectBoundSessions(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newScheduledTestCore(t)

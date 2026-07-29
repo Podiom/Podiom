@@ -228,7 +228,7 @@ func taskTools(c *manageClient) []mcpTool {
 				"profile":        strProp("Profile override. Empty string returns to agent default."),
 				"model":          strProp("Model override. Empty string returns to agent default only when the whole target is empty."),
 				"effort":         strProp("Effort override. Empty string returns to agent default only when the whole target is empty."),
-				"status":         strProp("New status: backlog, in_progress, review, done."),
+				"status":         strProp("New status: backlog, in_progress, review, done. Setting in_progress does not start the task or create a session — use podiom_start_task for that."),
 				"plan_required":  boolProp("Toggle plan mode."),
 				"pickup_at":      strProp("RFC3339 scheduled pickup time; empty string clears it."),
 				"goal_id":        strProp("Goal id to link this task to a goal (its runs become autonomous and audited on the goal timeline); empty string unlinks it."),
@@ -270,7 +270,7 @@ func taskTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_start_task",
 			APIRoutes:   []string{"/api/tasks/"},
-			Description: "Start a roadmap item (task) now: creates a session for its assigned agent and moves it to in_progress.",
+			Description: "Start a roadmap item (task) now: creates a session for its assigned agent, moves it to in_progress, and immediately runs the task as that agent's first turn. Returns as soon as the session exists; the run continues in the background. A task linked to a goal (goal_id) runs autonomously; a task with no goal_id runs with all side effects denied.",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{"id": strProp("Task id.")}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -280,7 +280,9 @@ func taskTools(c *manageClient) []mcpTool {
 				if err := requireField(m, "id"); err != nil {
 					return "", err
 				}
-				return c.post(ctx, "/api/tasks/"+url.PathEscape(argString(m, "id"))+"/start", nil)
+				// Always unattended: an MCP caller has no browser to send the first
+				// turn, so without this the session would sit empty and never run.
+				return c.post(ctx, "/api/tasks/"+url.PathEscape(argString(m, "id"))+"/start", map[string]any{"unattended": true})
 			},
 		},
 	}

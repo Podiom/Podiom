@@ -643,8 +643,9 @@ func (c *Core) TaskSession(ctx context.Context, taskID string) (store.Session, b
 type StartTaskRequest struct {
 	TaskID string
 	// Unattended runs the first turn server-side under the preapproved policy
-	// (used by scheduled pickup); on-demand starts leave the first turn to the
-	// caller (the web client sends it interactively).
+	// (scheduled pickup, and agent-initiated starts via podiom_start_task);
+	// attended starts leave the first turn to the caller (the web client sends
+	// it interactively).
 	Unattended bool
 }
 
@@ -710,23 +711,35 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 	}
 
 	if req.Unattended {
-		opts := TurnOptions{
-			PermissionTurnID: sess.ID,
-			Unattended:       true,
-		}
-		// A goal-linked task is yolo (session permission mode above); a standalone
-		// unattended task is preapproved with an empty allow-list (deny-all).
-		if !goalLinked {
-			opts.PermissionRelay = NewAllowListRelay(nil, c.log)
-		}
-		events, err := c.StreamTurn(ctx, sess.ID, TaskPrompt(task), opts)
-		if err != nil {
-			return sess, err
-		}
-		for range events { // drain
-		}
+		return sess, c.RunTaskTurn(ctx, sess)
 	}
 	return sess, nil
+}
+
+// RunTaskTurn runs the task's prompt as one unattended turn in an already
+// started roadmap session. Split out of StartTask so an HTTP caller can return
+// the session immediately and run the turn in the background.
+func (c *Core) RunTaskTurn(ctx context.Context, sess store.Session) error {
+	task, err := c.store.GetTask(ctx, sess.TaskID)
+	if err != nil {
+		return err
+	}
+	opts := TurnOptions{
+		PermissionTurnID: sess.ID,
+		Unattended:       true,
+	}
+	// A goal-linked task is yolo (session permission mode); a standalone
+	// unattended task is preapproved with an empty allow-list (deny-all).
+	if sess.GoalID == "" {
+		opts.PermissionRelay = NewAllowListRelay(nil, c.log)
+	}
+	events, err := c.StreamTurn(ctx, sess.ID, TaskPrompt(task), opts)
+	if err != nil {
+		return err
+	}
+	for range events { // drain
+	}
+	return nil
 }
 
 func projectLogFields(p projects.Project) map[string]string {

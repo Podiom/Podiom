@@ -137,6 +137,26 @@ func TestCreateTaskPostsBody(t *testing.T) {
 	}
 }
 
+// TestStartTaskPostsUnattended pins the flag that makes an agent-initiated start
+// actually run: an MCP caller has no browser to send the first turn, so the tool
+// must always ask the server to run it.
+func TestStartTaskPostsUnattended(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	if _, err := callTool(t, c, "podiom_start_task", map[string]any{"id": "t1"}); err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/api/tasks/t1/start" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	var unattended bool
+	if err := json.Unmarshal(rec.body["unattended"], &unattended); err != nil {
+		t.Fatalf("decode unattended from %v: %v", rec.body, err)
+	}
+	if !unattended {
+		t.Fatalf("body should set unattended=true: %v", rec.body)
+	}
+}
+
 func TestManageClientSendsGatewayToken(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(config.EnvHome, home)

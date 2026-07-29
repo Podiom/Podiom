@@ -164,7 +164,9 @@ its next review. An `env_var` approved **with** a value continues to
   ("Review now"). Prompt contract: goal definition + recent `user_feedback`
   events + recent timeline + decided access requests **including
   `decision_note` texts** + duties: assess progress against criteria, adjust
-  tasks/schedules while considering feedback as guidance, record a `progress`
+  tasks/schedules while considering feedback as guidance (starting a planned task
+  is `podiom_start_task`, which runs it in the background; `podiom_update_task`
+  to `in_progress` only moves the card), record a `progress`
   event with evidence and metric updates, file access requests if blocked, and
   call `podiom_propose_goal_completion` when the success criteria are met.
 - Both run **unattended** with the scheduled-run permission posture:

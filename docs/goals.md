@@ -164,7 +164,10 @@ stamped with the calling session's identity server-side, so timeline
 provenance never depends on the model identifying itself. `podiom_create_task`
 takes a `goal_id` (also on `POST /api/tasks`) — the lead agent passes it when a
 task is part of the goal's plan, which links the task's runs to the goal (forced
-yolo, audited on the goal timeline).
+yolo, audited on the goal timeline). The lead agent starts a planned task with
+`podiom_start_task`, which runs it immediately in the background under that same
+yolo posture; setting a task's status to `in_progress` with `podiom_update_task`
+only moves the card and starts nothing.
 
 ## Limitations (v1)
 

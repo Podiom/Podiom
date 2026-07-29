@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
@@ -180,5 +181,115 @@ func TestProjectGitPatchPersistsToLedger(t *testing.T) {
 		persisted.Git.BranchPrefixes["feature"] != "feat/" ||
 		persisted.Git.BranchPrefixes["spike"] != "spike/" {
 		t.Fatalf("persisted git block = %#v", persisted.Git)
+	}
+}
+
+// startTaskTestFixture creates an agent, a project, and one task with a body, so
+// the start-endpoint tests can assert on the full Title + Body prompt.
+func startTaskTestFixture(t *testing.T, srv *Server, title string) store.Task {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := srv.core.GetAgent(ctx, "writer"); err != nil {
+		if _, err := srv.core.CreateAgent(ctx, core.CreateAgentRequest{Name: "writer", Provider: config.ProviderClaude}); err != nil {
+			t.Fatalf("create agent: %v", err)
+		}
+		if _, err := srv.core.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+			t.Fatalf("create project: %v", err)
+		}
+	}
+	task, err := srv.core.CreateTask(ctx, store.Task{
+		ProjectID:     "mission-control",
+		Title:         title,
+		Body:          "Follow the existing theme tokens.",
+		AssignedAgent: "writer",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	return task
+}
+
+// TestTaskStartUnattendedRunsTaskPrompt is the regression test for the bug where
+// an agent-initiated start (podiom_start_task) created a session and moved the
+// task to in_progress but never sent the prompt, leaving an empty chat and a
+// task that never ran.
+func TestTaskStartUnattendedRunsTaskPrompt(t *testing.T) {
+	ctx := context.Background()
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	task := startTaskTestFixture(t, srv, "Add dark mode")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+task.ID+"/start", bytes.NewBufferString(`{"unattended":true}`))
+	rr := httptest.NewRecorder()
+	srv.handleTask(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var session store.Session
+	if err := json.NewDecoder(rr.Body).Decode(&session); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	if session.ID == "" {
+		t.Fatal("start returned no session")
+	}
+
+	// The turn runs in a background goroutine, so poll for the seeded prompt.
+	want := core.TaskPrompt(task)
+	deadline := time.Now().Add(5 * time.Second)
+	var seeded bool
+	for time.Now().Before(deadline) {
+		history, err := srv.core.History(ctx, session.ID)
+		if err != nil {
+			t.Fatalf("history: %v", err)
+		}
+		if len(history) > 0 {
+			if history[0].Role != store.RoleUser || history[0].Content != want {
+				t.Fatalf("first message = %q (role %q), want %q as user", history[0].Content, history[0].Role, want)
+			}
+			seeded = true
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !seeded {
+		t.Fatal("unattended start never seeded the task prompt")
+	}
+	// Let the background goroutine's post-run bookkeeping settle before the
+	// test store closes.
+	time.Sleep(200 * time.Millisecond)
+}
+
+// TestTaskStartWithoutBodyStaysAttended pins the browser's contract: it POSTs
+// with no body at all, which must decode to unattended=false so the web client
+// keeps sending the first turn itself (and does not send it twice).
+func TestTaskStartWithoutBodyStaysAttended(t *testing.T) {
+	ctx := context.Background()
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	task := startTaskTestFixture(t, srv, "Add light mode")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/"+task.ID+"/start", nil)
+	rr := httptest.NewRecorder()
+	srv.handleTask(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var session store.Session
+	if err := json.NewDecoder(rr.Body).Decode(&session); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	if session.ID == "" {
+		t.Fatal("start returned no session")
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	history, err := srv.core.History(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("attended start should leave history empty, got %d messages", len(history))
 	}
 }
