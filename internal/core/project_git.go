@@ -70,7 +70,7 @@ func (c *Core) materializeProjectGit(ctx context.Context, proj projects.Project,
 		return state
 	}
 
-	// Initialise or clone the working copy first. A commit identity is not
+	// Initialize or clone the working copy first. A commit identity is not
 	// required for git init or git clone — only for git commit — so we do this
 	// before the identity check so that the repository exists even when the
 	// user has not yet configured one.
