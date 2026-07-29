@@ -69,15 +69,11 @@ func (c *Core) materializeProjectGit(ctx context.Context, proj projects.Project,
 		state.Reason = "git is not installed on this machine."
 		return state
 	}
-	status := podiomgit.Check(ctx, podiomexec.Discovery{})
-	if !status.Ready {
-		state.Reason = status.Hint
-		if state.Reason == "" {
-			state.Reason = "git is not fully set up."
-		}
-		return state
-	}
 
+	// Initialize or clone the working copy first. A commit identity is not
+	// required for git init or git clone — only for git commit — so we do this
+	// before the identity check so that the repository exists even when the
+	// user has not yet configured one.
 	if !podiomgit.IsRepo(root) {
 		switch {
 		case proj.Git.Remote != "":
@@ -95,6 +91,15 @@ func (c *Core) materializeProjectGit(ctx context.Context, proj projects.Project,
 			}
 			c.log.Info("project repository initialised", "event", "project", "project", proj.ID, "path", root)
 		}
+	}
+
+	status := podiomgit.Check(ctx, podiomexec.Discovery{})
+	if !status.Ready {
+		state.Reason = status.Hint
+		if state.Reason == "" {
+			state.Reason = "git is not fully set up."
+		}
+		return state
 	}
 
 	state.Branch, _ = runner.CurrentBranch(ctx, root)
