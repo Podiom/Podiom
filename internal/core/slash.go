@@ -52,12 +52,15 @@ func (c *Core) HandleSlashCommand(ctx context.Context, sessionID, input string) 
 		return SlashResult{Handled: true, Session: updated, Notice: fmt.Sprintf("Effort set to %s", arg)}, err
 	case "permission":
 		mode := config.PermissionMode(arg)
-		if mode != config.PermissionApprove && mode != config.PermissionYolo {
-			return SlashResult{Handled: true, Session: sess, Notice: "Usage: /permission approve|yolo"}, nil
+		if !config.KnownPermission(mode) {
+			return SlashResult{Handled: true, Session: sess, Notice: "Usage: /permission " + config.PermissionModesLabel()}, nil
 		}
 		updated, err := c.store.UpdateSessionSettings(ctx, sess.ID, sess.Model, sess.Effort, mode)
 		notice := fmt.Sprintf("Permission mode set to %s", mode)
-		if mode == config.PermissionYolo {
+		switch mode {
+		case config.PermissionAuto:
+			notice = "Permission mode set to auto — edits inside this session's project are auto-approved; commands and anything outside it still ask. Switch back with /permission approve."
+		case config.PermissionYolo:
 			notice = "Permission mode set to yolo — whole-machine access, every tool call auto-approved. The workspace is NOT a sandbox (R8.31). Switch back with /permission approve."
 		}
 		return SlashResult{Handled: true, Session: updated, Notice: notice}, err
@@ -93,13 +96,24 @@ func (c *Core) HandleSlashCommand(ctx context.Context, sessionID, input string) 
 		}
 		updated, err := c.store.UpdateSessionMetadata(ctx, sess.ID, sess.Name, arg, false)
 		return SlashResult{Handled: true, Session: updated, Notice: "Session description updated"}, err
+	case "plan":
+		switch arg {
+		case "on":
+			updated, err := c.SetPlanMode(ctx, sess.ID, true)
+			return SlashResult{Handled: true, Session: updated, Notice: "Plan mode on — the agent will explore and propose a plan before implementing."}, err
+		case "off":
+			updated, err := c.SetPlanMode(ctx, sess.ID, false)
+			return SlashResult{Handled: true, Session: updated, Notice: "Plan mode off."}, err
+		default:
+			return SlashResult{Handled: true, Session: sess, Notice: "Usage: /plan on|off"}, nil
+		}
 	case "compact":
 		return SlashResult{Handled: true, Compact: true, Session: sess}, nil
 	case "help":
 		return SlashResult{
 			Handled: true,
 			Session: sess,
-			Notice:  "/model <name>, /effort <level>, /profile <name|default>, /permission <approve|yolo>, /name <text>, /describe <text>, /compact",
+			Notice:  "/model <name>, /effort <level>, /profile <name|default>, /permission <approve|auto|yolo>, /plan <on|off>, /name <text>, /describe <text>, /compact",
 		}, nil
 	default:
 		return SlashResult{Handled: true, Session: sess, Notice: fmt.Sprintf("Unknown command /%s. Try /help.", command)}, nil

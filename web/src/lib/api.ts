@@ -7,6 +7,7 @@
 import { request } from "./http";
 import type {
   AccessRequest,
+  Attachment,
   Agent,
   AgentDetail,
   Dream,
@@ -36,10 +37,13 @@ import type {
   MemoryInfo,
   OnboardingState,
   OnboardingToken,
+  GitStatus,
+  PermissionMode,
   PlanInfo,
   PlanState,
   ProfileInfo,
   Project,
+  ProjectGit,
   ProjectInstructions,
   Provider,
   ProviderCapabilities,
@@ -72,6 +76,51 @@ async function asJSON<T>(res: Response): Promise<T> {
 
 export async function getHealth(): Promise<Health> {
   return asJSON(await request("/healthz"));
+}
+
+export interface CreateWebSessionRequest {
+  agent_name: string;
+  origin: "web";
+  provider?: Provider;
+  profile?: string;
+  model?: string;
+  effort?: string;
+  permission_mode?: PermissionMode;
+  project_id?: string;
+  create_plan_before_implementation?: boolean;
+}
+
+export async function createWebSession(body: CreateWebSessionRequest): Promise<Session> {
+  return asJSON(
+    await request("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function uploadPhotoAttachment(sessionID: string, file: File, visual: Blob): Promise<Attachment> {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  body.append("visual", visual, "visual.jpg");
+  return asJSON(
+    await request(`/api/sessions/${encodeURIComponent(sessionID)}/attachments`, {
+      method: "POST",
+      body,
+    }),
+  );
+}
+
+export async function fetchPhotoAttachment(id: string, thumbnail = false): Promise<Blob> {
+  const suffix = thumbnail ? "/thumbnail" : "";
+  const res = await request(`/api/attachments/${encodeURIComponent(id)}${suffix}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.blob();
+}
+
+export async function deleteDraftPhotoAttachment(id: string): Promise<void> {
+  await asJSON(await request(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }));
 }
 
 export async function getOnboardingState(): Promise<OnboardingState> {
@@ -517,6 +566,7 @@ export interface NewProjectRequest {
   description: string;
   stack: string[];
   notes: string;
+  git?: ProjectGit;
 }
 
 export async function createProject(req: NewProjectRequest): Promise<Project> {
@@ -536,6 +586,21 @@ export interface ProjectPatch {
   status?: string;
   stack?: string[];
   notes?: string;
+  git?: ProjectGit;
+}
+
+export async function gitStatus(): Promise<GitStatus> {
+  return asJSON(await request("/api/git/status"));
+}
+
+export async function setGitIdentity(name: string, email: string): Promise<GitStatus> {
+  return asJSON(
+    await request("/api/git/identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email }),
+    }),
+  );
 }
 
 export async function updateProject(id: string, patch: ProjectPatch): Promise<Project> {

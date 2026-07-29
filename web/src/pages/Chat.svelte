@@ -1,6 +1,15 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { deleteSession, getSession, listGoals, listProfiles, listProjects } from "../lib/api";
+  import {
+    createWebSession,
+    deleteDraftPhotoAttachment,
+    deleteSession,
+    getSession,
+    listGoals,
+    listProfiles,
+    listProjects,
+    uploadPhotoAttachment,
+  } from "../lib/api";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { randomID } from "../lib/id";
   import { live } from "../lib/live.svelte";
@@ -14,6 +23,12 @@
   import UsageBar from "../lib/UsageBar.svelte";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import PhotoAttachment from "../lib/PhotoAttachment.svelte";
+  import {
+    MAX_PHOTOS_PER_MESSAGE,
+    normalizePhoto,
+    type NormalizedPhoto,
+  } from "../lib/photoAttachments";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import {
     modeChip,
@@ -23,6 +38,7 @@
   } from "../lib/theme";
   import type {
     Agent,
+    Attachment,
     ClientMessage,
     FallbackRequest,
     FallbackTarget,
@@ -57,6 +73,11 @@
     risk: ApprovalRisk;
     note?: string;
     at: number;
+  }
+
+  interface PendingPhoto extends NormalizedPhoto {
+    key: string;
+    uploaded?: Attachment;
   }
 
   let {
@@ -121,6 +142,9 @@
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let sending = $state(false);
+  let attachmentBusy = $state(false);
+  let pendingPhotos = $state<PendingPhoto[]>([]);
+  let photoInput = $state<HTMLInputElement | null>(null);
   let unsubscribe: (() => void) | undefined;
   let countdown: number | undefined;
 
@@ -169,7 +193,7 @@
     { cmd: "/model", desc: "set the model for this session" },
     { cmd: "/effort", desc: "low · medium · high · xhigh · max" },
     { cmd: "/profile", desc: "switch auth context — replays history" },
-    { cmd: "/permission", desc: "approve or yolo for this session" },
+    { cmd: "/permission", desc: "approve, auto, or yolo for this session" },
     { cmd: "/name", desc: "rename the session" },
     { cmd: "/compact", desc: "summarize older history to free up context" },
     { cmd: "/help", desc: "list every command" },
@@ -254,6 +278,9 @@
   const linkedProjectName = $derived(curProjectID ? projectName || projectLabel(curProjectID) : "");
   const planPending = $derived(activeSession?.PlanState === "pending_submission");
   const planAwaiting = $derived(activeSession?.PlanState === "awaiting_approval");
+  // Plan mode is togglable at any point, so the chip reflects the live session
+  // when there is one and the draft otherwise.
+  const planActive = $derived(activeSession ? planPending || planAwaiting : draftPlanFirst);
   const planInfo = $derived(activeSession?.PlanInfo);
   const planHtml = $derived(renderMarkdown(planInfo?.markdown ?? ""));
 
@@ -339,6 +366,7 @@
       cleanupPlanPanelResize();
       if (countdown) window.clearInterval(countdown);
       unsubscribe?.();
+      for (const photo of pendingPhotos) URL.revokeObjectURL(photo.previewURL);
     };
   });
 
@@ -815,7 +843,7 @@
       const time = transcriptTime(message);
       const speaker = transcriptSpeaker(message);
       const label = time ? `[${time}] ${speaker}:` : `${speaker}:`;
-      parts.push(`${label}\n${message.Content}`);
+      parts.push(`${label}\n${transcriptMessageText(message)}`);
     }
     return `${parts.join("\n\n")}\n`;
   }
@@ -838,9 +866,14 @@
 
   function transcriptMessageHTML(message: Message): string {
     if (message.Kind === "error" || message.Role === "user") {
-      return `<p>${escapeHTML(message.Content).replace(/\n/g, "<br>")}</p>`;
+      return `<p>${escapeHTML(transcriptMessageText(message)).replace(/\n/g, "<br>")}</p>`;
     }
     return renderMarkdown(message.Content);
+  }
+
+  function transcriptMessageText(message: Message): string {
+    const photos = (message.Attachments ?? []).map((attachment) => `[Attached photo: ${attachment.Name}]`);
+    return [message.Content, ...photos].filter(Boolean).join("\n");
   }
 
   function transcriptSpeaker(message: Message): string {
@@ -1004,6 +1037,7 @@
 
   async function loadHistory(session: Session, explicit = false) {
 	const loadToken = ++historyLoadToken;
+    void discardPendingPhotos();
     error = null;
     permissionYoloConfirmOpen = false;
 	if (explicit) {
@@ -1049,6 +1083,7 @@
       // The store owns the session list; refresh it from the daemon.
       live.send({ type: "list" });
       if (activeSession?.ID === id) {
+        void discardPendingPhotos();
         activeSession = null;
         messages = [];
         projectName = "";
@@ -1090,8 +1125,70 @@
     };
   }
 
-  function sendTurn(text = messageText.trim()) {
-    if (!text) return;
+  async function addPhotoFiles(files: File[]) {
+    if (files.length === 0) return;
+    const available = MAX_PHOTOS_PER_MESSAGE - pendingPhotos.length;
+    if (available <= 0 || files.length > available) {
+      error = `You can attach up to ${MAX_PHOTOS_PER_MESSAGE} photos per message.`;
+      return;
+    }
+    attachmentBusy = true;
+    error = null;
+    try {
+      for (const file of files) {
+        const normalized = await normalizePhoto(file);
+        pendingPhotos = [
+          ...pendingPhotos,
+          { ...normalized, key: `${Date.now()}-${randomID()}` },
+        ];
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      attachmentBusy = false;
+      if (photoInput) photoInput.value = "";
+    }
+  }
+
+  async function removePendingPhoto(key: string) {
+    const photo = pendingPhotos.find((item) => item.key === key);
+    if (!photo) return;
+    pendingPhotos = pendingPhotos.filter((item) => item.key !== key);
+    URL.revokeObjectURL(photo.previewURL);
+    if (photo.uploaded) {
+      try {
+        await deleteDraftPhotoAttachment(photo.uploaded.ID);
+      } catch {
+        // Draft cleanup is also performed by the daemon after 24 hours.
+      }
+    }
+  }
+
+  async function discardPendingPhotos(deleteUploads = true) {
+    const photos = pendingPhotos;
+    pendingPhotos = [];
+    for (const photo of photos) URL.revokeObjectURL(photo.previewURL);
+    if (!deleteUploads) return;
+    await Promise.allSettled(
+      photos.filter((photo) => photo.uploaded).map((photo) => deleteDraftPhotoAttachment(photo.uploaded!.ID)),
+    );
+  }
+
+  function onPhotoPaste(event: ClipboardEvent) {
+    const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addPhotoFiles(files);
+  }
+
+  function onPhotoDrop(event: DragEvent) {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer?.files ?? []).filter((file) => file.type.startsWith("image/"));
+    void addPhotoFiles(files);
+  }
+
+  async function sendTurn(text = messageText.trim()) {
+    if (!text && pendingPhotos.length === 0) return;
     if (!activeSession && !selectedAgent) {
       error = "Create or select an agent first";
       return;
@@ -1100,9 +1197,14 @@
       error = "WebSocket is offline — reconnecting…";
       return;
     }
+    if (pendingPhotos.length > 0 && text.startsWith("/")) {
+      error = "Photos cannot be attached to slash commands.";
+      return;
+    }
     error = null;
     notice = null;
     sending = true;
+    attachmentBusy = pendingPhotos.length > 0;
     pendingAssistant = "";
     nativeAgentActivities = [];
     nativeAgentMessageID = 0;
@@ -1110,22 +1212,64 @@
     pendingPermission = null;
     resetApprovalForm();
     pendingUserInput = null;
-    if (!send({
-      type: "send_turn",
-      request_id: randomID(),
-      agent_name: activeSession ? undefined : selectedAgent,
-      session_id: activeSession?.ID,
-      message: text,
-      provider: activeSession || !draftRunTargetExplicit ? undefined : draftProvider || undefined,
-      profile: activeSession || !draftRunTargetExplicit ? undefined : draftProfile || undefined,
-      model: activeSession || !draftRunTargetExplicit ? undefined : draftModel || undefined,
-      effort: activeSession || !draftRunTargetExplicit ? undefined : draftEffort || undefined,
-      permission_mode: activeSession ? undefined : draftPermissionMode || undefined,
-      project_id: activeSession ? undefined : draftProjectID || undefined,
-      create_plan_before_implementation: activeSession ? undefined : draftPlanFirst,
-    })) return;
-    messageText = "";
-    forceScrollToBottom();
+    try {
+      let session = activeSession;
+      if (!session && pendingPhotos.length > 0) {
+        session = await createWebSession({
+          agent_name: selectedAgent,
+          origin: "web",
+          provider: draftRunTargetExplicit ? draftProvider || undefined : undefined,
+          profile: draftRunTargetExplicit ? draftProfile || undefined : undefined,
+          model: draftRunTargetExplicit ? draftModel || undefined : undefined,
+          effort: draftRunTargetExplicit ? draftEffort || undefined : undefined,
+          permission_mode: draftPermissionMode || undefined,
+          project_id: draftProjectID || undefined,
+          create_plan_before_implementation: draftPlanFirst,
+        });
+        activeSession = session;
+        selectedAgent = session.AgentName;
+        projectName = session.ProjectID ? projectLabel(session.ProjectID) : "";
+        rememberSession(session.ID);
+        resetDraftSettings();
+        live.send({ type: "list" });
+      }
+
+      if (session && pendingPhotos.length > 0) {
+        for (const photo of pendingPhotos) {
+          if (photo.uploaded) continue;
+          const uploaded = await uploadPhotoAttachment(session.ID, photo.file, photo.visual);
+          pendingPhotos = pendingPhotos.map((item) => item.key === photo.key ? { ...item, uploaded } : item);
+        }
+      }
+
+      const attachmentIDs = pendingPhotos.map((photo) => photo.uploaded?.ID).filter((id): id is string => !!id);
+      if (!send({
+        type: "send_turn",
+        request_id: randomID(),
+        agent_name: session ? undefined : selectedAgent,
+        session_id: session?.ID,
+        message: text,
+        attachment_ids: attachmentIDs.length > 0 ? attachmentIDs : undefined,
+        provider: session || !draftRunTargetExplicit ? undefined : draftProvider || undefined,
+        profile: session || !draftRunTargetExplicit ? undefined : draftProfile || undefined,
+        model: session || !draftRunTargetExplicit ? undefined : draftModel || undefined,
+        effort: session || !draftRunTargetExplicit ? undefined : draftEffort || undefined,
+        permission_mode: session ? undefined : draftPermissionMode || undefined,
+        project_id: session ? undefined : draftProjectID || undefined,
+        create_plan_before_implementation: session ? undefined : draftPlanFirst,
+      })) {
+        sending = false;
+        return;
+      }
+      messageText = "";
+      await discardPendingPhotos(false);
+      forceScrollToBottom();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      sending = false;
+    } finally {
+      attachmentBusy = false;
+    }
   }
 
   function resetDraftSettings() {
@@ -1139,6 +1283,7 @@
   }
 
   function newSession(resetDrafts = true) {
+    void discardPendingPhotos();
     activeSession = null;
     permissionYoloConfirmOpen = false;
     messages = [];
@@ -1217,7 +1362,16 @@
     }
   }
 
-  function updateSessionSettings(patch: { model?: string; effort?: string; permission_mode?: PermissionMode }): boolean {
+  function togglePlanMode() {
+    if (activeTurn) return;
+    if (!activeSession) {
+      draftPlanFirst = !draftPlanFirst;
+      return;
+    }
+    updateSessionSettings({ plan_mode: !planActive });
+  }
+
+  function updateSessionSettings(patch: { model?: string; effort?: string; permission_mode?: PermissionMode; plan_mode?: boolean }): boolean {
     openDropdown = null;
     if (!activeSession) return false;
     return send({
@@ -1830,7 +1984,16 @@
           </div>
         {:else if m.Role === "user"}
           <div class="row-end message-row" data-message-id={m.ID}>
-            <div class="bubble-user">{m.Content}</div>
+            <div class="bubble-user">
+              {#if m.Content}<div>{m.Content}</div>{/if}
+              {#if m.Attachments?.length}
+                <div class="bubble-user-photos">
+                  {#each m.Attachments as attachment (attachment.ID)}
+                    <PhotoAttachment {attachment} />
+                  {/each}
+                </div>
+              {/if}
+            </div>
           </div>
         {:else}
           <div class="row-start message-row" data-message-id={m.ID}>
@@ -2141,31 +2304,61 @@
           <span>Plan mode on — {activeAgent?.Name ?? "the agent"} explores, then submits a plan before building.</span>
         </div>
       {/if}
-      <div class="composer-box">
+      <input
+        class="photo-input"
+        bind:this={photoInput}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        multiple
+        onchange={(event) => void addPhotoFiles(Array.from(event.currentTarget.files ?? []))}
+      />
+      {#if pendingPhotos.length}
+        <div class="photo-tray" aria-label="Photos ready to send">
+          {#each pendingPhotos as photo (photo.key)}
+            <div class="photo-draft">
+              <img src={photo.previewURL} alt={photo.file.name} />
+              <button type="button" title={`Remove ${photo.file.name}`} onclick={() => void removePendingPhoto(photo.key)}>×</button>
+              <span>{photo.file.name}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      <div class="composer-box" role="group" aria-label="Message composer" ondragover={(event) => event.preventDefault()} ondrop={onPhotoDrop}>
+        <button
+          class="composer-photo"
+          type="button"
+          title="Attach photos"
+          disabled={attachmentBusy || pendingPhotos.length >= MAX_PHOTOS_PER_MESSAGE}
+          onclick={() => photoInput?.click()}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+        </button>
         <textarea
           class="composer-input"
           rows="1"
           bind:value={messageText}
           use:autogrow={messageText}
           placeholder={`Message ${activeAgent?.Name ?? "agent"}…   / for commands`}
-          onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendTurn(); } }}
+          onpaste={onPhotoPaste}
+          onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); void sendTurn(); } }}
         ></textarea>
         {#if contextUsage}
           <ContextRing used={contextUsage.used} max={contextUsage.max} />
         {/if}
-        {#if !activeSession}
-          <button
-            class="composer-plan"
-            class:on={draftPlanFirst}
-            title="Plan first — explore, then submit a plan before building"
-            onclick={() => (draftPlanFirst = !draftPlanFirst)}
-          >{draftPlanFirst ? "◆ Plan" : "◇ Plan"}</button>
-        {/if}
+        <button
+          class="composer-plan"
+          class:on={planActive}
+          disabled={!!activeTurn}
+          title={activeTurn
+            ? "Plan mode can be changed when the current turn finishes"
+            : "Plan first — explore, then propose a plan before building"}
+          onclick={togglePlanMode}
+        >{planActive ? "◆ Plan" : "◇ Plan"}</button>
         <VoiceButton size={isPhone ? "sm" : "md"} onText={(t) => (messageText = appendTranscript(messageText, t))} />
         {#if activeTurn}
           <button class="composer-stop" title="Stop active turn" onclick={stopActiveTurn}>■</button>
         {:else}
-          <button class="composer-send" disabled={sending || status !== "live"} onclick={() => sendTurn()}>↑</button>
+          <button class="composer-send" disabled={sending || attachmentBusy || status !== "live"} onclick={() => void sendTurn()}>↑</button>
         {/if}
       </div>
       <div class="composer-meta">
@@ -2193,7 +2386,7 @@
             onclick={() => toggleDropdown("perm")}
             title={activeTurn ? "Permission mode can be changed when the current turn finishes" : activeSession ? "Permission mode for the next turn" : "Permission mode for this new session"}
           >
-            <span class="perm-dot" style={`background:${curMode === "yolo" ? "#C0392B" : "#2F6E60"}`}></span>
+            <span class="perm-dot" style={`background:${curMode === "yolo" ? "#C0392B" : curMode === "auto" ? "#C08A1E" : "#2F6E60"}`}></span>
             {curMode} <span class="chip-chev">▾</span>
           </button>
           {#if openDropdown === "perm" && !activeTurn}
@@ -2201,6 +2394,10 @@
               <button class="dd-opt2" class:sel={curMode === "approve"} onclick={() => setPermissionMode("approve")}>
                 <span class="dd-opt2-label">approve</span>
                 <span class="dd-opt2-desc">Confirm each action</span>
+              </button>
+              <button class="dd-opt2" class:sel={curMode === "auto"} onclick={() => setPermissionMode("auto")}>
+                <span class="dd-opt2-label">auto</span>
+                <span class="dd-opt2-desc">Edits run automatically; commands may still ask</span>
               </button>
               <button class="dd-opt2" class:sel={curMode === "yolo"} onclick={() => setPermissionMode("yolo")}>
                 <span class="dd-opt2-label">yolo</span>
@@ -3364,6 +3561,16 @@
     word-break: break-word;
   }
 
+  .bubble-user-photos {
+    display: grid;
+    gap: 9px;
+    margin-top: 8px;
+  }
+
+  .bubble-user > .bubble-user-photos:first-child {
+    margin-top: 0;
+  }
+
   .bubble-assistant {
     background: #fff;
     border: 1px solid var(--line-3);
@@ -3905,6 +4112,76 @@
     border: 1px solid var(--field-line);
     border-radius: 14px;
     padding: 8px 8px 8px 16px;
+  }
+
+  .photo-input {
+    display: none;
+  }
+
+  .photo-tray {
+    display: flex;
+    gap: 9px;
+    margin-bottom: 8px;
+    overflow-x: auto;
+    padding: 2px;
+  }
+
+  .photo-draft {
+    position: relative;
+    display: grid;
+    flex: 0 0 92px;
+    gap: 4px;
+  }
+
+  .photo-draft img {
+    width: 92px;
+    height: 72px;
+    border: 1px solid var(--line-3);
+    border-radius: 10px;
+    object-fit: cover;
+  }
+
+  .photo-draft button {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--line-3);
+    border-radius: 50%;
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+    line-height: 18px;
+  }
+
+  .photo-draft span {
+    overflow: hidden;
+    color: var(--muted-2);
+    font: 400 10px "Hanken Grotesk";
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .composer-photo {
+    display: grid;
+    width: 32px;
+    height: 36px;
+    flex: none;
+    place-items: center;
+    border: none;
+    background: transparent;
+    color: var(--muted-2);
+    cursor: pointer;
+  }
+
+  .composer-photo:hover:not(:disabled) {
+    color: var(--teal);
+  }
+
+  .composer-photo:disabled {
+    cursor: default;
+    opacity: 0.45;
   }
 
   .composer-input {

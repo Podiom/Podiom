@@ -43,7 +43,36 @@ func PlanGateActive(sess store.Session) bool {
 	return sess.PlanState == store.PlanPendingSubmission || sess.PlanState == store.PlanAwaitingApproval
 }
 
+// NativePlanMode reports whether the session's provider plans natively. When it
+// does, Podiom asks the provider to run its own plan mode and captures whatever
+// it produces; when it does not, Podiom runs its own gate instead (the injected
+// plan prompt plus podiom_submit_plan).
+func NativePlanMode(provider config.Provider) bool {
+	info, ok := config.ProviderInfoFor(provider)
+	return ok && info.NativePlanMode
+}
+
+// CaptureNativePlan stores a plan produced by a provider's own plan mode.
+//
+// The provider's plan is the plan: Podiom does not reformat it or hold it to
+// its own heading contract, which exists for the podiom_submit_plan fallback
+// where Podiom is the one specifying the shape.
+func (c *Core) CaptureNativePlan(ctx context.Context, sessionID string, proposal adapter.PlanProposal) (store.Session, error) {
+	return c.submitPlan(ctx, SubmitPlanRequest{
+		SessionID: sessionID,
+		FilePath:  proposal.FilePath,
+		Markdown:  proposal.Markdown,
+	}, true)
+}
+
+// SubmitPlan is the podiom_submit_plan path, used by providers that cannot plan
+// natively. It holds the plan to Podiom's structured heading contract, since
+// Podiom is what specified the shape in that case.
 func (c *Core) SubmitPlan(ctx context.Context, req SubmitPlanRequest) (store.Session, error) {
+	return c.submitPlan(ctx, req, false)
+}
+
+func (c *Core) submitPlan(ctx context.Context, req SubmitPlanRequest, native bool) (store.Session, error) {
 	sess, err := c.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return store.Session{}, err
@@ -52,14 +81,28 @@ func (c *Core) SubmitPlan(ctx context.Context, req SubmitPlanRequest) (store.Ses
 	if markdown == "" {
 		return store.Session{}, fmt.Errorf("plan markdown is required")
 	}
-	if err := validateStructuredPlanMarkdown(markdown); err != nil {
-		return store.Session{}, err
+	if !native {
+		if err := validateStructuredPlanMarkdown(markdown); err != nil {
+			return store.Session{}, err
+		}
 	}
 	projectCtx, err := c.sessionProjectExecutionContext(ctx, sess)
 	if err != nil {
 		return store.Session{}, err
 	}
-	path, err := c.validatePlanPath(c.planDirForContext(projectCtx), req.FilePath)
+	planDir := c.planDirForContext(projectCtx)
+	var path string
+	if native {
+		// The provider's own artifact lives wherever the provider put it —
+		// possibly inside the user's Claude config dir, possibly nowhere at all
+		// (Codex emits no file). Podiom writes its own copy instead, which
+		// becomes the canonical one: it survives the provider overwriting the
+		// same slug on revision, another session sharing the plans directory,
+		// and a switch to a different provider or profile mid-session.
+		path, err = c.writeCanonicalPlan(planDir, sess, markdown)
+	} else {
+		path, err = c.validatePlanPath(planDir, req.FilePath)
+	}
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -89,6 +132,32 @@ func (c *Core) SubmitPlan(ctx context.Context, req SubmitPlanRequest) (store.Ses
 	}
 	c.log.Info("plan submitted", "event", "plan", "session", sess.ID, "agent", sess.AgentName, "path", path)
 	return updated, nil
+}
+
+// SetPlanMode turns plan mode on or off for a live session.
+//
+// Both providers take plan mode per turn — Claude re-spawns each turn and Codex
+// carries collaborationMode on every turn/start — so the toggle takes effect on
+// the next turn with no backing-session teardown.
+func (c *Core) SetPlanMode(ctx context.Context, sessionID string, on bool) (store.Session, error) {
+	sess, err := c.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if on {
+		if PlanGateActive(sess) {
+			return sess, nil
+		}
+		return c.store.UpdateSessionPlanState(ctx, sess.ID, store.PlanPendingSubmission, true, store.PlanInfo{})
+	}
+	if sess.PlanState == store.PlanNone {
+		return sess, nil
+	}
+	// The artifact is cleared, not kept: a retained plan with the gate down is
+	// how an *approved* plan is represented, and pinning an unapproved one to
+	// every later turn would put words in the user's mouth. The plan file is
+	// left on disk — the user asked to stop planning, not to lose their work.
+	return c.store.UpdateSessionPlanState(ctx, sess.ID, store.PlanNone, false, store.PlanInfo{})
 }
 
 func (c *Core) ApprovePlan(ctx context.Context, sessionID string) (PlanDecision, error) {
@@ -128,10 +197,39 @@ func (c *Core) FeedbackPlan(ctx context.Context, sessionID, feedback string) (Pl
 	if feedback == "" {
 		return PlanDecision{}, fmt.Errorf("feedback is required")
 	}
+	// The revision turn stays in plan mode, so a native provider revises using
+	// its own plan workflow. Telling it to keep Podiom's headings and call
+	// podiom_submit_plan would be wrong on both counts — that instruction
+	// belongs only to the fallback path, where Podiom specified the shape.
+	instruction := "Please revise the implementation plan using this feedback:\n\n"
+	if !NativePlanMode(sess.Provider) {
+		instruction = "Please revise the implementation plan using this feedback. Keep the required structured Markdown headings, overwrite the same plan file, and call podiom_submit_plan again with the full updated Markdown:\n\n"
+	}
 	return PlanDecision{
 		Session:     sess,
-		NextMessage: "Please revise the implementation plan using this feedback. Keep the required structured Markdown headings, overwrite the same plan file, and call podiom_submit_plan again with the full updated Markdown:\n\n" + feedback,
+		NextMessage: instruction + feedback,
 	}, nil
+}
+
+// writeCanonicalPlan stores Podiom's own copy of a natively produced plan and
+// returns its path. The filename is stable per session, so a revision replaces
+// the previous copy rather than accumulating near-duplicates.
+func (c *Core) writeCanonicalPlan(planDir string, sess store.Session, markdown string) (string, error) {
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		return "", fmt.Errorf("create plans directory: %w", err)
+	}
+	name := fmt.Sprintf("%s-%s.md", time.Now().UTC().Format("20060102-1504"), sess.ID)
+	if existing := strings.TrimSpace(sess.PlanInfo.FilePath); existing != "" {
+		// Keep revising the same file across the approval loop.
+		if _, err := c.validatePlanPath(planDir, existing); err == nil {
+			name = filepath.Base(existing)
+		}
+	}
+	path := filepath.Join(planDir, name)
+	if err := os.WriteFile(path, []byte(markdown+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write plan file: %w", err)
+	}
+	return path, nil
 }
 
 // planDirForContext returns the plans directory a session should use, given its
@@ -248,6 +346,10 @@ func (c *Core) RejectPlan(ctx context.Context, sessionID string) (store.Session,
 	if sess.PlanState != store.PlanAwaitingApproval {
 		return store.Session{}, fmt.Errorf("session %q is not awaiting plan approval", sessionID)
 	}
+	// Only Podiom's own copy is removed. PlanInfo.FilePath always points inside
+	// Podiom's plans directory (validatePlanPath enforces it), so a provider's
+	// own artifact — which may live in the user's Claude config dir — is left
+	// alone. Podiom observes provider state; it does not delete it.
 	if path := strings.TrimSpace(sess.PlanInfo.FilePath); path != "" {
 		if err := c.removeValidatedPlanFile(ctx, sess, path); err != nil {
 			return store.Session{}, err
@@ -258,8 +360,12 @@ func (c *Core) RejectPlan(ctx context.Context, sessionID string) (store.Session,
 		return store.Session{}, err
 	}
 	if _, err := c.store.AppendMessages(ctx, sess.ID, []store.Message{{
-		Role:    store.RoleUser,
-		Content: "Plan rejected. Delete the submitted plan file and leave plan mode off.",
+		Role: store.RoleAssistant,
+		Kind: store.KindError,
+		// Not a user-role message: this is Podiom reporting an action it already
+		// took, and a user-role entry would be replayed to the provider as if
+		// the user had typed it.
+		Content: "Plan rejected by the user. The plan file has been deleted and plan mode is off.",
 	}}); err != nil {
 		return store.Session{}, err
 	}

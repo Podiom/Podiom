@@ -53,8 +53,13 @@ repo:
 Connecting a repo downloads a GitHub archive snapshot into the project's
 `repo/` directory (`~/.podiom/projects/<project>/repo/`) and writes
 `.podiom-source.json` in the project directory (`~/.podiom/projects/<project>/`).
-This is source context for agents, not a Git checkout: there is no `.git`, no
-remote, and no push/write-back path in v1.
+A snapshot is source context for agents, not a Git checkout: there is no `.git`,
+no remote, and no push path.
+
+For real source control, declare a `git:` block on the project instead — Podiom
+then materializes a working copy (cloned, or `git init`'d in place) that the
+agent operates on with plain `git`, and applies the project's branching policy
+through `podiom_start_work`. See [git.md](git.md).
 
 ### Connecting GitHub
 

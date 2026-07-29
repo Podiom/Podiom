@@ -47,6 +47,23 @@ Create a web-origin session.
 
 Send a turn to a new or existing session.
 
+An existing-session turn may reference draft photo uploads in display order:
+
+```json
+{
+  "type": "send_turn",
+  "request_id": "turn-1",
+  "session_id": "4b8d…",
+  "message": "What is shown here?",
+  "attachment_ids": ["8a41…", "c237…"]
+}
+```
+
+`message` may be empty when `attachment_ids` is non-empty. Attachment IDs must
+be unique, unbound drafts owned by that session; at most four are accepted. A
+slash-command turn cannot contain attachment IDs. The REST `POST /api/chat`
+request accepts the same `attachment_ids` field.
+
 Slash commands use the same `send_turn` envelope and return `notice`, `session`,
 and `done` messages rather than provider deltas.
 
@@ -110,7 +127,7 @@ automatically along the configured chain.
 | `state` | `agents`, `sessions`, `active_turns`. |
 | `session` | Active/created session. |
 | `history` | Ordered stored messages. |
-| `message` | One stored user or assistant message. |
+| `message` | One stored user or assistant message, including `Attachments` on an attachment-bearing user message. |
 | `delta` | Incremental assistant text. |
 | `assistant` | Final assistant text fallback. |
 | `permission_request` | Tool approval request. |
@@ -126,6 +143,33 @@ Session payloads include display metadata (`Name`, `Description`, `AutoNamed`)
 and current settings (`Model`, `Effort`, `PermissionMode`). Permission requests
 include `expires_at` when a timeout is active so clients can show an auto-deny
 countdown.
+
+An attachment-bearing stored message is representative of both `message` events
+and entries in `history`:
+
+```json
+{
+  "ID": 42,
+  "SessionID": "4b8d…",
+  "Seq": 3,
+  "Role": "user",
+  "Kind": "message",
+  "Content": "What is shown here?",
+  "Attachments": [{
+    "ID": "8a41…",
+    "SessionID": "4b8d…",
+    "MessageID": 42,
+    "Name": "garden.png",
+    "MIMEType": "image/png",
+    "SizeBytes": 381204,
+    "Width": 1500,
+    "Height": 2000,
+    "CreatedAt": "2026-07-18 09:30:00"
+  }]
+}
+```
+
+Filesystem paths are deliberately absent from this payload.
 
 USER.md interviews start with `start_interview`, use the same
 `user_input_decision` response shape as chat questions, and can be reattached
@@ -145,5 +189,23 @@ The web UI also uses REST for initial CRUD and history fetches:
 | `GET /api/sessions` | List sessions. |
 | `POST /api/sessions` | Create a session. |
 | `GET /api/sessions/{id}` | Get one session and ordered history. |
+| `POST /api/sessions/{id}/attachments` | Upload multipart `file` (original) and `visual` (normalized JPEG); returns draft attachment metadata. |
+| `GET /api/attachments/{id}` | Retrieve the authenticated retained original. |
+| `GET /api/attachments/{id}/thumbnail` | Retrieve the authenticated normalized JPEG preview. |
+| `DELETE /api/attachments/{id}` | Delete an unbound draft upload. |
 
 The older Phase 2 NDJSON `POST /api/chat` endpoint remains for the CLI.
+
+Example upload:
+
+```text
+POST /api/sessions/4b8d…/attachments
+Content-Type: multipart/form-data; boundary=…
+
+file=<original JPEG/PNG/GIF/WebP>
+visual=<JPEG, at most 2000 px on either edge>
+```
+
+The original and visual parts are each limited to 10 MiB; the complete request
+is limited to 22 MiB. Uploads are drafts until a turn binds them atomically to
+its new user message.

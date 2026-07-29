@@ -15,11 +15,12 @@ import (
 )
 
 type projectCreateRequest struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Stack       []string `json:"stack"`
-	Notes       string   `json:"notes"`
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Stack       []string      `json:"stack"`
+	Notes       string        `json:"notes"`
+	Git         *projects.Git `json:"git,omitempty"`
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +44,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Description: req.Description,
 			Stack:       req.Stack,
 			Notes:       req.Notes,
+			Git:         req.Git,
 		})
 		writeJSON(w, project, err)
 	default:
@@ -51,12 +53,13 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 type projectUpdateRequest struct {
-	Name        *string   `json:"name,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Color       *string   `json:"color,omitempty"`
-	Status      *string   `json:"status,omitempty"`
-	Stack       *[]string `json:"stack,omitempty"`
-	Notes       *string   `json:"notes,omitempty"`
+	Name        *string       `json:"name,omitempty"`
+	Description *string       `json:"description,omitempty"`
+	Color       *string       `json:"color,omitempty"`
+	Status      *string       `json:"status,omitempty"`
+	Stack       *[]string     `json:"stack,omitempty"`
+	Notes       *string       `json:"notes,omitempty"`
+	Git         *projects.Git `json:"git,omitempty"`
 }
 
 type projectRepoRequest struct {
@@ -175,6 +178,7 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 			Status:      req.Status,
 			Stack:       req.Stack,
 			Notes:       req.Notes,
+			Git:         req.Git,
 		})
 		writeJSON(w, updated, err)
 	case http.MethodDelete:

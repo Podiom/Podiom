@@ -5,10 +5,11 @@ import "strings"
 // FallbackModel is one bundled-catalogue model entry, converted to a
 // capabilities.ModelOption by internal/capabilities.Fallback.
 type FallbackModel struct {
-	ID          string
-	DisplayName string
-	Description string
-	Default     bool
+	ID              string
+	DisplayName     string
+	Description     string
+	Default         bool
+	InputModalities []string
 }
 
 // ProviderInfo is the static, dependency-free description of one supported
@@ -57,7 +58,17 @@ type ProviderInfo struct {
 
 	// PlanReadOnlyTools are exact tool names the plan gate allows read-only.
 	// Mutating tools are expressed by omission — the gate denies by default.
+	// Only consulted for providers without NativePlanMode, where Podiom's own
+	// gate is what enforces read-only.
 	PlanReadOnlyTools []string
+
+	// NativePlanMode marks a provider that has its own plan mode, which Podiom
+	// drives instead of running its own gate: the provider explores read-only
+	// and produces the plan, and the adapter emits adapter.EventPlanProposed.
+	// False falls back to Podiom's gate (planModePrompt + podiom_submit_plan +
+	// PlanGateRelay), which stays the contract for any provider that cannot
+	// plan natively.
+	NativePlanMode bool
 
 	// QuestionEndsTurn: true when the provider's user-input questions end the
 	// turn (the answer must be delivered as a follow-up turn); false when
@@ -84,12 +95,13 @@ var providerInfos = []ProviderInfo{
 		InstructionDelivery: "claude_import",
 		NativeAgentSep:      "-",
 		PlanReadOnlyTools:   []string{"read", "ls", "glob", "grep", "webfetch", "websearch"},
+		NativePlanMode:      true,
 		QuestionEndsTurn:    true,
 		FallbackModels: []FallbackModel{
-			{ID: "claude-opus-4-8", DisplayName: "Claude Opus 4.8", Description: "Claude Opus 4.8.", Default: true},
-			{ID: "claude-sonnet-5", DisplayName: "Claude Sonnet 5", Description: "Claude Sonnet 5."},
-			{ID: "claude-haiku-4-5", DisplayName: "Claude Haiku 4.5", Description: "Claude Haiku 4.5."},
-			{ID: "claude-fable-5", DisplayName: "Claude Fable 5", Description: "Claude Fable 5."},
+			{ID: "claude-opus-4-8", DisplayName: "Claude Opus 4.8", Description: "Claude Opus 4.8.", Default: true, InputModalities: []string{"text", "image"}},
+			{ID: "claude-sonnet-5", DisplayName: "Claude Sonnet 5", Description: "Claude Sonnet 5.", InputModalities: []string{"text", "image"}},
+			{ID: "claude-haiku-4-5", DisplayName: "Claude Haiku 4.5", Description: "Claude Haiku 4.5.", InputModalities: []string{"text", "image"}},
+			{ID: "claude-fable-5", DisplayName: "Claude Fable 5", Description: "Claude Fable 5.", InputModalities: []string{"text", "image"}},
 		},
 	},
 	{
@@ -104,10 +116,11 @@ var providerInfos = []ProviderInfo{
 		InstructionsNeedProjectDir: true,
 		NativeAgentSep:             "_",
 		NativeAgentConfigDir:       "codex",
+		NativePlanMode:             true,
 		FallbackModels: []FallbackModel{
-			{ID: "gpt-5.1", DisplayName: "GPT-5.1", Description: "Recommended full-size Codex model.", Default: true},
-			{ID: "gpt-5.1-mini", DisplayName: "GPT-5.1 mini", Description: "Faster, lower-cost Codex model."},
-			{ID: "o4", DisplayName: "o4", Description: "Reasoning-oriented OpenAI model."},
+			{ID: "gpt-5.1", DisplayName: "GPT-5.1", Description: "Recommended full-size Codex model.", Default: true, InputModalities: []string{"text", "image"}},
+			{ID: "gpt-5.1-mini", DisplayName: "GPT-5.1 mini", Description: "Faster, lower-cost Codex model.", InputModalities: []string{"text", "image"}},
+			{ID: "o4", DisplayName: "o4", Description: "Reasoning-oriented OpenAI model.", InputModalities: []string{"text", "image"}},
 		},
 	},
 }

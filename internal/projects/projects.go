@@ -30,9 +30,120 @@ type Project struct {
 	Status       string   `yaml:"status" json:"status"`
 	Stack        []string `yaml:"stack" json:"stack"`
 	Repo         *Repo    `yaml:"repo" json:"repo"`
+	Git          *Git     `yaml:"git,omitempty" json:"git,omitempty"`
 	Roadmap      []string `yaml:"roadmap" json:"roadmap"`
 	Notes        string   `yaml:"notes" json:"notes"`
 	Instructions string   `yaml:"instructions,omitempty" json:"instructions"`
+}
+
+// Branching policies.
+const (
+	// BranchingDirect commits straight to the default branch.
+	BranchingDirect = "direct"
+	// BranchingPerTask puts each feature or fix on its own branch.
+	BranchingPerTask = "branch-per-task"
+)
+
+// Commit policies.
+const (
+	// CommitAsk means the agent commits only when asked to.
+	CommitAsk = "ask"
+	// CommitAuto lets the agent commit its own completed work.
+	CommitAuto = "auto"
+)
+
+// Git declares how a project wants to be versioned. It is first-class project
+// data rather than a property of a connected remote, because the three postures
+// a project can take are distinguishable without one:
+//
+//	Enabled=false            no source control; the agent performs no git
+//	Enabled, Remote==""      a local repository, created in place with git init
+//	Enabled, Remote!=""      a repository that lives on a host; cloned
+//
+// Nil means "not declared" and is treated as disabled, which is what every
+// project created before this existed should be until the user opts in.
+type Git struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Remote  string `yaml:"remote,omitempty" json:"remote"`
+	// DefaultBranch is the branch work returns to and branches off.
+	DefaultBranch string `yaml:"default_branch,omitempty" json:"default_branch"`
+	// Branching is BranchingDirect or BranchingPerTask. It is executable, not
+	// advisory: podiom_start_work applies it so the agent cannot skip it.
+	Branching string `yaml:"branching,omitempty" json:"branching"`
+	// BranchPrefixes maps a kind of work ("feature", "bugfix") to its branch
+	// prefix. Missing kinds fall back to "work/".
+	BranchPrefixes map[string]string `yaml:"branch_prefixes,omitempty" json:"branch_prefixes"`
+	// Commit is CommitAsk or CommitAuto.
+	Commit string `yaml:"commit,omitempty" json:"commit"`
+}
+
+// defaultBranchPrefixes are used when a project does not name its own.
+var defaultBranchPrefixes = map[string]string{
+	"feature": "feature/",
+	"bugfix":  "fix/",
+	"chore":   "chore/",
+}
+
+// normalizeGit fills in the defaults a partially specified block implies, so
+// every consumer can read the values without repeating fallback logic. A
+// disabled block keeps its fields: turning git back on should not silently
+// discard a remote the user already configured.
+func normalizeGit(g *Git) *Git {
+	if g == nil {
+		return nil
+	}
+	out := *g
+	out.Remote = strings.TrimSpace(out.Remote)
+	if strings.TrimSpace(out.DefaultBranch) == "" {
+		out.DefaultBranch = "main"
+	}
+	if out.Branching != BranchingPerTask {
+		out.Branching = BranchingDirect
+	}
+	if out.Commit != CommitAuto {
+		out.Commit = CommitAsk
+	}
+	if len(out.BranchPrefixes) == 0 {
+		out.BranchPrefixes = map[string]string{}
+		for kind, prefix := range defaultBranchPrefixes {
+			out.BranchPrefixes[kind] = prefix
+		}
+	}
+	return &out
+}
+
+// BranchFor renders the branch name for a piece of work under this policy.
+// Under BranchingDirect the answer is always the default branch — the policy
+// decides, not the caller.
+func (g *Git) BranchFor(kind, slug string) string {
+	if g == nil || !g.Enabled {
+		return ""
+	}
+	normalized := normalizeGit(g)
+	if normalized.Branching != BranchingPerTask {
+		return normalized.DefaultBranch
+	}
+	slug = branchSlug(slug)
+	if slug == "" {
+		return normalized.DefaultBranch
+	}
+	prefix, ok := normalized.BranchPrefixes[strings.ToLower(strings.TrimSpace(kind))]
+	if !ok || prefix == "" {
+		prefix = "work/"
+	}
+	return prefix + slug
+}
+
+// branchSlug reduces free text to something git accepts as a branch component.
+var branchUnsafe = regexp.MustCompile(`[^a-z0-9._-]+`)
+
+func branchSlug(raw string) string {
+	slug := branchUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(raw)), "-")
+	slug = strings.Trim(slug, "-._")
+	if len(slug) > 60 {
+		slug = strings.Trim(slug[:60], "-._")
+	}
+	return slug
 }
 
 // Repo describes an optional external source linked to a Podiom project. v1
@@ -61,6 +172,7 @@ type ProjectPatch struct {
 	Stack        *[]string
 	Repo         *Repo
 	ClearRepo    bool
+	Git          *Git
 	Notes        *string
 	Instructions *string
 }
@@ -134,6 +246,7 @@ func (l *Ledger) Create(p Project) (Project, error) {
 	if p.Roadmap == nil {
 		p.Roadmap = []string{}
 	}
+	p.Git = normalizeGit(p.Git)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -185,6 +298,9 @@ func (l *Ledger) Update(id string, patch ProjectPatch) (Project, error) {
 	}
 	if patch.Color != nil {
 		p.Color = *patch.Color
+	}
+	if patch.Git != nil {
+		p.Git = normalizeGit(patch.Git)
 	}
 	if patch.Status != nil {
 		p.Status = *patch.Status
@@ -316,6 +432,7 @@ func (p *Project) UnmarshalYAML(value *yaml.Node) error {
 		Status       string    `yaml:"status"`
 		Stack        []string  `yaml:"stack"`
 		Repo         yaml.Node `yaml:"repo"`
+		Git          *Git      `yaml:"git"`
 		Roadmap      []string  `yaml:"roadmap"`
 		Notes        string    `yaml:"notes"`
 		Instructions string    `yaml:"instructions"`
@@ -335,6 +452,7 @@ func (p *Project) UnmarshalYAML(value *yaml.Node) error {
 	p.Notes = raw.Notes
 	p.Instructions = raw.Instructions
 	p.Repo = repoFromNode(raw.Repo)
+	p.Git = normalizeGit(raw.Git)
 	return nil
 }
 

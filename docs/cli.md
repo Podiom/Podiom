@@ -228,7 +228,7 @@ podiom agents create juno --generate-soul
 | `--provider claude|codex` | Provider for the agent. Empty inherits `global.provider`. |
 | `--model name` | Default model. Empty means provider default. |
 | `--effort level` | Default provider-supported reasoning effort. |
-| `--permission approve|yolo` | Agent permission default. |
+| `--permission approve|auto|yolo` | Agent permission default. |
 | `--generate-soul` | Ask the daemon to generate and save the initial `SOUL.md` after creation. |
 
 Choosing `--permission yolo` prints a whole-machine-access warning: in `yolo`
@@ -286,7 +286,7 @@ Slash commands can be sent as the message body:
 | `/model <name>` | Set the session model for subsequent turns. |
 | `/effort <level>` | Set a provider-supported reasoning effort. |
 | `/profile <name|default>` | Switch auth profile. `default` clears the profile; the next turn replays history into a fresh backing session/thread. |
-| `/permission approve|yolo` | Set permission mode. |
+| `/permission approve|auto|yolo` | Set permission mode. |
 | `/name <text>` | Rename the session. |
 | `/describe <text>` | Set the session description. |
 | `/compact` | Summarize older history to free the context window; the next turn replays the summary plus recent turns into a fresh backing session/thread. |

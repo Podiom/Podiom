@@ -200,17 +200,22 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 		c.turnLog(req).Info("provider thread resumed", "event", "provider", "stage", "thread_resume", "thread", threadID)
 	}
 
-	message := req.Message
+	message := messageWithImageFallback(req.Message, req.Images)
 	if startedFresh && len(req.History) > 0 {
-		message = codexReplayMessage(req.History, req.Message)
+		message = codexReplayMessage(req.History, message)
 	}
 
-	result, err := client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Settings))
+	// The collaboration mode rides on every turn, not just plan turns: it is
+	// sticky on the thread, so an implementation turn must say "default"
+	// explicitly or the thread keeps planning.
+	collab := client.collaborationMode(ctx, req.Settings)
+
+	result, err := client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Images, req.Settings, collab))
 	if err != nil && threadID != "" {
 		c.turnLog(req).Warn("provider turn start failed; retrying after resume", "stage", "turn_start", "method", "turn/start", "error", podiomlog.Redact(err.Error()))
 		client.markUnloaded(threadID)
 		if resumeErr := client.ensureThread(ctx, threadID, req.Settings); resumeErr == nil {
-			result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Settings))
+			result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Images, req.Settings, collab))
 		} else {
 			c.turnLog(req).Warn("provider retry resume failed", "stage", "thread_resume", "method", "thread/resume", "error", podiomlog.Redact(resumeErr.Error()))
 		}
@@ -223,7 +228,7 @@ func (c *Codex) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, er
 			client = c.client(req.Settings.ProfileDir, profileName, profileHash, profileConfig)
 			fallbackSettings := withoutCodexNativeAgents(req.Settings)
 			if resumeErr := client.ensureThread(ctx, threadID, fallbackSettings); resumeErr == nil {
-				result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, fallbackSettings))
+				result, err = client.call(ctx, "turn/start", codexTurnStartParams(threadID, message, req.Images, fallbackSettings, client.collaborationMode(ctx, fallbackSettings)))
 			} else {
 				err = resumeErr
 			}
@@ -437,6 +442,7 @@ type codexClient struct {
 	initialized  bool
 	needsRespawn bool
 
+	meta        codexMeta
 	pending     map[string]chan codexCallResponse
 	loaded      map[string]string
 	watchers    map[codexTurnKey]chan codexStreamEvent
@@ -1003,6 +1009,7 @@ func parseCodexModelList(raw json.RawMessage) (codexModelListPage, error) {
 				ReasoningEffort string `json:"reasoningEffort"`
 				Description     string `json:"description"`
 			} `json:"supportedReasoningEfforts"`
+			InputModalities []string `json:"inputModalities"`
 		} `json:"data"`
 		NextCursor string `json:"nextCursor"`
 	}
@@ -1033,6 +1040,7 @@ func parseCodexModelList(raw json.RawMessage) (codexModelListPage, error) {
 			IsDefault:              item.IsDefault,
 			DefaultReasoningEffort: item.DefaultReasoningEffort,
 			SupportedEfforts:       efforts,
+			InputModalities:        append([]string(nil), item.InputModalities...),
 		})
 	}
 	return codexModelListPage{models: out, nextCursor: resp.NextCursor}, nil
@@ -1139,6 +1147,12 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 				}
 				for _, tu := range c.codexToolUses(event.method, event.params, key) {
 					if !sendAdapterEvent(ctx, out, Event{Kind: EventToolUse, ToolUse: tu}) {
+						return
+					}
+				}
+				if proposal := codexPlanProposal(event.method, event.params); proposal != nil {
+					c.log.Info("provider proposed a plan", "event", "provider", "stage", "plan", "thread", key.threadID, "turn", key.turnID)
+					if !sendAdapterEvent(ctx, out, Event{Kind: EventPlanProposed, PlanProposal: proposal}) {
 						return
 					}
 				}
@@ -1319,7 +1333,7 @@ func (c *codexClient) respondError(id json.RawMessage, code int, message string)
 func codexThreadStartParams(req StartRequest) map[string]any {
 	params := map[string]any{
 		"cwd":                   req.WorkspaceDir,
-		"runtimeWorkspaceRoots": workspaceRoots(req.WorkspaceDir, req.ExtraWorkspaceDirs),
+		"runtimeWorkspaceRoots": codexRuntimeRoots(req.PermissionMode, req.WorkspaceDir, req.ExtraWorkspaceDirs),
 		"approvalPolicy":        codexApprovalPolicy(req.PermissionMode),
 		"sandbox":               codexSandboxMode(req.PermissionMode),
 		"threadSource":          "podiom",
@@ -1343,7 +1357,7 @@ func codexThreadResumeParams(threadID string, settings TurnSettings) map[string]
 	}
 	if settings.WorkspaceDir != "" {
 		params["cwd"] = settings.WorkspaceDir
-		params["runtimeWorkspaceRoots"] = workspaceRoots(settings.WorkspaceDir, settings.ExtraWorkspaceDirs)
+		params["runtimeWorkspaceRoots"] = codexRuntimeRoots(settings.PermissionMode, settings.WorkspaceDir, settings.ExtraWorkspaceDirs)
 	}
 	if settings.Model != "" {
 		params["model"] = settings.Model
@@ -1362,18 +1376,36 @@ func instructionHash(instructions []byte) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-func codexTurnStartParams(threadID, message string, settings TurnSettings) map[string]any {
+func codexTurnStartParams(threadID, message string, images []ImageInput, settings TurnSettings, collaborationMode map[string]any) map[string]any {
+	input := []map[string]any{{
+		"type":          "text",
+		"text":          message,
+		"text_elements": []any{},
+	}}
+	for _, image := range images {
+		input = append(input, map[string]any{"type": "localImage", "path": image.Path})
+	}
+	// The sandbox policy's writableRoots must agree with the runtime roots:
+	// Codex derives writable scope from the latter, so a mismatch would be
+	// misleading to anyone reading the wire log.
+	roots := codexRuntimeRoots(settings.PermissionMode, settings.WorkspaceDir, settings.ExtraWorkspaceDirs)
+	sandbox := codexSandboxPolicy(settings.PermissionMode, roots)
+	if settings.PlanMode {
+		// Plan mode is behavioral orchestration, not a sandbox boundary — the
+		// model declined to write under workspace-write, but Podiom pins
+		// read-only so non-mutation is enforced rather than instructed.
+		sandbox = map[string]any{"type": "readOnly", "networkAccess": false}
+	}
 	params := map[string]any{
-		"threadId": threadID,
-		"input": []map[string]any{{
-			"type":          "text",
-			"text":          message,
-			"text_elements": []any{},
-		}},
+		"threadId":              threadID,
+		"input":                 input,
 		"cwd":                   settings.WorkspaceDir,
-		"runtimeWorkspaceRoots": workspaceRoots(settings.WorkspaceDir, settings.ExtraWorkspaceDirs),
+		"runtimeWorkspaceRoots": roots,
 		"approvalPolicy":        codexApprovalPolicy(settings.PermissionMode),
-		"sandboxPolicy":         codexSandboxPolicy(settings.PermissionMode, settings.WorkspaceDir),
+		"sandboxPolicy":         sandbox,
+	}
+	if collaborationMode != nil {
+		params["collaborationMode"] = collaborationMode
 	}
 	if settings.Model != "" {
 		params["model"] = settings.Model
@@ -1402,21 +1434,59 @@ func codexApprovalPolicy(mode config.PermissionMode) string {
 	if mode == config.PermissionYolo {
 		return "never"
 	}
+	// approve and auto both keep asking; they differ in what the sandbox makes
+	// possible without an approval round-trip, not in the approval policy.
 	return "on-request"
 }
 
 func codexSandboxMode(mode config.PermissionMode) string {
-	if mode == config.PermissionYolo {
+	switch mode {
+	case config.PermissionYolo:
 		return "danger-full-access"
+	case config.PermissionAuto:
+		return "workspace-write"
+	default:
+		return "read-only"
 	}
-	return "read-only"
 }
 
-func codexSandboxPolicy(mode config.PermissionMode, workspace string) map[string]any {
-	if mode == config.PermissionYolo {
+func codexSandboxPolicy(mode config.PermissionMode, writableRoots []string) map[string]any {
+	switch mode {
+	case config.PermissionYolo:
 		return map[string]any{"type": "dangerFullAccess"}
+	case config.PermissionAuto:
+		return map[string]any{
+			"type":          "workspaceWrite",
+			"writableRoots": writableRoots,
+			"networkAccess": false,
+		}
+	default:
+		return map[string]any{"type": "readOnly", "networkAccess": false}
 	}
-	return map[string]any{"type": "readOnly", "networkAccess": false}
+}
+
+// codexRuntimeRoots picks the runtime workspace roots for a mode.
+//
+// On Codex the *writable* scope is governed by runtimeWorkspaceRoots, not by
+// sandboxPolicy.writableRoots — verified against app-server 0.142.4: holding
+// writableRoots fixed, a directory listed in runtimeWorkspaceRoots was written
+// with no approval request, and the same write was refused once that directory
+// was dropped from the list.
+//
+// So a writable mode must not receive the broad set. ExtraWorkspaceDirs
+// includes the projects parent directory, and handing that to a workspace-write
+// sandbox would let one session write into every project on disk. auto
+// therefore gets the working directory alone. Reads are unaffected — also
+// verified: a file outside the narrowed roots was still readable, so agents
+// keep access to the shared ledger.
+//
+// approve (read-only) and yolo (full access) keep the broad set: writes are
+// impossible in one and unrestricted by design in the other.
+func codexRuntimeRoots(mode config.PermissionMode, primary string, extra []string) []string {
+	if mode == config.PermissionAuto {
+		return workspaceRoots(primary, nil)
+	}
+	return workspaceRoots(primary, extra)
 }
 
 func codexThreadID(raw json.RawMessage) (string, error) {
@@ -1933,10 +2003,11 @@ func codexReplayMessage(history []store.Message, liveMessage string) string {
 	b.WriteString("Use this canonical transcript as prior context, then answer the live user turn.\n\n")
 	b.WriteString("<podiom_history>\n")
 	for _, msg := range history {
-		if strings.TrimSpace(msg.Content) == "" {
+		content := historyMessageContent(msg)
+		if content == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "%s: %s\n", msg.Role, msg.Content)
+		fmt.Fprintf(&b, "%s: %s\n", msg.Role, content)
 	}
 	b.WriteString("</podiom_history>\n\n")
 	b.WriteString("Live user turn:\n")

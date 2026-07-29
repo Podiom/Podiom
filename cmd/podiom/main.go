@@ -791,7 +791,7 @@ func newAgentsCreateCmd(addr *string) *cobra.Command {
 	cmd.Flags().StringVar(&profile, "profile", "", "auth profile name (must exist and match provider)")
 	cmd.Flags().StringVar(&model, "model", "", "default model")
 	cmd.Flags().StringVar(&effort, "effort", "", "default reasoning effort (provider-supported level)")
-	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve or yolo")
+	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve, auto, or yolo")
 	cmd.Flags().StringArrayVar(&fallback, "fallback", nil, "ordered fallback target (repeatable): profile name, claude|codex, or default")
 	cmd.Flags().BoolVar(&generateSoul, "generate-soul", false, "generate and save SOUL.md after creating the agent")
 	return cmd
@@ -879,7 +879,7 @@ func newAgentsUpdateCmd(addr *string) *cobra.Command {
 	cmd.Flags().StringVar(&profile, "profile", "", "auth profile name")
 	cmd.Flags().StringVar(&model, "model", "", "default model")
 	cmd.Flags().StringVar(&effort, "effort", "", "default reasoning effort (provider-supported level)")
-	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve or yolo")
+	cmd.Flags().StringVar(&permission, "permission", "", "permission mode: approve, auto, or yolo")
 	cmd.Flags().StringArrayVar(&fallback, "fallback", nil, "replace fallback chain (repeatable): profile name, claude|codex, or default")
 	cmd.Flags().BoolVar(&generateSoul, "generate-soul", false, "generate a new SOUL.md and ask before saving")
 	cmd.Flags().StringVar(&notes, "notes", "", "extra direction for --generate-soul")

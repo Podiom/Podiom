@@ -33,6 +33,7 @@ type Paths struct {
 	ProfilesDir     string // profiles/
 	LogsDir         string // logs/
 	ArchiveDir      string // archive/ (archived tasks and other exports)
+	AttachmentsDir  string // attachments/ (durable per-session photo uploads)
 	PushDir         string // push/ (VAPID keypair for Web Push)
 	MarketplaceDir  string // marketplace/ (skill-registry secrets + cache state)
 	GatewayToken    string // gateway.token (the API/WS gateway token, HA7/HA8)
@@ -78,6 +79,7 @@ func NewPaths(home string) Paths {
 		ProfilesDir:     filepath.Join(home, "profiles"),
 		LogsDir:         filepath.Join(home, "logs"),
 		ArchiveDir:      filepath.Join(home, "archive"),
+		AttachmentsDir:  filepath.Join(home, "attachments"),
 		PushDir:         filepath.Join(home, "push"),
 		MarketplaceDir:  filepath.Join(home, "marketplace"),
 		GatewayToken:    filepath.Join(home, "gateway.token"),

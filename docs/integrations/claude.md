@@ -25,7 +25,9 @@ Optional flags:
 | Model | `--model <name>` |
 | Effort | `--effort <level>` |
 | Best-effort Podiom agent projection | `--agents <json>` and `--agent <generated-name>` |
+| `auto` permission mode | `--permission-mode acceptEdits` (relay still wired for non-edit tools) |
 | `yolo` permission mode | `--permission-mode bypassPermissions` |
+| Plan mode | `--permission-mode plan` |
 
 When a profile is set, Podiom exports `CLAUDE_CONFIG_DIR=<profile.config_dir>`.
 When no profile is set, Podiom leaves `CLAUDE_CONFIG_DIR` unset so Claude uses
@@ -74,6 +76,29 @@ stdout. The adapter handles:
 When resuming with `--resume`, Podiom sends only the new user turn. It does not
 also replay canonical history into an already-resumed Claude session.
 
+## Photo inputs
+
+For a turn with [photo attachments](../photo-attachments.md), Podiom appends an
+explicitly delimited, ordered list containing each display name and absolute path
+to its normalized `visual.jpg`. The session attachment directory is passed as an
+additional allowed/readable root, so Claude can use its image-path workflow
+without receiving the retained original.
+
+If the durable user content is empty, the adapter supplies a provider-only
+instruction to inspect the attached photos. That fallback text is not stored in
+canonical history.
+
+When profile switching, compaction, or provider fallback creates a fresh Claude
+backing session, replay retains historical photo names and normalized paths and
+the attachment directory remains an additional read root. Historical photos are
+not automatically promoted to new current-turn attachments. Text-only turns use
+the unchanged stream-json shape.
+
+Claude model catalogue responses may advertise
+`capabilities.image_input.supported`; Podiom maps that flag to `image` in the
+public model `input_modalities` list. Bundled fallback Claude models declare
+both `text` and `image`.
+
 ## Permissions
 
 `approve` mode generates a temporary MCP config in `workspace/.podiom/` and adds:
@@ -105,3 +130,44 @@ shape was verified against Claude Code during Phase 2.
 
 If no decision arrives before `global.permission_timeout`, the daemon returns
 `{"behavior":"deny"}` so Claude does not block indefinitely.
+
+## Plan mode
+
+Podiom drives Claude's own plan mode rather than running its own gate: while a
+session is in plan mode the turn adds `--permission-mode plan` and nothing else.
+Claude enforces read-only in its executor and runs its own phased workflow
+(including Explore subagents), which is why Podiom does not inject a plan prompt
+of its own.
+
+**Podiom observes where the plan lands; it does not configure it.** Writing
+`plansDirectory` into the user's Claude settings would be intrusive and is
+unnecessary — the default is `<CLAUDE_CONFIG_DIR>/plans`, and Podiom already
+sets that variable per profile. Resolution order:
+
+1. a `plansDirectory` the *user* has set (`<config dir>/settings.json`, or
+   project-local `.claude/settings.json`), read-only, resolved relative to the
+   project root as Claude does;
+2. otherwise `<CLAUDE_CONFIG_DIR>/plans`, falling back to `~/.claude/plans` when
+   Podiom leaves the variable unset.
+
+Podiom snapshots that directory's `.md` files before the turn and takes the
+new-or-modified one after. Matching is by **modification time, not filename**:
+Claude derives the plan's slug from the session, so a revision overwrites the
+same file and a name-only check would capture the first plan and miss every
+revision. On capture Podiom writes its own copy under the project's `plans/`
+directory, which becomes the canonical artifact — the provider's own file is
+never deleted, even on reject.
+
+### Why not ExitPlanMode
+
+`ExitPlanMode` is **not available in headless `-p` runs**. Invoked anyway, the
+CLI answers: *"No such tool available: ExitPlanMode. ExitPlanMode exists but is
+not enabled in this context."* `--allowedTools ExitPlanMode` does not help — it
+is a permission allow-list, not a registration mechanism — and no other flag
+exposes it. Confirmed in the 2.1.220 binary: the tool is present in
+`getAllBaseTools()` but excluded from the pool `assembleToolPool` builds for
+this context. File detection is therefore not a workaround for a missing
+feature; it is the only mechanism available to a CLI-driven integration.
+
+The Node Agent SDK likely does expose the tool. That would only become relevant
+if Podiom's Claude adapter ever stopped spawning the CLI binary.

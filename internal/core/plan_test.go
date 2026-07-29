@@ -165,78 +165,40 @@ func TestSubmitPlanUnassignedSessionRoutesToUnassignedDir(t *testing.T) {
 	}
 }
 
-func TestPlanModePromptForUnassignedSessionUsesUnassignedDir(t *testing.T) {
-	ctx := context.Background()
-	c, fake, cleanup := newScheduledTestCore(t)
+// Podiom's own plan prompt is the fallback contract, used only by providers
+// that cannot plan natively. Both shipped providers do, so it is exercised
+// directly rather than through a turn.
+func TestFallbackPlanPromptTargetsTheSessionPlansDir(t *testing.T) {
+	c, cleanup := newTestCore(t)
 	defer cleanup()
 
-	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
-		t.Fatalf("create agent: %v", err)
+	unassigned := c.planModePrompt(store.Session{PlanState: store.PlanPendingSubmission}, projectExecutionContext{})
+	if !strings.Contains(unassigned, filepath.Join(c.paths.ProjectsDir, "unassigned", "plans")) {
+		t.Fatalf("unassigned prompt should point at unassigned/plans:\n%s", unassigned)
 	}
-	session, err := c.CreateSession(ctx, CreateSessionRequest{
-		AgentName:                      "planner",
-		Origin:                         store.OriginWeb,
-		CreatePlanBeforeImplementation: true,
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
+	if strings.Contains(unassigned, "<project>") {
+		t.Fatalf("unassigned prompt still contains a placeholder:\n%s", unassigned)
 	}
-	if _, err := c.AppendTurn(ctx, session.ID, "Build a dashboard"); err != nil {
-		t.Fatalf("append turn: %v", err)
-	}
-	if len(fake.Requests) != 1 {
-		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
-	}
-	got := fake.Requests[0].Message
-	if !strings.Contains(got, filepath.Join(c.paths.ProjectsDir, "unassigned", "plans")) {
-		t.Fatalf("unassigned plan-mode prompt should point at unassigned/plans:\n%s", got)
-	}
-	if strings.Contains(got, "<project>") {
-		t.Fatalf("unassigned plan-mode prompt still contains <project> placeholder:\n%s", got)
-	}
-}
 
-func TestPlanModePromptIsInjectedIntoGatedTurn(t *testing.T) {
-	ctx := context.Background()
-	c, fake, cleanup := newScheduledTestCore(t)
-	defer cleanup()
-
-	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-	if _, err := c.CreateProject(ctx, projects.Project{ID: "demo", Name: "Demo"}); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	session, err := c.CreateSession(ctx, CreateSessionRequest{
-		AgentName:                      "planner",
-		Origin:                         store.OriginWeb,
-		ProjectID:                      "demo",
-		CreatePlanBeforeImplementation: true,
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	if _, err := c.AppendTurn(ctx, session.ID, "Build a dashboard"); err != nil {
-		t.Fatalf("append turn: %v", err)
-	}
-	if len(fake.Requests) != 1 {
-		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
-	}
-	got := fake.Requests[0].Message
+	projectDir := filepath.Join(c.paths.ProjectsDir, "demo")
+	bound := c.planModePrompt(store.Session{PlanState: store.PlanPendingSubmission}, projectExecutionContext{ProjectDir: projectDir})
 	for _, want := range []string{
 		"Podiom plan mode is active for this session.",
 		"# Plan: <short title>",
 		"## Risks And Rollback",
-		filepath.Join(c.paths.ProjectsDir, "demo", "plans"),
-		"User message:\nBuild a dashboard",
+		filepath.Join(projectDir, "plans"),
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("plan-mode provider message missing %q:\n%s", want, got)
+		if !strings.Contains(bound, want) {
+			t.Fatalf("fallback plan prompt missing %q:\n%s", want, bound)
 		}
 	}
 }
 
-func TestPlanFeedbackTurnInjectsRevisionInstruction(t *testing.T) {
+// A provider that plans natively is asked to do so, and must NOT receive
+// Podiom's plan prompt: the provider's own plan contract is already in its
+// system prompt, so re-prepending Podiom's to every user message would only
+// cost tokens and compete with it.
+func TestNativePlanModeReplacesTheInjectedPrompt(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newScheduledTestCore(t)
 	defer cleanup()
@@ -256,23 +218,64 @@ func TestPlanFeedbackTurnInjectsRevisionInstruction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	planPath := filepath.Join(c.paths.ProjectsDir, "demo", "plans", "plan.md")
-	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
-		t.Fatalf("mkdir plans: %v", err)
+	if _, err := c.AppendTurn(ctx, session.ID, "Build a dashboard"); err != nil {
+		t.Fatalf("append turn: %v", err)
 	}
-	if _, err := c.SubmitPlan(ctx, SubmitPlanRequest{
-		SessionID: session.ID,
-		FilePath:  planPath,
-		Markdown:  validStructuredPlanMarkdown("Demo"),
-	}); err != nil {
-		t.Fatalf("submit plan: %v", err)
+	if len(fake.Requests) != 1 {
+		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
+	}
+	req := fake.Requests[0]
+	if !req.Settings.PlanMode {
+		t.Fatal("native provider was not asked to run its own plan mode")
+	}
+	if strings.Contains(req.Message, "Podiom plan mode is active") {
+		t.Fatalf("native plan mode must not inject Podiom's prompt:\n%s", req.Message)
+	}
+	if !strings.Contains(req.Message, "Build a dashboard") {
+		t.Fatalf("user message missing:\n%s", req.Message)
+	}
+}
+
+// Feedback keeps the session awaiting approval and re-runs the turn still in
+// plan mode, so the provider revises with its own workflow. The revision
+// instruction must not mention Podiom's headings or submit tool for a native
+// provider — neither applies to the plan it produced.
+func TestPlanFeedbackRevisesInPlanMode(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "planner", Provider: config.ProviderCodex}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "demo", Name: "Demo"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{
+		AgentName:                      "planner",
+		Origin:                         store.OriginWeb,
+		ProjectID:                      "demo",
+		CreatePlanBeforeImplementation: true,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := c.CaptureNativePlan(ctx, session.ID, adapter.PlanProposal{Markdown: "# Native plan\n\nDo the work."}); err != nil {
+		t.Fatalf("capture plan: %v", err)
 	}
 	decision, err := c.FeedbackPlan(ctx, session.ID, "Add a migration step.")
 	if err != nil {
 		t.Fatalf("feedback plan: %v", err)
 	}
-	if !strings.Contains(decision.NextMessage, "Keep the required structured Markdown headings") {
-		t.Fatalf("feedback next message missing structured instruction: %q", decision.NextMessage)
+	if strings.Contains(decision.NextMessage, "podiom_submit_plan") ||
+		strings.Contains(decision.NextMessage, "structured Markdown headings") {
+		t.Fatalf("native revision must not cite the fallback contract: %q", decision.NextMessage)
+	}
+	if !strings.Contains(decision.NextMessage, "Add a migration step.") {
+		t.Fatalf("feedback text missing: %q", decision.NextMessage)
+	}
+	if decision.Session.PlanState != store.PlanAwaitingApproval {
+		t.Fatalf("feedback must keep the session awaiting approval, got %q", decision.Session.PlanState)
 	}
 	if _, err := c.AppendTurn(ctx, session.ID, decision.NextMessage); err != nil {
 		t.Fatalf("append feedback turn: %v", err)
@@ -280,15 +283,8 @@ func TestPlanFeedbackTurnInjectsRevisionInstruction(t *testing.T) {
 	if len(fake.Requests) != 1 {
 		t.Fatalf("fake requests = %d, want 1", len(fake.Requests))
 	}
-	got := fake.Requests[0].Message
-	for _, want := range []string{
-		"Revision turn: incorporate the user's feedback",
-		"Keep the required structured Markdown headings",
-		"Add a migration step.",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("feedback provider message missing %q:\n%s", want, got)
-		}
+	if !fake.Requests[0].Settings.PlanMode {
+		t.Fatal("revision turn must still run in plan mode")
 	}
 }
 

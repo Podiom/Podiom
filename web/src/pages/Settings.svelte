@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { createProfile, deleteProfile, getConfig, listProfiles, updateConfig, updateProfile } from "../lib/api";
+  import { createProfile, deleteProfile, getConfig, gitStatus, listProfiles, setGitIdentity, updateConfig, updateProfile } from "../lib/api";
   import {
     capabilityKey,
     effortOptions as capabilityEffortOptions,
@@ -10,7 +10,7 @@
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import type { PushState } from "../lib/live.svelte";
-  import type { Agent, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
+  import type { Agent, GitStatus, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
   import AboutYou from "./AboutYou.svelte";
   import Credentials from "./Credentials.svelte";
   import Agents from "./Agents.svelte";
@@ -61,7 +61,61 @@
     onUserProfileSaved?: () => void;
   } = $props();
 
-  const PERMISSIONS: PermissionMode[] = ["approve", "yolo"];
+  const PERMISSIONS: PermissionMode[] = ["approve", "auto", "yolo"];
+
+  // ── Git ────────────────────────────────────────────────────────────────
+  // Source control needs three things to be usable: the binary, a commit
+  // identity, and credentials that can reach a remote. The card reports each
+  // separately so a half-configured host says which half is missing.
+  let git = $state<GitStatus | null>(null);
+  let gitLoading = $state(true);
+  let gitName = $state("");
+  let gitEmail = $state("");
+  let gitSaving = $state(false);
+  let gitError = $state("");
+
+  const gitIdentitySet = $derived(!!git?.user_name && !!git?.user_email);
+  const gitBadge = $derived(
+    !git || !git.found
+      ? { label: "not installed", tone: "amber" }
+      : git.ready
+        ? { label: "ready", tone: "green" }
+        : { label: "needs setup", tone: "amber" },
+  );
+
+  async function refreshGit() {
+    gitLoading = true;
+    try {
+      git = await gitStatus();
+      gitName = git.user_name ?? "";
+      gitEmail = git.user_email ?? "";
+    } catch (e) {
+      gitError = e instanceof Error ? e.message : String(e);
+    } finally {
+      gitLoading = false;
+    }
+  }
+
+  async function saveGitIdentity() {
+    gitSaving = true;
+    gitError = "";
+    try {
+      git = await setGitIdentity(gitName.trim(), gitEmail.trim());
+    } catch (e) {
+      gitError = e instanceof Error ? e.message : String(e);
+    } finally {
+      gitSaving = false;
+    }
+  }
+
+  async function copySSHKey() {
+    if (!git?.ssh_key) return;
+    try {
+      await navigator.clipboard.writeText(git.ssh_key);
+    } catch {
+      // Clipboard access can be denied; the key is on screen to copy by hand.
+    }
+  }
   const TIMEOUT_PRESETS = ["30s", "1m", "3m", "5m", "10m"];
 
   let loading = $state(true);
@@ -103,7 +157,10 @@
   let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
   let loadingCapabilities = new Set<string>();
 
-  onMount(load);
+  onMount(() => {
+    void load();
+    void refreshGit();
+  });
 
   $effect(() => {
     void ensureCapabilities(provider, profile);
@@ -666,6 +723,84 @@
     </section>
 
     <!-- ===== VOICE INPUT ===== -->
+    <!-- ===== GIT ===== -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-icon violet">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 15V9a9 9 0 0 1 9-9"/></svg>
+        </div>
+        <div class="grow">
+          <div class="card-title">Git</div>
+          <div class="card-sub">Source control for projects that use it. Podiom uses your own git credentials — it never creates any.</div>
+        </div>
+        <span class="badge {gitBadge.tone}">{gitLoading ? "checking…" : gitBadge.label}</span>
+      </div>
+
+      <div class="git-steps">
+        <div class="git-step" class:done={!!git?.found}>
+          <span class="git-step-mark">{git?.found ? "✓" : "1"}</span>
+          <div class="grow">
+            <div class="git-step-title">git installed</div>
+            <div class="git-step-sub">
+              {#if git?.found}
+                <span class="mono">{git.version || git.path}</span>
+              {:else}
+                {git?.hint || "Install git, then re-check."}
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <div class="git-step" class:done={gitIdentitySet}>
+          <span class="git-step-mark">{gitIdentitySet ? "✓" : "2"}</span>
+          <div class="grow">
+            <div class="git-step-title">commit identity</div>
+            <div class="git-step-sub">The name and email your agents' commits are attributed to.</div>
+            <div class="git-identity">
+              <input class="timeout-input" style="flex:1;min-width:150px" bind:value={gitName} placeholder="Your Name" disabled={!git?.found} />
+              <input class="timeout-input" style="flex:1;min-width:180px" bind:value={gitEmail} placeholder="you@example.com" disabled={!git?.found} />
+              <button
+                class="btn-save sm"
+                disabled={!git?.found || gitSaving || !gitName.trim() || !gitEmail.trim()}
+                onclick={saveGitIdentity}
+              >{gitSaving ? "Saving…" : "Save"}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="git-step" class:done={!!git?.ssh_key}>
+          <span class="git-step-mark">{git?.ssh_key ? "✓" : "3"}</span>
+          <div class="grow">
+            <div class="git-step-title">credentials</div>
+            {#if git?.ssh_key}
+              <div class="git-step-sub">
+                An SSH key is present. If a repository still refuses you, add this public key to your git host.
+              </div>
+              <div class="git-key">
+                <code class="mono">{git.ssh_key}</code>
+                <button class="btn-save sm" onclick={copySSHKey}>Copy</button>
+              </div>
+            {:else}
+              <div class="git-step-sub">
+                No SSH key found in <span class="mono">~/.ssh</span>. Create one with
+                <span class="mono">ssh-keygen -t ed25519 -C "{gitEmail || "you@example.com"}"</span>
+                and add the public half to your git host — or configure a credential helper. Podiom uses whatever you set up.
+              </div>
+            {/if}
+          </div>
+        </div>
+      </div>
+
+      {#if gitError}
+        <div class="voice-key-error">{gitError}</div>
+      {/if}
+      <div class="hint">
+        Projects choose whether they use git on the Projects page. A project with source control gets a real working
+        copy the agent operates on with plain <span class="mono">git</span>.
+        <button class="link-btn" onclick={refreshGit}>Re-check</button>
+      </div>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <div class="card-icon teal">
@@ -1551,5 +1686,77 @@
       flex-direction: column;
       align-items: stretch;
     }
+  }
+
+  .git-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .git-step {
+    display: flex;
+    gap: 11px;
+    align-items: flex-start;
+  }
+  .git-step-mark {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    font: 600 11px "JetBrains Mono", monospace;
+    background: #EFEBE4;
+    border: 1px solid #DED8CE;
+    color: #7A7268;
+  }
+  .git-step.done .git-step-mark {
+    background: #EAF1ED;
+    border-color: #CFE3D8;
+    color: #3F7A5F;
+  }
+  .git-step-title {
+    font: 600 12.5px/1.4 "Inter", system-ui, sans-serif;
+    color: #2C2A27;
+  }
+  .git-step-sub {
+    font: 400 12px/1.6 "Inter", system-ui, sans-serif;
+    color: #7A7268;
+    margin-top: 2px;
+  }
+  .git-identity {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .git-key {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .git-key code {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    background: #F6F3EE;
+    border: 1px solid #E4DED4;
+    border-radius: 7px;
+    padding: 7px 9px;
+    font-size: 11px;
+    color: #5A544C;
+  }
+  .link-btn {
+    background: none;
+    border: 0;
+    padding: 0;
+    margin-left: 4px;
+    font: inherit;
+    color: #3F7A5F;
+    text-decoration: underline;
+    cursor: pointer;
   }
 </style>

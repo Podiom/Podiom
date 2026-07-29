@@ -374,8 +374,21 @@ func (s *Store) UpdateRollingSummary(ctx context.Context, id, summary string) (S
 // AppendMessages appends messages to the canonical history with strictly
 // increasing sequence numbers assigned inside one transaction.
 func (s *Store) AppendMessages(ctx context.Context, sessionID string, messages []Message) ([]Message, error) {
+	return s.appendMessages(ctx, sessionID, messages, nil)
+}
+
+// AppendUserMessage atomically appends one user message and binds validated
+// draft attachments from the same session to it.
+func (s *Store) AppendUserMessage(ctx context.Context, sessionID, content string, attachmentIDs []string) ([]Message, error) {
+	return s.appendMessages(ctx, sessionID, []Message{{Role: RoleUser, Content: content}}, attachmentIDs)
+}
+
+func (s *Store) appendMessages(ctx context.Context, sessionID string, messages []Message, attachmentIDs []string) ([]Message, error) {
 	if len(messages) == 0 {
 		return nil, nil
+	}
+	if len(attachmentIDs) > 0 && (len(messages) != 1 || messages[0].Role != RoleUser) {
+		return nil, fmt.Errorf("attachments can only be bound to one user message")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -411,6 +424,32 @@ func (s *Store) AppendMessages(ctx context.Context, sessionID string, messages [
 		msg.ID = id
 		inserted = append(inserted, msg)
 	}
+	if len(attachmentIDs) > 0 {
+		seen := map[string]bool{}
+		for position, id := range attachmentIDs {
+			if id == "" || seen[id] {
+				return nil, fmt.Errorf("attachment ids must be non-empty and unique")
+			}
+			seen[id] = true
+			var owner string
+			var messageID sql.NullInt64
+			if err := tx.QueryRowContext(ctx, `SELECT session_id, message_id FROM attachments WHERE id = ?`, id).Scan(&owner, &messageID); err != nil {
+				if err == sql.ErrNoRows {
+					return nil, fmt.Errorf("attachment %q: %w", id, ErrNotFound)
+				}
+				return nil, fmt.Errorf("read attachment %q: %w", id, err)
+			}
+			if owner != sessionID {
+				return nil, fmt.Errorf("attachment %q belongs to another session", id)
+			}
+			if messageID.Valid {
+				return nil, fmt.Errorf("attachment %q is already bound to a message", id)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE attachments SET message_id = ?, position = ? WHERE id = ? AND message_id IS NULL`, inserted[0].ID, position, id); err != nil {
+				return nil, fmt.Errorf("bind attachment %q: %w", id, err)
+			}
+		}
+	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`,
 		sessionID,
@@ -419,6 +458,17 @@ func (s *Store) AppendMessages(ctx context.Context, sessionID string, messages [
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit append messages: %w", err)
+	}
+	if len(attachmentIDs) > 0 {
+		attachments, err := s.ListAttachmentsForSession(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		for _, attachment := range attachments {
+			if attachment.MessageID == inserted[0].ID {
+				inserted[0].Attachments = append(inserted[0].Attachments, attachment)
+			}
+		}
 	}
 	return inserted, nil
 }
@@ -443,7 +493,23 @@ func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, 
 		}
 		messages = append(messages, msg)
 	}
-	return messages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	attachments, err := s.ListAttachmentsForSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	byMessage := make(map[int64][]Attachment)
+	for _, attachment := range attachments {
+		if attachment.MessageID != 0 {
+			byMessage[attachment.MessageID] = append(byMessage[attachment.MessageID], attachment)
+		}
+	}
+	for i := range messages {
+		messages[i].Attachments = byMessage[messages[i].ID]
+	}
+	return messages, nil
 }
 
 // DeleteSession removes a single session. Its message history is removed by the

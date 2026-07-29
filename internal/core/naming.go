@@ -90,9 +90,17 @@ func transcript(history []store.Message) string {
 		if !isConversationMessage(msg) {
 			continue
 		}
-		fmt.Fprintf(&b, "%s: %s\n", msg.Role, oneLine(msg.Content))
+		fmt.Fprintf(&b, "%s: %s\n", msg.Role, oneLine(messageTranscriptContent(msg)))
 	}
 	return b.String()
+}
+
+func messageTranscriptContent(message store.Message) string {
+	content := message.Content
+	for _, attachment := range message.Attachments {
+		content += "\n[Attached photo: " + attachment.Name + "]"
+	}
+	return strings.TrimSpace(content)
 }
 
 func parseNamingPayload(raw string) namingPayload {

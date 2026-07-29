@@ -459,6 +459,7 @@ type ChatRequest struct {
 	SessionID                      string          `json:"session_id,omitempty"`
 	AgentName                      string          `json:"agent_name,omitempty"`
 	Message                        string          `json:"message"`
+	AttachmentIDs                  []string        `json:"attachment_ids,omitempty"`
 	Provider                       config.Provider `json:"provider,omitempty"`
 	Profile                        string          `json:"profile,omitempty"`
 	CreatePlanBeforeImplementation bool            `json:"create_plan_before_implementation,omitempty"`

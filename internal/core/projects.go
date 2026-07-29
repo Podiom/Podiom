@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
+	podiomgit "github.com/Podiom/Podiom/internal/git"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
@@ -453,8 +454,17 @@ func (c *Core) ArchiveDoneTasks(ctx context.Context, projectID string) (ArchiveD
 		return ArchiveDoneTasksResult{}, err
 	}
 	for _, task := range done {
+		sessions, err := c.store.ListSessionsByTask(ctx, task.ID)
+		if err != nil {
+			return ArchiveDoneTasksResult{}, err
+		}
 		if err := c.store.DeleteSessionsByTask(ctx, task.ID); err != nil {
 			return ArchiveDoneTasksResult{}, err
+		}
+		for _, session := range sessions {
+			if err := os.RemoveAll(c.SessionAttachmentsDir(session.ID)); err != nil {
+				c.log.Warn("session attachment cleanup failed", "session", session.ID, "error", err)
+			}
 		}
 		if err := c.store.DeleteTask(ctx, task.ID); err != nil {
 			return ArchiveDoneTasksResult{}, err
@@ -525,6 +535,9 @@ func (c *Core) archiveTasks(ctx context.Context, tasks []store.Task, archivedAt 
 				Session:  archiveSession(sess),
 				Messages: messages,
 			})
+			if err := c.copySessionAttachments(sess.ID, filepath.Join(tmpDir, "attachments", sess.ID)); err != nil {
+				return "", 0, err
+			}
 		}
 		sessionCount += len(sessions)
 		payload := taskArchive{
@@ -911,6 +924,9 @@ type projectExecutionContext struct {
 	ProjectDir   string
 	Instructions string
 	Prompt       string
+	// Git is the project's source-control posture plus whether the host can act
+	// on it. Zero value means the session is not bound to a project.
+	Git ProjectGitState
 }
 
 func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Session) (projectExecutionContext, error) {
@@ -934,6 +950,15 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 	if proj.Repo != nil {
 		root = filepath.Join(projectDir, "repo")
 	}
+	// A clone needs to create its own directory, so for a remote-backed project
+	// that has not been cloned yet the root is deliberately left absent.
+	cloning := proj.Git != nil && proj.Git.Enabled && proj.Git.Remote != "" && !podiomgit.IsRepo(root)
+	if !cloning {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return projectExecutionContext{}, fmt.Errorf("create project workspace %s: %w", root, err)
+		}
+	}
+	gitState := c.materializeProjectGit(ctx, proj, root)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return projectExecutionContext{}, fmt.Errorf("create project workspace %s: %w", root, err)
 	}
@@ -969,10 +994,21 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 	prompt := "Podiom project context for this session:\n" +
 		strings.TrimSpace(string(raw)) + "\n\n" +
 		"This session is bound to project " + proj.ID + ". Create and edit durable project files under " + root + ". " +
-		"Do not create project artifacts in the agent workspace."
-	if proj.Repo != nil {
+		"Do not create project artifacts in the agent workspace.\n" +
+		gitPromptLine(gitState) + "\n" +
+		"Call podiom_project_context for the full project and source-control detail."
+	// A snapshot-mode repo without git really is just extracted files, and the
+	// agent must not assume otherwise. Git-enabled projects get the source
+	// control line above instead.
+	if proj.Repo != nil && (proj.Git == nil || !proj.Git.Enabled) {
 		prompt += " The connected GitHub repository has been downloaded as a local source snapshot at " + root + ". " +
 			"You may inspect files there for project facts. It is not a Git checkout: do not assume .git, branches, commits, pushes, or PR operations are available."
 	}
-	return projectExecutionContext{Root: root, ProjectDir: projectDir, Instructions: proj.Instructions, Prompt: prompt}, nil
+	return projectExecutionContext{
+		Root:         root,
+		ProjectDir:   projectDir,
+		Instructions: proj.Instructions,
+		Prompt:       prompt,
+		Git:          gitState,
+	}, nil
 }

@@ -18,7 +18,40 @@ Every session and scheduled run carries a permission mode (R5.18–R5.21, §8.4)
 | Mode | Meaning | How it is enforced |
 | --- | --- | --- |
 | `approve` *(default)* | Each tool call is relayed to a human who allows or denies it. | Claude: an MCP permission server (`--permission-prompt-tool`) → daemon broker → UI/CLI. Codex: `approvalPolicy: on-request` + `sandbox: read-only`, relayed through the same broker. |
+| `auto` | File edits inside the session's working directory run unattended; everything else still asks. | Claude: `--permission-mode acceptEdits`, with the permission relay still wired for every non-edit tool. Codex: `approvalPolicy: on-request` + `sandbox: workspace-write`, scoped to the working directory alone. |
 | `yolo` *(opt-in)* | Every tool call is auto-approved. | Claude: `--permission-mode bypassPermissions`. Codex: `approvalPolicy: never` + `sandbox: danger-full-access`. |
+
+**`auto` is not the same shape on both providers**, and the difference is worth
+knowing rather than papering over: under Codex, commands that stay inside the
+sandbox run without asking; under Claude, edits are automatic but every `Bash`
+call still reaches the relay. Claude's own classifier-driven `auto` mode would
+have closed the gap, but measured against Claude Code 2.1.220 it is silently
+downgraded to `default` in headless `-p` runs (as is `manual`), so `acceptEdits`
+is the only value that actually takes effect.
+
+**`auto`'s writable scope is deliberately narrow.** On Codex the writable scope
+is governed by `runtimeWorkspaceRoots`, *not* by `sandboxPolicy.writableRoots` —
+measured: holding `writableRoots` fixed, a directory listed in the runtime roots
+was written with no approval request, and the same write was refused once it was
+dropped from that list. Podiom's broad root set includes the projects parent
+directory (so agents can read the shared ledger), so `auto` receives the working
+directory alone; handing it the broad set would let one session write into every
+project on disk. Reads are unaffected — also measured — so ledger access still
+works. `approve` and `yolo` keep the broad set, where writes are respectively
+impossible and unrestricted by design.
+
+**On `--dangerously-skip-permissions`:** it and `--permission-mode
+bypassPermissions` are exactly equivalent — both report
+`permissionMode: bypassPermissions` in Claude's `system/init` event. Podiom uses
+the latter because the former carries extra environment refusals (it is the flag
+`--allow-dangerously-skip-permissions` exists to gate) for no behavioural gain.
+Codex's `approvalPolicy: never` + `sandbox: danger-full-access` is the
+programmatic equivalent of its `--dangerously-bypass-approvals-and-sandbox`.
+
+Mode validity is enforced in Go (`config.KnownPermission`), not by a schema
+constraint: migration 28 dropped the `permission_mode` CHECK for the same reason
+migration 25 dropped the provider CHECKs — baking the list into the schema made
+every new mode a migration.
 
 **`yolo` is whole-machine access by design (R8.31).** Podiom does *not* pretend
 the workspace is a sandbox in `yolo` — the only guard is the explicit opt-in and
@@ -138,6 +171,30 @@ stay in sync. It is used server-side only: `GET /api/config` exposes just a
 presence, never the value. The `PODIOM_OPENAI_API_KEY` / `OPENAI_API_KEY`
 environment variables override the file for setups that keep secrets out of
 YAML entirely.
+
+### Photo attachments
+
+[Photo attachments](photo-attachments.md) are stored locally below
+`$PODIOM_HOME/attachments/<session-id>/<attachment-id>/`. Each directory uses
+daemon-generated IDs and contains a server-named original plus `visual.jpg`;
+the client filename is display metadata only, reduced to a basename and never
+used to construct a path. Filesystem paths are omitted from REST and WebSocket
+attachment objects.
+
+Upload handling detects the original MIME signature instead of trusting request
+headers, permits only JPEG/PNG/GIF/WebP, limits each original and normalized part
+to 10 MiB, and requires the normalized visual to be a decodable JPEG no larger
+than 2000 px on either edge. The browser creates that JPEG at quality 0.85. This
+re-encoding strips embedded metadata before provider delivery, but the retained
+original is intentionally unchanged and can still contain EXIF location, camera,
+or author data.
+
+Original and thumbnail retrieval uses the normal gateway-token authentication
+and `nosniff`/private/no-store response headers. Attachment IDs must belong to
+the target session and can be bound only once. Deleting a session removes its
+live files; archives and `$PODIOM_HOME` backups retain copies by design. Unbound
+uploads older than 24 hours and filesystem orphans are cleaned at startup and
+daily.
 
 ### GitHub project repo tokens
 

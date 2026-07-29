@@ -725,7 +725,7 @@ func platformTools(c *manageClient) []mcpTool {
 				"profile":            strProp("Default auth profile."),
 				"model":              strProp("Default model."),
 				"effort":             strProp("Default effort."),
-				"permission_mode":    strProp("approve or yolo."),
+				"permission_mode":    strProp("approve, auto, or yolo."),
 				"permission_timeout": strProp("Permission prompt timeout (e.g. 3m)."),
 				"fallback":           strArrProp("Ordered fallback provider list."),
 			}),

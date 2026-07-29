@@ -126,6 +126,66 @@ func startRequestFor(t *testing.T, fake *adapter.Fake, sessionID string) adapter
 	return adapter.StartRequest{}
 }
 
+func TestPhotoOnlyTurnBindsAttachmentAndDeliversNormalizedImage(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "viewer", Provider: config.ProviderClaude}); err != nil {
+		t.Fatal(err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "viewer", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := c.CreateAttachment(ctx, CreateAttachmentInput{
+		SessionID: session.ID,
+		Name:      "scene.png",
+		MIMEType:  "image/png",
+		Original:  []byte("original"),
+		Visual:    []byte("normalized"),
+		Width:     20,
+		Height:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := c.StreamTurn(ctx, session.ID, "", TurnOptions{AttachmentIDs: []string{attachment.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range events {
+	}
+	if len(fake.Requests) != 1 || len(fake.Requests[0].Images) != 1 {
+		t.Fatalf("adapter image request = %+v", fake.Requests)
+	}
+	request := fake.Requests[0]
+	if request.Message != "Please inspect the attached photo(s)." || request.Images[0].Name != "scene.png" || request.Images[0].Path != c.AttachmentVisualPath(attachment) {
+		t.Fatalf("adapter request = %+v", request)
+	}
+	foundRoot := false
+	for _, root := range request.Settings.ExtraWorkspaceDirs {
+		if root == c.SessionAttachmentsDir(session.ID) {
+			foundRoot = true
+		}
+	}
+	if !foundRoot {
+		t.Fatalf("attachment root missing from %v", request.Settings.ExtraWorkspaceDirs)
+	}
+	history, err := c.store.ListMessages(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) < 1 || history[0].Content != "" || len(history[0].Attachments) != 1 {
+		t.Fatalf("canonical photo-only history = %+v", history)
+	}
+	if err := c.DeleteSession(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(c.SessionAttachmentsDir(session.ID)); !os.IsNotExist(err) {
+		t.Fatalf("attachment directory remains after session delete: %v", err)
+	}
+}
+
 func TestSessionStartIncludesInternalPlanMCP(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newTestCoreAdapterWithDaemon(t)
@@ -270,9 +330,21 @@ func TestStreamTurnPersistsErrorAndExcludesItFromReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
+	attachment, err := c.CreateAttachment(ctx, CreateAttachmentInput{
+		SessionID: session.ID,
+		Name:      "failure.png",
+		MIMEType:  "image/png",
+		Original:  []byte("original"),
+		Visual:    []byte("visual"),
+		Width:     2,
+		Height:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	fake.SendTurnError = errors.New("provider exploded")
-	events, err := c.StreamTurn(ctx, session.ID, "please fail", TurnOptions{})
+	events, err := c.StreamTurn(ctx, session.ID, "please fail", TurnOptions{AttachmentIDs: []string{attachment.ID}})
 	if err != nil {
 		t.Fatalf("stream turn: %v", err)
 	}
@@ -299,6 +371,9 @@ func TestStreamTurnPersistsErrorAndExcludesItFromReplay(t *testing.T) {
 	}
 	if len(history) != 2 || history[0].Kind != store.KindMessage || history[1].Kind != store.KindError {
 		t.Fatalf("unexpected persisted history: %+v", history)
+	}
+	if len(history[0].Attachments) != 1 || history[0].Attachments[0].ID != attachment.ID {
+		t.Fatalf("failed turn lost attachment: %+v", history[0])
 	}
 
 	fake.SendTurnError = nil

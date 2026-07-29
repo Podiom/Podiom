@@ -157,13 +157,31 @@ func (u SessionUsage) Add(d SessionUsage) SessionUsage {
 
 // Message is one ordered entry in a session's canonical history.
 type Message struct {
-	ID        int64
-	SessionID string
-	Seq       int
-	Role      MessageRole
-	Kind      MessageKind
-	Content   string
-	CreatedAt string
+	ID          int64
+	SessionID   string
+	Seq         int
+	Role        MessageRole
+	Kind        MessageKind
+	Content     string
+	CreatedAt   string
+	Attachments []Attachment
+}
+
+// Attachment is one durable photo associated with a user message. The original
+// and normalized visual bytes live under PODIOM_HOME; only safe metadata crosses
+// the API boundary.
+type Attachment struct {
+	ID         string
+	SessionID  string
+	MessageID  int64
+	Position   int `json:"-"`
+	Name       string
+	MIMEType   string
+	SizeBytes  int64
+	Width      int
+	Height     int
+	CreatedAt  string
+	VisualPath string `json:"-"`
 }
 
 // DreamTrigger records what caused a memory-consolidation dream.

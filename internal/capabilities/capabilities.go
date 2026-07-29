@@ -38,6 +38,7 @@ type ModelOption struct {
 	IsDefault              bool           `json:"is_default,omitempty"`
 	DefaultReasoningEffort string         `json:"default_reasoning_effort,omitempty"`
 	SupportedEfforts       []EffortOption `json:"supported_efforts,omitempty"`
+	InputModalities        []string       `json:"input_modalities,omitempty"`
 }
 
 // EffortOption is one selectable reasoning effort.
@@ -74,7 +75,9 @@ func Fallback(provider config.Provider, profile string) ProviderCapabilities {
 	if info, ok := config.ProviderInfoFor(provider); ok {
 		caps.Models = make([]ModelOption, 0, len(info.FallbackModels))
 		for _, m := range info.FallbackModels {
-			caps.Models = append(caps.Models, model(m.ID, m.DisplayName, m.Description, m.Default))
+			option := model(m.ID, m.DisplayName, m.Description, m.Default)
+			option.InputModalities = append([]string(nil), m.InputModalities...)
+			caps.Models = append(caps.Models, option)
 		}
 	}
 	return caps
@@ -113,6 +116,7 @@ func CloneModels(in []ModelOption) []ModelOption {
 	copy(out, in)
 	for i := range out {
 		out[i].SupportedEfforts = CloneEfforts(out[i].SupportedEfforts)
+		out[i].InputModalities = append([]string(nil), out[i].InputModalities...)
 	}
 	return out
 }

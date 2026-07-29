@@ -135,6 +135,12 @@ func (c *Core) validateAgentTargets(agent store.Agent) error {
 	if !config.KnownProvider(agent.Provider) {
 		return fmt.Errorf("unknown provider %q (want %s)", agent.Provider, config.ProviderIDsLabel())
 	}
+	// Permission-mode validity is enforced here for the same reason provider
+	// validity is: migration 28 dropped the CHECK constraint that used to catch
+	// it, so Go is now the only guard on the create/update path.
+	if agent.PermissionMode != "" && !config.KnownPermission(agent.PermissionMode) {
+		return fmt.Errorf("unknown permission_mode %q (want %s)", agent.PermissionMode, config.PermissionModesLabel())
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if agent.Profile != "" {
@@ -191,6 +197,11 @@ func (c *Core) DeleteAgent(ctx context.Context, name string) (DeleteAgentResult,
 	}
 	if err := c.store.DeleteSessionsByAgent(ctx, name); err != nil {
 		return DeleteAgentResult{}, err
+	}
+	for _, session := range sessions {
+		if err := os.RemoveAll(c.SessionAttachmentsDir(session.ID)); err != nil {
+			c.log.Warn("session attachment cleanup failed", "session", session.ID, "error", err)
+		}
 	}
 	if err := c.store.UnassignTasksByAgent(ctx, name); err != nil {
 		return DeleteAgentResult{}, err
@@ -289,6 +300,9 @@ func (c *Core) archiveAgentSessions(ctx context.Context, agent store.Agent, sess
 		raw = append(raw, '\n')
 		if err := os.WriteFile(filepath.Join(tmpDir, archiveSessionFilename(sess)), raw, 0o600); err != nil {
 			return "", fmt.Errorf("write session archive %q: %w", sess.ID, err)
+		}
+		if err := c.copySessionAttachments(sess.ID, filepath.Join(tmpDir, "attachments", sess.ID)); err != nil {
+			return "", err
 		}
 	}
 	if err := os.Rename(tmpDir, finalDir); err != nil {

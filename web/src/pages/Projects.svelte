@@ -76,6 +76,13 @@
 
   // New-project modal.
   let creating = $state(false);
+  // Source-control posture for a new project. The three postures the ledger
+  // supports are chosen here rather than being inferred from whether a repo is
+  // connected later — "no source control" is a real answer, not a missing one.
+  type GitPosture = "none" | "local" | "remote";
+  let npGitPosture = $state<GitPosture>("none");
+  let npGitRemote = $state("");
+  let npGitBranching = $state<"direct" | "branch-per-task">("direct");
   let npName = $state("");
   let npDescription = $state("");
   let npStack = $state("");
@@ -217,11 +224,24 @@
         description: npDescription.trim(),
         stack: npStack.split(",").map((s) => s.trim()).filter(Boolean),
         notes: npNotes.trim(),
+        git:
+          npGitPosture === "none"
+            ? undefined
+            : {
+                enabled: true,
+                remote: npGitPosture === "remote" ? npGitRemote.trim() : "",
+                default_branch: "main",
+                branching: npGitBranching,
+                commit: "ask",
+              },
       });
       const connectAfterCreate = npConnectGitHub;
       creating = false;
       npName = npDescription = npStack = npNotes = "";
       npConnectGitHub = false;
+      npGitPosture = "none";
+      npGitRemote = "";
+      npGitBranching = "direct";
       await load();
       if (connectAfterCreate) await openGitHub(created);
     } catch (e) {
@@ -633,12 +653,51 @@
         <div class="label-mono" style="margin:18px 0 8px">notes</div>
         <textarea class="field-area" rows="2" bind:value={npNotes} placeholder="Anything agents should know." style="min-height:56px"></textarea>
 
+        <div class="label-mono" style="margin:18px 0 8px">source control</div>
+        <div class="posture-row">
+          <button class="posture" class:sel={npGitPosture === "none"} onclick={() => (npGitPosture = "none")}>
+            <span class="posture-label">None</span>
+            <span class="posture-sub">No git. The agent never runs git commands.</span>
+          </button>
+          <button class="posture" class:sel={npGitPosture === "local"} onclick={() => (npGitPosture = "local")}>
+            <span class="posture-label">Local repo</span>
+            <span class="posture-sub">Podiom runs git init in the project folder.</span>
+          </button>
+          <button class="posture" class:sel={npGitPosture === "remote"} onclick={() => (npGitPosture = "remote")}>
+            <span class="posture-label">Clone a remote</span>
+            <span class="posture-sub">Podiom clones it and works in the checkout.</span>
+          </button>
+        </div>
+
+        {#if npGitPosture === "remote"}
+          <input class="field-input mono" style="margin-top:10px" bind:value={npGitRemote} placeholder="git@github.com:you/app.git" />
+          <div class="posture-hint">Podiom uses your own git credentials — set them up in Settings → Git.</div>
+        {/if}
+
+        {#if npGitPosture !== "none"}
+          <div class="label-mono" style="margin:18px 0 8px">branching</div>
+          <div class="posture-row">
+            <button class="posture" class:sel={npGitBranching === "direct"} onclick={() => (npGitBranching = "direct")}>
+              <span class="posture-label">Direct</span>
+              <span class="posture-sub">Work happens on the default branch.</span>
+            </button>
+            <button class="posture" class:sel={npGitBranching === "branch-per-task"} onclick={() => (npGitBranching = "branch-per-task")}>
+              <span class="posture-label">Branch per task</span>
+              <span class="posture-sub">Each feature or fix gets its own branch.</span>
+            </button>
+          </div>
+        {/if}
+
         <label class="repo-check">
           <input type="checkbox" bind:checked={npConnectGitHub} />
           <span>Connect GitHub after creating</span>
         </label>
 
-        <button class="modal-cta" disabled={!npName.trim()} onclick={submit}>Create project</button>
+        <button
+          class="modal-cta"
+          disabled={!npName.trim() || (npGitPosture === "remote" && !npGitRemote.trim())}
+          onclick={submit}
+        >Create project</button>
       </div>
     </div>
   </div>
@@ -1299,5 +1358,40 @@
     .repo-actions {
       justify-content: stretch;
     }
+  }
+
+  .posture-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .posture {
+    flex: 1 1 150px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    border: 1px solid #E4DED4;
+    background: #FBF9F6;
+    cursor: pointer;
+  }
+  .posture.sel {
+    border-color: #CFE3D8;
+    background: #EAF1ED;
+  }
+  .posture-label {
+    font: 600 12px "Inter", system-ui, sans-serif;
+    color: #2C2A27;
+  }
+  .posture-sub {
+    font: 400 11px/1.5 "Inter", system-ui, sans-serif;
+    color: #7A7268;
+  }
+  .posture-hint {
+    font: 400 11.5px/1.6 "Inter", system-ui, sans-serif;
+    color: #7A7268;
+    margin-top: 6px;
   }
 </style>

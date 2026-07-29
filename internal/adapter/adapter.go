@@ -6,7 +6,9 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Podiom/Podiom/internal/capabilities"
@@ -63,9 +65,51 @@ type TurnRequest struct {
 	Handle    Handle
 	Message   string
 	History   []store.Message
+	Images    []ImageInput
 	Settings  TurnSettings
 	Relay     PermissionRelay
 	Input     UserInputRelay
+}
+
+// ImageInput is one normalized, model-ready photo in the current user turn.
+// Path is daemon-owned and points inside the session attachment directory.
+type ImageInput struct {
+	Name string
+	Path string
+}
+
+func messageWithImages(message string, images []ImageInput) string {
+	if len(images) == 0 {
+		return message
+	}
+	message = messageWithImageFallback(message, images)
+	var b strings.Builder
+	b.WriteString(message)
+	b.WriteString("\n\n<attached_photos>\n")
+	for i, image := range images {
+		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, image.Name, image.Path)
+	}
+	b.WriteString("</attached_photos>\nTreat these files as visual context supplied by the user.")
+	return b.String()
+}
+
+func messageWithImageFallback(message string, images []ImageInput) string {
+	if strings.TrimSpace(message) == "" && len(images) > 0 {
+		return "Please inspect the attached photo(s)."
+	}
+	return message
+}
+
+func historyMessageContent(message store.Message) string {
+	content := message.Content
+	for _, attachment := range message.Attachments {
+		if attachment.VisualPath != "" {
+			content += fmt.Sprintf("\n[Attached photo: %s — %s]", attachment.Name, attachment.VisualPath)
+		} else {
+			content += fmt.Sprintf("\n[Attached photo: %s]", attachment.Name)
+		}
+	}
+	return strings.TrimSpace(content)
 }
 
 // TurnSettings are the current session settings needed by per-turn providers
@@ -92,6 +136,11 @@ type TurnSettings struct {
 	// requests are resolved without a human — via AllowedTools natively on
 	// Claude, and via the in-process Relay on Codex — never queued for a person.
 	Unattended bool
+	// PlanMode asks the provider to run this turn in its own native plan mode:
+	// explore read-only, then propose a plan instead of implementing it. Only
+	// meaningful for providers whose config.ProviderInfo.NativePlanMode is true;
+	// others ignore it and Podiom falls back to its own plan gate.
+	PlanMode bool
 	// AllowedTools is the preapproved allow-list for an unattended run. Tools not
 	// listed are auto-denied. Empty means deny all side-effecting actions.
 	AllowedTools  []string
@@ -202,6 +251,12 @@ const (
 	// metadata: core records it on the goal timeline for goal-linked runs, where
 	// yolo mode means tool calls never reach the permission broker.
 	EventToolUse EventKind = "tool_use"
+	// EventPlanProposed carries a plan produced by the provider's own plan mode.
+	// The two providers surface it differently — Claude writes a file, Codex
+	// emits a typed plan item — and both adapters normalize to this event so
+	// core has one capture path. Emitted at most once per turn; a plan turn may
+	// legitimately produce none.
+	EventPlanProposed EventKind = "plan_proposed"
 	// EventRateLimited reports that the active turn cannot continue on this
 	// backing target because the provider rate-limited it.
 	EventRateLimited EventKind = "rate_limited"
@@ -233,6 +288,17 @@ type Event struct {
 	TurnUsage         *TurnUsage
 	NativeAgent       *NativeAgentActivity
 	ToolUse           *ToolUse
+	PlanProposal      *PlanProposal
+}
+
+// PlanProposal is a plan produced by a provider's native plan mode, normalized
+// across providers. Markdown is authoritative and always set; FilePath is the
+// provider's own artifact when it wrote one (Claude) and empty otherwise
+// (Codex), and is informational — Podiom keeps its own canonical copy either
+// way, so the provider's file may be overwritten or absent later.
+type PlanProposal struct {
+	Markdown string
+	FilePath string
 }
 
 // Adapter abstracts over provider process models: per-turn Claude processes and

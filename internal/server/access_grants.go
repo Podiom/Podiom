@@ -158,8 +158,8 @@ func (s *Server) installSkillGrant(ctx context.Context, payload map[string]strin
 // explicitly consented.
 func (s *Server) setAgentPermissionMode(ctx context.Context, agentName, mode string) error {
 	pm := config.PermissionMode(strings.TrimSpace(mode))
-	if pm != config.PermissionApprove && pm != config.PermissionYolo {
-		return fmt.Errorf("permission mode must be approve or yolo, got %q", mode)
+	if !config.KnownPermission(pm) {
+		return fmt.Errorf("permission mode must be one of %s, got %q", config.PermissionModesLabel(), mode)
 	}
 	agent, err := s.core.GetAgent(ctx, agentName)
 	if err != nil {

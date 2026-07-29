@@ -50,6 +50,7 @@ type chatRequest struct {
 	SessionID                      string                `json:"session_id,omitempty"`
 	AgentName                      string                `json:"agent_name,omitempty"`
 	Message                        string                `json:"message"`
+	AttachmentIDs                  []string              `json:"attachment_ids,omitempty"`
 	Provider                       config.Provider       `json:"provider,omitempty"`
 	Profile                        string                `json:"profile,omitempty"`
 	Model                          string                `json:"model,omitempty"`
@@ -626,7 +627,16 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	rest := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if id, sub, ok := strings.Cut(rest, "/"); ok {
+		if sub == "attachments" {
+			s.handleSessionAttachments(w, r, id)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	id := rest
 	if id == "" {
 		http.Error(w, "session id is required", http.StatusBadRequest)
 		return
@@ -701,7 +711,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Message) == "" {
+	if strings.TrimSpace(req.Message) == "" && len(req.AttachmentIDs) == 0 {
 		http.Error(w, "message is required", http.StatusBadRequest)
 		return
 	}
@@ -739,6 +749,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	writeStreamEvent(enc, flusher, streamEvent{Type: "session", Session: &session})
 
+	if len(req.AttachmentIDs) > 0 && strings.HasPrefix(strings.TrimSpace(req.Message), "/") {
+		writeStreamEvent(enc, flusher, streamEvent{Type: "error", Error: "photos cannot be attached to slash commands"})
+		return
+	}
 	slash, err := s.core.HandleSlashCommand(ctx, session.ID, req.Message)
 	if err != nil {
 		writeStreamEvent(enc, flusher, streamEvent{Type: "error", Error: err.Error()})
@@ -791,6 +805,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	events, err := s.core.StreamTurn(ctx, session.ID, req.Message, core.TurnOptions{
+		AttachmentIDs:    req.AttachmentIDs,
 		PermissionTurnID: turnID,
 		PermissionRelay:  s.broker,
 		UserInputRelay:   s.input,

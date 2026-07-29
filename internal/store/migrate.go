@@ -1082,6 +1082,128 @@ var migrations = []migration{
 			SELECT RAISE(ABORT, 'session origin is immutable');
 		END;`,
 	},
+	{
+		version: 27,
+		name:    "message_photo_attachments",
+		sql: `CREATE TABLE attachments (
+			id         TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+			message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+			position   INTEGER NOT NULL DEFAULT 0,
+			name       TEXT NOT NULL,
+			mime_type  TEXT NOT NULL,
+			size_bytes INTEGER NOT NULL,
+			width      INTEGER NOT NULL,
+			height     INTEGER NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		CREATE INDEX idx_attachments_session ON attachments(session_id, created_at);
+		CREATE INDEX idx_attachments_message ON attachments(message_id, position);`,
+	},
+	{
+		// Permission-mode validity is enforced in Go against the config registry
+		// (config.KnownPermission); baking the mode list into CHECK constraints
+		// made every new mode a schema migration — the same reasoning that
+		// dropped the provider CHECKs in migration 25. This rebuilds agents and
+		// sessions identically minus the permission_mode CHECK clauses, which is
+		// what admits the new 'auto' mode. All other constraints, indexes, and
+		// triggers are recreated verbatim.
+		version: 28,
+		name:    "drop_permission_mode_checks",
+		sql: `CREATE TABLE agents_new (
+			name            TEXT PRIMARY KEY,
+			provider        TEXT NOT NULL,
+			profile         TEXT NOT NULL DEFAULT '',
+			model           TEXT NOT NULL DEFAULT '',
+			effort          TEXT NOT NULL DEFAULT '',
+			permission_mode TEXT NOT NULL,
+			fallback_json   TEXT NOT NULL DEFAULT '[]',
+			mcp_config      TEXT NOT NULL DEFAULT '',
+			created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+			mcp_servers_json TEXT NOT NULL DEFAULT '[]',
+			avatar_updated_at TEXT NOT NULL DEFAULT ''
+		);
+
+		INSERT INTO agents_new
+			(name, provider, profile, model, effort, permission_mode, fallback_json, mcp_config,
+			 created_at, updated_at, mcp_servers_json, avatar_updated_at)
+		SELECT name, provider, profile, model, effort, permission_mode, fallback_json, mcp_config,
+			 created_at, updated_at, mcp_servers_json, avatar_updated_at
+		FROM agents;
+
+		DROP TABLE agents;
+		ALTER TABLE agents_new RENAME TO agents;
+
+		CREATE TABLE sessions_new (
+			id                TEXT PRIMARY KEY,
+			agent_name        TEXT NOT NULL REFERENCES agents(name) ON UPDATE CASCADE ON DELETE RESTRICT,
+			provider          TEXT NOT NULL,
+			profile           TEXT NOT NULL DEFAULT '',
+			model             TEXT NOT NULL DEFAULT '',
+			effort            TEXT NOT NULL DEFAULT '',
+			permission_mode   TEXT NOT NULL,
+			origin            TEXT NOT NULL CHECK (origin IN ('web', 'cli', 'onboarding', 'interview', 'schedule', 'roadmap', 'goal')),
+			schedule_id       TEXT,
+			run_id            TEXT,
+			rolling_summary   TEXT NOT NULL DEFAULT '',
+			provider_handle   TEXT NOT NULL DEFAULT '',
+			created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+			name              TEXT NOT NULL DEFAULT '',
+			description       TEXT NOT NULL DEFAULT '',
+			auto_named        INTEGER NOT NULL DEFAULT 0,
+			task_id           TEXT,
+			project_id        TEXT NOT NULL DEFAULT '',
+			dreamed_at        TEXT,
+			plan_state        TEXT NOT NULL DEFAULT 'none'
+				CHECK (plan_state IN ('none', 'pending_submission', 'awaiting_approval')),
+			plan_explicit     INTEGER NOT NULL DEFAULT 0,
+			plan_file_path    TEXT NOT NULL DEFAULT '',
+			plan_markdown     TEXT NOT NULL DEFAULT '',
+			plan_submitted_at TEXT NOT NULL DEFAULT '',
+			plan_updated_at   TEXT NOT NULL DEFAULT '',
+			context_tokens    INTEGER NOT NULL DEFAULT 0,
+			context_limit     INTEGER NOT NULL DEFAULT 0,
+			goal_id           TEXT,
+			usage_input_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_output_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			usage_cache_write_tokens INTEGER NOT NULL DEFAULT 0
+		);
+
+		INSERT INTO sessions_new
+			(id, agent_name, provider, profile, model, effort, permission_mode, origin, schedule_id,
+			 run_id, rolling_summary, provider_handle, created_at, updated_at, name, description,
+			 auto_named, task_id, project_id, dreamed_at, plan_state, plan_explicit, plan_file_path,
+			 plan_markdown, plan_submitted_at, plan_updated_at, context_tokens, context_limit, goal_id,
+			 usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens)
+		SELECT id, agent_name, provider, profile, model, effort, permission_mode, origin, schedule_id,
+			 run_id, rolling_summary, provider_handle, created_at, updated_at, name, description,
+			 auto_named, task_id, project_id, dreamed_at, plan_state, plan_explicit, plan_file_path,
+			 plan_markdown, plan_submitted_at, plan_updated_at, context_tokens, context_limit, goal_id,
+			 usage_input_tokens, usage_output_tokens, usage_cache_read_tokens, usage_cache_write_tokens
+		FROM sessions;
+
+		DROP TABLE sessions;
+		ALTER TABLE sessions_new RENAME TO sessions;
+
+		CREATE INDEX idx_sessions_agent_name ON sessions(agent_name);
+		CREATE INDEX idx_sessions_dreamed ON sessions(agent_name, dreamed_at);
+		CREATE INDEX idx_sessions_goal_id ON sessions(goal_id);
+		CREATE INDEX idx_sessions_origin ON sessions(origin);
+		CREATE INDEX idx_sessions_plan_state ON sessions(plan_state);
+		CREATE INDEX idx_sessions_project_id ON sessions(project_id);
+		CREATE INDEX idx_sessions_schedule_id ON sessions(schedule_id);
+		CREATE INDEX idx_sessions_task_id ON sessions(task_id);
+
+		CREATE TRIGGER sessions_origin_immutable
+		BEFORE UPDATE OF origin ON sessions
+		BEGIN
+			SELECT RAISE(ABORT, 'session origin is immutable');
+		END;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

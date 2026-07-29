@@ -192,6 +192,10 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	if err := offerGitSetup(ctx, u, out); err != nil {
+		return err
+	}
+
 	section(out, "Choosing a provider")
 	profiles := loadProfilesForOnboarding()
 	provider, profile, err := chooseProvider(u, loggedIn, profiles)

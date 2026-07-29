@@ -96,8 +96,13 @@ func fetchClaudeModels(ctx context.Context, configDir string) ([]capabilities.Mo
 func parseClaudeModelList(raw []byte) (models []capabilities.ModelOption, hasMore bool, lastID string, err error) {
 	var resp struct {
 		Data []struct {
-			ID          string `json:"id"`
-			DisplayName string `json:"display_name"`
+			ID           string `json:"id"`
+			DisplayName  string `json:"display_name"`
+			Capabilities struct {
+				ImageInput struct {
+					Supported bool `json:"supported"`
+				} `json:"image_input"`
+			} `json:"capabilities"`
 		} `json:"data"`
 		HasMore bool   `json:"has_more"`
 		LastID  string `json:"last_id"`
@@ -115,12 +120,17 @@ func parseClaudeModelList(raw []byte) (models []capabilities.ModelOption, hasMor
 		if display == "" {
 			display = id
 		}
-		out = append(out, capabilities.ModelOption{
+		option := capabilities.ModelOption{
 			ID:          id,
 			Model:       id,
 			DisplayName: display,
 			Description: display + ".",
-		})
+		}
+		option.InputModalities = []string{"text"}
+		if item.Capabilities.ImageInput.Supported {
+			option.InputModalities = append(option.InputModalities, "image")
+		}
+		out = append(out, option)
 	}
 	return out, resp.HasMore, resp.LastID, nil
 }

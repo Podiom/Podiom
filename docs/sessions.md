@@ -2,7 +2,8 @@
 
 A Podiom session is the durable conversation unit. It stores the bound agent,
 current settings, immutable origin, provider resume handle, rolling summary area,
-and the full ordered message history in SQLite.
+and the full ordered message history in SQLite. User messages may also own
+durable [photo attachments](photo-attachments.md).
 
 ## Origin
 
@@ -35,6 +36,19 @@ provider handle, starts a fresh backing session/thread on the next live turn, an
 replays canonical history. If a rolling summary is available, replay sends the
 summary plus the most recent turns verbatim instead of the full transcript.
 
+Photo attachment metadata is part of canonical message history. Each attachment
+row belongs to its session and user message, while its original and normalized
+JPEG live below `$PODIOM_HOME/attachments/<session-id>/<attachment-id>/`. Fresh
+provider replay preserves attachment names and readable normalized paths but
+does not automatically resend every historical photo as a current visual input.
+Rolling-summary prompts, automatic naming, and copied/exported transcripts retain
+photo names so the visual context does not disappear silently during compaction.
+
+Agent and completed-roadmap-task archives copy the associated attachment files.
+Deleting a session cascades its attachment metadata and removes its live
+attachment directory. Backing up `$PODIOM_HOME` includes both canonical SQLite
+metadata and live photo files; restore both together.
+
 When an **interactive** turn hits a provider session limit, Podiom does not fall
 back silently: it blocks the turn and prompts the user (a `fallback_request` over
 the WebSocket) to either advance their configured fallback chain or switch to a
@@ -59,6 +73,9 @@ metadata and mark it as user-authored.
 Slash commands are session-scoped controls and are not appended to canonical chat
 history.
 
+Slash commands cannot carry photo attachments. Ordinary user turns may contain
+text, one to four photos, or photos without text.
+
 New web sessions may be created with draft model, effort, permission mode, and
 project settings. If a project is selected before the first message, the session
 stores `project_id` and receives the same project context used by project-linked
@@ -69,7 +86,7 @@ roadmap sessions.
 | `/model <name>` | Set the model for subsequent turns. |
 | `/effort <level>` | Set a provider-supported reasoning effort for subsequent turns. |
 | `/profile <name|default>` | Switch auth profile; `default` clears the profile and uses the provider's normal login. The next turn replays history into a fresh backing session/thread. |
-| `/permission approve|yolo` | Override permission mode for subsequent turns. |
+| `/permission approve|auto|yolo` | Override permission mode for subsequent turns. |
 | `/name <text>` | Set the session display name. |
 | `/describe <text>` | Set the session description. |
 | `/compact` | Summarize older history and free the context window. Forces a rolling summary, clears the provider handle, and replays the summary plus recent turns into a fresh backing session/thread on the next turn. |

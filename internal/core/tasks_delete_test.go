@@ -108,10 +108,22 @@ func TestArchiveDoneTasksWritesAndRemoves(t *testing.T) {
 	defer cleanup()
 
 	task, sess := startedTask(t, c, "finish the feature")
-	if _, err := c.store.AppendMessages(ctx, sess.ID, []store.Message{
-		{Role: store.RoleUser, Content: "do the thing"},
-		{Role: store.RoleAssistant, Content: "done"},
-	}); err != nil {
+	attachment, err := c.CreateAttachment(ctx, CreateAttachmentInput{
+		SessionID: sess.ID,
+		Name:      "proof.png",
+		MIMEType:  "image/png",
+		Original:  []byte("original"),
+		Visual:    []byte("visual"),
+		Width:     2,
+		Height:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.store.AppendUserMessage(ctx, sess.ID, "do the thing", []string{attachment.ID}); err != nil {
+		t.Fatalf("append user message: %v", err)
+	}
+	if _, err := c.store.AppendMessages(ctx, sess.ID, []store.Message{{Role: store.RoleAssistant, Content: "done"}}); err != nil {
 		t.Fatalf("append messages: %v", err)
 	}
 	done, err := c.store.GetTask(ctx, task.ID)
@@ -157,6 +169,13 @@ func TestArchiveDoneTasksWritesAndRemoves(t *testing.T) {
 	}
 	if len(archived.Sessions) != 1 || archived.Sessions[0].Session.ID != sess.ID || len(archived.Sessions[0].Messages) != 2 {
 		t.Fatalf("archived session/messages wrong: %+v", archived.Sessions)
+	}
+	archivedVisual := filepath.Join(result.ArchivePath, "attachments", sess.ID, attachment.ID, "visual.jpg")
+	if raw, err := os.ReadFile(archivedVisual); err != nil || string(raw) != "visual" {
+		t.Fatalf("archived attachment visual = %q, err=%v", raw, err)
+	}
+	if _, err := os.Stat(c.SessionAttachmentsDir(sess.ID)); !os.IsNotExist(err) {
+		t.Fatalf("live attachment directory remains after archive: %v", err)
 	}
 
 	// Both the task and its session are removed from the active app.

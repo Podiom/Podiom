@@ -308,6 +308,13 @@ func (s *Server) handleWSMessage(ctx context.Context, writer *wsWriter, msg Clie
 		if err != nil {
 			return err
 		}
+		if msg.PlanMode != nil {
+			session, err = s.core.SetPlanMode(context.Background(), msg.SessionID, *msg.PlanMode)
+			if err != nil {
+				return err
+			}
+			s.turns.recordSession(session)
+		}
 		if err := writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, SessionID: session.ID, Session: &session}); err != nil {
 			return err
 		}
@@ -389,6 +396,10 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 		return
 	}
 	_ = writer.write(ctx, ServerMessage{Type: "session", RequestID: msg.RequestID, Session: &session})
+	if len(msg.AttachmentIDs) > 0 && strings.HasPrefix(strings.TrimSpace(msg.Message), "/") {
+		s.writePersistedSessionError(ctx, writer, msg.RequestID, session.ID, "photos cannot be attached to slash commands")
+		return
+	}
 	slash, err := s.core.HandleSlashCommand(daemonCtx, session.ID, msg.Message)
 	if err != nil {
 		s.writePersistedSessionError(ctx, writer, msg.RequestID, session.ID, err.Error())
@@ -428,6 +439,7 @@ func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMess
 	defer cancel()
 
 	events, err := s.core.StreamTurn(turnCtx, session.ID, msg.Message, core.TurnOptions{
+		AttachmentIDs:    msg.AttachmentIDs,
 		PermissionTurnID: turnID,
 		PermissionRelay:  s.broker,
 		UserInputRelay:   s.input,

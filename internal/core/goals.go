@@ -681,8 +681,8 @@ func validateAccessPayload(kind store.AccessRequestKind, payload map[string]stri
 		return nil
 	case store.AccessPermissionMode:
 		mode := strings.TrimSpace(payload["mode"])
-		if mode != "approve" && mode != "yolo" {
-			return fmt.Errorf("permission_mode request needs payload field \"mode\" of approve or yolo")
+		if !config.KnownPermission(config.PermissionMode(mode)) {
+			return fmt.Errorf("permission_mode request needs payload field %q of %s", "mode", config.PermissionModesLabel())
 		}
 		return nil
 	default:

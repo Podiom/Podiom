@@ -53,6 +53,39 @@ snapshot lives under `~/.podiom/projects/<id>/repo/`. Treat that `repo/`
 directory as the local codebase for inspection, but do **not** assume it is a Git
 checkout: there may be no `.git`, no remote, and no branch/push/PR capability.
 
+## Source control
+
+A project may also declare a `git:` block saying how it wants to be versioned:
+
+```yaml
+  git:
+    enabled: true                        # false → this project uses no source control
+    remote: git@github.com:me/app.git    # "" → a local repo, created in place
+    default_branch: main
+    branching: branch-per-task           # or: direct
+    commit: ask                          # ask | auto
+```
+
+Call **`podiom_project_context`** to see the project you are working in and its
+full source-control state. It takes no arguments — the project comes from your
+session.
+
+Standing rules:
+
+- If the project has no source control, do not run git commands at all.
+- If it uses `branch-per-task`, call **`podiom_start_work`** before you edit
+  anything. It creates and checks out the right branch for you. Do not create
+  branches yourself; calling it twice for the same work is safe.
+- Commit only when the user asks, unless the project's `commit` policy is
+  `auto`.
+- Never revert changes you did not make. Do not use `git commit --amend`,
+  `git reset --hard`, or `git checkout --` on work you did not author unless the
+  user explicitly asks.
+- If the project uses git but git is not set up on this machine, ask the user
+  **once** whether to set it up in Settings → Git. If they decline, do the work
+  anyway, run no git commands, and say plainly in your final message that the
+  changes are uncommitted. Do not ask again.
+
 ## Risky or comprehensive implementation work
 
 When the user asks you to implement code and you determine the work is risky,

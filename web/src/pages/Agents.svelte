@@ -732,7 +732,7 @@
         <div class="ed-row">
           <span class="ed-key">permission</span>
           <div class="ed-chips">
-            {#each ["approve", "yolo"] as p}
+            {#each ["approve", "auto", "yolo"] as p}
               <button style={chip(p === edPermission)} onclick={() => (edPermission = p)}>{p}</button>
             {/each}
           </div>

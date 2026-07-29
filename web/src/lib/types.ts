@@ -52,7 +52,7 @@ export interface LogStreamEvent {
 
 export type { Provider } from "./providers";
 import type { Provider } from "./providers";
-export type PermissionMode = "approve" | "yolo";
+export type PermissionMode = "approve" | "auto" | "yolo";
 
 export interface EffortOption {
   effort: string;
@@ -68,6 +68,7 @@ export interface ModelOption {
   is_default?: boolean;
   default_reasoning_effort?: string;
   supported_efforts?: EffortOption[];
+  input_modalities?: string[];
 }
 
 export interface ProviderCapabilities {
@@ -266,9 +267,36 @@ export interface Project {
   status: string;
   stack: string[];
   repo: ProjectRepo | null;
+  git: ProjectGit | null;
   roadmap: string[];
   notes: string;
   instructions: string;
+}
+
+// ProjectGit declares how a project wants to be versioned. The three postures
+// are expressed by two fields: disabled; enabled with no remote (a local repo
+// created in place); enabled with a remote (cloned).
+export interface ProjectGit {
+  enabled: boolean;
+  remote: string;
+  default_branch: string;
+  branching: "direct" | "branch-per-task";
+  branch_prefixes?: Record<string, string>;
+  commit: "ask" | "auto";
+}
+
+// GitStatus is the host's readiness to do source control at all, independent of
+// any single project.
+export interface GitStatus {
+  found: boolean;
+  path?: string;
+  version?: string;
+  user_name?: string;
+  user_email?: string;
+  ssh_key?: string;
+  ready: boolean;
+  hint?: string;
+  error?: string;
 }
 
 export interface ProjectInstructions {
@@ -655,6 +683,19 @@ export interface Message {
   Kind?: MessageKind;
   Content: string;
   CreatedAt?: string;
+  Attachments?: Attachment[];
+}
+
+export interface Attachment {
+  ID: string;
+  SessionID: string;
+  MessageID: number;
+  Name: string;
+  MIMEType: string;
+  SizeBytes: number;
+  Width: number;
+  Height: number;
+  CreatedAt?: string;
 }
 
 export interface PermissionRequest {
@@ -863,6 +904,7 @@ export type ClientMessage =
       model?: string;
       effort?: string;
       permission_mode?: PermissionMode;
+      plan_mode?: boolean;
     }
   | {
       type: "create_session";
@@ -882,6 +924,7 @@ export type ClientMessage =
       agent_name?: string;
       session_id?: string;
       message: string;
+      attachment_ids?: string[];
       provider?: Provider;
       profile?: string;
       model?: string;

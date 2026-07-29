@@ -100,6 +100,12 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 	if req.Settings.WorkspaceDir == "" {
 		return nil, errors.New("claude workspace dir is required")
 	}
+	// Snapshot before the process starts so the window covers the whole turn.
+	var plans planSnapshot
+	if req.Settings.PlanMode {
+		plans = snapshotPlans(claudePlansDir(req.Settings.ProfileDir, req.Settings.WorkspaceDir))
+	}
+
 	run, err := c.startProcess(ctx, req, true)
 	if err != nil {
 		c.providerLog(req).Warn("provider turn setup failed", "stage", "args", "error", err)
@@ -110,6 +116,18 @@ func (c *Claude) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, e
 	go func() {
 		defer close(out)
 		c.consumeProcess(ctx, req, run, out, true)
+		if !req.Settings.PlanMode {
+			return
+		}
+		// A plan turn need not produce a plan — the model may still be
+		// exploring, or may have answered a question instead.
+		proposal := detectPlan(plans)
+		if proposal == nil {
+			c.providerLog(req).Info("provider turn produced no plan", "event", "provider", "stage", "plan", "plans_dir", plans.dir)
+			return
+		}
+		c.providerLog(req).Info("provider proposed a plan", "event", "provider", "stage", "plan", "path", proposal.FilePath)
+		out <- Event{Kind: EventPlanProposed, PlanProposal: proposal}
 	}()
 	return out, nil
 }
@@ -164,7 +182,7 @@ func (c *Claude) startProcess(ctx context.Context, req TurnRequest, allowNative 
 		c.providerLog(req).Warn("provider process start failed", "stage", "start", "error", err)
 		return claudeProcess{}, fmt.Errorf("start claude: %w", err)
 	}
-	if err := writeClaudeInput(stdin, req.Message, req.History, req.Handle.ID != ""); err != nil {
+	if err := writeClaudeInput(stdin, messageWithImages(req.Message, req.Images), req.History, req.Handle.ID != ""); err != nil {
 		_ = podiomexec.Kill(cmd)
 		cleanup()
 		if nativeEnabled {
@@ -473,10 +491,32 @@ func (c *Claude) args(req TurnRequest, allowNative bool) ([]string, func(), bool
 	}
 	cleanup := func() {}
 	needsPermissionMCP := false
+	if req.Settings.PlanMode {
+		// Claude enforces read-only itself in plan mode, and its own phased
+		// workflow (Explore/Plan subagents) is what produces the plan. Podiom
+		// adds nothing here but the flag.
+		args = append(args, "--permission-mode", "plan")
+		configPath, err := c.writeMCPConfig(req)
+		if err != nil {
+			return nil, cleanup, nativeEnabled, err
+		}
+		cleanup = func() { _ = os.Remove(configPath) }
+		args = append(args, "--mcp-config", configPath, "--strict-mcp-config")
+		return args, cleanup, nativeEnabled, nil
+	}
 	switch req.Settings.PermissionMode {
 	case config.PermissionYolo:
 		args = append(args, "--permission-mode", "bypassPermissions")
 	default:
+		if req.Settings.PermissionMode == config.PermissionAuto {
+			// acceptEdits auto-approves file edits; every other tool still goes
+			// through the relay configured below. Claude's own richer "auto"
+			// mode is deliberately not used: measured against 2.1.220,
+			// `--permission-mode auto` is silently downgraded to "default" in
+			// headless -p runs (as is "manual"), so acceptEdits is the only
+			// setting that actually takes effect here.
+			args = append(args, "--permission-mode", "acceptEdits")
+		}
 		// Unattended (scheduled) preapproved run: there is no human to answer a
 		// prompt, so use Claude's native allow-list and rely on `claude -p`
 		// auto-denying anything not pre-approved — no permission MCP relay (§7.7).
@@ -546,7 +586,10 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 		turnID = req.SessionID
 	}
 	var permission map[string]any
-	if req.Settings.PermissionMode != config.PermissionYolo && !req.Settings.Unattended {
+	// Plan mode needs no relay: Claude's executor enforces read-only itself, so
+	// nothing reaches a permission prompt and spawning the helper would be dead
+	// weight.
+	if req.Settings.PermissionMode != config.PermissionYolo && !req.Settings.Unattended && !req.Settings.PlanMode {
 		timeout := req.Settings.PermissionTimeout
 		if timeout <= 0 {
 			timeout = c.permissionTimeout
@@ -628,10 +671,11 @@ func writeClaudeInput(stdin io.WriteCloser, message string, history []store.Mess
 	enc := json.NewEncoder(stdin)
 	if !resumed {
 		for _, msg := range history {
-			if msg.Content == "" {
+			content := historyMessageContent(msg)
+			if content == "" {
 				continue
 			}
-			if err := enc.Encode(claudeInputMessage(string(msg.Role), msg.Content)); err != nil {
+			if err := enc.Encode(claudeInputMessage(string(msg.Role), content)); err != nil {
 				return fmt.Errorf("write history to claude: %w", err)
 			}
 		}

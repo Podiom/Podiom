@@ -41,10 +41,22 @@ server:
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := c.store.AppendMessages(ctx, session.ID, []store.Message{
-		{Role: store.RoleUser, Content: "remember alpha"},
-		{Role: store.RoleAssistant, Content: "alpha noted"},
-	}); err != nil {
+	attachment, err := c.CreateAttachment(ctx, CreateAttachmentInput{
+		SessionID: session.ID,
+		Name:      "memory.png",
+		MIMEType:  "image/png",
+		Original:  []byte("original"),
+		Visual:    []byte("visual"),
+		Width:     2,
+		Height:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.store.AppendUserMessage(ctx, session.ID, "remember alpha", []string{attachment.ID}); err != nil {
+		t.Fatalf("append user message: %v", err)
+	}
+	if _, err := c.store.AppendMessages(ctx, session.ID, []store.Message{{Role: store.RoleAssistant, Content: "alpha noted"}}); err != nil {
 		t.Fatalf("append messages: %v", err)
 	}
 
@@ -88,6 +100,10 @@ server:
 	}
 	if len(archived.Messages) != 2 || archived.Messages[0].Content != "remember alpha" || archived.Messages[1].Content != "alpha noted" {
 		t.Fatalf("bad archived messages: %+v", archived.Messages)
+	}
+	archivedVisual := filepath.Join(result.ArchivePath, "attachments", session.ID, attachment.ID, "visual.jpg")
+	if raw, err := os.ReadFile(archivedVisual); err != nil || string(raw) != "visual" {
+		t.Fatalf("archived attachment visual = %q, err=%v", raw, err)
 	}
 	if _, err := c.store.GetAgent(ctx, "atlas"); err == nil {
 		t.Fatal("expected atlas agent row to be deleted")

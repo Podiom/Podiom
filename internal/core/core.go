@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -87,6 +88,8 @@ type Core struct {
 
 	capMu    sync.Mutex
 	capCache map[string]capabilityCacheEntry
+
+	attachmentMu sync.Mutex
 }
 
 type capabilityCacheEntry struct {
@@ -166,6 +169,15 @@ func New(opts Options) (*Core, error) {
 	}
 	if err := c.store.InterruptRunningGoalRuns(context.Background()); err != nil {
 		return nil, err
+	}
+	if err := os.MkdirAll(c.paths.AttachmentsDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create attachments dir: %w", err)
+	}
+	if err := c.CleanupAttachments(context.Background(), time.Now().UTC()); err != nil {
+		c.log.Warn("attachment cleanup failed", "error", err)
+	}
+	if !c.noBg {
+		go c.attachmentCleanupLoop()
 	}
 	return c, nil
 }

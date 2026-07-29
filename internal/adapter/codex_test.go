@@ -32,11 +32,11 @@ func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	if approveStart["approvalPolicy"] != "on-request" || approveStart["sandbox"] != "read-only" {
 		t.Fatalf("bad approve thread params: %#v", approveStart)
 	}
-	approveTurn := codexTurnStartParams("thread-1", "hi", TurnSettings{
+	approveTurn := codexTurnStartParams("thread-1", "hi", nil, TurnSettings{
 		Effort:         "high",
 		PermissionMode: config.PermissionApprove,
 		WorkspaceDir:   "/tmp/workspace",
-	})
+	}, nil)
 	policy, ok := approveTurn["sandboxPolicy"].(map[string]any)
 	if !ok || policy["type"] != "readOnly" || policy["networkAccess"] != false {
 		t.Fatalf("bad approve turn sandbox policy: %#v", approveTurn["sandboxPolicy"])
@@ -52,10 +52,10 @@ func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	if yoloStart["approvalPolicy"] != "never" || yoloStart["sandbox"] != "danger-full-access" {
 		t.Fatalf("bad yolo thread params: %#v", yoloStart)
 	}
-	yoloTurn := codexTurnStartParams("thread-1", "hi", TurnSettings{
+	yoloTurn := codexTurnStartParams("thread-1", "hi", nil, TurnSettings{
 		PermissionMode: config.PermissionYolo,
 		WorkspaceDir:   "/tmp/workspace",
-	})
+	}, nil)
 	policy, ok = yoloTurn["sandboxPolicy"].(map[string]any)
 	if !ok || policy["type"] != "dangerFullAccess" {
 		t.Fatalf("bad yolo turn sandbox policy: %#v", yoloTurn["sandboxPolicy"])
@@ -117,6 +117,7 @@ func TestParseCodexModelList(t *testing.T) {
 			"hidden": false,
 			"isDefault": true,
 			"defaultReasoningEffort": "medium",
+			"inputModalities": ["text", "image"],
 			"supportedReasoningEfforts": [
 				{"reasoningEffort": "low", "description": "Fast"},
 				{"reasoningEffort": "medium", "description": "Balanced"}
@@ -136,6 +137,42 @@ func TestParseCodexModelList(t *testing.T) {
 	}
 	if len(model.SupportedEfforts) != 2 || model.SupportedEfforts[1].Effort != "medium" {
 		t.Fatalf("bad efforts: %+v", model.SupportedEfforts)
+	}
+	if strings.Join(model.InputModalities, ",") != "text,image" {
+		t.Fatalf("input modalities = %v", model.InputModalities)
+	}
+}
+
+func TestCodexTurnStartOrdersLocalImagesAfterText(t *testing.T) {
+	params := codexTurnStartParams("thread-1", "compare", []ImageInput{
+		{Name: "left.png", Path: "/attachments/left/visual.jpg"},
+		{Name: "right.png", Path: "/attachments/right/visual.jpg"},
+	}, TurnSettings{WorkspaceDir: "/workspace"}, nil)
+	input, ok := params["input"].([]map[string]any)
+	if !ok || len(input) != 3 {
+		t.Fatalf("input = %#v", params["input"])
+	}
+	if input[0]["type"] != "text" || input[0]["text"] != "compare" {
+		t.Fatalf("text input = %#v", input[0])
+	}
+	if input[1]["type"] != "localImage" || input[1]["path"] != "/attachments/left/visual.jpg" || input[2]["path"] != "/attachments/right/visual.jpg" {
+		t.Fatalf("image ordering = %#v", input)
+	}
+}
+
+func TestProviderImagePromptsPreserveTextOnlyAndFrameClaudePaths(t *testing.T) {
+	if got := messageWithImages("hello", nil); got != "hello" {
+		t.Fatalf("text-only message changed: %q", got)
+	}
+	images := []ImageInput{{Name: "scene.png", Path: "/attachments/scene/visual.jpg"}}
+	got := messageWithImages("", images)
+	for _, want := range []string{"Please inspect the attached photo(s).", "<attached_photos>", "scene.png", "/attachments/scene/visual.jpg"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Claude image prompt missing %q: %s", want, got)
+		}
+	}
+	if got := messageWithImageFallback("", images); strings.Contains(got, "/attachments/") {
+		t.Fatalf("Codex fallback leaked path framing: %q", got)
 	}
 }
 
@@ -981,6 +1018,21 @@ func runFakeCodexAppServer() {
 				"platformOs":     "test",
 			})
 		case "initialized":
+		case "collaborationMode/list":
+			// Mirrors the real 0.142.4 surface: Plan carries a medium effort and
+			// no model of its own, so the client must supply one.
+			writeFakeResponse(enc, msg.ID, map[string]any{
+				"data": []map[string]any{
+					{"name": "Plan", "mode": "plan", "model": nil, "reasoning_effort": "medium"},
+					{"name": "Default", "mode": "default", "model": nil, "reasoning_effort": nil},
+				},
+			})
+		case "model/list":
+			writeFakeResponse(enc, msg.ID, map[string]any{
+				"data": []map[string]any{
+					{"id": "fake-model", "model": "fake-model", "isDefault": true},
+				},
+			})
 		case "thread/start":
 			var params struct {
 				CWD string `json:"cwd"`

@@ -17,7 +17,7 @@ Defaults applied across all agents unless overridden per agent.
 | `provider` | `claude` \| `codex` | Default backend for new agents. |
 | `model` | string | Default model name (empty = provider default). |
 | `effort` | string | Default provider-supported reasoning effort. |
-| `permission_mode` | `approve` \| `yolo` | `approve` relays each side effect to you (safe default); `yolo` auto-approves with whole-machine access. |
+| `permission_mode` | `approve` \| `auto` \| `yolo` | `approve` relays each side effect to you (safe default); `auto` runs edits inside the session's working directory unattended and still asks for the rest; `yolo` auto-approves with whole-machine access. |
 | `permission_timeout` | duration | Approve-mode prompt timeout before auto-deny, e.g. `30s` or `3m`. |
 | `fallback` | list of profile names or `default` | Optional default fallback chain used when an agent declares none. |
 
@@ -75,7 +75,7 @@ present, after archiving its sessions into the preserved agent workspace.
 | `provider` | `claude` \| `codex` | Backend (inherits `global`). |
 | `profile` | profile name | Auth context (omit for global login). |
 | `model` / `effort` | string | Per-agent overrides. |
-| `permission_mode` | `approve` \| `yolo` | Per-agent override. |
+| `permission_mode` | `approve` \| `auto` \| `yolo` | Per-agent override. |
 | `fallback` | list of profile names or `default` | Ordered rate-limit fallback (may cross providers). Applied automatically for non-interactive runs; interactive turns prompt the user to confirm or override it. |
 | `mcp_config` | path | Opt-in per-agent MCP config, additive to native tools. |
 

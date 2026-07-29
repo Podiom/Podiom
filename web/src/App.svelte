@@ -665,6 +665,7 @@
           <div class="label-mono" style="margin:18px 0 8px">permission mode</div>
           <div style="display:flex;gap:9px">
             <button style={seg(hirePermission === "approve")} onclick={() => (hirePermission = "approve")}>approve · safe</button>
+            <button style={seg(hirePermission === "auto")} onclick={() => (hirePermission = "auto")}>auto · edits</button>
             <button style={seg(hirePermission === "yolo")} onclick={() => (hirePermission = "yolo")}>yolo · full access</button>
           </div>
 

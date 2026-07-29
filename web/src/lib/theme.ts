@@ -71,12 +71,16 @@ export function providerChip(p: Provider | string): string {
   return base + `background:${chip.bg};border:1px solid ${chip.bd};color:${chip.ink}`;
 }
 
+// Escalating warmth across the three postures: green (asks first), amber
+// (edits run unattended), red (no limits).
 export function modeChip(m: PermissionMode | string): string {
   const base =
     "padding:3px 9px;border-radius:999px;font:600 10px 'JetBrains Mono',monospace;";
-  return m === "yolo"
-    ? base + "background:#F8E0D6;border:1px solid #EFC3AF;color:#B14E2A"
-    : base + "background:#EAF1ED;border:1px solid #CFE3D8;color:#3F7A5F";
+  if (m === "yolo")
+    return base + "background:#F8E0D6;border:1px solid #EFC3AF;color:#B14E2A";
+  if (m === "auto")
+    return base + "background:#FBF0DA;border:1px solid #EDDCAE;color:#8A6516";
+  return base + "background:#EAF1ED;border:1px solid #CFE3D8;color:#3F7A5F";
 }
 
 const ORIGIN_MAP: Record<string, string> = {

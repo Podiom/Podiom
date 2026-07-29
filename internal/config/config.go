@@ -11,16 +11,51 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PermissionMode is Podiom's two-value permission posture (§5.5 / D12).
+// PermissionMode is Podiom's permission posture, in escalating order (§5.5 / D12).
 type PermissionMode string
 
 const (
 	// PermissionApprove relays each side-effecting action to the user (default,
-	// the only real safety boundary in v1).
+	// the only full safety boundary).
 	PermissionApprove PermissionMode = "approve"
+	// PermissionAuto auto-approves edits inside the session's working directory
+	// and leaves everything else asking. Providers express this differently:
+	// Claude gets --permission-mode acceptEdits plus the relay for non-edit
+	// tools, Codex gets a workspace-write sandbox scoped by codexRuntimeRoots.
+	PermissionAuto PermissionMode = "auto"
 	// PermissionYolo auto-approves everything with whole-machine access (opt-in).
 	PermissionYolo PermissionMode = "yolo"
 )
+
+// permissionModes is the accepted set, in escalating order. UI pickers and
+// error messages derive from it so a new mode is added in exactly one place.
+var permissionModes = []PermissionMode{PermissionApprove, PermissionAuto, PermissionYolo}
+
+// PermissionModes returns the accepted permission modes in escalating order.
+func PermissionModes() []PermissionMode {
+	out := make([]PermissionMode, len(permissionModes))
+	copy(out, permissionModes)
+	return out
+}
+
+// KnownPermission reports whether m is an accepted permission mode.
+func KnownPermission(m PermissionMode) bool {
+	for _, mode := range permissionModes {
+		if mode == m {
+			return true
+		}
+	}
+	return false
+}
+
+// PermissionModesLabel renders the set as "approve|auto|yolo" for messages.
+func PermissionModesLabel() string {
+	parts := make([]string, len(permissionModes))
+	for i, mode := range permissionModes {
+		parts[i] = string(mode)
+	}
+	return strings.Join(parts, "|")
+}
 
 // Provider identifies a backing CLI.
 type Provider string
@@ -497,12 +532,10 @@ func validateProvider(p Provider) error {
 }
 
 func validatePermission(m PermissionMode) error {
-	switch m {
-	case PermissionApprove, PermissionYolo:
+	if KnownPermission(m) {
 		return nil
-	default:
-		return fmt.Errorf("unknown permission_mode %q (want approve|yolo)", m)
 	}
+	return fmt.Errorf("unknown permission_mode %q (want %s)", m, PermissionModesLabel())
 }
 
 func validatePermissionTimeout(raw string) error {

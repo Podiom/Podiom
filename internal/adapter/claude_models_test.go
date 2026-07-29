@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func writeClaudeModelsCreds(t *testing.T) string {
 func TestParseClaudeModelList(t *testing.T) {
 	raw := []byte(`{
 		"data": [
-			{"type":"model","id":"claude-opus-4-8","display_name":"Claude Opus 4.8"},
+			{"type":"model","id":"claude-opus-4-8","display_name":"Claude Opus 4.8","capabilities":{"image_input":{"supported":true}}},
 			{"type":"model","id":"claude-fable-5","display_name":"Claude Fable 5"},
 			{"type":"model","id":"","display_name":"skip me"},
 			{"type":"model","id":"claude-haiku-4-5"}
@@ -61,6 +62,12 @@ func TestParseClaudeModelList(t *testing.T) {
 	}
 	if models[0].ID != models[0].Model {
 		t.Errorf("ID should mirror Model: %+v", models[0])
+	}
+	if got := strings.Join(models[0].InputModalities, ","); got != "text,image" {
+		t.Errorf("image model modalities = %q", got)
+	}
+	if got := strings.Join(models[1].InputModalities, ","); got != "text" {
+		t.Errorf("text-only model modalities = %q", got)
 	}
 	// display_name absent -> falls back to id.
 	if models[2].DisplayName != "claude-haiku-4-5" {

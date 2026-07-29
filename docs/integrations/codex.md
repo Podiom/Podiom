@@ -35,7 +35,25 @@ its normal global login.
 `thread/start` and `thread/resume` include the agent `workspace/` as `cwd`,
 `runtimeWorkspaceRoots`, model when set, and the current permission posture.
 `turn/start` includes the user text input, `cwd`, `runtimeWorkspaceRoots`, model
-when set, and effort when set.
+when set, and effort when set. A turn with photos appends one ordered
+`localImage` item per normalized image after the text item:
+
+```json
+{
+  "threadId": "thread-1",
+  "input": [
+    {"type":"text","text":"Compare these","text_elements":[]},
+    {"type":"localImage","path":"…/attachments/<session>/<first>/visual.jpg"},
+    {"type":"localImage","path":"…/attachments/<session>/<second>/visual.jpg"}
+  ]
+}
+```
+
+The attachment directory is also present in `runtimeWorkspaceRoots`, including
+after a fallback or fresh replay. Photo-only turns receive a provider-only text
+instruction; it is not persisted as user content. Historical attachment names
+and readable paths appear in fresh history replay, but historical photos are not
+automatically resent as current `localImage` items. Text-only input is unchanged.
 
 The returned `thread.id` is stored as `sessions.provider_handle`. If the
 app-server restarts, Podiom clears its in-memory loaded-thread set, calls
@@ -104,6 +122,13 @@ non-intrusive chat chip used for Claude, for example `Codex delegated to
 Researcher`. The Podiom agent remains authoritative; Codex-native activity is
 only a provider hint and UI affordance.
 
+## Model image capability
+
+Codex `model/list` entries may advertise `inputModalities`; Podiom preserves
+that list as `input_modalities` in its provider capability API. Bundled fallback
+Codex models declare `text` and `image`, matching the native `localImage`
+delivery used for web-chat photos.
+
 ## Permissions
 
 Podiom keeps Codex sandbox and approval settings separate.
@@ -111,12 +136,24 @@ Podiom keeps Codex sandbox and approval settings separate.
 | Podiom mode | Codex settings |
 | --- | --- |
 | `approve` | `approvalPolicy: "on-request"` and `sandbox: "read-only"` on thread start; per-turn `sandboxPolicy.type: "readOnly"`. |
+| `auto` | `approvalPolicy: "on-request"` and `sandbox: "workspace-write"`; per-turn `sandboxPolicy.type: "workspaceWrite"` scoped to the working directory alone. |
 | `yolo` | `approvalPolicy: "never"` and `sandbox: "danger-full-access"` on thread start; per-turn `sandboxPolicy.type: "dangerFullAccess"`. |
 
-Podiom intentionally does not use Codex's lower-friction `workspace-write` Auto
-preset for `approve`, because Claude prompts before workspace writes. Keeping
-Codex in `read-only` makes the user-facing `approve` promise aligned across
-providers: reads may proceed, writes ask.
+Podiom intentionally does not use `workspace-write` for `approve`, because
+Claude prompts before workspace writes. Keeping Codex in `read-only` makes the
+user-facing `approve` promise aligned across providers: reads may proceed,
+writes ask. `workspace-write` is what `auto` is for — that mode's promise is
+exactly "edits proceed, the rest asks".
+
+**Writable scope comes from `runtimeWorkspaceRoots`, not
+`sandboxPolicy.writableRoots`.** Measured against app-server 0.142.4: with
+`writableRoots` held fixed, a directory listed in the runtime roots was written
+with no approval request, and the same write was refused once that directory was
+dropped from the list. Podiom's broad root set includes the projects parent
+directory so agents can read the shared ledger, so `auto` is sent the working
+directory alone (`codexRuntimeRoots`) — the broad set would let one session
+write into every project. Reads are unaffected. `thread/start.runtimeWorkspaceRoots`
+is also gated on `experimentalApi` and is *rejected*, not ignored, without it.
 
 When Codex sends `item/commandExecution/requestApproval`,
 `item/fileChange/requestApproval`, or `item/permissions/requestApproval`, Podiom
@@ -127,3 +164,52 @@ denial returns an empty turn-scoped grant.
 
 If no decision arrives before `global.permission_timeout`, the broker returns a
 deny decision so the Codex request cannot hang indefinitely.
+
+## Plan mode
+
+Podiom drives Codex's own Plan collaboration mode. Every `turn/start` carries
+the intended mode explicitly — plan turns send `plan`, all others send
+`default` — because the setting is sticky on the thread: an implementation turn
+that omitted it would keep planning after the user approved.
+
+```jsonc
+"collaborationMode": {
+  "mode": "plan",
+  "settings": {
+    "model": "<the active model>",       // required; never hardcoded
+    "reasoning_effort": "medium",         // from the preset unless the session sets one
+    "developer_instructions": null        // null = use Codex's built-in plan contract
+  }
+}
+```
+
+Three things this depends on, all verified against codex-cli 0.142.4:
+
+- **`capabilities.experimentalApi: true` at `initialize`.** Podiom already sends
+  it. Without it, `collaborationMode/list` and `turn/start.collaborationMode`
+  are both rejected with `-32600`.
+- **`codex app-server generate-json-schema` hides `collaborationMode` unless run
+  with `--experimental`.** Reading the reduced schema is how an earlier
+  investigation wrongly concluded Codex plan mode was unreachable. Regenerate
+  with `--experimental` when checking this against a new Codex release.
+- **Presets and the model are discovered, not assumed.** `collaborationMode/list`
+  supplies the modes; `settings.model` is required and the preset's own value is
+  usually null, so Podiom falls back to the session model and then to the
+  account default from `model/list` (whose catalogue is under `result.data`).
+  Hardcoding a model fails the turn with an unrelated HTTP 400 when the account
+  default is newer than the installed CLI.
+
+`developer_instructions: null` selects Codex's built-in plan contract without
+clearing the thread's own `developerInstructions` — verified with an identity
+marker, so Podiom's composed agent instructions survive planning.
+
+The plan arrives as a completed thread item of type `plan`, which is
+authoritative; `item/plan/delta` is a streaming preview the schema warns may
+differ from the final text. A plan turn may legitimately end with only an
+`agentMessage` and no plan item. `turn/plan/updated` is the separate
+`update_plan` progress checklist and is never the plan artifact.
+
+Plan mode is behavioral orchestration, not a sandbox boundary — a plan turn
+under `workspace-write` declined to write — but Podiom still pins
+`sandboxPolicy: readOnly` while planning so non-mutation is enforced rather
+than instructed.

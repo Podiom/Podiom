@@ -40,11 +40,14 @@ RUN set -eu; \
     done
 
 # Node from NodeSource (per-arch debs) + pipx for mcp-proxy. git is needed by
-# the coding CLIs; procps gives the terminal shell ps/top.
+# the coding CLIs and by Podiom's project source control; openssh-client is a
+# Recommends of git, so --no-install-recommends would otherwise drop it and
+# every SSH remote (git@github.com:…) would fail. procps gives the terminal
+# shell ps/top.
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      ca-certificates git gnupg pipx procps python3; \
+      ca-certificates git openssh-client gnupg pipx procps python3; \
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -; \
     apt-get install -y --no-install-recommends nodejs; \
     rm -rf /var/lib/apt/lists/*

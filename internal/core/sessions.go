@@ -85,6 +85,9 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		sess.PlanExplicit = true
 	}
 	if req.PermissionMode != "" {
+		if !config.KnownPermission(req.PermissionMode) {
+			return store.Session{}, fmt.Errorf("unknown permission_mode %q (want %s)", req.PermissionMode, config.PermissionModesLabel())
+		}
 		sess.PermissionMode = req.PermissionMode
 	}
 	if sess.Origin == store.OriginInterview {
@@ -290,6 +293,9 @@ func (c *Core) DeleteSession(ctx context.Context, id string) error {
 	if err := c.store.DeleteSession(ctx, id); err != nil {
 		return err
 	}
+	if err := os.RemoveAll(c.SessionAttachmentsDir(id)); err != nil {
+		c.log.Warn("session attachment cleanup failed", "session", id, "error", err)
+	}
 	c.log.Info("session deleted",
 		"event", "run",
 		"session", sess.ID,
@@ -322,7 +328,7 @@ func (c *Core) UpdateSessionSettings(ctx context.Context, id, model, effort stri
 	}
 	if permissionMode == "" {
 		permissionMode = sess.PermissionMode
-	} else if permissionMode != config.PermissionApprove && permissionMode != config.PermissionYolo {
+	} else if !config.KnownPermission(permissionMode) {
 		return store.Session{}, fmt.Errorf("invalid permission mode %q", permissionMode)
 	}
 	updated, err := c.store.UpdateSessionSettings(ctx, id, model, effort, permissionMode)
@@ -345,6 +351,7 @@ func (c *Core) UpdateSessionSettings(ctx context.Context, id, model, effort stri
 
 // TurnOptions configures one live adapter turn.
 type TurnOptions struct {
+	AttachmentIDs    []string
 	PermissionTurnID string
 	PermissionRelay  adapter.PermissionRelay
 	UserInputRelay   adapter.UserInputRelay
@@ -381,6 +388,10 @@ type TurnEvent struct {
 type turnOutput struct {
 	assistant string
 	reasoning string
+	// plan is the plan a provider's native plan mode produced this turn, if
+	// any. A plan turn legitimately produces none — the model may still be
+	// exploring or may have asked a clarifying question instead.
+	plan *adapter.PlanProposal
 }
 
 // AppendTurn persists the user turn, drives the adapter, persists the assistant
@@ -402,8 +413,14 @@ func (c *Core) AppendTurn(ctx context.Context, sessionID, userMessage string) ([
 // StreamTurn persists the user turn, streams adapter events, persists the final
 // assistant reply, and emits the newly stored messages.
 func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, opts TurnOptions) (<-chan TurnEvent, error) {
-	if strings.TrimSpace(userMessage) == "" {
+	if strings.TrimSpace(userMessage) == "" && len(opts.AttachmentIDs) == 0 {
 		return nil, fmt.Errorf("user message is required")
+	}
+	if len(opts.AttachmentIDs) > 4 {
+		return nil, fmt.Errorf("a message can include at most 4 photos")
+	}
+	if len(opts.AttachmentIDs) > 0 && strings.HasPrefix(strings.TrimSpace(userMessage), "/") {
+		return nil, fmt.Errorf("photos cannot be attached to slash commands")
 	}
 	sess, err := c.store.GetSession(ctx, sessionID)
 	if err != nil {
@@ -434,10 +451,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 		}
 		return nil, err
 	}
-	userMessages, err := c.store.AppendMessages(ctx, sessionID, []store.Message{{
-		Role:    store.RoleUser,
-		Content: userMessage,
-	}})
+	userMessages, err := c.store.AppendUserMessage(ctx, sessionID, userMessage, opts.AttachmentIDs)
 	if err != nil {
 		if goalRun.ID != "" {
 			_, _ = c.store.FinishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
@@ -502,7 +516,11 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			providerMessage := c.providerMessage(current, projectCtx, userMessage)
+			providerUserMessage := userMessage
+			if strings.TrimSpace(providerUserMessage) == "" && len(userMessages[0].Attachments) > 0 {
+				providerUserMessage = "Please inspect the attached photo(s)."
+			}
+			providerMessage := c.providerMessage(current, projectCtx, providerUserMessage)
 			mcpServers, mcpAll, err := c.sessionMCPServers(ctx, current)
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "mcp", "error", err)
@@ -525,6 +543,9 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			}
 			workspaceDir := c.sessionWorkspaceDir(current.AgentName, projectCtx)
 			extraWorkspaceDirs := c.sessionExtraWorkspaceDirs(workspaceDir, c.AgentPaths(current.AgentName).Workspace, projectCtx)
+			if messagesHaveAttachments(history) || len(userMessages[0].Attachments) > 0 {
+				extraWorkspaceDirs = appendUniqueString(extraWorkspaceDirs, c.SessionAttachmentsDir(sessionID))
+			}
 			instructions := providerInstructionsForAdapter(current.Provider, projectCtx, payload.Bytes)
 			// Each attempt gets its own cancelable context: a rate-limited provider
 			// process can still be alive (the Claude CLI keeps retrying after an
@@ -532,7 +553,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			// fallback target reruns the turn.
 			attemptCtx, cancelAttempt := context.WithCancel(ctx)
 			defer cancelAttempt()
-			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, opts, workspaceDir, extraWorkspaceDirs, payload.Path, instructions, nativeAgentName, nativeAgents, mcpServers, mcpAll))
+			events, err := c.adapter.SendTurn(attemptCtx, c.turnRequest(current, history, providerMessage, userMessages[0].Attachments, opts, workspaceDir, extraWorkspaceDirs, payload.Path, instructions, nativeAgentName, nativeAgents, mcpServers, mcpAll))
 			if err != nil {
 				runLog.Warn("turn failed", "stage", "dispatch", "provider", string(current.Provider), "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
@@ -603,6 +624,15 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				runLog.Warn("turn failed", "stage", "persist", "error", err)
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
+			}
+			// Capture a natively produced plan once the turn's messages are
+			// stored, so the plan artifact and the conversation agree. A failure
+			// here must not fail the turn: the plan stays visible in the
+			// assistant reply and the session stays gated.
+			if output.plan != nil {
+				if _, err := c.CaptureNativePlan(ctx, sessionID, *output.plan); err != nil {
+					runLog.Warn("plan capture failed", "stage", "plan", "error", err)
+				}
 			}
 			if !c.noBg {
 				go c.autoNameSessionBackground(sessionID)
@@ -696,7 +726,10 @@ func (c *Core) sessionWorkspaceDir(agentName string, projectCtx projectExecution
 
 func (c *Core) providerMessage(sess store.Session, projectCtx projectExecutionContext, userMessage string) string {
 	var parts []string
-	if PlanGateActive(sess) {
+	// Providers that plan natively bring their own plan contract, which is both
+	// better than Podiom's and already in their system prompt. Re-prepending
+	// Podiom's version to every user message would only cost tokens.
+	if PlanGateActive(sess) && !NativePlanMode(sess.Provider) {
 		parts = append(parts, c.planModePrompt(sess, projectCtx))
 	}
 	if strings.TrimSpace(projectCtx.Prompt) != "" {
@@ -723,7 +756,7 @@ func (c *Core) sessionExtraWorkspaceDirs(workspaceDir, agentWorkspace string, pr
 	return out
 }
 
-func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, instructions []byte, nativeAgentName string, nativeAgents []adapter.NativeAgent, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
+func (c *Core) turnRequest(sess store.Session, history []store.Message, userMessage string, attachments []store.Attachment, opts TurnOptions, workspaceDir string, extraWorkspaceDirs []string, instructionPath string, instructions []byte, nativeAgentName string, nativeAgents []adapter.NativeAgent, mcpServers, mcpAll []podiommcp.Server) adapter.TurnRequest {
 	effectivePermission := sess.PermissionMode
 	relay := opts.PermissionRelay
 	if sess.Origin == store.OriginInterview {
@@ -731,6 +764,10 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 		relay = NewInterviewGateRelay(c.log)
 	} else if PlanGateActive(sess) {
 		effectivePermission = config.PermissionApprove
+		// Kept even for native plan mode as a backstop. Claude enforces
+		// read-only in its executor and Podiom pins Codex to a read-only
+		// sandbox, so this should never fire there — but a denial is the right
+		// answer if it ever does.
 		relay = NewPlanGateRelay(c.log)
 	}
 	// Keep the generated provider MCP profile stable for the life of the
@@ -739,6 +776,16 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 	// StartRequest and the first TurnRequest forces a different app-server and
 	// makes Codex unable to resume the new thread.
 	mcpServers, mcpAll = c.withInternalMCPServers(sess, sess.ID, mcpServers, mcpAll)
+	images := make([]adapter.ImageInput, 0, len(attachments))
+	for _, attachment := range attachments {
+		images = append(images, adapter.ImageInput{Name: attachment.Name, Path: c.AttachmentVisualPath(attachment)})
+	}
+	replayed := replayHistory(sess, history)
+	for i := range replayed {
+		for j := range replayed[i].Attachments {
+			replayed[i].Attachments[j].VisualPath = c.AttachmentVisualPath(replayed[i].Attachments[j])
+		}
+	}
 	return adapter.TurnRequest{
 		SessionID: sess.ID,
 		Handle: adapter.Handle{
@@ -746,7 +793,8 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			ID:       sess.ProviderHandle,
 		},
 		Message: userMessage,
-		History: replayHistory(sess, history),
+		History: replayed,
+		Images:  images,
 		Settings: adapter.TurnSettings{
 			AgentName:          sess.AgentName,
 			Profile:            sess.Profile,
@@ -754,6 +802,7 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			Model:              sess.Model,
 			Effort:             sess.Effort,
 			PermissionMode:     effectivePermission,
+			PlanMode:           PlanGateActive(sess) && NativePlanMode(sess.Provider),
 			WorkspaceDir:       workspaceDir,
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
 			ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(sess.AgentName).Tools),
@@ -771,6 +820,24 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 		Relay: relay,
 		Input: opts.UserInputRelay,
 	}
+}
+
+func messagesHaveAttachments(messages []store.Message) bool {
+	for _, message := range messages {
+		if len(message.Attachments) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 // withInternalMCPServers projects Podiom's built-in stdio MCP servers. USER.md
@@ -820,6 +887,18 @@ func (c *Core) withInternalMCPServers(sess store.Session, turnID string, assigne
 		EnvVars: podiommcp.EnvVars{{Name: config.EnvHome, Value: c.paths.Home}},
 		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
 	}
+	project := podiommcp.Server{
+		Name:      "podiom_project",
+		Transport: podiommcp.TransportStdio,
+		Command:   exe,
+		Args: []string{
+			"project-mcp",
+			"--addr", c.daemonAddr,
+			"--session", sess.ID,
+		},
+		EnvVars: podiommcp.EnvVars{{Name: config.EnvHome, Value: c.paths.Home}},
+		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
+	}
 	manage := podiommcp.Server{
 		Name:      "podiom_manage",
 		Transport: podiommcp.TransportStdio,
@@ -833,7 +912,7 @@ func (c *Core) withInternalMCPServers(sess store.Session, turnID string, assigne
 		EnvVars: podiommcp.EnvVars{{Name: config.EnvHome, Value: c.paths.Home}},
 		Sources: []podiommcp.Source{podiommcp.SourcePodiom},
 	}
-	return append(assigned, plan, manage), append(all, plan, manage)
+	return append(assigned, plan, project, manage), append(all, plan, project, manage)
 }
 
 func (c *Core) permissionTimeout() time.Duration {
@@ -873,38 +952,42 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 
 func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID, goalRunID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
 	var assistant, reasoning strings.Builder
+	var plan *adapter.PlanProposal
 	currentProviderHandle := providerHandle
+	result := func() turnOutput {
+		return turnOutput{assistant: assistant.String(), reasoning: reasoning.String(), plan: plan}
+	}
 	for event := range events {
 		switch event.Kind {
 		case adapter.EventReasoningDelta:
 			reasoning.WriteString(event.Content)
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
-				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				return result(), false, false
 			}
 		case adapter.EventReasoningMessage:
 			reasoning.Reset()
 			reasoning.WriteString(event.Content)
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
-				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				return result(), false, false
 			}
 		case adapter.EventAssistantDelta:
 			assistant.WriteString(event.Content)
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
-				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				return result(), false, false
 			}
 		case adapter.EventAssistantMessage:
 			assistant.Reset()
 			assistant.WriteString(event.Content)
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
-				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				return result(), false, false
 			}
 		case adapter.EventPermissionRequest:
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, PermissionRequest: event.PermissionRequest}) {
-				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				return result(), false, false
 			}
 		case adapter.EventUserInputRequest:
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, UserInputRequest: event.UserInputRequest}) {
-				return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+				return result(), false, false
 			}
 		case adapter.EventHandleUpdated:
 			if event.Handle != nil {
@@ -913,7 +996,7 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				}
 				if _, err := c.store.UpdateSessionProviderHandle(ctx, sessionID, event.Handle.ID); err != nil {
 					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
-					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+					return result(), false, false
 				}
 				currentProviderHandle = event.Handle.ID
 				c.log.Info("provider handle stored",
@@ -944,7 +1027,7 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 					c.log.Warn("persist session context failed", "event", "provider", "session", sessionID, "error", err)
 				}
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ContextStatus: event.ContextStatus}) {
-					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+					return result(), false, false
 				}
 			}
 		case adapter.EventTurnUsage:
@@ -970,14 +1053,14 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 					}
 					usage := total
 					if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Usage: &usage}) {
-						return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+						return result(), false, false
 					}
 				}
 			}
 		case adapter.EventNativeAgentActivity:
 			if event.NativeAgent != nil {
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, NativeAgent: event.NativeAgent}) {
-					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+					return result(), false, false
 				}
 			}
 		case adapter.EventToolUse:
@@ -989,15 +1072,21 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 					c.appendGoalToolUseEvent(ctx, goalID, sessionID, goalRunID, *event.ToolUse)
 				}
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ToolUse: event.ToolUse}) {
-					return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, false
+					return result(), false, false
 				}
 			}
+		case adapter.EventPlanProposed:
+			// Captured here, applied after the turn's messages are persisted so
+			// the plan lands in a consistent history.
+			if event.PlanProposal != nil {
+				plan = event.PlanProposal
+			}
 		case adapter.EventRateLimited:
-			return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, true, true
+			return result(), true, true
 		case adapter.EventTurnDone:
 		}
 	}
-	return turnOutput{assistant: assistant.String(), reasoning: reasoning.String()}, false, true
+	return result(), false, true
 }
 
 // History returns a session's canonical history.
