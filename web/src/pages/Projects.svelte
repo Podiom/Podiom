@@ -50,6 +50,8 @@
   // Delete-project confirmation.
   let deleteTarget = $state<Project | null>(null);
   let deleting = $state(false);
+  // Cards start collapsed so a long ledger stays scannable; open state is per project.
+  let openCards = $state<Record<string, boolean>>({});
 
   const deleteMessage = $derived(
     deleteTarget
@@ -141,6 +143,10 @@
 
   function taskCount(id: string): number {
     return tasks.filter((t) => t.ProjectID === id).length;
+  }
+
+  function toggleCard(id: string) {
+    openCards = { ...openCards, [id]: !openCards[id] };
   }
 
   function meta(p: Project): string {
@@ -515,12 +521,22 @@
   <div class="proj-grid">
     {#each projects as p (p.id)}
       <article class="proj-card">
-        <div class="pc-head">
+        <button
+          class="pc-head"
+          aria-expanded={!!openCards[p.id]}
+          title={openCards[p.id] ? "Collapse project" : "Expand project"}
+          onclick={() => toggleCard(p.id)}
+        >
+          <span class="pc-chevron" class:closed={!openCards[p.id]}>⌄</span>
           <span class="pc-bigdot" style="background:{color(p)}"></span>
-          <span class="pc-name">{p.name}</span>
-        </div>
-        <div class="pc-id mono">{p.id}</div>
+          <span class="pc-headtext">
+            <span class="pc-name">{p.name}</span>
+            <span class="pc-id mono">{p.id}</span>
+          </span>
+          {#if !openCards[p.id]}<span class="pc-headmeta mono">{meta(p)}</span>{/if}
+        </button>
 
+        {#if openCards[p.id]}
         <div class="label-mono" style="margin:16px 0 8px">colour</div>
         <div class="pc-swatches">
           {#each PROJECT_COLORS as c}
@@ -614,6 +630,7 @@
           <button class="pc-delete" onclick={() => (deleteTarget = p)}>Delete</button>
           <button class="pc-view" onclick={() => onOpenChat({})}>View sessions →</button>
         </div>
+        {/if}
       </article>
     {/each}
     {#if projects.length === 0}
@@ -834,6 +851,7 @@
   .proj-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+    align-items: start;
     gap: 18px;
     max-width: 1180px;
   }
@@ -850,6 +868,36 @@
     display: flex;
     align-items: center;
     gap: 11px;
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .pc-chevron {
+    flex: none;
+    font: 800 14px "Hanken Grotesk";
+    color: var(--faint);
+    transition: transform 0.12s ease;
+  }
+
+  .pc-chevron.closed {
+    transform: rotate(-90deg);
+  }
+
+  .pc-headtext {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pc-headmeta {
+    flex: none;
+    font: 500 11.5px "JetBrains Mono", monospace;
+    color: #9a8e80;
   }
 
   .pc-bigdot {
@@ -867,7 +915,7 @@
   .pc-id {
     font: 500 11px "JetBrains Mono", monospace;
     color: var(--faint);
-    margin: 2px 0 0 25px;
+    margin: 2px 0 0;
   }
 
   .pc-swatches {
@@ -1322,10 +1370,14 @@
     }
 
     .pc-id {
-      margin-left: 25px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    /* The name needs the full row on a phone; the count is one tap away. */
+    .pc-headmeta {
+      display: none;
     }
 
     .pc-desc-head,
