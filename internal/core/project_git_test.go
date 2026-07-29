@@ -33,6 +33,16 @@ func newGitProject(t *testing.T, c *Core, git *projects.Git) store.Session {
 // the agent is told the policy in one line rather than having to infer it.
 func TestGitEnabledProjectMaterializesALocalRepo(t *testing.T) {
 	ctx := context.Background()
+
+	// Provide a temporary git identity so the repo is reported as ready in any
+	// environment, including CI runners that have no global git config.
+	tmpHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpHome, ".gitconfig"),
+		[]byte("[user]\n\tname = Test User\n\temail = test@example.com\n"), 0o644); err != nil {
+		t.Fatalf("write gitconfig: %v", err)
+	}
+	t.Setenv("HOME", tmpHome)
+
 	c, cleanup := newTestCore(t)
 	defer cleanup()
 	session := newGitProject(t, c, &projects.Git{Enabled: true, DefaultBranch: "main"})
