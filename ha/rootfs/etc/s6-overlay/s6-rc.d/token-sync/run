@@ -2,4 +2,4 @@
 # token-sync longrun (plan D5): surfaces the gateway token on the HA
 # Configuration page and services the rotate_token toggle. All logic lives in
 # the script so it can also be exercised outside s6 (smoke test).
-exec /usr/local/bin/podiom-token-sync
+exec s6-setuidgid podiom /usr/local/bin/podiom-token-sync

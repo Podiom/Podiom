@@ -65,6 +65,13 @@ time `yolo` is selected:
   change grants whole-machine access and applies from the next turn.
 - The web "Hire agent" modal labels the option `yolo · full access`.
 
+In the Home Assistant image, "whole-machine" means everything reachable by the
+dedicated non-root `podiom` account inside the add-on container. That includes
+all persistent projects, credentials, SSH keys, and Podiom state, but not
+root-owned system paths. Running Claude as non-root also allows its
+`bypassPermissions` mode to support autonomous goal sessions without the CLI's
+root/sudo refusal.
+
 The mandatory `approve` auto-deny timeout (`global.permission_timeout`) ensures a
 blocked permission prompt never hangs an agent indefinitely (R8.18): if no human
 decision arrives in time, the broker returns *deny*.

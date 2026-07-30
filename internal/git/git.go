@@ -222,9 +222,9 @@ func PublicKey() string {
 
 // sshDirs returns the .ssh directories a key may live in. $HOME is Podiom's
 // (and git's) idea of home; OpenSSH deliberately ignores $HOME and expands ~
-// from the passwd entry, so on a container that sets HOME — the Home Assistant
-// add-on sets /data/home while running as root — ssh-keygen writes under the
-// passwd home instead. Check both, so the key is found wherever ssh put it.
+// from the passwd entry. The Home Assistant image aligns both values at
+// /data/home for its podiom user. Check both for standalone installs where
+// they may still differ, so the key is found wherever ssh put it.
 func sshDirs() []string {
 	var dirs []string
 	if home, err := os.UserHomeDir(); err == nil && home != "" {

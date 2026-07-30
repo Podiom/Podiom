@@ -8,6 +8,8 @@ set -e
 
 readonly PODIOM_HOME="${PODIOM_HOME:-/data/podiom}"
 readonly PODIOM_USER_HOME="${HOME:-/data/home}"
+readonly PODIOM_RUNTIME_USER="podiom"
+readonly OWNERSHIP_MIGRATION_MARKER="${PODIOM_HOME}/.nonroot-owner-v1"
 
 mkdir -p "${PODIOM_HOME}" "${PODIOM_USER_HOME}"
 
@@ -32,5 +34,31 @@ if [ ! -f "${PODIOM_USER_HOME}/.bashrc" ]; then
 PS1='podiom:\w\$ '
 EOF
 fi
+
+# Older add-on releases ran every process as root. Migrate their complete
+# persistent trees once, without following user-controlled symlinks outside
+# /data. chown changes ownership only; existing SSH/key permission modes remain
+# untouched. Fresh installs take the same path because the roots were just
+# created by this root oneshot.
+# Refuse to let a planted marker symlink suppress the migration or make touch
+# write through to a target outside the persistent tree.
+if [ -L "${OWNERSHIP_MIGRATION_MARKER}" ]; then
+    rm -f "${OWNERSHIP_MIGRATION_MARKER}"
+fi
+if [ ! -e "${OWNERSHIP_MIGRATION_MARKER}" ]; then
+    bashio::log.info "Migrating persistent data ownership to ${PODIOM_RUNTIME_USER}"
+    chown -R --no-dereference \
+        "${PODIOM_RUNTIME_USER}:${PODIOM_RUNTIME_USER}" \
+        "${PODIOM_HOME}" "${PODIOM_USER_HOME}"
+    touch "${OWNERSHIP_MIGRATION_MARKER}"
+fi
+
+# The root oneshot can recreate either seed file after the migration marker
+# exists, so enforce ownership for these root-authored paths on every boot.
+chown --no-dereference \
+    "${PODIOM_RUNTIME_USER}:${PODIOM_RUNTIME_USER}" \
+    "${PODIOM_HOME}" "${PODIOM_USER_HOME}" \
+    "${PODIOM_HOME}/config.yaml" "${PODIOM_USER_HOME}/.bashrc" \
+    "${OWNERSHIP_MIGRATION_MARKER}"
 
 bashio::log.info "Podiom data directories ready under /data"

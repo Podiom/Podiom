@@ -256,16 +256,16 @@ layers:
   **2026-07 update:** profile-scoped terminal login entries are superseded by
   onboard-integrated login checks; later profile re-authentication is manual in
   Shell with `CLAUDE_CONFIG_DIR=<dir>` or `CODEX_HOME=<dir>`.
-- **HA24 — The terminal is Podiom-root (honest note).** Whoever reaches a
-  terminal sub-path reaches the whole container: `$PODIOM_HOME`, every profile's
-  credentials, and the gateway token. Ingress gates these sub-paths behind HA
-  login exactly as it gates the SPA, which means **the HA account's security IS
-  the Podiom container's security**. Moving the terminal to its own sub-paths
-  (outside the SPA) does not change this — the sub-paths sit behind the same
-  single Ingress entry and inherit the same HA authentication. This is
-  consistent with Podiom's single-user, fully-trusted model, but it must be
-  stated plainly in the app documentation (same honesty principle as the yolo
-  posture in the main doc), with a recommendation to enable HA MFA.
+- **HA24 — The terminal is trusted but non-root (honest note).** The daemon,
+  provider CLIs, token sync, and terminal run as one fixed `podiom` account;
+  only the s6 init oneshot remains root so it can prepare and migrate `/data`.
+  Whoever reaches a terminal sub-path reaches all persistent Podiom data:
+  `$PODIOM_HOME`, every profile's credentials, SSH keys, and the gateway token,
+  but cannot write root-owned system paths in the container. Ingress gates
+  these sub-paths behind HA login exactly as it gates the SPA, which means
+  **the HA account's security IS the Podiom data's security**. This remains
+  consistent with Podiom's single-user, fully-trusted model and must be stated
+  plainly in the app documentation, with a recommendation to enable HA MFA.
 
 ---
 

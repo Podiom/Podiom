@@ -197,9 +197,9 @@ func TestPublicKeyPrefersTheHomeSSHDir(t *testing.T) {
 	}
 }
 
-// OpenSSH ignores $HOME and expands ~ from the passwd entry, so on the Home
-// Assistant add-on (HOME=/data/home, root's passwd home /root) ssh-keygen
-// writes a key Podiom would otherwise never see. Both homes must be searched.
+// OpenSSH ignores $HOME and expands ~ from the passwd entry. The Home Assistant
+// image aligns them, but standalone environments may not, so both homes must
+// still be searched.
 func TestSSHDirsIncludesTheOpenSSHHome(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.UserHomeDir reads USERPROFILE on Windows")

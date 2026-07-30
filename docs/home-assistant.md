@@ -84,10 +84,12 @@ mkdir -p /data/home/.codex-work
 CODEX_HOME=/data/home/.codex-work codex login --device-auth
 ```
 
-> **Honest note:** whoever reaches a terminal entry has shell access to the
-> whole container — `$PODIOM_HOME`, every profile's credentials, and the
-> gateway token. These entries sit behind HA's login exactly like the UI, so
-> **your HA account's security is Podiom's security. Enable HA MFA.**
+> **Honest note:** the terminal runs as the same non-root `podiom` account as
+> the daemon. Whoever reaches it can access all persistent Podiom data —
+> `$PODIOM_HOME`, every profile's credentials, SSH keys, and the gateway token
+> — but cannot write root-owned system paths in the container. These entries
+> sit behind HA's login exactly like the UI, so **your HA account's security is
+> Podiom's security. Enable HA MFA.**
 
 ## Storage, backups, updates
 
@@ -95,7 +97,9 @@ Everything persistent lives on `/data` (`PODIOM_HOME=/data/podiom`,
 `HOME=/data/home`), so:
 
 - **Restarts and app updates lose nothing** — sessions, agent SOUL/MEMORY,
-  skills, profiles, CLI logins, and the gateway token all survive.
+  skills, profiles, CLI logins, Git configuration, SSH keys, and the gateway
+  token all survive. Upgrading from an older root-based image migrates their
+  ownership without broadening key permissions.
 - **HA backups cover all of Podiom for free.** A restored backup brings back
   the complete state. Because `/data` contains CLI credentials and the
   gateway token, **use password-protected backups**.

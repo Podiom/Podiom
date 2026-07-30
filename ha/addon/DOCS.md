@@ -77,8 +77,11 @@ start and copied into the browser at the end of setup.
 
 Everything Podiom knows lives on `/data`: sessions and history, agent
 SOUL/MEMORY files, plans, projects, schedules, skills, profiles, the CLI
-logins, the gateway token, and your git SSH key (`/data/home/.ssh` — root's
-home is pointed there so `ssh-keygen` writes somewhere updates cannot wipe).
+logins, the gateway token, and your git SSH key. The non-root `podiom` account's
+environment and passwd home both point to `/data/home`, so Git reads
+`/data/home/.gitconfig` and OpenSSH reads `/data/home/.ssh`. Upgrading from an
+older root-based release migrates their ownership without widening private-key
+permissions.
 Home Assistant's native backups therefore capture and restore a **complete**
 Podiom state with no extra setup — treat this as a feature and back up
 regularly.
@@ -89,12 +92,13 @@ the gateway token**, we strongly recommend **password-protected backups**
 
 ## Security honesty notes
 
-- **The terminal is root in the container.** Anyone who can open a
-  `terminal/...` link can reach everything: `$PODIOM_HOME`, every profile's
-  credentials, and the gateway token. These links sit behind the same HA
-  login as the rest of the add-on — which means **your HA account's security
-  IS your Podiom security**. Enable multi-factor authentication on your Home
-  Assistant users.
+- **The terminal runs as the non-root `podiom` account.** Anyone who can open a
+  `terminal/...` link can still reach all persistent Podiom data:
+  `$PODIOM_HOME`, every profile's credentials, SSH keys, and the gateway token.
+  It cannot write root-owned system paths in the container. These links sit
+  behind the same HA login as the rest of the add-on — which means **your HA
+  account's security IS your Podiom security**. Enable multi-factor
+  authentication on your Home Assistant users.
 - Podiom is single-user and fully trusted by design; the add-on does not
   change that model, it just fences it behind HA.
 - The add-on's web server only accepts connections from the Ingress proxy;
