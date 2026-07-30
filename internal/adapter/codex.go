@@ -1081,18 +1081,28 @@ func (c *codexClient) markUnloaded(threadID string) {
 }
 
 func (c *codexClient) registerTurn(key codexTurnKey, active codexActiveTurn) <-chan codexStreamEvent {
-	ch := make(chan codexStreamEvent, 128)
 	c.mu.Lock()
-	c.watchers[key] = ch
-	c.active[key] = active
 	buffered := c.buffered[key]
 	delete(c.buffered, key)
+	// Size the channel to hold every replayed notification so the sends below
+	// cannot block while the lock is held (dispatchNotification caps a key's
+	// backlog at 256).
+	capacity := 128
+	if len(buffered) > capacity {
+		capacity = len(buffered)
+	}
+	ch := make(chan codexStreamEvent, capacity)
+	// Replay notifications that landed before this turn was registered, and
+	// publish the watcher only afterwards — both under the same lock as
+	// dispatchNotification. Replaying from a goroutine instead races live
+	// dispatch: it can deliver buffered events after later live ones, or lose
+	// them entirely when the turn completes before the goroutine is scheduled.
+	for _, event := range buffered {
+		ch <- event
+	}
+	c.watchers[key] = ch
+	c.active[key] = active
 	c.mu.Unlock()
-	go func() {
-		for _, event := range buffered {
-			ch <- event
-		}
-	}()
 	return ch
 }
 
