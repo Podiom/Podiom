@@ -169,10 +169,25 @@ its next review. An `env_var` approved **with** a value continues to
   to `in_progress` only moves the card), record a `progress`
   event with evidence and metric updates, file access requests if blocked, and
   call `podiom_propose_goal_completion` when the success criteria are met.
-- Both run **unattended** with the scheduled-run permission posture:
-  pre-approved allow-list (read-only file tools + the `podiom_*` management
-  tools), *not* yolo — unless the agent's own permission mode is yolo (e.g.
-  granted via a `permission_mode` request).
+- Both run **unattended** in **yolo** (full autonomous access): Claude
+  `bypassPermissions`, Codex `approvalPolicy: never` + `sandbox:
+  danger-full-access`. No permission relay and no allow-list are attached — a
+  goal exists to reach an outcome without the user in the loop, so there is
+  nobody to answer a prompt and nothing is queued for one.
+- Yolo is **unconditional and not a per-goal choice**: a goal carries no
+  permission field. The lead session is created yolo and *re-asserted* yolo on
+  every run, so it cannot drift. The lead agent's own standing permission mode
+  is overridden, not consulted — an `approve`-mode agent still runs goal work at
+  full access. Because the mode is persisted on the session, a user's later
+  interactive turns in that conversation are also yolo.
+- The **whole delegated chain inherits it**: tasks and schedules carrying
+  `goal_id` run yolo too (a goal-linked task's plan gate is bypassed, and a
+  goal-linked schedule run is forced yolo even when its file still says
+  `run_permission: preapproved`).
+- The counterweight is the audit trail, not a permission gate: every tool call
+  the chain makes is recorded on the goal timeline (§8), and the UI must disclose
+  full access — a warning on the goal-creation form and a persistent badge on the
+  goal detail view.
 
 ## 5. Scheduling
 
