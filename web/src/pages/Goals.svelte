@@ -596,6 +596,20 @@
       (detail.events[0].Kind === "planning_started" || detail.events[0].Kind === "created"),
   );
 
+  // The next-step panel answers "what will the agent do?", so it is hidden
+  // whenever that question has no meaningful answer: while planning is still
+  // deciding, once completion is proposed, and on a finished goal. The empty
+  // placeholder is active-only, because on a paused goal no review is coming to
+  // fill it in.
+  const nextStepVisible = $derived(
+    detail !== null &&
+      !isPlanning &&
+      detail.goal.Status !== "review" &&
+      detail.goal.Status !== "done" &&
+      detail.goal.Status !== "abandoned" &&
+      (detail.goal.NextStep.trim() !== "" || detail.goal.Status === "active"),
+  );
+
   // A review run is in flight for the open goal — from click (reviewBusy)
   // until the finish ping refreshes the detail and clears running_run.
   const reviewRunning = $derived(
@@ -1283,6 +1297,35 @@
                 </div>
               {/each}
             </div>
+          </div>
+        {/if}
+
+        <!-- NEXT STEP -->
+        {#if nextStepVisible}
+          <div class="panel">
+            <div class="ns-head">
+              <span class="section-label mono ns-label">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M12 5l7 7-7 7"/></svg>
+                Next step
+              </span>
+              {#if g.NextStepAt}
+                <span class="ns-age mono">stated {relTime(g.NextStepAt)}</span>
+              {/if}
+            </div>
+            {#if g.NextStep}
+              <div class="ns-action">{g.NextStep}</div>
+              {#if g.NextStepWhy}
+                <div class="ns-why">{g.NextStepWhy}</div>
+              {/if}
+              <div class="ns-foot mono">
+                <AgentAvatar name={g.LeadAgent} size={17} radius={5} fontSize={8} />
+                {g.LeadAgent} decided this · restated at every review
+              </div>
+            {:else}
+              <div class="desc muted">
+                No next step stated yet — {g.LeadAgent} sets one at its next review.
+              </div>
+            {/if}
           </div>
         {/if}
 
@@ -2473,6 +2516,51 @@
     display: flex;
     flex-direction: column;
     gap: 17px;
+  }
+
+  /* Next step: the agent's stated intent. Action-first typography and a teal
+     accent, deliberately unlike the header's "next review" clock — one is what
+     the agent will do, the other is only when it wakes up. */
+  .ns-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .ns-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--teal);
+    margin-bottom: 12px;
+  }
+  .ns-age {
+    font-size: 11px;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  .ns-action {
+    font-size: 16.5px;
+    line-height: 1.45;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .ns-why {
+    margin-top: 8px;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--ink-soft);
+  }
+  .ns-foot {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 15px;
+    padding-top: 13px;
+    border-top: 1px solid var(--line-2);
+    font-size: 11px;
+    color: var(--faint);
   }
 
   .banner {

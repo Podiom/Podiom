@@ -56,11 +56,26 @@ Guiding principles:
 | `status` | enum | `active \| paused \| review \| done \| abandoned` |
 | `next_review_at` | RFC3339 | empty when paused/terminal or reviews disabled |
 | `closing_report` | markdown | set when the agent proposes completion |
+| `next_step` | string | agent-stated action it will take before the next review |
+| `next_step_why` | string | one sentence on why that is the right move now |
+| `next_step_at` | RFC3339 | when the agent stated it; empty when never stated |
 | `created_at`, `updated_at` | RFC3339 | |
 
 `GoalMetric` = `{name string, target float64, current float64, unit string}`.
 The agent updates `current` over time with evidence; metric history is
 derivable from `metric_update` events (§2.2).
+
+The **next step** is the agent's statement of strategic intent — *"Post the
+launch thread on r/selfhosted"*, not a restatement of a task or schedule it
+created (§1 principle 5: goals orchestrate, they do not duplicate). It is
+**agent-authored only**: the user has no edit affordance and steers through
+`user_feedback` instead, because the agent owns the plan (§1 principle 1). It is
+written solely by `podiom_record_goal_progress` — so intent cannot change
+without a timeline entry saying what moved — and is cleared when completion is
+proposed or the goal goes terminal. Pausing preserves it, so resuming shows the
+same intent the user paused on. History is derivable from the `next_step` /
+`next_step_why` keys echoed in the `payload` of the `progress` / `plan_change`
+event that stated it.
 
 ### 2.2 Goal events (audit timeline)
 
@@ -157,9 +172,10 @@ its next review. An `env_var` approved **with** a value continues to
   recent `user_feedback` events + instructions to (a) decompose into roadmap
   tasks (`podiom_create_task`, delegating to other agents where sensible)
   and/or schedules (`podiom_create_schedule`), (b) record the plan via
-  `podiom_record_goal_progress` (kind `plan_change`), and (c) file
-  `podiom_request_access` for any missing capability. Feedback is guidance, not
-  a direct conversation, and must not override explicit success criteria.
+  `podiom_record_goal_progress` (kind `plan_change`) **including `next_step` and
+  `next_step_why`** (§2.1), and (c) file `podiom_request_access` for any missing
+  capability. Feedback is guidance, not a direct conversation, and must not
+  override explicit success criteria.
 - **Review session** — fired on the goal's cadence (§5) or manually
   ("Review now"). Prompt contract: goal definition + recent `user_feedback`
   events + recent timeline + decided access requests **including
@@ -169,6 +185,9 @@ its next review. An `env_var` approved **with** a value continues to
   to `in_progress` only moves the card), record a `progress`
   event with evidence and metric updates, file access requests if blocked, and
   call `podiom_propose_goal_completion` when the success criteria are met.
+  The prompt also carries the goal's **current `next_step` with its age**, and the
+  progress duty requires the agent to report whether that step happened before
+  restating it — the loop that keeps a stated intent from going stale.
 - Both run **unattended** in **yolo** (full autonomous access): Claude
   `bypassPermissions`, Codex `approvalPolicy: never` + `sandbox:
   danger-full-access`. No permission relay and no allow-list are attached — a
@@ -266,14 +285,17 @@ server-side, so provenance never depends on the model remembering to pass it.
 | `podiom_list_goals` | list goals (filter by status) |
 | `podiom_get_goal` | goal + recent events + pending/decided access requests |
 | `podiom_update_goal` | description / success criteria / cadence only — **status and lead agent are rejected** |
-| `podiom_record_goal_progress` | append `progress` or `plan_change` event; optional metric updates |
+| `podiom_record_goal_progress` | append `progress` or `plan_change` event; optional metric updates; optional `next_step` / `next_step_why` (§2.1) |
 | `podiom_list_goal_events` | paginated timeline |
 | `podiom_propose_goal_completion` | closing report → status `review` + notification |
 | `podiom_request_access` | file a typed access request |
 | `podiom_list_access_requests` | see prior decisions incl. `decision_note` |
 
 Deliberately absent: create/delete goal (goals are user-created), and any
-approve/deny surface (decisions are human-only).
+approve/deny surface (decisions are human-only). `podiom_update_goal` also
+deliberately cannot set `next_step` — routing it through
+`podiom_record_goal_progress` alone keeps the stated intent tied to a timeline
+entry explaining what moved.
 
 User feedback is also human-only: `POST /api/goals/<id>/feedback` appends a
 `user_feedback` event, and there is deliberately no agent tool for creating

@@ -94,7 +94,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_record_goal_progress",
 			APIRoutes:   []string{"/api/goals/"},
-			Description: "Record a goal timeline entry: what moved and the evidence (kind \"progress\"), or how the plan changed (kind \"plan_change\"). Pass metric_updates to move metric values — each update is audited old → new.",
+			Description: "Record a goal timeline entry: what moved and the evidence (kind \"progress\"), or how the plan changed (kind \"plan_change\"). Pass metric_updates to move metric values — each update is audited old → new. Pass next_step to restate what you will do next; this is the one line the user reads to see where the goal is heading.",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":   strProp("Goal id."),
 				"kind": strProp("Entry kind: progress (default) or plan_change."),
@@ -104,6 +104,8 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 					"required":   []string{"name", "current"},
 					"properties": map[string]any{"name": strProp("Metric name (must exist on the goal)."), "current": map[string]any{"type": "number", "description": "New current value."}},
 				}},
+				"next_step":     strProp("One short imperative line naming the single most important strategic move you will make before the next review (e.g. \"Post the launch thread on r/selfhosted\"). Not a restatement of a task or schedule you created, and not a list. Omit to leave the current next step unchanged."),
+				"next_step_why": strProp("One sentence on why that is the right move now."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -113,7 +115,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				if err := requireField(m, "id"); err != nil {
 					return "", err
 				}
-				body := stamp(bodyFrom(m, "kind", "body", "metric_updates"))
+				body := stamp(bodyFrom(m, "kind", "body", "metric_updates", "next_step", "next_step_why"))
 				return c.post(ctx, "/api/goals/"+url.PathEscape(argString(m, "id"))+"/events", body)
 			},
 		},

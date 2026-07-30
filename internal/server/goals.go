@@ -61,6 +61,10 @@ type goalProgressRequest struct {
 	Body          string                  `json:"body,omitempty"`
 	MetricUpdates []core.GoalMetricUpdate `json:"metric_updates,omitempty"`
 	SessionID     string                  `json:"session_id,omitempty"`
+	// Omitting these leaves the goal's current next step alone, so recording
+	// progress never fails for lacking one and never silently erases one.
+	NextStep    string `json:"next_step,omitempty"`
+	NextStepWhy string `json:"next_step_why,omitempty"`
 }
 
 type goalFeedbackRequest struct {
@@ -470,6 +474,8 @@ func (s *Server) handleGoalEvents(w http.ResponseWriter, r *http.Request, id str
 			Kind:          store.GoalEventKind(req.Kind),
 			Body:          req.Body,
 			MetricUpdates: req.MetricUpdates,
+			NextStep:      req.NextStep,
+			NextStepWhy:   req.NextStepWhy,
 		})
 		if err != nil {
 			writeJSON(w, nil, err)

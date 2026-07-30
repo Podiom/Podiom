@@ -263,6 +263,14 @@ func (c *Core) TransitionGoal(ctx context.Context, id string, to store.GoalStatu
 	if err != nil {
 		return store.Goal{}, err
 	}
+	// A finished goal has no next step. Pausing keeps it, so resuming shows the
+	// same intent the user paused on.
+	if to == store.GoalDone || to == store.GoalAbandoned {
+		if err := c.store.SetGoalNextStep(ctx, updated.ID, "", "", ""); err != nil {
+			return store.Goal{}, err
+		}
+		updated.NextStep, updated.NextStepWhy, updated.NextStepAt = "", "", ""
+	}
 	payload, _ := json.Marshal(map[string]string{"from": string(from), "to": string(to)})
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:  updated.ID,
@@ -526,18 +534,25 @@ type GoalMetricUpdate struct {
 }
 
 // RecordGoalProgressRequest is an agent-recorded timeline entry: a progress or
-// plan_change note, optionally moving metrics.
+// plan_change note, optionally moving metrics and restating the next step.
 type RecordGoalProgressRequest struct {
 	GoalID        string
 	SessionID     string
 	Kind          store.GoalEventKind // progress (default) or plan_change
 	Body          string
 	MetricUpdates []GoalMetricUpdate
+	// NextStep and NextStepWhy restate the agent's strategic intent. Empty leaves
+	// the goal's current next step untouched, so a progress entry never has to
+	// carry one and never silently erases one.
+	NextStep    string
+	NextStepWhy string
 }
 
 // RecordGoalProgress appends a progress/plan_change event and, when metrics
 // moved, a metric_update event whose payload carries the old → new deltas —
-// applied to the goal's metric projection in the same transaction.
+// applied to the goal's metric projection in the same transaction. A stated next
+// step is projected onto the goal and echoed in the event payload, so the
+// history of intentions stays derivable from the timeline.
 func (c *Core) RecordGoalProgress(ctx context.Context, req RecordGoalProgressRequest) ([]store.GoalEvent, error) {
 	goal, err := c.store.GetGoal(ctx, req.GoalID)
 	if err != nil {
@@ -554,20 +569,34 @@ func (c *Core) RecordGoalProgress(ctx context.Context, req RecordGoalProgressReq
 		return nil, fmt.Errorf("a progress entry needs a body or metric updates")
 	}
 	runID := c.goalRunForAgentEvent(ctx, goal.ID, req.SessionID)
+	nextStep := strings.TrimSpace(req.NextStep)
+	nextStepWhy := strings.TrimSpace(req.NextStepWhy)
 
 	var events []store.GoalEvent
 	if strings.TrimSpace(req.Body) != "" {
+		var payload string
+		if nextStep != "" || nextStepWhy != "" {
+			raw, _ := json.Marshal(map[string]string{"next_step": nextStep, "next_step_why": nextStepWhy})
+			payload = string(raw)
+		}
 		ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 			GoalID:    goal.ID,
 			SessionID: req.SessionID,
 			RunID:     runID,
 			Kind:      kind,
 			Body:      req.Body,
+			Payload:   payload,
 		})
 		if err != nil {
 			return nil, err
 		}
 		events = append(events, ev)
+	}
+
+	if nextStep != "" || nextStepWhy != "" {
+		if err := c.store.SetGoalNextStep(ctx, goal.ID, nextStep, nextStepWhy, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return nil, err
+		}
 	}
 
 	if len(req.MetricUpdates) > 0 {
@@ -629,6 +658,11 @@ func (c *Core) ProposeGoalCompletion(ctx context.Context, goalID, sessionID, clo
 	if err != nil {
 		return store.Goal{}, err
 	}
+	// Claiming the criteria are met is a claim that nothing is left to do.
+	if err := c.store.SetGoalNextStep(ctx, updated.ID, "", "", ""); err != nil {
+		return store.Goal{}, err
+	}
+	updated.NextStep, updated.NextStepWhy, updated.NextStepAt = "", "", ""
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    updated.ID,
 		SessionID: sessionID,

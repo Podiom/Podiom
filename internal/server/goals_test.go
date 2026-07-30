@@ -314,6 +314,53 @@ func TestGoalProgressEventsApplyMetrics(t *testing.T) {
 	}
 }
 
+// The next step reaches the goal over the same progress endpoint the agent tools
+// use, and a later entry that omits it leaves the stated intent alone.
+func TestGoalProgressEventsStateNextStep(t *testing.T) {
+	_, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	goal := createGoalViaCore(t, srv, store.Goal{})
+
+	body := `{"body":"Issue #3 shipped","session_id":"sess-2",` +
+		`"next_step":"Post the launch thread on r/selfhosted",` +
+		`"next_step_why":"Organic signups stalled."}`
+	req := httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/events", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("progress: %d %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/goals/"+goal.ID, nil)
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get goal: %d %s", rr.Code, rr.Body.String())
+	}
+	var detail GoalDetail
+	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detail.Goal.NextStep != "Post the launch thread on r/selfhosted" {
+		t.Fatalf("next step = %q", detail.Goal.NextStep)
+	}
+	if detail.Goal.NextStepWhy != "Organic signups stalled." || detail.Goal.NextStepAt == "" {
+		t.Fatalf("next step rationale/timestamp missing: %+v", detail.Goal)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/events",
+		bytes.NewBufferString(`{"body":"Drafted the thread."}`))
+	rr = httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("second progress: %d %s", rr.Code, rr.Body.String())
+	}
+	got, _ := srv.core.GetGoal(context.Background(), goal.ID)
+	if got.NextStep != "Post the launch thread on r/selfhosted" {
+		t.Fatalf("omitting next_step changed it to %q", got.NextStep)
+	}
+}
+
 func TestGoalFeedbackEndpointRecordsUserEventOnly(t *testing.T) {
 	_, srv, cleanup := newGoalTestServer(t)
 	defer cleanup()

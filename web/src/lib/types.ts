@@ -463,6 +463,11 @@ export interface Goal {
   Status: GoalStatus;
   NextReviewAt: string;
   ClosingReport: string;
+  // The lead agent's stated strategic move before its next review, its one-sentence
+  // rationale, and when it said so. Agent-authored: the user steers via feedback.
+  NextStep: string;
+  NextStepWhy: string;
+  NextStepAt: string;
   CreatedAt: string;
   UpdatedAt: string;
   // Rolled-up token usage across the goal's sessions, as an estimated share of the

@@ -33,7 +33,7 @@ exactly what you did while they were away.
    - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id so they run as part of this goal's autonomous chain.
 2. Do quick setup and investigation directly (install a CLI tool, read the repo, run a probe command) — but push the substantial and recurring work into the tasks and schedules above so it is tracked and survives this session.
 3. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
-4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal.
+4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before your first review (e.g. "Post the launch thread on r/selfhosted", "Benchmark the three candidate libraries"), not a restatement of a task or schedule you just created, and not a list; next_step_why is one sentence on why that is the right first move. This is what the user reads to understand where the goal is heading.
 5. File podiom_request_access only for things you genuinely cannot do yourself: assigning an MCP server, installing a marketplace skill, or a credential / environment variable — when you are blocked on missing auth (e.g. a GitHub token), request it by variable name and purpose, never the secret value itself; the user enters the value privately and it becomes available in your environment on later runs. You do not need to request CLI-tool installs or a permission level — you already have full access.
 6. If — and only if — you are genuinely blocked on a decision that is the user's to make (a strategic choice, a missing value, a preference you cannot infer), call podiom_ask_user with the question and a few selectable answers. This pauses the goal's reviews and surfaces the question on the goal page; the user's answer is fed into your next session. Do not ask about things you can decide yourself.
 
@@ -93,7 +93,7 @@ tool-call entries to stay readable; the full record is on the goal page.)
 
 1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted.
 2. Consider the user's recent feedback above as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
-3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed.
+3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed. If you stated a next step last time (see the goal brief above), say in the body whether it happened. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before the next review (e.g. "Post the launch thread on r/selfhosted", "Benchmark the three candidate libraries"), not a restatement of a task or schedule you created, and not a list; next_step_why is one sentence on why that is the right move now. This is what the user reads to understand where the goal is heading, so keep it current.
 4. Take direct corrective action when it is quick and unblocks progress (run a command, fix a file, unstick a task); push larger or recurring work into tasks and schedules (with goal_id) so it is tracked.
 5. File podiom_request_access only for what you cannot do yourself (an MCP server, a marketplace skill, a credential by variable name — never the value). An env_var request marked [executed] means the credential is already set in your environment — use it directly and never echo its value. If the user answered a previous request (see above), act on their note.
 6. If — and only if — you are genuinely blocked on a decision that is the user's to make, call podiom_ask_user with the question and a few selectable answers. This pauses reviews and surfaces it on the goal page; the answer reaches your next session. If the user answered a previous question (see above), act on their answer. Do not ask about things you can decide yourself.
@@ -120,6 +120,18 @@ func writeGoalBrief(b *strings.Builder, goal store.Goal) {
 		b.WriteString("- Metrics:\n")
 		for _, m := range goal.Metrics {
 			fmt.Fprintf(b, "  - %s: %g / %g %s\n", m.Name, m.Current, m.Target, m.Unit)
+		}
+	}
+	// The next step you stated last time, with its age — so you can report whether
+	// it happened instead of quietly replacing it.
+	if strings.TrimSpace(goal.NextStep) != "" {
+		if goal.NextStepAt != "" {
+			fmt.Fprintf(b, "- Next step you stated (at %s): %s\n", goal.NextStepAt, strings.TrimSpace(goal.NextStep))
+		} else {
+			fmt.Fprintf(b, "- Next step you stated: %s\n", strings.TrimSpace(goal.NextStep))
+		}
+		if strings.TrimSpace(goal.NextStepWhy) != "" {
+			fmt.Fprintf(b, "  Why you said it mattered: %s\n", strings.TrimSpace(goal.NextStepWhy))
 		}
 	}
 	b.WriteString("\n")

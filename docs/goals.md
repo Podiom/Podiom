@@ -71,6 +71,24 @@ with evidence and metric updates, reads your answers to its access requests,
 and proposes completion when everything is met. **Review now** on the goal
 detail triggers one immediately.
 
+## Next step
+
+Every review ends with the agent stating its **next step**: the single most
+important move it will make before the next review, plus one sentence on why.
+It appears near the top of the goal detail so you can see where the goal is
+heading at a glance — *"Post the launch thread on r/selfhosted"*, not a
+restatement of the tasks and schedules on the Roadmap and Schedules pages.
+
+Note the difference from **next review** in the goal header: that is *when* the
+agent wakes up, this is *what it intends to do*.
+
+The next step is written by the agent, not you — there is no edit box. To steer
+it, add feedback (above); the agent reads your notes at its next review and
+revises. Each review also shows the agent its own previous next step and asks it
+to report whether that happened, so the line stays current rather than going
+stale. It clears when the agent proposes completion or the goal is closed;
+pausing keeps it, so resuming shows the intent you paused on.
+
 ## Goals run in yolo mode
 
 A goal exists to reach an outcome **without** you in the loop, so the whole goal
@@ -149,7 +167,7 @@ those goals first under **Needs you**.
 - `DELETE /api/goals/<id>`
 - `GET  /api/goals/<id>/events` (`?limit=&before=`) — timeline pagination
 - `GET  /api/goals/<id>/runs/<run-id>` — exact run metadata, events, and bounded transcript
-- `POST /api/goals/<id>/events` — record progress / metric updates (agent tools)
+- `POST /api/goals/<id>/events` — record progress / metric updates / next step (agent tools)
 - `POST /api/goals/<id>/feedback` — add user feedback for the next goal run
 - `PATCH /api/goals/<id>/feedback` — edit feedback by `event_id` until a later planning/review session has read it
 - `POST /api/goals/<id>/propose-completion`

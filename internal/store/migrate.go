@@ -1204,6 +1204,18 @@ var migrations = []migration{
 			SELECT RAISE(ABORT, 'session origin is immutable');
 		END;`,
 	},
+	{
+		// The lead agent's stated next step: what it will do before the next
+		// review, and why. Plain column adds — no CHECK constraint is involved,
+		// so no table rebuild. next_step_at is nullable (the next_review_at
+		// precedent) because "never stated" and "stated at the epoch" must not
+		// look alike.
+		version: 29,
+		name:    "goal_next_step",
+		sql: `ALTER TABLE goals ADD COLUMN next_step     TEXT NOT NULL DEFAULT '';
+		ALTER TABLE goals ADD COLUMN next_step_why TEXT NOT NULL DEFAULT '';
+		ALTER TABLE goals ADD COLUMN next_step_at  TEXT;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

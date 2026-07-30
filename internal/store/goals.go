@@ -27,11 +27,13 @@ func (s *Store) CreateGoal(ctx context.Context, goal Goal) (Goal, error) {
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO goals
 		(id, title, description, success_criteria, metrics_json, review_every, lead_agent, project_id,
-		 provider, profile, model, effort, lead_session_id, status, next_review_at, closing_report)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+		 provider, profile, model, effort, lead_session_id, status, next_review_at, closing_report,
+		 next_step, next_step_why, next_step_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, NULLIF(?, ''))`,
 		goal.ID, goal.Title, goal.Description, goal.SuccessCriteria, metrics, goal.ReviewEvery,
 		goal.LeadAgent, goal.ProjectID, goal.Provider, goal.Profile, goal.Model, goal.Effort,
 		goal.LeadSessionID, goal.Status, goal.NextReviewAt, goal.ClosingReport,
+		goal.NextStep, goal.NextStepWhy, goal.NextStepAt,
 	)
 	if err != nil {
 		return Goal{}, fmt.Errorf("create goal %q: %w", goal.ID, err)
@@ -71,6 +73,10 @@ func (s *Store) ListGoals(ctx context.Context, status string) ([]Goal, error) {
 
 // UpdateGoal stores the mutable fields of a goal. Which fields a given caller
 // may change (user vs agent tool) is policy enforced at the API layer.
+//
+// The next-step columns are deliberately absent from the SET clause: they are
+// written only by SetGoalNextStep, so a full-row update built from a stale read
+// (a cadence edit, a lead handoff) can never clobber the agent's stated intent.
 func (s *Store) UpdateGoal(ctx context.Context, goal Goal) (Goal, error) {
 	metrics, err := marshalMetrics(goal.Metrics)
 	if err != nil {
@@ -161,9 +167,33 @@ func (s *Store) SetGoalNextReview(ctx context.Context, id, at string) error {
 	return nil
 }
 
+// SetGoalNextStep persists the lead agent's stated next step — the action it
+// will take before the next review, its one-sentence rationale, and when it said
+// so. Passing empty strings clears all three (completion, terminal states).
+//
+// A targeted UPDATE rather than a field on UpdateGoal, so recording progress
+// never races a concurrent full-row write of the goal.
+func (s *Store) SetGoalNextStep(ctx context.Context, id, step, why, at string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE goals
+		SET next_step = ?, next_step_why = ?, next_step_at = NULLIF(?, ''), updated_at = datetime('now')
+		WHERE id = ?`, step, why, at, id)
+	if err != nil {
+		return fmt.Errorf("set goal %q next step: %w", id, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set goal %q next step rows affected: %w", id, err)
+	}
+	if changed == 0 {
+		return fmt.Errorf("goal %q: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 const goalSelect = `SELECT id, title, description, success_criteria, metrics_json, review_every,
 	lead_agent, project_id, COALESCE(provider, ''), COALESCE(profile, ''), COALESCE(model, ''), COALESCE(effort, ''),
-	COALESCE(lead_session_id, ''), status, COALESCE(next_review_at, ''), closing_report, created_at, updated_at FROM goals`
+	COALESCE(lead_session_id, ''), status, COALESCE(next_review_at, ''), closing_report,
+	next_step, next_step_why, COALESCE(next_step_at, ''), created_at, updated_at FROM goals`
 
 func scanGoals(rows *sql.Rows) ([]Goal, error) {
 	var goals []Goal
@@ -197,6 +227,9 @@ func scanGoal(row scanner) (Goal, error) {
 		&goal.Status,
 		&goal.NextReviewAt,
 		&goal.ClosingReport,
+		&goal.NextStep,
+		&goal.NextStepWhy,
+		&goal.NextStepAt,
 		&goal.CreatedAt,
 		&goal.UpdatedAt,
 	); err != nil {

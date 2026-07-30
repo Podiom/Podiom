@@ -130,6 +130,67 @@ func TestGoalCRUDAndDueReviews(t *testing.T) {
 	}
 }
 
+// The stated next step must survive an unrelated full-row UpdateGoal — a cadence
+// edit or lead handoff built from a stale read must not erase the agent's intent,
+// which is why the columns live outside UpdateGoal's SET clause.
+func TestGoalNextStepSurvivesUpdateAndClears(t *testing.T) {
+	ctx := context.Background()
+	db := openGoalStore(t)
+
+	created, err := db.CreateGoal(ctx, Goal{Title: "Grow the newsletter", LeadAgent: "atlas"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if created.NextStep != "" || created.NextStepWhy != "" || created.NextStepAt != "" {
+		t.Fatalf("new goal should have no next step, got %+v", created)
+	}
+
+	stated := time.Now().UTC().Format(time.RFC3339)
+	if err := db.SetGoalNextStep(ctx, created.ID, "Post the launch thread on r/selfhosted",
+		"Organic signups stalled and Reddit is the cheapest channel left untried.", stated); err != nil {
+		t.Fatalf("set next step: %v", err)
+	}
+	got, err := db.GetGoal(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if got.NextStep != "Post the launch thread on r/selfhosted" {
+		t.Fatalf("next step = %q", got.NextStep)
+	}
+	if got.NextStepWhy == "" || got.NextStepAt != stated {
+		t.Fatalf("next step why/at did not round-trip: %+v", got)
+	}
+
+	// A full-row write from a read taken BEFORE the next step was stated.
+	stale := created
+	stale.ReviewEvery = "12h"
+	updated, err := db.UpdateGoal(ctx, stale)
+	if err != nil {
+		t.Fatalf("update goal: %v", err)
+	}
+	if updated.NextStep != "Post the launch thread on r/selfhosted" {
+		t.Fatalf("UpdateGoal clobbered the next step: %q", updated.NextStep)
+	}
+	if updated.ReviewEvery != "12h" {
+		t.Fatalf("cadence edit lost: %q", updated.ReviewEvery)
+	}
+
+	if err := db.SetGoalNextStep(ctx, created.ID, "", "", ""); err != nil {
+		t.Fatalf("clear next step: %v", err)
+	}
+	cleared, err := db.GetGoal(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if cleared.NextStep != "" || cleared.NextStepWhy != "" || cleared.NextStepAt != "" {
+		t.Fatalf("next step not cleared: %+v", cleared)
+	}
+
+	if err := db.SetGoalNextStep(ctx, "missing", "x", "y", stated); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("set on missing goal err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	ctx := context.Background()
 	db := openGoalStore(t)

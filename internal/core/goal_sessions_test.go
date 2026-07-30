@@ -72,6 +72,165 @@ func TestGoalPlanningSessionUsesProjectInstructions(t *testing.T) {
 	}
 }
 
+// The next step is the user's answer to "what will the agent do?", so it is
+// written only alongside a progress entry, preserved when a later entry omits it,
+// and dropped once the goal has nothing left to do.
+func TestRecordGoalProgressStatesNextStep(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Grow the newsletter", LeadAgent: "lead"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+
+	// Restating intent requires saying what moved: a next step alone is rejected.
+	if _, err := c.RecordGoalProgress(ctx, RecordGoalProgressRequest{
+		GoalID:   goal.ID,
+		NextStep: "Post the launch thread on r/selfhosted",
+	}); err == nil {
+		t.Fatalf("next step without a body or metric updates should be rejected")
+	}
+
+	if _, err := c.RecordGoalProgress(ctx, RecordGoalProgressRequest{
+		GoalID:      goal.ID,
+		Body:        "Sent issue 4; 18 new signups.",
+		NextStep:    "Post the launch thread on r/selfhosted",
+		NextStepWhy: "Organic signups stalled and Reddit is the cheapest channel left untried.",
+	}); err != nil {
+		t.Fatalf("record progress: %v", err)
+	}
+	stated, err := c.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if stated.NextStep != "Post the launch thread on r/selfhosted" {
+		t.Fatalf("next step = %q", stated.NextStep)
+	}
+	if stated.NextStepWhy == "" || stated.NextStepAt == "" {
+		t.Fatalf("next step rationale/timestamp missing: %+v", stated)
+	}
+
+	// The event payload carries it too, so the history of intentions is derivable
+	// from the timeline the way metric history is.
+	events, err := c.ListGoalEvents(ctx, goal.ID, 10, 0)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	var found bool
+	for _, ev := range events {
+		if ev.Kind == store.GoalEventProgress && strings.Contains(ev.Payload, "r/selfhosted") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no progress event carried the next step payload: %+v", events)
+	}
+
+	// A later entry that omits it must not silently erase it.
+	if _, err := c.RecordGoalProgress(ctx, RecordGoalProgressRequest{
+		GoalID: goal.ID,
+		Body:   "Drafted the thread.",
+	}); err != nil {
+		t.Fatalf("record progress: %v", err)
+	}
+	kept, err := c.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if kept.NextStep != stated.NextStep {
+		t.Fatalf("omitting next_step changed it to %q", kept.NextStep)
+	}
+
+	// Pausing keeps the intent the user paused on.
+	if _, err := c.TransitionGoal(ctx, goal.ID, store.GoalPaused, "Paused by you."); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	paused, err := c.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if paused.NextStep != stated.NextStep {
+		t.Fatalf("pausing dropped the next step: %q", paused.NextStep)
+	}
+
+	// Abandoning clears it — a finished goal has no next step.
+	if _, err := c.TransitionGoal(ctx, goal.ID, store.GoalAbandoned, "Abandoned by you."); err != nil {
+		t.Fatalf("abandon: %v", err)
+	}
+	done, err := c.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if done.NextStep != "" || done.NextStepWhy != "" || done.NextStepAt != "" {
+		t.Fatalf("abandoned goal kept a next step: %+v", done)
+	}
+}
+
+// Proposing completion is a claim that nothing is left, so it drops the next step
+// in the returned goal as well as in the store.
+func TestProposeGoalCompletionClearsNextStep(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Grow the newsletter", LeadAgent: "lead"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := c.RecordGoalProgress(ctx, RecordGoalProgressRequest{
+		GoalID:   goal.ID,
+		Body:     "Hit 1,000 subscribers.",
+		NextStep: "Post the launch thread on r/selfhosted",
+	}); err != nil {
+		t.Fatalf("record progress: %v", err)
+	}
+	proposed, err := c.ProposeGoalCompletion(ctx, goal.ID, "", "Every criterion is met: 1,000 subscribers.")
+	if err != nil {
+		t.Fatalf("propose completion: %v", err)
+	}
+	if proposed.NextStep != "" || proposed.NextStepAt != "" {
+		t.Fatalf("returned goal kept a next step: %+v", proposed)
+	}
+	stored, err := c.GetGoal(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("get goal: %v", err)
+	}
+	if stored.NextStep != "" {
+		t.Fatalf("stored goal kept a next step: %q", stored.NextStep)
+	}
+}
+
+// The review prompt shows the agent its own previous next step with its age, which
+// is what lets the review duty ask "did that happen?" instead of silently drifting.
+func TestGoalReviewPromptCarriesStatedNextStep(t *testing.T) {
+	goal := store.Goal{
+		ID:          "g1",
+		Title:       "Grow the newsletter",
+		NextStep:    "Post the launch thread on r/selfhosted",
+		NextStepWhy: "Organic signups stalled.",
+		NextStepAt:  "2026-07-29T09:00:00Z",
+	}
+	prompt := GoalReviewPrompt(goal, nil, nil, nil, nil)
+	for _, want := range []string{"Post the launch thread on r/selfhosted", "Organic signups stalled.", "2026-07-29T09:00:00Z", "next_step_why"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review prompt missing %q:\n%s", want, prompt)
+		}
+	}
+
+	bare := GoalReviewPrompt(store.Goal{ID: "g1", Title: "Grow the newsletter"}, nil, nil, nil, nil)
+	if strings.Contains(bare, "Next step you stated") {
+		t.Fatalf("unstated next step should not appear in the brief:\n%s", bare)
+	}
+}
+
 func TestGoalFeedbackIsUserOnlyContextForGoalRuns(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newScheduledTestCore(t)

@@ -352,8 +352,17 @@ type Goal struct {
 	NextReviewAt string
 	// ClosingReport is the agent-written markdown set when it proposes completion.
 	ClosingReport string
-	CreatedAt     string
-	UpdatedAt     string
+	// NextStep is the agent-stated strategic move it will make before the next
+	// review — an action ("Post the launch thread on r/selfhosted"), not a
+	// restatement of a scheduled task. NextStepWhy is its one-sentence rationale
+	// and NextStepAt when it was stated, so a stale intention is visible as such.
+	// Written only through RecordGoalProgress (never a full-row UpdateGoal) and
+	// cleared when the goal is proposed complete or goes terminal.
+	NextStep    string
+	NextStepWhy string
+	NextStepAt  string
+	CreatedAt   string
+	UpdatedAt   string
 }
 
 // GoalEventKind classifies one entry in a goal's append-only timeline.
