@@ -204,6 +204,28 @@ prints the gateway-token location. On supported local desktops it copies the
 token to the clipboard; otherwise it prints clear manual-copy instructions. The
 token value is printed only to your terminal, never to daemon or add-on logs.
 
+### `podiom memory`
+
+Inspect and manage the durable `MEMORY.md` that each agent curates through
+nightly session consolidation, called dreaming.
+
+```
+podiom memory show jared
+podiom memory edit jared
+podiom memory clear jared --yes
+podiom memory dream jared
+podiom memory status
+podiom memory status jared
+```
+
+| Command | Description |
+| --- | --- |
+| `show <agent>` | Print the agent's current `MEMORY.md`. |
+| `edit <agent>` | Open memory in `$EDITOR`, falling back to `vi`; saved edits are authoritative. |
+| `clear <agent> [--yes]` | Empty memory after confirmation, or skip the prompt with `--yes`. |
+| `dream <agent>` | Consolidate un-dreamed sessions now; does nothing when none are pending. |
+| `status [<agent>]` | Show last-dream time, pending sessions, and memory line-budget usage. |
+
 ### `podiom agents list`
 
 List durable agents known to the daemon.
