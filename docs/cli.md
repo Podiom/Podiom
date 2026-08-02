@@ -226,6 +226,28 @@ podiom memory status jared
 | `dream <agent>` | Consolidate un-dreamed sessions now; does nothing when none are pending. |
 | `status [<agent>]` | Show last-dream time, pending sessions, and memory line-budget usage. |
 
+### `podiom skills`
+
+Browse the reusable `SKILL.md` capability folders available to agents. Podiom
+discovers skills under `~/.agents/skills`, `~/.claude/skills`, and
+`~/.codex/skills`, then presents one deduplicated catalogue.
+
+```
+podiom skills list
+podiom skills list --source codex
+podiom skills show hello-podiom
+podiom skills paths
+podiom skills scan
+podiom skills relink
+```
+
+| Command | Description |
+| --- | --- |
+| `list [--source agents\|claude\|codex]` | List skills with their source badges and descriptions. |
+| `show <name>` | Print a skill's `SKILL.md`, source paths, and any cross-source conflict. |
+| `paths` | Print the three skill roots and resolved union topology. |
+| `scan` / `relink` | Rebuild the shared `~/.agents/skills` union links without overwriting real folders. |
+
 ### `podiom agents list`
 
 List durable agents known to the daemon.
