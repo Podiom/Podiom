@@ -28,6 +28,16 @@ stays thin on purpose:
 - Built-in scheduling for recurring work and follow-ups.
 - Native integration with the tools you already use instead of replacing them.
 
+## See it in action
+
+![Podiom demo: create a session, send a message, and receive a response](docs/assets/screenshots/podiom-demo.gif)
+
+## Screenshots
+
+| Agent roster | Chat session | Goal timeline |
+| --- | --- | --- |
+| ![Podiom agent roster showing named Claude and Codex agents](docs/assets/screenshots/agents-dashboard.png) | ![Podiom chat session with durable history and session usage](docs/assets/screenshots/agent-chat-session.png) | ![Podiom goal timeline showing metrics and recorded activity](docs/assets/screenshots/goal-timeline.png) |
+
 ## Who is this for?
 
 - Developers already using Claude Code or OpenAI Codex locally.
