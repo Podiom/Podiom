@@ -136,6 +136,10 @@ All runtime state lives under `$PODIOM_HOME` (default `~/.podiom/`).
 - [Requirements](docs/requirements.md) — the authoritative spec (v1.6).
 - [CLI reference](docs/cli.md)
 - [Configuration](docs/configuration.md)
+- [Agents](docs/agents.md) — durable, named colleagues and their stored defaults
+- [Git](docs/git.md) — how projects carry source control
+- [Sessions](docs/sessions.md) — the durable conversation unit
+- [SOUL.md generation](docs/soul-generation.md) — how agent identity files are generated
 - [Scheduling](docs/scheduling.md)
 - [Projects & Roadmap](docs/projects.md)
 - [Goals](docs/goals.md) — hand an outcome to an agent; it plans, reviews, and reports back
