@@ -133,17 +133,21 @@ All runtime state lives under `$PODIOM_HOME` (default `~/.podiom/`).
 
 ## Documentation
 
-- [Requirements](docs/requirements.md) — the authoritative spec (v1.6).
+- [Requirements](docs/requirements.md) - the authoritative spec (v1.6).
 - [CLI reference](docs/cli.md)
 - [Configuration](docs/configuration.md)
+- [Agents](docs/agents.md) - agent roster, adapters, and workspace setup
+- [Sessions](docs/sessions.md) - chat sessions, history, and session usage
 - [Scheduling](docs/scheduling.md)
 - [Projects & Roadmap](docs/projects.md)
-- [Goals](docs/goals.md) — hand an outcome to an agent; it plans, reviews, and reports back
-- [Workspace tools](docs/workspace-tools.md) — approved per-agent CLI installs
-- [Voice input](docs/voice-input.md) — speak prompts in chat, tasks, and goals (OpenAI Whisper)
-- [Photo attachments](docs/photo-attachments.md) — attach retained photos for Claude or Codex to inspect
-- [Security & logging](docs/security.md) — permission modes, gateway token, redaction, run logs
-- [Home Assistant app](docs/home-assistant.md) — deploy Podiom as an HA add-on
+- [Goals](docs/goals.md) - hand an outcome to an agent; it plans, reviews, and reports back
+- [Workspace tools](docs/workspace-tools.md) - approved per-agent CLI installs
+- [Git worktrees](docs/git.md) - git integration for agent work
+- [Soul generation](docs/soul-generation.md) - generate agent soul / personality prompts
+- [Voice input](docs/voice-input.md) - speak prompts in chat, tasks, and goals (OpenAI Whisper)
+- [Photo attachments](docs/photo-attachments.md) - attach retained photos for Claude or Codex to inspect
+- [Security & logging](docs/security.md) - permission modes, gateway token, redaction, run logs
+- [Home Assistant app](docs/home-assistant.md) - deploy Podiom as an HA add-on
 - [Integration contracts](docs/integrations/README.md)
 
 ## Contributing
