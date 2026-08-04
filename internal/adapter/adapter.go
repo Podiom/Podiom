@@ -221,13 +221,16 @@ type EventKind string
 
 const (
 	// EventReasoningDelta is an incremental reasoning/thinking text chunk. It is
-	// hidden from the current chat UI and kept separate from final assistant text.
+	// kept separate from assistant text so chat can render it as a working note
+	// rather than as the turn's answer.
 	EventReasoningDelta EventKind = "reasoning_delta"
 	// EventReasoningMessage is a completed reasoning/thinking text block.
 	EventReasoningMessage EventKind = "reasoning_message"
 	// EventAssistantDelta is an incremental assistant text chunk.
 	EventAssistantDelta EventKind = "assistant_delta"
-	// EventAssistantMessage is the final assistant message for the turn.
+	// EventAssistantMessage is a completed assistant text block. A turn may emit
+	// several — prose between tool calls, then the answer — and core treats the
+	// last one as the answer.
 	EventAssistantMessage EventKind = "assistant_message"
 	// EventPermissionRequest asks the client to approve or deny a tool action.
 	EventPermissionRequest EventKind = "permission_request"

@@ -93,6 +93,7 @@ export interface GlobalConfig {
   permission_mode: PermissionMode;
   permission_timeout: string;
   fallback: string[];
+  collapse_reasoning: boolean;
   voice: VoiceConfig;
 }
 
@@ -113,11 +114,12 @@ export interface GlobalConfigPatch {
   permission_mode?: PermissionMode;
   permission_timeout?: string;
   fallback?: string[];
+  collapse_reasoning?: boolean;
   voice?: { openai_api_key?: string };
 }
 export type SessionOrigin = "web" | "cli" | "onboarding" | "interview" | "schedule" | "roadmap" | "goal";
 export type MessageRole = "user" | "assistant";
-export type MessageKind = "message" | "error" | "reasoning";
+export type MessageKind = "message" | "error" | "reasoning" | "narration";
 export type PlanState = "none" | "pending_submission" | "awaiting_approval";
 
 export interface PlanInfo {

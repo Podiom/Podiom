@@ -31,6 +31,27 @@ Message history is stored as strictly ordered `user` and `assistant` messages.
 The provider's own session or thread is treated as a resumable backing resource;
 Podiom's SQLite history is the canonical truth that survives daemon restarts.
 
+Every row carries a `Kind`:
+
+| Kind | Meaning |
+| --- | --- |
+| `message` | Conversation: a user turn or an agent's answer. The default. |
+| `narration` | What the agent said while still working, before its answer. |
+| `reasoning` | The provider's own thinking/reasoning text. |
+| `error` | A durable, session-scoped diagnostic shown in the chat. |
+
+One turn writes several rows rather than one. Each tool call ends the current
+`narration` and `reasoning` rows, so a turn that writes, works, writes again and
+then answers becomes a sequence of working notes followed by exactly one
+`message` — the last assistant row is always the answer. Working notes are
+persisted as the turn produces them, so they survive a turn that never finishes.
+
+Chat renders `narration` and `reasoning` as visually distinct working notes, and
+the `global.collapse_reasoning` setting decides whether a finished note folds
+down to one line once the answer arrives. Only `message` rows replay to a
+provider: working notes and diagnostics are Podiom's own record, and they are
+also left out of rolling summaries, automatic naming, and copied transcripts.
+
 When a profile switch or fallback changes the provider target, Podiom clears the
 provider handle, starts a fresh backing session/thread on the next live turn, and
 replays canonical history. If a rolling summary is available, replay sends the

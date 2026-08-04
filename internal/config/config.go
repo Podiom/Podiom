@@ -132,6 +132,10 @@ type Global struct {
 	// DreamTime is the local wall-clock time ("HH:MM") at which the nightly
 	// memory-consolidation ("dreaming") runner fires. Empty means the default.
 	DreamTime string `yaml:"dream_time"`
+	// CollapseReasoning makes chat fold a finished thinking/working note down to
+	// a single clickable line once the turn's answer arrives. Default false:
+	// notes stay expanded.
+	CollapseReasoning bool `yaml:"collapse_reasoning,omitempty"`
 }
 
 // GitHub is optional. Omitted, it defaults to Podiom's official GitHub App

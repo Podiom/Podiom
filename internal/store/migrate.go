@@ -1216,6 +1216,34 @@ var migrations = []migration{
 		ALTER TABLE goals ADD COLUMN next_step_why TEXT NOT NULL DEFAULT '';
 		ALTER TABLE goals ADD COLUMN next_step_at  TEXT;`,
 	},
+	{
+		// A turn now stores its interim assistant prose ("narration") as its own
+		// rows instead of gluing it onto the answer, so the kind CHECK has to
+		// admit one more value. Widened rather than dropped: unlike providers and
+		// permission modes there is no Go validator for message kinds, so this
+		// constraint is the only guard. Rebuild preserves id — attachments
+		// reference messages(id) — and deliberately leaves attachments alone;
+		// with foreign_keys OFF a RENAME does not rewrite its REFERENCES clause.
+		version: 30,
+		name:    "message_narration_kind",
+		sql: `CREATE TABLE messages_new (
+				id         INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+				seq        INTEGER NOT NULL,
+				role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+				kind       TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'error', 'reasoning', 'narration')),
+				content    TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				UNIQUE (session_id, seq)
+			);
+
+			INSERT INTO messages_new (id, session_id, seq, role, kind, content, created_at)
+			SELECT id, session_id, seq, role, kind, content, created_at FROM messages;
+
+			DROP TABLE messages;
+			ALTER TABLE messages_new RENAME TO messages;
+			CREATE INDEX idx_messages_session_seq ON messages(session_id, seq);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

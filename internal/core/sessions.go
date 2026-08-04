@@ -386,12 +386,35 @@ type TurnEvent struct {
 }
 
 type turnOutput struct {
+	// assistant and reasoning are the turn's *unflushed tail*: the text of the
+	// last segment of each kind that consumeAdapterEvents did not already
+	// persist mid-turn. An assistant segment is only flushed once a later one
+	// opens, so the tail assistant text is always the turn's final answer.
 	assistant string
 	reasoning string
+	// flushed reports whether any segment was already persisted mid-turn, so a
+	// turn whose whole output was flushed is not mistaken for an empty one.
+	flushed bool
 	// plan is the plan a provider's native plan mode produced this turn, if
 	// any. A plan turn legitimately produces none — the model may still be
 	// exploring or may have asked a clarifying question instead.
 	plan *adapter.PlanProposal
+}
+
+// turnSegment is one contiguous run of provider output of a single kind. A turn
+// is a sequence of them — the agent narrates, calls tools, narrates again, then
+// answers — and each segment becomes its own history row so the chat can tell
+// working notes apart from the answer.
+//
+// kind is KindReasoning or KindNarration: the working kind for assistant text is
+// narration, because that is what it becomes if a later assistant segment proves
+// it was not the turn's answer. The one segment left unstored at the end is the
+// answer, and StreamTurn writes it with the default kind.
+type turnSegment struct {
+	kind   store.MessageKind
+	text   strings.Builder
+	open   bool
+	stored bool
 }
 
 // AppendTurn persists the user turn, drives the adapter, persists the assistant
@@ -599,7 +622,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				continue
 			}
 			duration := time.Since(startedAt)
-			if output.assistant == "" && output.reasoning == "" {
+			if output.assistant == "" && output.reasoning == "" && !output.flushed {
 				runStatus = store.GoalRunSucceeded
 				runError = ""
 				runLog.Info("turn finished", "provider", string(current.Provider), "reply_bytes", 0, "fallbacks", fallbacks, podiomlog.DurationMS("duration_ms", duration))
@@ -619,11 +642,17 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 					Content: output.assistant,
 				})
 			}
-			assistantMessages, err := c.appendFinalMessages(ctx, sessionID, finalMessages)
-			if err != nil {
-				runLog.Warn("turn failed", "stage", "persist", "error", err)
-				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
-				return
+			// A turn can legitimately arrive here with nothing left to write: the
+			// segments it produced were all persisted mid-turn. Skip the write, but
+			// keep going so plan capture and turn_done still run.
+			var assistantMessages []store.Message
+			if len(finalMessages) > 0 {
+				assistantMessages, err = c.appendFinalMessages(ctx, sessionID, finalMessages)
+				if err != nil {
+					runLog.Warn("turn failed", "stage", "persist", "error", err)
+					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
+					return
+				}
 			}
 			// Capture a natively produced plan once the turn's messages are
 			// stored, so the plan artifact and the conversation agree. A failure
@@ -951,33 +980,175 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 }
 
 func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID, goalRunID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
-	var assistant, reasoning strings.Builder
+	// segments accumulates the turn's output in arrival order. Pointers, not
+	// values: appending would copy each strings.Builder along with its internal
+	// self-pointer, and the next write to a copy panics.
+	var segments []*turnSegment
+	var flushed bool
 	var plan *adapter.PlanProposal
 	currentProviderHandle := providerHandle
+
+	lastSegment := func(kind store.MessageKind) *turnSegment {
+		for i := len(segments) - 1; i >= 0; i-- {
+			if segments[i].kind == kind {
+				return segments[i]
+			}
+		}
+		return nil
+	}
+	// storeSegment persists one closed segment as its own history row and streams
+	// it to the client. A failed write costs a single working note, never the
+	// turn, so the segment is marked stored either way rather than risking a retry
+	// that would relabel a note as the answer.
+	storeSegment := func(seg *turnSegment) bool {
+		seg.stored = true
+		if strings.TrimSpace(seg.text.String()) == "" {
+			return true
+		}
+		flushed = true
+		stored, err := c.appendFinalMessages(ctx, sessionID, []store.Message{{
+			Role:    store.RoleAssistant,
+			Kind:    seg.kind,
+			Content: seg.text.String(),
+		}})
+		if err != nil {
+			c.log.Warn("persist turn segment failed",
+				"event", "run",
+				"session", sessionID,
+				"kind", string(seg.kind),
+				"error", err,
+			)
+			return true
+		}
+		for _, msg := range stored {
+			msg := msg
+			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "message_stored", Message: &msg}) {
+				return false
+			}
+		}
+		return true
+	}
+	// flushSettled persists every segment the turn has finished with, walking front
+	// to back so rows land in the order the agent produced them and stopping at the
+	// first one that is not settled yet. Stopping — rather than skipping — is what
+	// keeps the order honest: a note that comes after something still pending must
+	// wait its turn.
+	//
+	// Two things make a segment unsettled: it is still open, or it is the last
+	// assistant segment, which may yet turn out to be the turn's answer. Whatever
+	// is left from there on is the tail StreamTurn persists at the end.
+	flushSettled := func() bool {
+		lastAssistant := -1
+		for i, seg := range segments {
+			if seg.kind == store.KindNarration {
+				lastAssistant = i
+			}
+		}
+		for i, seg := range segments {
+			if seg.open || i == lastAssistant {
+				return true
+			}
+			if seg.stored {
+				continue
+			}
+			if !storeSegment(seg) {
+				return false
+			}
+		}
+		return true
+	}
+	openSegment := func(kind store.MessageKind, text string) bool {
+		seg := &turnSegment{kind: kind, open: true}
+		seg.text.WriteString(text)
+		segments = append(segments, seg)
+		return flushSettled()
+	}
+	// recordDelta appends streamed text to the open segment of its kind, starting
+	// one when the previous segment was already closed by a tool call.
+	recordDelta := func(kind store.MessageKind, content string) bool {
+		seg := lastSegment(kind)
+		if seg != nil && seg.open {
+			seg.text.WriteString(content)
+			return true
+		}
+		return openSegment(kind, content)
+	}
+	// recordMessage applies a provider's *complete* block. It supersedes the open
+	// segment (a finished block replaces the deltas that built it, and Claude's
+	// terminal `result` line replaces the assistant block it repeats); it drops an
+	// exact repeat of the closed segment it follows (the same `result` line
+	// arriving after a tool call already closed the block it repeats — recording it
+	// would duplicate the row); otherwise it starts a new segment.
+	recordMessage := func(kind store.MessageKind, content string) bool {
+		seg := lastSegment(kind)
+		switch {
+		case seg == nil:
+			return openSegment(kind, content)
+		case seg.open:
+			seg.text.Reset()
+			seg.text.WriteString(content)
+		case strings.TrimSpace(seg.text.String()) == strings.TrimSpace(content):
+		default:
+			return openSegment(kind, content)
+		}
+		return true
+	}
+	// closeSegments ends the open segments at a tool call: whatever the agent said
+	// before reaching for a tool was a working note, not the turn's answer.
+	closeSegments := func() bool {
+		for _, seg := range segments {
+			seg.open = false
+		}
+		return flushSettled()
+	}
+	// result returns the tail: the segments from the last assistant one onward,
+	// which StreamTurn persists as the turn's reasoning row and answer. There is
+	// at most one assistant segment left, but a turn can end on several reasoning
+	// segments, so those are joined rather than overwritten.
 	result := func() turnOutput {
-		return turnOutput{assistant: assistant.String(), reasoning: reasoning.String(), plan: plan}
+		out := turnOutput{flushed: flushed, plan: plan}
+		var reasoning []string
+		for _, seg := range segments {
+			if seg.stored || strings.TrimSpace(seg.text.String()) == "" {
+				continue
+			}
+			switch seg.kind {
+			case store.KindReasoning:
+				reasoning = append(reasoning, seg.text.String())
+			case store.KindNarration:
+				out.assistant = seg.text.String()
+			}
+		}
+		out.reasoning = strings.Join(reasoning, "\n")
+		return out
 	}
 	for event := range events {
 		switch event.Kind {
 		case adapter.EventReasoningDelta:
-			reasoning.WriteString(event.Content)
+			if !recordDelta(store.KindReasoning, event.Content) {
+				return result(), false, false
+			}
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
 				return result(), false, false
 			}
 		case adapter.EventReasoningMessage:
-			reasoning.Reset()
-			reasoning.WriteString(event.Content)
+			if !recordMessage(store.KindReasoning, event.Content) {
+				return result(), false, false
+			}
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
 				return result(), false, false
 			}
 		case adapter.EventAssistantDelta:
-			assistant.WriteString(event.Content)
+			if !recordDelta(store.KindNarration, event.Content) {
+				return result(), false, false
+			}
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
 				return result(), false, false
 			}
 		case adapter.EventAssistantMessage:
-			assistant.Reset()
-			assistant.WriteString(event.Content)
+			if !recordMessage(store.KindNarration, event.Content) {
+				return result(), false, false
+			}
 			if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, Content: event.Content}) {
 				return result(), false, false
 			}
@@ -1065,6 +1236,11 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 			}
 		case adapter.EventToolUse:
 			if event.ToolUse != nil {
+				// A tool call ends the current bubbles: the text before it was the
+				// agent working, not answering.
+				if !closeSegments() {
+					return result(), false, false
+				}
 				// Record every tool call on the goal timeline for goal-linked runs —
 				// the audit counterweight to yolo. Best effort: a failed append is
 				// logged, never aborting the turn.

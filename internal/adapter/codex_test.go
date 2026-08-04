@@ -189,11 +189,11 @@ func TestCodexReplayMessageIncludesHistoryAndLiveTurn(t *testing.T) {
 }
 
 func TestCodexReasoningPhaseClassification(t *testing.T) {
-	text, reasoning := codexDelta(json.RawMessage(`{"delta":"work","phase":"analysis"}`))
-	if text != "work" || !reasoning {
-		t.Fatalf("phased delta = (%q, %v), want reasoning work", text, reasoning)
+	text, itemID, reasoning := codexDelta(json.RawMessage(`{"delta":"work","phase":"analysis","itemId":"msg-1"}`))
+	if text != "work" || itemID != "msg-1" || !reasoning {
+		t.Fatalf("phased delta = (%q, %q, %v), want reasoning work on msg-1", text, itemID, reasoning)
 	}
-	text, reasoning = codexDelta(json.RawMessage(`{"delta":"public"}`))
+	text, _, reasoning = codexDelta(json.RawMessage(`{"delta":"public"}`))
 	if text != "public" || reasoning {
 		t.Fatalf("unphased delta = (%q, %v), want visible assistant", text, reasoning)
 	}
@@ -784,6 +784,96 @@ func TestCodexNativeAgentActivityParsingAndEnrichment(t *testing.T) {
 	}
 }
 
+// Codex sends its reasoning twice: as deltas while the turn runs, then whole at
+// turn/completed. Emitting both would duplicate every working note, so the
+// completion copy is dropped once deltas have streamed — and the item-boundary
+// newline it used to supply has to be inserted into the delta stream instead.
+func TestCodexDropsDuplicateReasoningAfterStreamingDeltas(t *testing.T) {
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "reasoning")
+	codex := newTestCodex(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	workspace := t.TempDir()
+
+	handle, err := codex.Start(ctx, StartRequest{
+		SessionID:      "session-1",
+		Provider:       config.ProviderCodex,
+		PermissionMode: config.PermissionYolo,
+		WorkspaceDir:   workspace,
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	events, err := codex.SendTurn(ctx, TurnRequest{
+		SessionID: "session-1",
+		Handle:    handle,
+		Message:   "run the tests",
+		Settings:  TurnSettings{PermissionMode: config.PermissionYolo, WorkspaceDir: workspace},
+	})
+	if err != nil {
+		t.Fatalf("send turn: %v", err)
+	}
+
+	var reasoning strings.Builder
+	var answer string
+	for _, event := range collectCodexEvents(t, events) {
+		switch event.Kind {
+		case EventReasoningDelta:
+			reasoning.WriteString(event.Content)
+		case EventReasoningMessage:
+			t.Fatalf("completion reasoning was re-emitted after deltas: %q", event.Content)
+		case EventAssistantMessage:
+			answer = event.Content
+		}
+	}
+	const wantReasoning = "checking the config\nnow running the tests"
+	if reasoning.String() != wantReasoning {
+		t.Fatalf("streamed reasoning = %q, want %q", reasoning.String(), wantReasoning)
+	}
+	if answer != "all green" {
+		t.Fatalf("final answer = %q, want %q", answer, "all green")
+	}
+}
+
+// With reasoning summaries off nothing streams, so the completion copy is the
+// only source there is and must still come through.
+func TestCodexKeepsCompletionReasoningWhenNoDeltasStreamed(t *testing.T) {
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "reasoning_no_deltas")
+	codex := newTestCodex(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	workspace := t.TempDir()
+
+	handle, err := codex.Start(ctx, StartRequest{
+		SessionID:      "session-1",
+		Provider:       config.ProviderCodex,
+		PermissionMode: config.PermissionYolo,
+		WorkspaceDir:   workspace,
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	events, err := codex.SendTurn(ctx, TurnRequest{
+		SessionID: "session-1",
+		Handle:    handle,
+		Message:   "run the tests",
+		Settings:  TurnSettings{PermissionMode: config.PermissionYolo, WorkspaceDir: workspace},
+	})
+	if err != nil {
+		t.Fatalf("send turn: %v", err)
+	}
+
+	var reasoningMessages []string
+	for _, event := range collectCodexEvents(t, events) {
+		if event.Kind == EventReasoningMessage {
+			reasoningMessages = append(reasoningMessages, event.Content)
+		}
+	}
+	if len(reasoningMessages) != 1 || reasoningMessages[0] != "silent thought" {
+		t.Fatalf("reasoning messages = %+v, want [\"silent thought\"]", reasoningMessages)
+	}
+}
+
 func TestCodexStreamsNativeAgentActivity(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "native_agent")
 	codex := newTestCodex(t)
@@ -1100,6 +1190,17 @@ func runFakeCodexAppServer() {
 						}},
 					}},
 				})
+			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "reasoning" {
+				// Two reasoning items streamed as deltas, then the completion that
+				// repeats them whole alongside the answer.
+				writeFakePhasedDelta(enc, params.ThreadID, turnID, "msg-1", "analysis", "checking the ")
+				writeFakePhasedDelta(enc, params.ThreadID, turnID, "msg-1", "analysis", "config")
+				writeFakePhasedDelta(enc, params.ThreadID, turnID, "msg-2", "analysis", "now running the tests")
+				writeFakeCompletedWithReasoning(enc, params.ThreadID, turnID, []string{"checking the config", "now running the tests"}, "all green")
+			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "reasoning_no_deltas" {
+				// Reasoning summaries off: nothing streams, so the completion is the
+				// only place the reasoning appears.
+				writeFakeCompletedWithReasoning(enc, params.ThreadID, turnID, []string{"silent thought"}, "all green")
 			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "native_agent" {
 				writeFakeNativeAgentStarted(enc, params.ThreadID, turnID)
 				writeFakeSubAgentActivity(enc, params.ThreadID, turnID, "started")
@@ -1209,6 +1310,46 @@ func writeFakeNativeAgentCompleted(enc *json.Encoder, threadID, turnID string) {
 				"senderThreadId":    threadID,
 				"receiverThreadIds": []string{"agent-thread-1"},
 			},
+		},
+	})
+}
+
+func writeFakePhasedDelta(enc *json.Encoder, threadID, turnID, itemID, phase, delta string) {
+	_ = enc.Encode(map[string]any{
+		"method": "item/agentMessage/delta",
+		"params": map[string]any{
+			"threadId": threadID,
+			"turnId":   turnID,
+			"itemId":   itemID,
+			"phase":    phase,
+			"delta":    delta,
+		},
+	})
+}
+
+// writeFakeCompletedWithReasoning mirrors the real completion payload: it carries
+// the turn's reasoning items *and* its final answer, each tagged with a phase.
+func writeFakeCompletedWithReasoning(enc *json.Encoder, threadID, turnID string, reasoning []string, answer string) {
+	items := []map[string]any{}
+	for i, text := range reasoning {
+		items = append(items, map[string]any{
+			"type":  "agentMessage",
+			"id":    fmt.Sprintf("msg-%d", i+1),
+			"text":  text,
+			"phase": "analysis",
+		})
+	}
+	items = append(items, map[string]any{
+		"type":  "agentMessage",
+		"id":    "assistant-1",
+		"text":  answer,
+		"phase": "final_answer",
+	})
+	_ = enc.Encode(map[string]any{
+		"method": "turn/completed",
+		"params": map[string]any{
+			"threadId": threadID,
+			"turn":     map[string]any{"id": turnID, "items": items},
 		},
 	})
 }

@@ -542,6 +542,7 @@
   function messageLabel(message: Message): string {
     if (message.Role === "user") return "Run request";
     if (message.Kind === "reasoning") return "Reasoning";
+    if (message.Kind === "narration") return "Working note";
     if (message.Kind === "error") return "Run error";
     return "Agent response";
   }

@@ -127,9 +127,11 @@ automatically along the configured chain.
 | `state` | `agents`, `sessions`, `active_turns`. |
 | `session` | Active/created session. |
 | `history` | Ordered stored messages. |
-| `message` | One stored user or assistant message, including `Attachments` on an attachment-bearing user message. |
+| `message` | One stored user or assistant message, including `Attachments` on an attachment-bearing user message. `Kind` is `message`, `narration`, `reasoning`, or `error` (see [sessions](sessions.md#history)); a turn emits several as it persists its working notes. |
 | `delta` | Incremental assistant text. |
 | `assistant` | Final assistant text fallback. |
+| `reasoning_delta` | Incremental provider thinking text, streamed separately from the answer. |
+| `reasoning` | Completed provider thinking text, when the provider sends no deltas. |
 | `permission_request` | Tool approval request. |
 | `user_input_request` | Provider/user clarification request. |
 | `fallback_request` | Session limit reached; the user must pick how to continue. Carries the rate-limited target, the configured next fallback, and the selectable `targets`. |

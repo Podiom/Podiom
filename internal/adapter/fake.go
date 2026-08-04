@@ -32,6 +32,10 @@ type Fake struct {
 	// ToolUses, when set, are emitted as EventToolUse before the assistant
 	// message so tests can exercise the goal tool-use audit path.
 	ToolUses []ToolUse
+	// Script, when set, replaces the whole default sequence: its events are
+	// emitted verbatim, then EventTurnDone. It lets a test reproduce a provider's
+	// real interleaving of reasoning, prose and tool calls within one turn.
+	Script []Event
 }
 
 // NewFake returns a fake adapter with the default echo-style response script.
@@ -82,9 +86,24 @@ func (f *Fake) SendTurn(ctx context.Context, req TurnRequest) (<-chan Event, err
 		return nil, err
 	}
 	rateLimited, response, reasoning := f.nextResult(req)
+	script := f.Script
 	ch := make(chan Event, 4)
 	go func() {
 		defer close(ch)
+		if len(script) > 0 {
+			for _, event := range script {
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- event:
+				}
+			}
+			select {
+			case <-ctx.Done():
+			case ch <- Event{Kind: EventTurnDone}:
+			}
+			return
+		}
 		if rateLimited {
 			select {
 			case <-ctx.Done():

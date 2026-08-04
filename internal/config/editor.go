@@ -69,6 +69,13 @@ func setGlobal(root *yaml.Node, g Global) bool {
 	changed = setScalarChild(global, "permission_mode", string(g.PermissionMode)) || changed
 	changed = setScalarChild(global, "permission_timeout", g.PermissionTimeout) || changed
 	changed = setSequenceChild(global, "fallback", g.Fallback) || changed
+	// setScalarChild drops empty values, so "off" leaves no key behind and the
+	// zero value from applyDefaults stands.
+	collapse := ""
+	if g.CollapseReasoning {
+		collapse = "true"
+	}
+	changed = setScalarChild(global, "collapse_reasoning", collapse) || changed
 	return changed
 }
 

@@ -20,6 +20,7 @@ Defaults applied across all agents unless overridden per agent.
 | `permission_mode` | `approve` \| `auto` \| `yolo` | `approve` relays each side effect to you (safe default); `auto` runs edits inside the session's working directory unattended and still asks for the rest; `yolo` auto-approves with whole-machine access. |
 | `permission_timeout` | duration | Approve-mode prompt timeout before auto-deny, e.g. `30s` or `3m`. |
 | `fallback` | list of profile names or `default` | Optional default fallback chain used when an agent declares none. |
+| `collapse_reasoning` | bool | Fold a finished thinking/working note in chat down to one clickable line once the turn's answer arrives. Default `false` (notes stay expanded). Editable from Settings → Chat display. |
 
 ## `github`
 

@@ -396,6 +396,32 @@ func TestParseClaudeReasoningStream(t *testing.T) {
 	}
 }
 
+// Core splits a turn into working notes and an answer at tool-call boundaries,
+// which only works if an assistant line emits its text *before* the tool_use it
+// carries. This pins that order.
+func TestParseClaudeEmitsTextBeforeToolUseInOneMessage(t *testing.T) {
+	input := strings.NewReader(`{"type":"assistant","message":{"content":[{"type":"thinking","text":"private"},{"type":"text","text":"let me look"},{"type":"tool_use","id":"tu-1","name":"Read","input":{"file_path":"/tmp/a"}}]}}
+`)
+	out := make(chan Event, 8)
+	if err := parseClaudeStream(context.Background(), input, out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	var kinds []EventKind
+	for event := range out {
+		kinds = append(kinds, event.Kind)
+	}
+	want := []EventKind{EventReasoningMessage, EventAssistantMessage, EventToolUse}
+	if len(kinds) != len(want) {
+		t.Fatalf("event kinds = %v, want %v", kinds, want)
+	}
+	for i, w := range want {
+		if kinds[i] != w {
+			t.Fatalf("event[%d] = %q, want %q (full order %v)", i, kinds[i], w, kinds)
+		}
+	}
+}
+
 func TestParseClaudeRateLimitErrorEvent(t *testing.T) {
 	input := strings.NewReader(`{"type":"error","error":{"message":"Claude usage limit reached. Try again later."}}
 `)

@@ -186,25 +186,28 @@ func TestAppendMessagesStoresMessageKind(t *testing.T) {
 	inserted, err := db.AppendMessages(ctx, created.ID, []Message{
 		{Role: RoleUser, Content: "hello"},
 		{Role: RoleAssistant, Kind: KindReasoning, Content: "thinking privately"},
+		{Role: RoleAssistant, Kind: KindNarration, Content: "let me check the config"},
 		{Role: RoleAssistant, Kind: KindError, Content: "boom"},
 	})
 	if err != nil {
 		t.Fatalf("append messages: %v", err)
 	}
-	if inserted[0].Kind != KindMessage {
-		t.Fatalf("default kind = %q, want %q", inserted[0].Kind, KindMessage)
-	}
-	if inserted[1].Kind != KindReasoning {
-		t.Fatalf("reasoning kind = %q, want %q", inserted[1].Kind, KindReasoning)
-	}
-	if inserted[2].Kind != KindError {
-		t.Fatalf("error kind = %q, want %q", inserted[2].Kind, KindError)
+	wantKinds := []MessageKind{KindMessage, KindReasoning, KindNarration, KindError}
+	for i, want := range wantKinds {
+		if inserted[i].Kind != want {
+			t.Fatalf("inserted[%d] kind = %q, want %q", i, inserted[i].Kind, want)
+		}
 	}
 	history, err := db.ListMessages(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
 	}
-	if len(history) != 3 || history[0].Kind != KindMessage || history[1].Kind != KindReasoning || history[2].Kind != KindError {
-		t.Fatalf("unexpected message kinds: %+v", history)
+	if len(history) != len(wantKinds) {
+		t.Fatalf("history length = %d, want %d: %+v", len(history), len(wantKinds), history)
+	}
+	for i, want := range wantKinds {
+		if history[i].Kind != want {
+			t.Fatalf("history[%d] kind = %q, want %q", i, history[i].Kind, want)
+		}
 	}
 }

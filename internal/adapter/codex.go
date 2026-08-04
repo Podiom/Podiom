@@ -1117,6 +1117,11 @@ func (c *codexClient) unregisterTurn(key codexTurnKey) {
 func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings TurnSettings, events <-chan codexStreamEvent, first []Event, out chan<- Event) {
 	started := time.Now()
 	track := codexNativeAgentTrack{nativeAgentTasks: map[string]NativeAgentActivity{}}
+	// Reasoning arrives twice over this protocol: as deltas while the turn runs,
+	// then again whole at turn/completed. These track the delta stream so the
+	// duplicate can be dropped and item boundaries kept.
+	var streamedReasoning bool
+	var lastReasoningItem string
 	defer close(out)
 	defer c.unregisterTurn(key)
 	for _, event := range first {
@@ -1136,10 +1141,20 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 			}
 			switch event.method {
 			case "item/agentMessage/delta":
-				if text, reasoning := codexDelta(event.params); text != "" {
+				if text, itemID, reasoning := codexDelta(event.params); text != "" {
 					kind := EventAssistantDelta
 					if reasoning {
 						kind = EventReasoningDelta
+						// Consecutive reasoning items carry no separator of their own —
+						// there is no per-item completion notification — and the joined
+						// turn/completed message that used to supply the newlines is
+						// suppressed below once deltas have streamed. Insert it here so
+						// successive working notes do not run together.
+						if streamedReasoning && itemID != lastReasoningItem {
+							text = "\n" + text
+						}
+						streamedReasoning = true
+						lastReasoningItem = itemID
 					}
 					if !sendAdapterEvent(ctx, out, Event{Kind: kind, Content: text}) {
 						return
@@ -1176,9 +1191,15 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 						return
 					}
 				}
-				if text := codexReasoningMessage(event.params); text != "" {
-					if !sendAdapterEvent(ctx, out, Event{Kind: EventReasoningMessage, Content: text}) {
-						return
+				// codexReasoningMessage joins the turn's *entire* reasoning, so
+				// emitting it after the deltas already streamed would duplicate every
+				// working note. It stays as the backstop for turns that streamed none
+				// (reasoning summaries off).
+				if !streamedReasoning {
+					if text := codexReasoningMessage(event.params); text != "" {
+						if !sendAdapterEvent(ctx, out, Event{Kind: EventReasoningMessage, Content: text}) {
+							return
+						}
 					}
 				}
 				if text := codexFinalMessage(event.params); text != "" {
@@ -1933,17 +1954,22 @@ func codexNativeAgentDisplayCandidate(providerAgent string) string {
 	return firstNonEmptyString(base, providerAgent)
 }
 
-func codexDelta(params json.RawMessage) (string, bool) {
+// codexDelta returns a streamed delta's text, the id of the item it belongs to,
+// and whether the item's phase makes it reasoning rather than the final answer.
+func codexDelta(params json.RawMessage) (string, string, bool) {
 	var p struct {
-		Delta string `json:"delta"`
-		Phase string `json:"phase"`
-		Item  struct {
+		Delta  string `json:"delta"`
+		Phase  string `json:"phase"`
+		ItemID string `json:"itemId"`
+		Item   struct {
+			ID    string `json:"id"`
 			Phase string `json:"phase"`
 		} `json:"item"`
 	}
 	_ = json.Unmarshal(params, &p)
 	phase := firstNonEmptyString(p.Phase, p.Item.Phase)
-	return p.Delta, phase != "" && phase != "final_answer"
+	itemID := firstNonEmptyString(p.ItemID, p.Item.ID)
+	return p.Delta, itemID, phase != "" && phase != "final_answer"
 }
 
 func codexFinalMessage(params json.RawMessage) string {

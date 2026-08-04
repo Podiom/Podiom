@@ -150,6 +150,13 @@
   let voiceKeyError = $state<string | null>(null);
   let voiceKeySaved = $state(false);
 
+  // How chat renders a finished thinking/working note. Also outside
+  // canonical()/save(): it is a display preference, so it takes effect on click
+  // rather than waiting behind the "Save defaults" button.
+  let collapseReasoning = $state(false);
+  let collapseSaving = $state(false);
+  let collapseError = $state<string | null>(null);
+
   // Canonical JSON snapshot of the last-saved state, for dirty tracking.
   let baseline = $state("");
   let releaseNotesEl = $state<HTMLElement | null>(null);
@@ -294,6 +301,7 @@
 
   function applyConfig(cfg: GlobalConfig) {
     voiceKeySet = cfg.voice?.openai_api_key_set ?? false;
+    collapseReasoning = cfg.collapse_reasoning ?? false;
     provider = cfg.provider;
     profile = cfg.profile ?? "";
     model = cfg.model;
@@ -429,6 +437,19 @@
       voiceKeyError = e instanceof Error ? e.message : String(e);
     } finally {
       voiceKeySaving = false;
+    }
+  }
+
+  async function setCollapseReasoning(value: boolean) {
+    if (value === collapseReasoning || collapseSaving) return;
+    collapseSaving = true;
+    collapseError = null;
+    try {
+      applyConfig(await updateConfig({ collapse_reasoning: value }));
+    } catch (e) {
+      collapseError = e instanceof Error ? e.message : String(e);
+    } finally {
+      collapseSaving = false;
     }
   }
 
@@ -847,6 +868,38 @@
         {:else if voiceKeySaved}
           <div class="voice-key-ok">Saved to config.yaml.</div>
         {/if}
+      </div>
+    </section>
+
+    <!-- ===== CHAT DISPLAY ===== -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-icon violet">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div class="grow">
+          <div class="card-title">Chat display</div>
+          <div class="card-sub">How an agent's thinking and working notes read once its answer has arrived.</div>
+        </div>
+      </div>
+
+      <div class="rows">
+        <div class="row top">
+          <span class="row-key">notes</span>
+          <div class="chips-col">
+            <div class="chips">
+              <button class="chip" class:on={!collapseReasoning} disabled={collapseSaving} onclick={() => setCollapseReasoning(false)}>always expanded</button>
+              <button class="chip" class:on={collapseReasoning} disabled={collapseSaving} onclick={() => setCollapseReasoning(true)}>collapse when done</button>
+            </div>
+            <div class="hint">
+              Notes always stream in full while a turn runs. Collapsing folds each finished one down to a single clickable
+              line so long turns stay readable.
+            </div>
+            {#if collapseError}
+              <div class="field-error">{collapseError}</div>
+            {/if}
+          </div>
+        </div>
       </div>
     </section>
 

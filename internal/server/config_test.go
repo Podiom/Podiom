@@ -42,6 +42,59 @@ func TestPatchConfigUpdatesPermissionTimeout(t *testing.T) {
 	}
 }
 
+// The chat-display preference has to survive the YAML round-trip both ways: on
+// is written as a key, off removes it so the default stands.
+func TestPatchConfigTogglesCollapseReasoning(t *testing.T) {
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	patch := func(body string) globalConfigDTO {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(body))
+		req.RemoteAddr = "127.0.0.1:1234"
+		rr := httptest.NewRecorder()
+		srv.handleConfig(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+		}
+		var got globalConfigDTO
+		if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return got
+	}
+	persisted := func() bool {
+		t.Helper()
+		cfg, err := config.Load(paths.ConfigYAML)
+		if err != nil {
+			t.Fatalf("load config: %v", err)
+		}
+		return cfg.Global.CollapseReasoning
+	}
+
+	if got := patch(`{"collapse_reasoning":true}`); !got.CollapseReasoning {
+		t.Fatal("response collapse_reasoning = false, want true")
+	}
+	if !srv.core.GetGlobal().CollapseReasoning {
+		t.Fatal("live collapse_reasoning = false, want true")
+	}
+	if !persisted() {
+		t.Fatal("persisted collapse_reasoning = false, want true")
+	}
+
+	// An unrelated patch must not disturb it.
+	if got := patch(`{"model":"opus"}`); !got.CollapseReasoning {
+		t.Fatal("collapse_reasoning was cleared by an unrelated patch")
+	}
+
+	if got := patch(`{"collapse_reasoning":false}`); got.CollapseReasoning {
+		t.Fatal("response collapse_reasoning = true, want false")
+	}
+	if persisted() {
+		t.Fatal("persisted collapse_reasoning = true, want false")
+	}
+}
+
 func TestConfigVoiceKeySetClearAndMasking(t *testing.T) {
 	paths, srv, cleanup := newAgentAPITestServer(t)
 	defer cleanup()

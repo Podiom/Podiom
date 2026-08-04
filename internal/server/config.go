@@ -20,6 +20,7 @@ type globalConfigDTO struct {
 	PermissionMode    config.PermissionMode `json:"permission_mode"`
 	PermissionTimeout string                `json:"permission_timeout"`
 	Fallback          []string              `json:"fallback"`
+	CollapseReasoning bool                  `json:"collapse_reasoning"`
 	Voice             voiceConfigDTO        `json:"voice"`
 }
 
@@ -41,6 +42,7 @@ func globalToDTO(g config.Global, v config.Voice) globalConfigDTO {
 		PermissionMode:    g.PermissionMode,
 		PermissionTimeout: g.PermissionTimeout,
 		Fallback:          g.Fallback,
+		CollapseReasoning: g.CollapseReasoning,
 		Voice:             voiceConfigDTO{OpenAIAPIKeySet: v.OpenAIAPIKey != ""},
 	}
 }
@@ -55,6 +57,7 @@ type globalConfigPatch struct {
 	PermissionMode    *config.PermissionMode `json:"permission_mode,omitempty"`
 	PermissionTimeout *string                `json:"permission_timeout,omitempty"`
 	Fallback          *[]string              `json:"fallback,omitempty"`
+	CollapseReasoning *bool                  `json:"collapse_reasoning,omitempty"`
 	Voice             *voiceConfigPatch      `json:"voice,omitempty"`
 }
 
@@ -116,6 +119,9 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	if patch.Fallback != nil {
 		g.Fallback = *patch.Fallback
 	}
+	if patch.CollapseReasoning != nil {
+		g.CollapseReasoning = *patch.CollapseReasoning
+	}
 	voiceBefore := s.core.GetVoice()
 	v := voiceBefore
 	if patch.Voice != nil && patch.Voice.OpenAIAPIKey != nil {
@@ -168,6 +174,7 @@ func globalLogFields(g config.Global, v config.Voice) map[string]string {
 		"permission":         string(g.PermissionMode),
 		"permission_timeout": g.PermissionTimeout,
 		"fallback_count":     fmt.Sprintf("%d", len(g.Fallback)),
+		"collapse_reasoning": fmt.Sprintf("%t", g.CollapseReasoning),
 		// presence only — the key itself must never reach a log line
 		"openai_api_key_set": fmt.Sprintf("%t", v.OpenAIAPIKey != ""),
 	}

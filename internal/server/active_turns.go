@@ -253,7 +253,20 @@ func (h *activeTurnHub) stop(sessionID string) bool {
 	return true
 }
 
+// recordMessage broadcasts a stored history row and retires the live buffer it
+// replaces. A turn persists its working notes as it goes, so without this a
+// client reconnecting mid-turn would see the same text twice: once as the
+// restored stream buffer and once as the row.
 func (h *activeTurnHub) recordMessage(sessionID string, msg *store.Message) {
+	h.mu.Lock()
+	if turn := h.turns[sessionID]; turn != nil && msg != nil && msg.Role == store.RoleAssistant {
+		if msg.Kind == store.KindReasoning {
+			turn.pendingReasoning = ""
+		} else {
+			turn.pendingAssistant = ""
+		}
+	}
+	h.mu.Unlock()
 	writers, requestID := h.turnWriters(sessionID)
 	h.broadcast(writers, ServerMessage{Type: "message", RequestID: requestID, SessionID: sessionID, Message: msg})
 }

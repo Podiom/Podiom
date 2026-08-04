@@ -4,6 +4,7 @@
     createWebSession,
     deleteDraftPhotoAttachment,
     deleteSession,
+    getConfig,
     getSession,
     listGoals,
     listProfiles,
@@ -44,6 +45,7 @@
     FallbackTarget,
     Goal,
     Message,
+    MessageKind,
     NativeAgentActivity,
     PermissionMode,
     PermissionRequest,
@@ -110,6 +112,13 @@
   let deleteError = $state<string | null>(null);
   let messages = $state<Message[]>([]);
   let pendingAssistant = $state("");
+  // The live thinking/working note, streamed alongside pendingAssistant. Both
+  // are replaced by their stored rows as the turn persists them.
+  let pendingReasoning = $state("");
+  // Display preference from GET /api/config; expanded unless the user says so.
+  let collapseReasoning = $state(false);
+  // Per-message overrides for the collapsed view, keyed by message ID.
+  let expandedThinking = $state<Record<number, boolean>>({});
   let nativeAgentActivities = $state<NativeAgentActivity[]>([]);
   let nativeAgentMessageID = $state(0);
   let pendingPermission = $state<PermissionRequest | null>(null);
@@ -358,6 +367,7 @@
     void loadGoals();
     listProjects().then((p) => (projects = p)).catch(() => {});
     listProfiles().then((p) => (profiles = p)).catch(() => {});
+    getConfig().then((cfg) => (collapseReasoning = cfg.collapse_reasoning ?? false)).catch(() => {});
     if (!explicitTargetSeen) restoreLastSession();
     countdown = window.setInterval(updatePermissionRemaining, 1000);
     return () => {
@@ -471,7 +481,7 @@
         break;
       case "history":
         messages = msg.history ?? [];
-        pendingAssistant = "";
+        clearPendingStream();
         nativeAgentActivities = [];
         nativeAgentMessageID = 0;
         pendingPermission = null;
@@ -486,15 +496,31 @@
         clearPendingRequests();
         if (msg.message && !messages.some((e) => sameMessage(e, msg.message))) {
           messages = [...messages, msg.message];
-          if (msg.message.Role === "assistant" && msg.message.Kind !== "reasoning") {
-            if (nativeAgentActivities.length) nativeAgentMessageID = msg.message.ID;
-            pendingAssistant = "";
+          // The stored row supersedes the live buffer it was built from. Only a
+          // final answer owns the delegation chips — binding them to a working
+          // note would strand them mid-turn.
+          if (msg.message.Role === "assistant") {
+            if (msg.message.Kind === "reasoning") {
+              pendingReasoning = "";
+            } else if (msg.message.Kind !== "error") {
+              // A narration row and the final answer both come off the assistant
+              // stream, so either retires the buffer; only the answer takes the
+              // chips (an absent Kind means "message").
+              if (msg.message.Kind !== "narration" && nativeAgentActivities.length) {
+                nativeAgentMessageID = msg.message.ID;
+              }
+              pendingAssistant = "";
+            }
           }
         }
         break;
       case "reasoning_delta":
+        if (!messageForActiveSession(msg)) break;
+        pendingReasoning += msg.delta ?? "";
+        break;
       case "reasoning":
         if (!messageForActiveSession(msg)) break;
+        if (!pendingReasoning) pendingReasoning = msg.delta ?? "";
         break;
       case "delta":
         if (!messageForActiveSession(msg)) break;
@@ -595,7 +621,7 @@
             const durableErrorVisible =
               !!msg.session_id && lastMessage?.Kind === "error" && lastMessage.Content === (msg.error ?? "");
             if (!durableErrorVisible) error = msg.error ?? "Unknown server error";
-            pendingAssistant = "";
+            clearPendingStream();
             setPendingFallback(null);
             sending = false;
           }
@@ -612,6 +638,14 @@
   // longer blocked, so acting on the modal would hit a dead request. Question
   // modals from turn-ending providers are intentionally preserved (their answer
   // is a follow-up turn), matching the "done" handler's semantics.
+  // clearPendingStream retires both live stream buffers. They always go
+  // together: whatever invalidates the assistant stream — a new turn, a reload,
+  // a session switch, an error — invalidates the thinking stream too.
+  function clearPendingStream() {
+    pendingAssistant = "";
+    pendingReasoning = "";
+  }
+
   function clearPendingRequests() {
     markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
     pendingPermission = null;
@@ -742,6 +776,7 @@
     if (state.session_id !== activeSession?.ID) return;
     sending = state.status === "running";
     pendingAssistant = state.pending_assistant ?? "";
+    pendingReasoning = state.pending_reasoning ?? "";
     nativeAgentActivities = state.native_agent_activities ?? [];
     nativeAgentMessageID = 0;
     if (state.pending_permission) {
@@ -839,7 +874,7 @@
 
   function transcriptPlainText(selectedMessages: Message[]): string {
     const parts = [`Podiom chat - ${sessionTitle}`];
-    for (const message of visibleMessages(selectedMessages)) {
+    for (const message of transcriptMessages(selectedMessages)) {
       const time = transcriptTime(message);
       const speaker = transcriptSpeaker(message);
       const label = time ? `[${time}] ${speaker}:` : `${speaker}:`;
@@ -849,7 +884,7 @@
   }
 
   function transcriptHTML(selectedMessages: Message[]): string {
-    const articles = visibleMessages(selectedMessages).map((message) => {
+    const articles = transcriptMessages(selectedMessages).map((message) => {
       const time = transcriptTime(message);
       const speaker = transcriptSpeaker(message);
       const timeHTML = time
@@ -860,8 +895,32 @@
     return `<section class="podiom-transcript"><h1>Podiom chat - ${escapeHTML(sessionTitle)}</h1>${articles.join("")}</section>`;
   }
 
-  function visibleMessages(items: Message[]): Message[] {
-    return items.filter((message) => message.Kind !== "reasoning");
+  // transcriptMessages drops the turn's working notes: a copied transcript is
+  // the conversation, not the agent's scratch work.
+  function transcriptMessages(items: Message[]): Message[] {
+    return items.filter((message) => !isThinkingKind(message.Kind));
+  }
+
+  // Kinds that render as a working note rather than as part of the conversation.
+  function isThinkingKind(kind: MessageKind | undefined): boolean {
+    return kind === "reasoning" || kind === "narration";
+  }
+
+  // The label above a working note — thinking is the provider's own reasoning,
+  // narration is what the agent said to the user while still working.
+  function thinkingLabel(kind: MessageKind | undefined): string {
+    return kind === "narration" ? "working" : "thinking";
+  }
+
+  // First meaningful line of a note, for the collapsed one-liner.
+  function thinkingSummary(content: string): string {
+    const line = content.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+    const plain = line.replace(/^[#>*\-\s]+/, "");
+    return plain.length > 80 ? `${plain.slice(0, 79)}…` : plain;
+  }
+
+  function toggleThinking(id: number) {
+    expandedThinking = { ...expandedThinking, [id]: !expandedThinking[id] };
   }
 
   function transcriptMessageHTML(message: Message): string {
@@ -947,6 +1006,7 @@
     // Touch the reactive deps so the effect re-runs when they change.
     void messages.length;
     void pendingAssistant;
+    void pendingReasoning;
     void nativeAgentActivities.length;
     if (stick) void scrollMessagesToBottom();
   });
@@ -1054,7 +1114,7 @@
       rememberSession(detail.session.ID);
       messages = detail.history ?? [];
       projectName = detail.project_name ?? (detail.session.ProjectID ? projectLabel(detail.session.ProjectID) : "");
-      pendingAssistant = "";
+      clearPendingStream();
       nativeAgentActivities = [];
       nativeAgentMessageID = 0;
       pendingPermission = null;
@@ -1087,7 +1147,7 @@
         activeSession = null;
         messages = [];
         projectName = "";
-        pendingAssistant = "";
+        clearPendingStream();
         nativeAgentActivities = [];
         nativeAgentMessageID = 0;
         pendingPermission = null;
@@ -1205,7 +1265,7 @@
     notice = null;
     sending = true;
     attachmentBusy = pendingPhotos.length > 0;
-    pendingAssistant = "";
+    clearPendingStream();
     nativeAgentActivities = [];
     nativeAgentMessageID = 0;
     markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
@@ -1292,7 +1352,7 @@
     projectName = "";
     localStorage.removeItem(LAST_SESSION_KEY);
     if (resetDrafts) resetDraftSettings();
-    pendingAssistant = "";
+    clearPendingStream();
     pendingPermission = null;
     resetApprovalForm();
     pendingUserInput = null;
@@ -1399,7 +1459,7 @@
     error = null;
     notice = null;
     sending = true;
-    pendingAssistant = "";
+    clearPendingStream();
     nativeAgentActivities = [];
     nativeAgentMessageID = 0;
     resetPlanReview();
@@ -1417,7 +1477,7 @@
     error = null;
     notice = null;
     sending = true;
-    pendingAssistant = "";
+    clearPendingStream();
     nativeAgentActivities = [];
     nativeAgentMessageID = 0;
     send({
@@ -1974,8 +2034,29 @@
         if (stick) void scrollMessagesToBottom("auto");
       }}
     >
-      {#each visibleMessages(messages) as m (m.ID)}
-        {#if m.Kind === "error"}
+      {#each messages as m (m.ID)}
+        {#if isThinkingKind(m.Kind)}
+          <div class="row-start message-row" data-message-id={m.ID}>
+            <div class="avatar-gap"></div>
+            <div class="bubble-assistant bubble-thinking">
+              {#if collapseReasoning && !expandedThinking[m.ID]}
+                <button class="thinking-summary" onclick={() => toggleThinking(m.ID)}>
+                  <span class="thinking-label mono">{thinkingLabel(m.Kind)}</span>
+                  <span class="thinking-peek">{thinkingSummary(m.Content)}</span>
+                  <span class="thinking-caret">▸</span>
+                </button>
+              {:else}
+                <div class="thinking-head">
+                  <span class="thinking-label mono">{thinkingLabel(m.Kind)}</span>
+                  {#if collapseReasoning}
+                    <button class="thinking-fold" onclick={() => toggleThinking(m.ID)}>hide</button>
+                  {/if}
+                </div>
+                {@html renderMarkdown(m.Content)}
+              {/if}
+            </div>
+          </div>
+        {:else if m.Kind === "error"}
           <div class="row-start message-row" data-message-id={m.ID}>
             <div class="bubble-error">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0z" /></svg>
@@ -2019,6 +2100,18 @@
         {/if}
       {/each}
 
+      {#if pendingReasoning}
+        <div class="row-start">
+          <div class="avatar-gap"></div>
+          <div class="bubble-assistant bubble-thinking">
+            <div class="thinking-head">
+              <span class="thinking-label mono">thinking</span>
+            </div>
+            {@html renderMarkdown(pendingReasoning)}<span class="cursor"></span>
+          </div>
+        </div>
+      {/if}
+
       {#if pendingAssistant}
         <div class="row-start">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
@@ -2042,7 +2135,7 @@
         </div>
       {/if}
 
-      {#if sending && !pendingAssistant && nativeAgentActivities.length && !nativeAgentMessageID}
+      {#if sending && !pendingAssistant && !pendingReasoning && nativeAgentActivities.length && !nativeAgentMessageID}
         <div class="row-start" style="align-items:center">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <div class="bubble-assistant activity-only">
@@ -2060,7 +2153,7 @@
             </div>
           </div>
         </div>
-      {:else if sending && !pendingAssistant && !pendingPermission && !pendingUserInput}
+      {:else if sending && !pendingAssistant && !pendingReasoning && !pendingPermission && !pendingUserInput}
         <div class="row-start" style="align-items:center">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <span class="thinking">
@@ -3585,6 +3678,88 @@
 
   .bubble-assistant.activity-only {
     padding: 10px 12px;
+  }
+
+  /* A working note: same bubble geometry and markdown typography as an answer
+     (the :global markdown rules below are keyed on .bubble-assistant), pulled
+     back to a flat, quieter surface so it never reads as the reply. */
+  /* Two classes on purpose: the mobile block below restyles .bubble-assistant,
+     and a note must keep its own smaller type there too. */
+  .bubble-assistant.bubble-thinking {
+    background: #faf7f3;
+    border-color: #ece2d6;
+    border-style: dashed;
+    box-shadow: none;
+    color: #7a7167;
+    font-size: 14px;
+  }
+
+  /* Keeps the note's left edge aligned with the answers below it, without
+     stamping an avatar on every step of a long turn. */
+  .avatar-gap {
+    width: 30px;
+    flex: none;
+  }
+
+  .thinking-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .thinking-label {
+    font: 600 10px "JetBrains Mono", monospace;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #a3968a;
+    flex: none;
+  }
+
+  .thinking-fold {
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    font: 500 11px "Hanken Grotesk";
+    color: #a3968a;
+    text-decoration: underline;
+  }
+
+  .thinking-fold:hover {
+    color: var(--ink-soft);
+  }
+
+  .thinking-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    width: 100%;
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    font: 400 14px/1.5 "Hanken Grotesk";
+    color: #7a7167;
+  }
+
+  .thinking-peek {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thinking-caret {
+    flex: none;
+    font-size: 10px;
+    color: #a3968a;
+  }
+
+  .thinking-summary:hover .thinking-peek {
+    color: var(--ink-soft);
   }
 
   .native-agent-chips {
