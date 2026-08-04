@@ -70,10 +70,10 @@ type ProviderInfo struct {
 	// plan natively.
 	NativePlanMode bool
 
-	// QuestionEndsTurn: true when the provider's user-input questions end the
-	// turn (the answer must be delivered as a follow-up turn); false when
-	// questions block mid-turn and the decision resumes them. Mirrored by
-	// questionEndsTurn in web/src/lib/providers.ts.
+	// QuestionEndsTurn is the compatibility default for user-input payloads
+	// that predate UserInputRequest.EndsTurn. New requests carry their own
+	// delivery semantics. Mirrored by questionEndsTurn in
+	// web/src/lib/providers.ts.
 	QuestionEndsTurn bool
 
 	// FallbackModels is the bundled model catalogue used when live capability

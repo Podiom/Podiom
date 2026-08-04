@@ -743,6 +743,7 @@ export interface UserInputRequest {
   item_id?: string;
   questions: UserInputQuestion[];
   auto_resolution_ms?: number;
+  ends_turn?: boolean;
 }
 
 // AgentQuestion mirrors store.AgentQuestion: a question an unattended agent (a

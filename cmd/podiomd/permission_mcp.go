@@ -9,10 +9,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Podiom/Podiom/internal/adapter"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -143,6 +144,13 @@ func forwardPermission(ctx context.Context, addr, turnID string, timeout time.Du
 	if req.Description == "" {
 		req.Description = permissionInputDescription(req.Input)
 	}
+	if req.ToolName == "AskUserQuestion" {
+		decision, err := forwardClaudeUserInput(ctx, addr, turnID, timeout, req)
+		if err != nil {
+			return adapter.PermissionDecision{Behavior: "deny", Message: err.Error()}, nil
+		}
+		return decision, nil
+	}
 	body, _ := json.Marshal(req)
 	requestCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
 	defer cancel()
@@ -169,6 +177,81 @@ func forwardPermission(ctx context.Context, addr, turnID string, timeout time.Du
 		decision.Behavior = "deny"
 	}
 	return decision, nil
+}
+
+func forwardClaudeUserInput(ctx context.Context, addr, turnID string, timeout time.Duration, permission adapter.PermissionRequest) (adapter.PermissionDecision, error) {
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(permission.Input, &input); err != nil {
+		return adapter.PermissionDecision{}, fmt.Errorf("decode AskUserQuestion input: %w", err)
+	}
+	var questions []adapter.UserInputQuestion
+	if err := json.Unmarshal(input["questions"], &questions); err != nil || len(questions) == 0 {
+		return adapter.PermissionDecision{}, fmt.Errorf("AskUserQuestion questions are required")
+	}
+	adapter.NormalizeUserInputQuestions(questions)
+	for _, question := range questions {
+		if question.Question == "" {
+			return adapter.PermissionDecision{}, fmt.Errorf("AskUserQuestion question text is required")
+		}
+	}
+
+	req := adapter.UserInputRequest{
+		ID:        permission.ID,
+		TurnID:    turnID,
+		ItemID:    permission.ToolUseID,
+		Questions: questions,
+		EndsTurn:  false,
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return adapter.PermissionDecision{}, err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
+	defer cancel()
+	url := "http://" + addr + "/api/user-input-requests/" + turnID + "?timeout=" + timeout.String()
+	httpReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return adapter.PermissionDecision{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	setGatewayToken(httpReq)
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return adapter.PermissionDecision{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return adapter.PermissionDecision{}, fmt.Errorf("podiom user input API status %d", resp.StatusCode)
+	}
+	var answer adapter.UserInputDecision
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil {
+		return adapter.PermissionDecision{}, err
+	}
+
+	answers := make(map[string]string, len(questions))
+	for _, question := range questions {
+		values := answer.Answers[question.ID]
+		clean := make([]string, 0, len(values))
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				clean = append(clean, value)
+			}
+		}
+		if len(clean) == 0 {
+			return adapter.PermissionDecision{}, fmt.Errorf("AskUserQuestion was not answered")
+		}
+		answers[question.Question] = strings.Join(clean, ", ")
+	}
+	rawAnswers, err := json.Marshal(answers)
+	if err != nil {
+		return adapter.PermissionDecision{}, err
+	}
+	input["answers"] = rawAnswers
+	updatedInput, err := json.Marshal(input)
+	if err != nil {
+		return adapter.PermissionDecision{}, err
+	}
+	return adapter.PermissionDecision{Behavior: "allow", UpdatedInput: updatedInput}, nil
 }
 
 func permissionInputDescription(input json.RawMessage) string {

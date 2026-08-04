@@ -77,6 +77,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/logs", s.handleLogs},
 		{"/api/logs/follow", s.handleLogsFollow},
 		{"/api/permission-decisions/", s.handlePermissionDecision},
+		{"/api/user-input-requests/", s.handleUserInputRequest},
 		{"/api/user-input-decisions/", s.handleUserInputDecision},
 		{"/api/interviews/", s.handleInterview},
 		{"/api/permissions/", s.handlePermissionRequest},

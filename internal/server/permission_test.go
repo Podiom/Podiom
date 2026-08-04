@@ -107,6 +107,95 @@ func TestUserInputBrokerDecision(t *testing.T) {
 	}
 }
 
+func TestHandleUserInputRequestRelaysBlockingQuestion(t *testing.T) {
+	b := newUserInputBroker()
+	s := &Server{input: b}
+	requests, unsubscribe := b.subscribe("turn-1")
+	defer unsubscribe()
+
+	body := `{"id":"claude-question","provider":"claude","item_id":"toolu-question","questions":[{"question":"Pick one","header":"Choice","multiSelect":false}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/user-input-requests/turn-1?timeout=1s", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		s.handleUserInputRequest(rr, req)
+		close(done)
+	}()
+
+	input := <-requests
+	if input.ID != "claude-question" || input.TurnID != "turn-1" || input.EndsTurn {
+		t.Fatalf("bad relayed request: %+v", input)
+	}
+	if len(input.Questions) != 1 || input.Questions[0].ID != "q1" {
+		t.Fatalf("questions were not normalized: %+v", input.Questions)
+	}
+	if !b.decide(input.ID, adapter.UserInputDecision{Answers: map[string][]string{"q1": {"A"}}}) {
+		t.Fatal("answer was not accepted")
+	}
+	<-done
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var decision adapter.UserInputDecision
+	if err := json.Unmarshal(rr.Body.Bytes(), &decision); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := decision.Answers["q1"]; len(got) != 1 || got[0] != "A" {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestHandleUserInputRequestTimeoutReturnsEmptyDecision(t *testing.T) {
+	s := &Server{input: newUserInputBroker()}
+	body := `{"provider":"claude","questions":[{"question":"Pick one"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/user-input-requests/missing-turn?timeout=1ns", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.handleUserInputRequest(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"answers":{}`) {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleUserInputRequestRejectsMalformedQuestion(t *testing.T) {
+	s := &Server{input: newUserInputBroker()}
+	for _, body := range []string{
+		`{"provider":"claude","questions":[]}`,
+		`{"provider":"claude","questions":[{"question":"  "}]}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/user-input-requests/turn-1", strings.NewReader(body))
+		rr := httptest.NewRecorder()
+		s.handleUserInputRequest(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status = %d, response = %s", body, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestActiveTurnRestoresBlockingUserInputOnReconnect(t *testing.T) {
+	hub := newActiveTurnHub()
+	if _, err := hub.start("session-1", "turn-1", "request-1", nil, func() {}); err != nil {
+		t.Fatalf("start turn: %v", err)
+	}
+	input := &adapter.UserInputRequest{
+		ID:       "claude-question",
+		TurnID:   "turn-1",
+		EndsTurn: false,
+		Questions: []adapter.UserInputQuestion{{
+			ID:       "q1",
+			Question: "Pick one",
+		}},
+	}
+	hub.recordUserInput("session-1", input)
+
+	state, ok := hub.attach("session-1", nil)
+	if !ok || state.PendingUserInput == nil {
+		t.Fatalf("pending question was not restored: %+v", state)
+	}
+	if state.PendingPermission != nil || state.PendingUserInput.ID != input.ID || state.PendingUserInput.EndsTurn {
+		t.Fatalf("bad restored interaction state: %+v", state)
+	}
+}
+
 func TestUserInputBrokerMetadata(t *testing.T) {
 	b := newUserInputBroker()
 	b.attach("input-1", "session-1", true)

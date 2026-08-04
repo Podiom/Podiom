@@ -44,7 +44,10 @@ func (q *UserInputQuestion) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func normalizeUserInputQuestions(questions []UserInputQuestion) {
+// NormalizeUserInputQuestions trims provider payloads and assigns stable ids
+// when a provider omits them. Internal protocol helpers use the same function
+// as adapters so answer keys stay consistent across the relay round-trip.
+func NormalizeUserInputQuestions(questions []UserInputQuestion) {
 	for i := range questions {
 		if strings.TrimSpace(questions[i].ID) == "" {
 			questions[i].ID = fmt.Sprintf("q%d", i+1)

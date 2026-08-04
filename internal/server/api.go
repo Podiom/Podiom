@@ -909,6 +909,74 @@ func (s *Server) handleUserInputDecision(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]string{"status": "ok"}, nil)
 }
 
+// handleUserInputRequest is the blocking HTTP side of the provider-neutral
+// user-input relay. Internal provider helpers post a structured question here;
+// the request remains open until the browser answers through the matching
+// decision endpoint or the configured timeout expires.
+func (s *Server) handleUserInputRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	turnID := strings.TrimPrefix(r.URL.Path, "/api/user-input-requests/")
+	if turnID == "" {
+		http.Error(w, "turn id is required", http.StatusBadRequest)
+		return
+	}
+	var req adapter.UserInputRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	adapter.NormalizeUserInputQuestions(req.Questions)
+	if len(req.Questions) == 0 {
+		http.Error(w, "questions are required", http.StatusBadRequest)
+		return
+	}
+	for _, question := range req.Questions {
+		if question.Question == "" {
+			http.Error(w, "question text is required", http.StatusBadRequest)
+			return
+		}
+	}
+	req.TurnID = turnID
+	req.EndsTurn = false
+	if req.ID == "" {
+		req.ID = uuid.NewString()
+	}
+	// Internal helpers do not own provider identity. Resolve it from the active
+	// session so the relay stays provider-neutral and registry-backed.
+	if s.broker != nil && s.core != nil {
+		if sessionID, ok := s.broker.sessionForTurn(turnID); ok {
+			sess, err := s.core.GetSession(r.Context(), sessionID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if sess.Origin == store.OriginInterview {
+				http.Error(w, "interview questions must use the profile interview relay", http.StatusForbidden)
+				return
+			}
+			req.Provider = sess.Provider
+		}
+	}
+	timeout := defaultHTTPPermissionTimeout
+	if rawTimeout := r.URL.Query().Get("timeout"); rawTimeout != "" {
+		if parsed, err := time.ParseDuration(rawTimeout); err == nil {
+			timeout = parsed
+		}
+	}
+	decision, err := s.input.RequestUserInput(r.Context(), req, timeout)
+	if err != nil && err != errUserInputTimeout && err != context.Canceled {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if decision.Answers == nil {
+		decision.Answers = map[string][]string{}
+	}
+	writeJSON(w, decision, nil)
+}
+
 func (s *Server) handlePermissionDecision(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

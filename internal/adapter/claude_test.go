@@ -501,6 +501,9 @@ func TestParseClaudeRawQuestionsText(t *testing.T) {
 	if q.ID != "q1" || q.Header != "Intent" || q.MultiSelect {
 		t.Fatalf("bad question metadata: %+v", q)
 	}
+	if !req.EndsTurn {
+		t.Fatal("raw question text must remain a turn-ending fallback")
+	}
 	if len(q.Options) != 2 || q.Options[0].Label != "Draft a testing roadmap" {
 		t.Fatalf("bad options: %+v", q.Options)
 	}
@@ -533,6 +536,66 @@ func TestParseClaudeToolUseQuestions(t *testing.T) {
 	}
 	if !req.Questions[0].MultiSelect || req.Questions[0].ID != "intent" {
 		t.Fatalf("bad question: %+v", req.Questions[0])
+	}
+	if !req.EndsTurn {
+		t.Fatal("stream-parsed tool question must end the turn")
+	}
+}
+
+func TestParseClaudeToolUseQuestionSuppressedForPermissionRelay(t *testing.T) {
+	input := strings.NewReader(`{"type":"assistant","session_id":"claude-session","message":{"content":[{"type":"tool_use","id":"toolu_question","name":"AskUserQuestion","input":{"questions":[{"question":"Pick one","header":"Intent","multiSelect":false,"options":[{"label":"A"},{"label":"B"}]}]}}]}}
+`)
+	out := make(chan Event, 4)
+	if err := parseClaudeStream(context.Background(), input, out, claudeStreamOptions{SuppressStructuredQuestions: true}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	var sawToolUse bool
+	for event := range out {
+		if event.Kind == EventUserInputRequest {
+			t.Fatalf("permission relay mode emitted duplicate question: %+v", event)
+		}
+		if event.Kind == EventToolUse {
+			sawToolUse = true
+		}
+	}
+	if !sawToolUse {
+		t.Fatal("question suppression must retain the tool-use audit event")
+	}
+}
+
+func TestParseClaudeRawQuestionRemainsFallbackWithPermissionRelay(t *testing.T) {
+	input := strings.NewReader(`{"type":"assistant","message":{"content":[{"type":"text","text":"questions: [{\"question\":\"Pick one\",\"options\":[{\"label\":\"A\"},{\"label\":\"B\"}],\"multiSelect\":false}]"}]}}
+`)
+	out := make(chan Event, 2)
+	if err := parseClaudeStream(context.Background(), input, out, claudeStreamOptions{SuppressStructuredQuestions: true}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	event := <-out
+	if event.Kind != EventUserInputRequest || event.UserInputRequest == nil || !event.UserInputRequest.EndsTurn {
+		t.Fatalf("raw fallback was not preserved: %+v", event)
+	}
+}
+
+func TestClaudeQuestionViaPermissionRelayModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings TurnSettings
+		want     bool
+	}{
+		{name: "approve", settings: TurnSettings{PermissionMode: config.PermissionApprove}, want: true},
+		{name: "auto", settings: TurnSettings{PermissionMode: config.PermissionAuto}, want: true},
+		{name: "yolo", settings: TurnSettings{PermissionMode: config.PermissionYolo}, want: false},
+		{name: "plan", settings: TurnSettings{PermissionMode: config.PermissionApprove, PlanMode: true}, want: false},
+		{name: "unattended", settings: TurnSettings{PermissionMode: config.PermissionApprove, Unattended: true}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeQuestionViaPermissionRelay(TurnRequest{Settings: tt.settings}); got != tt.want {
+				t.Fatalf("relay = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

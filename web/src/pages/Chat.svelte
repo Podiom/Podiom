@@ -587,7 +587,7 @@
           markApprovalRecord(activeSession?.ID, pendingPermission?.id, "cleared");
           pendingPermission = null;
           resetApprovalForm();
-          if (pendingUserInput && !questionEndsTurn(pendingUserInput.provider)) pendingUserInput = null;
+          if (pendingUserInput && !userInputEndsTurn(pendingUserInput)) pendingUserInput = null;
           setPendingFallback(null);
           sending = false;
         }
@@ -651,7 +651,7 @@
     pendingPermission = null;
     permissionRemaining = 0;
     resetApprovalForm();
-    if (pendingUserInput && !questionEndsTurn(pendingUserInput.provider)) pendingUserInput = null;
+    if (pendingUserInput && !userInputEndsTurn(pendingUserInput)) pendingUserInput = null;
     setPendingFallback(null);
   }
 
@@ -1654,13 +1654,17 @@
     return !!req && req.questions.every((q) => (userInputAnswers[q.id] ?? []).some((v) => v.trim()));
   }
 
+  function userInputEndsTurn(req: UserInputRequest): boolean {
+    return req.ends_turn ?? questionEndsTurn(req.provider);
+  }
+
   function submitUserInput() {
     const req = pendingUserInput;
     if (!req || !userInputReady(req)) return;
     const decision = { answers: userInputAnswers };
     if (!send({ type: "user_input_decision", request_id: req.id, input: decision })) return;
     pendingUserInput = null;
-    if (questionEndsTurn(req.provider)) {
+    if (userInputEndsTurn(req)) {
       sendTurn(formatUserInputFollowup(req, userInputAnswers));
       return;
     }

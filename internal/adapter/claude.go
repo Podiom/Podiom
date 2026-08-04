@@ -203,7 +203,9 @@ func (c *Claude) consumeProcess(ctx context.Context, req TurnRequest, run claude
 	stderrc := make(chan stderrResult, 1)
 	parsed := make(chan Event, 32)
 	go func() {
-		parsec <- parseClaudeStream(ctx, run.stdout, parsed)
+		parsec <- parseClaudeStream(ctx, run.stdout, parsed, claudeStreamOptions{
+			SuppressStructuredQuestions: claudeQuestionViaPermissionRelay(req),
+		})
 		close(parsed)
 	}()
 	go c.trackClaudeStream(ctx, req, parsed, out, trackc)
@@ -698,7 +700,23 @@ func claudeInputMessage(role, text string) map[string]any {
 	}
 }
 
-func parseClaudeStream(ctx context.Context, r io.Reader, out chan<- Event) error {
+type claudeStreamOptions struct {
+	// SuppressStructuredQuestions leaves AskUserQuestion delivery to Claude's
+	// blocking permission-prompt callback. Text fallbacks remain enabled.
+	SuppressStructuredQuestions bool
+}
+
+func claudeQuestionViaPermissionRelay(req TurnRequest) bool {
+	return !req.Settings.PlanMode &&
+		!req.Settings.Unattended &&
+		req.Settings.PermissionMode != config.PermissionYolo
+}
+
+func parseClaudeStream(ctx context.Context, r io.Reader, out chan<- Event, options ...claudeStreamOptions) error {
+	var opts claudeStreamOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	lastHandleID := ""
@@ -710,7 +728,7 @@ func parseClaudeStream(ctx context.Context, r io.Reader, out chan<- Event) error
 		if len(line) == 0 {
 			continue
 		}
-		events, err := parseClaudeLine(line)
+		events, err := parseClaudeLineWithOptions(line, opts)
 		if err != nil {
 			return err
 		}
@@ -730,6 +748,10 @@ func parseClaudeStream(ctx context.Context, r io.Reader, out chan<- Event) error
 }
 
 func parseClaudeLine(line []byte) ([]Event, error) {
+	return parseClaudeLineWithOptions(line, claudeStreamOptions{})
+}
+
+func parseClaudeLineWithOptions(line []byte, opts claudeStreamOptions) ([]Event, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return nil, fmt.Errorf("parse claude json %q: %w", string(line), err)
@@ -745,7 +767,7 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 	switch eventType {
 	case "stream_event":
 		if nested, ok := raw["event"].(map[string]any); ok {
-			if req, ok := claudeUserInputRequest(nested, line); ok {
+			if req, ok := claudeStreamUserInputRequest(nested, line, opts); ok {
 				events = append(events, Event{Kind: EventUserInputRequest, UserInputRequest: req})
 			} else if text, reasoning := extractTextKind(nested); text != "" {
 				if reasoning {
@@ -764,7 +786,7 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 			}
 		}
 	case "assistant", "message":
-		if req, ok := claudeUserInputRequest(raw, line); ok {
+		if req, ok := claudeStreamUserInputRequest(raw, line, opts); ok {
 			events = append(events, Event{Kind: EventUserInputRequest, UserInputRequest: req})
 		} else {
 			if text := extractReasoningText(raw); text != "" {
@@ -828,6 +850,16 @@ func parseClaudeLine(line []byte) ([]Event, error) {
 		}
 	}
 	return events, nil
+}
+
+func claudeStreamUserInputRequest(raw map[string]any, source []byte, opts claudeStreamOptions) (*UserInputRequest, bool) {
+	if !opts.SuppressStructuredQuestions {
+		return claudeUserInputRequest(raw, source)
+	}
+	if text := extractText(raw); text != "" {
+		return claudeUserInputRequestFromText(text, source)
+	}
+	return nil, false
 }
 
 // claudeToolUses extracts tool_use content blocks from a complete assistant
@@ -1011,7 +1043,7 @@ func claudeUserInputRequestFromPayload(payload map[string]any, questions any, so
 	if err := json.Unmarshal(rawQuestions, &parsed); err != nil || len(parsed) == 0 {
 		return nil, false
 	}
-	normalizeUserInputQuestions(parsed)
+	NormalizeUserInputQuestions(parsed)
 	itemID := firstString(payload, "id", "tool_use_id", "toolUseID", "item_id", "itemId")
 	autoMS := int64FromAny(firstValue(payload, "autoResolutionMs", "auto_resolution_ms"))
 	req := &UserInputRequest{
@@ -1021,6 +1053,7 @@ func claudeUserInputRequestFromPayload(payload map[string]any, questions any, so
 		ItemID:           itemID,
 		Questions:        parsed,
 		AutoResolutionMS: autoMS,
+		EndsTurn:         true,
 	}
 	if itemID != "" {
 		req.ID = "claude-" + sanitizeFilename(itemID)
@@ -1036,11 +1069,12 @@ func claudeUserInputRequestFromText(text string, source []byte) (*UserInputReque
 		if err := json.Unmarshal([]byte(raw), &questions); err != nil || len(questions) == 0 {
 			return nil, false
 		}
-		normalizeUserInputQuestions(questions)
+		NormalizeUserInputQuestions(questions)
 		return &UserInputRequest{
 			ID:        userInputID("claude", source),
 			Provider:  config.ProviderClaude,
 			Questions: questions,
+			EndsTurn:  true,
 		}, true
 	}
 	if strings.HasPrefix(trimmed, "{") {
@@ -1057,11 +1091,12 @@ func claudeUserInputRequestFromText(text string, source []byte) (*UserInputReque
 		if err := json.Unmarshal([]byte(trimmed), &questions); err != nil || len(questions) == 0 {
 			return nil, false
 		}
-		normalizeUserInputQuestions(questions)
+		NormalizeUserInputQuestions(questions)
 		return &UserInputRequest{
 			ID:        userInputID("claude", source),
 			Provider:  config.ProviderClaude,
 			Questions: questions,
+			EndsTurn:  true,
 		}, true
 	}
 	return nil, false

@@ -2486,7 +2486,7 @@ func codexUserInputRequest(id, params json.RawMessage, active codexActiveTurn) U
 	if p.ItemID != "" {
 		reqID += "-" + sanitizeFilename(p.ItemID)
 	}
-	normalizeUserInputQuestions(p.Questions)
+	NormalizeUserInputQuestions(p.Questions)
 	return UserInputRequest{
 		ID:               reqID,
 		TurnID:           turnID,

@@ -42,6 +42,7 @@ var notManageable = map[string]string{
 	"/api/skills/resolve":        "monorepo URL resolution used by the install UI",
 	"/api/logs/follow":           "never-terminating stream; podiom_read_logs polls instead",
 	"/api/permission-decisions/": "permission relay plumbing",
+	"/api/user-input-requests/":  "user-input relay plumbing",
 	"/api/user-input-decisions/": "user-input relay plumbing",
 	"/api/interviews/":           "USER.md interview relay plumbing",
 	"/api/permissions/":          "permission relay plumbing",

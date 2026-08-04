@@ -355,6 +355,11 @@ type UserInputRequest struct {
 	ItemID           string              `json:"item_id,omitempty"`
 	Questions        []UserInputQuestion `json:"questions"`
 	AutoResolutionMS int64               `json:"auto_resolution_ms,omitempty"`
+	// EndsTurn distinguishes follow-up questions emitted from a completed
+	// provider turn from questions whose answer resumes the same blocked turn.
+	// It is deliberately always serialized so clients do not have to infer the
+	// behavior from provider identity for newly emitted requests.
+	EndsTurn bool `json:"ends_turn"`
 }
 
 // UserInputQuestion is one prompt in a provider clarification request.

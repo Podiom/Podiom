@@ -31,6 +31,7 @@ interface ProviderMetaShape {
   // modal survives "done" and the answer is sent as a follow-up turn).
   // false = questions block mid-turn (the answer resumes via the broker and
   // the modal is stale after "done").
+  // Compatibility default for older user-input payloads without ends_turn.
   questionEndsTurn: boolean;
 }
 
