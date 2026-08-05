@@ -66,8 +66,8 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; background: rgba(43, 37, 32, 0.32); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 60; }
-  .modal { width: 100%; max-width: 560px; background: #fffdfb; border: 1px solid #ede4d9; border-radius: 18px; padding: 22px 24px; box-shadow: 0 24px 60px -20px rgba(43, 37, 32, 0.4); }
+  .overlay { position: fixed; inset: 0; background: rgba(43, 37, 32, 0.32); display: flex; align-items: center; justify-content: center; padding: 24px 24px calc(24px + env(safe-area-inset-bottom)); z-index: 55; overflow-y: auto; overscroll-behavior: contain; }
+  .modal { width: 100%; max-width: 560px; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; background: #fffdfb; border: 1px solid #ede4d9; border-radius: 18px; padding: 22px 24px; box-shadow: 0 24px 60px -20px rgba(43, 37, 32, 0.4); }
   h2 { margin: 0 0 6px; font: 800 18px "Hanken Grotesk"; color: #2b2520; }
   p { margin: 0 0 16px; font: 400 13px/1.55 "Hanken Grotesk"; color: #8a7f73; }
   code { font: 500 12px "JetBrains Mono", monospace; color: #7a6f62; }

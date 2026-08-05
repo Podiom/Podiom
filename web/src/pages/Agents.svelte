@@ -634,7 +634,7 @@
         <div class="modal-title">Edit {edName}</div>
         <div class="modal-sub">Tune how this colleague runs and rewrite their SOUL.md. Changes save to their durable defaults and workspace.</div>
       </div>
-      <div class="modal-body" style="max-height:74vh;overflow-y:auto">
+      <div class="modal-body">
         {#if editError}<div class="error-banner" style="margin-bottom:14px">{editError}</div>{/if}
 
         <div class="label-mono" style="margin-bottom:8px">provider</div>

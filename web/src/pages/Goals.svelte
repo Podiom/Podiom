@@ -1782,6 +1782,7 @@
     bottom: 0;
     width: min(580px, 92vw);
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 24px;
     background: #fcfbff;
     border-left: 1px solid #ddd4ef;
@@ -1918,9 +1919,11 @@
   .page.form-page {
     max-width: 660px;
   }
-  @media (max-width: 700px) {
+  @media (max-width: 768px) {
     .run-drawer {
       top: 12vh;
+      /* Stop above the fixed bottom nav instead of running underneath it. */
+      bottom: calc(72px + env(safe-area-inset-bottom));
       width: 100%;
       padding: 18px;
       border-top: 1px solid #ddd4ef;
@@ -3338,16 +3341,25 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 50;
-    padding: 16px;
+    z-index: 55;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .modal {
     width: 460px;
     max-width: 100%;
+    max-height: 100%;
     background: var(--surface);
     border-radius: 20px;
     box-shadow: 0 30px 80px -24px rgba(43, 37, 32, 0.5);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal > * {
+    flex: none;
+    min-height: 0;
   }
   .modal-head {
     display: flex;
@@ -3362,6 +3374,9 @@
   }
   .modal-body {
     padding: 16px 26px 26px;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .modal-text {
     font-size: 13.5px;

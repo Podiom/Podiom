@@ -433,7 +433,7 @@
         <div class="modal-title">New schedule</div>
         <div class="modal-sub">Creates a markdown file under <span class="mono">~/.podiom/schedules</span>. The frontmatter sets the engine; the body is the prompt the agent runs on each tick.</div>
       </div>
-      <div class="modal-body" style="max-height:76vh;overflow-y:auto">
+      <div class="modal-body">
         {#if error}<div class="error-banner" style="margin-bottom:14px">{error}</div>{/if}
 
         <div class="label-mono" style="margin-bottom:8px">name</div>
@@ -502,7 +502,7 @@
           {timing(inspectingSchedule)} · {inspectingSchedule.agent} · {inspectingSchedule.path}
         </div>
       </div>
-      <div class="modal-body instruction-body">
+      <div class="modal-body">
         <div class="instruction-content">{@html renderMarkdown(inspectingSchedule.body || "")}</div>
         <button class="modal-cta instruction-close" onclick={() => (inspectingSchedule = null)}>Close</button>
       </div>
@@ -931,11 +931,6 @@
   .instruction-modal {
     width: 620px;
     max-width: 94vw;
-  }
-
-  .instruction-body {
-    max-height: 70vh;
-    overflow-y: auto;
   }
 
   .instruction-content {

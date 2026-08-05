@@ -555,7 +555,7 @@
         </div>
         <div class="cm-title">{openCard.Title}</div>
       </div>
-      <div class="cm-body">
+      <div class="modal-body cm-body">
         {#if openCard.Body}
           <div class="label-mono" style="margin-bottom:7px">prompt</div>
           <div class="cm-prompt">{openCard.Body}</div>
@@ -630,7 +630,7 @@
         <div class="modal-title">New task</div>
         <div class="modal-sub">Assign work to a colleague. Give it a pickup time to schedule it, or leave it on demand and drag it onto Start when you're ready.</div>
       </div>
-      <div class="modal-body" style="max-height:74vh;overflow-y:auto">
+      <div class="modal-body">
         <div class="label-mono" style="margin-bottom:8px">title</div>
         <input class="field-input" bind:value={ntTitle} placeholder="e.g. Add a settings page" />
 
@@ -715,7 +715,7 @@
         <div class="modal-title">Edit task</div>
         <div class="modal-sub">Tasks can be edited until a session has been created for them.</div>
       </div>
-      <div class="modal-body" style="max-height:74vh;overflow-y:auto">
+      <div class="modal-body">
         <div class="label-mono" style="margin-bottom:8px">title</div>
         <input class="field-input" bind:value={etTitle} placeholder="e.g. Add a settings page" />
 
