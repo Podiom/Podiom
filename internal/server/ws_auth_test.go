@@ -113,3 +113,31 @@ func TestTokenRotationClosesLiveSocketsWith4401(t *testing.T) {
 		}
 	}
 }
+
+func TestWebSocketAcceptedDuringTokenRotationClosesWith4401(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, keeper, srv := newWSAuthServer(t)
+	oldToken := keeper.Current()
+	if _, err := keeper.Rotate(); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+
+	// Bypass auth middleware to model a handshake that it authorized just
+	// before the token rotated, but that handleWebSocket accepts just after.
+	ts := httptest.NewServer(http.HandlerFunc(srv.handleWebSocket))
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{gateway.WSProtocol, gateway.WSProtocolEntry(oldToken)},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	_, _, err = conn.Read(ctx)
+	if code := websocket.CloseStatus(err); code != wsCloseTokenRotated {
+		t.Fatalf("close status = %d, want %d (err=%v)", code, wsCloseTokenRotated, err)
+	}
+}

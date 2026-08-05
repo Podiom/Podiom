@@ -40,8 +40,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	writer := &wsWriter{conn: conn}
 	// Track the live connection so a token rotation can force-close it (HA12)
-	// and goal-event broadcasts can reach it.
-	s.registerWS(conn, writer)
+	// and goal-event broadcasts can reach it. Recheck the handshake token while
+	// holding wsMu: the upgrade can finish concurrently with a token rotation,
+	// before the connection has reached the registry snapshot in closeAllWS.
+	if !s.registerWS(conn, writer, r) {
+		_ = conn.Close(wsCloseTokenRotated, "gateway token rotated")
+		return
+	}
 	defer s.unregisterWS(conn)
 
 	ctx := r.Context()
@@ -77,13 +82,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) registerWS(conn *websocket.Conn, writer *wsWriter) {
+func (s *Server) registerWS(conn *websocket.Conn, writer *wsWriter, r *http.Request) bool {
 	s.wsMu.Lock()
 	defer s.wsMu.Unlock()
+	if s.tokens != nil && !s.tokens.Authorize(r) {
+		return false
+	}
 	if s.wsConns == nil {
 		s.wsConns = map[*websocket.Conn]*wsWriter{}
 	}
 	s.wsConns[conn] = writer
+	return true
 }
 
 func (s *Server) unregisterWS(conn *websocket.Conn) {
