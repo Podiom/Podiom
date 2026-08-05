@@ -383,6 +383,33 @@ type TurnEvent struct {
 	// Usage carries the session's updated cumulative billed-token totals after a
 	// turn completes, so the client can refresh its usage bar live.
 	Usage *store.SessionUsage
+	// AuthRequired names the signed-out target that killed the turn, so the
+	// client can offer a sign-in affordance for that exact account.
+	AuthRequired *AuthRequired
+}
+
+// AuthRequired identifies the provider account a turn needs signed in. Profile
+// is empty for the provider's own global login, matching profiles elsewhere.
+type AuthRequired struct {
+	Provider config.Provider `json:"provider"`
+	Profile  string          `json:"profile"`
+	Message  string          `json:"message,omitempty"`
+}
+
+// authRequiredMessage is the transcript wording for a turn that died signed
+// out. It names the account and points at the in-app fix, because the whole
+// point is that the user should not have to find a terminal.
+func authRequiredMessage(provider config.Provider, profile string) string {
+	label := string(provider)
+	if info, ok := config.ProviderInfoFor(provider); ok {
+		label = info.DisplayName
+	}
+	account := "your " + label + " account"
+	if profile != "" {
+		account = "the " + label + " profile " + profile
+	}
+	return "This session couldn't run because " + account + " is signed out. " +
+		"Sign in from Settings → profile, then send your message again."
 }
 
 type turnOutput struct {
@@ -986,6 +1013,9 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 	var segments []*turnSegment
 	var flushed bool
 	var plan *adapter.PlanProposal
+	// Claude reports a signed-out account on both the assistant line and the
+	// terminal result line; the user needs one card, not two.
+	var authNotified bool
 	currentProviderHandle := providerHandle
 
 	lastSegment := func(kind store.MessageKind) *turnSegment {
@@ -1259,6 +1289,41 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 			}
 		case adapter.EventRateLimited:
 			return result(), true, true
+		case adapter.EventAuthRequired:
+			if authNotified {
+				continue
+			}
+			authNotified = true
+			// Two surfaces, deliberately. The structured event drives a live
+			// sign-in card, but the turn ends here, so nothing would explain the
+			// dead turn after a reload — hence a transcript row too, in Podiom's
+			// own wording rather than the provider's "run /login". Error rows are
+			// excluded from provider replay, so it informs the user without
+			// confusing the next turn.
+			//
+			// The row is persisted directly rather than via
+			// sendPersistedTurnError: that helper also emits a terminal "error"
+			// event, which would abort the turn as failed and duplicate the row
+			// in the client's error line. This is a handled outcome with its own
+			// affordance, not an unhandled failure.
+			if rows, err := c.appendErrorMessage(ctx, sessionID, authRequiredMessage(provider, profile)); err == nil {
+				for _, row := range rows {
+					row := row
+					if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "message_stored", Message: &row}) {
+						return result(), false, false
+					}
+				}
+			}
+			if !sendTurnEvent(ctx, streamOut, TurnEvent{
+				Kind: event.Kind,
+				AuthRequired: &AuthRequired{
+					Provider: provider,
+					Profile:  profile,
+					Message:  event.Content,
+				},
+			}) {
+				return result(), false, false
+			}
 		case adapter.EventTurnDone:
 		}
 	}

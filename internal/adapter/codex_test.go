@@ -305,6 +305,31 @@ func TestCodexRateStatusAndLimitParsing(t *testing.T) {
 	}
 }
 
+func TestCodexAuthFailureDetection(t *testing.T) {
+	for _, params := range []string{
+		`{"error":{"message":"Not logged in"}}`,
+		`{"error":{"message":"not signed in"}}`,
+		`{"error":{"message":"Your access token could not be refreshed. Please log out and sign in again."}}`,
+		`{"error":{"message":"ChatGPT account ID not available, please re-run ` + "`codex login`" + `"}}`,
+		`{"error":{"message":"authentication required"}}`,
+	} {
+		if !codexAuthFailure(json.RawMessage(params)) {
+			t.Errorf("expected %s to be classified as a sign-in failure", params)
+		}
+	}
+	// A bare 401 also fires when a tool call hits an unrelated API, so it must
+	// not be mistaken for "sign in to Codex".
+	for _, params := range []string{
+		`{"error":{"message":"401 Unauthorized"}}`,
+		`{"error":{"message":"usage_limit_exceeded"}}`,
+		`{"error":{"message":"stream disconnected"}}`,
+	} {
+		if codexAuthFailure(json.RawMessage(params)) {
+			t.Errorf("%s should not be classified as a sign-in failure", params)
+		}
+	}
+}
+
 func TestCodexContextStatusParsing(t *testing.T) {
 	// A token_count payload nests token usage and the window under "info".
 	params := json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":150000},"last_token_usage":{"input_tokens":80000,"cached_input_tokens":10000,"output_tokens":2000},"model_context_window":200000}}`)

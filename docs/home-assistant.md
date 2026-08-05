@@ -66,19 +66,28 @@ opens Shell for maintenance.
 
 ### Re-authenticating later
 
-Use **Terminal** → Shell, then run:
+Use **Settings → Global config → profile**. Every profile chip carries a
+sign-in dot (green signed in, red signed out, amber unknown); pick the account
+and press **Sign in**. Podiom runs the provider's own login and opens the
+authorization page in a popup — Claude then asks you to paste back the code
+that page shows, Codex shows a one-time code and finishes on its own. Nothing
+leaves the browser except that code, and the CLI writes its own credentials
+into the profile's directory.
+
+If a provider CLI has no login Podiom can drive, the panel falls back to
+printing the terminal command. Use **Terminal** → Shell for that:
 
 ```sh
-claude /login
+claude auth login
 codex login --device-auth
 ```
 
-For a profile-scoped login, create the directory yourself and prefix the CLI's
-environment variable:
+For a profile-scoped login from the shell, create the directory yourself and
+prefix the CLI's environment variable:
 
 ```sh
 mkdir -p /data/home/.claude-work
-CLAUDE_CONFIG_DIR=/data/home/.claude-work claude /login
+CLAUDE_CONFIG_DIR=/data/home/.claude-work claude auth login
 
 mkdir -p /data/home/.codex-work
 CODEX_HOME=/data/home/.codex-work codex login --device-auth

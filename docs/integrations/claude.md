@@ -31,7 +31,59 @@ Optional flags:
 
 When a profile is set, Podiom exports `CLAUDE_CONFIG_DIR=<profile.config_dir>`.
 When no profile is set, Podiom leaves `CLAUDE_CONFIG_DIR` unset so Claude uses
-its normal global login.
+its normal global login. The variable name comes from the registry
+(`ProviderInfo.ProfileEnvVar`), and it is always stripped from the inherited
+environment first, so one profile's directory can never leak into another's
+process.
+
+## Sign-in
+
+`internal/providerlogin` drives `claude auth login` over plain pipes — no pty
+required. The CLI reads the authorization code from stdin with `readline` and
+narrates on stdout:
+
+```text
+Opening browser to sign in…
+If the browser didn't open, visit: <url>
+Paste code here if prompted >
+```
+
+That URL is the **manual-redirect** variant
+(`redirect_uri=https://platform.claude.com/oauth/code/callback`), so it works
+from any browser on any device and ends on a page showing a `code#state` string.
+Claude also mints a `http://localhost:<port>/callback` variant, but only hands
+it to the browser it opens locally — useless when the daemon is on another
+machine, which is why the printed one is the one Podiom surfaces.
+
+Podiom scrapes the URL, the browser opens it in a popup, and the pasted code
+goes straight to the CLI's stdin. A rejected code leaves the process running
+(`Invalid code. …` on stderr) so the user can retry on the same session. The
+terminal verdict is the exit status, not a success string — that stays stable
+across CLI versions. Podiom never sees the token: the CLI performs the exchange
+and writes `.credentials.json` (or the macOS Keychain entry) itself.
+
+Login state is probed with `claude auth status`, which prints
+`{"loggedIn": …}` and is authoritative even on a non-zero exit.
+
+### Detecting a signed-out turn
+
+Claude Code does **not** report a signed-out account as a stream error. It
+emits a synthetic *assistant message*, which is why the raw text used to reach
+the transcript as if the agent had said it:
+
+```json
+{"type":"assistant",
+ "message":{"model":"<synthetic>","content":[{"type":"text","text":"Not logged in · Please run /login"}]},
+ "error":"authentication_failed","is_api_error_message":true}
+```
+
+The terminal `result` line repeats it with `"is_error": true`. The adapter keys
+off those explicit markers (`error: "authentication_failed"`, `<synthetic>`,
+`is_api_error_message`, `is_error`) and only then consults the wording, so a
+model that merely talks about logging in is never misread. Both lines produce
+`adapter.EventAuthRequired`; core keeps the first and drops the duplicate, and
+the process-exit path stays silent so the generic "claude exited with error"
+bubble doesn't bury the sign-in card.
 
 ## Instructions
 

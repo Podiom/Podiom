@@ -22,7 +22,26 @@ The transport is newline-delimited JSON-RPC over stdin/stdout. Podiom sends:
 Podiom keeps the process alive and restarts it on transport failure. Because
 `CODEX_HOME` is process-scoped, the adapter keeps one app-server per Codex
 profile directory. When no profile is set, `CODEX_HOME` is unset and Codex uses
-its normal global login.
+its normal global login. The variable name comes from the registry
+(`ProviderInfo.ProfileEnvVar`).
+
+## Sign-in
+
+`internal/providerlogin` runs `codex login --device-auth` and reads its
+narration (which is ANSI-coloured even on a pipe, so lines are stripped before
+matching):
+
+```text
+1. Open this link in your browser and sign in to your account
+   https://auth.openai.com/codex/device
+
+2. Enter this one-time code (expires in 15 minutes)
+   BDJL-IOS16
+```
+
+Podiom surfaces the URL and the one-time code; unlike Claude there is nothing to
+paste back, because the CLI polls and exits on its own. The exit status is the
+verdict. Login state is probed with `codex login status`.
 
 ## Lifecycle
 

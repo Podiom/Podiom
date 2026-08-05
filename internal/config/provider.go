@@ -21,7 +21,8 @@ type FallbackModel struct {
 //     cmd/podiomd/main.go.
 //  2. Add one ProviderInfo entry to providerInfos below.
 //  3. Add one-line entries to usage.usageProviders and
-//     providercheck.authProbes; optionally mcp.nativeImports and
+//     providercheck.authProbes; providerlogin.loginFlows if its CLI login can
+//     be driven from the browser; optionally mcp.nativeImports and
 //     skills.nativeRoots if the provider has native MCP/skills dirs.
 //  4. Add one PROVIDERS entry + logo component in web/src/lib/providers.ts.
 //
@@ -36,6 +37,12 @@ type ProviderInfo struct {
 	// dir: "config_dir" (ConfigDir) or "home_dir" (HomeDir). A future
 	// provider reuses one of the two existing keys.
 	ProfileDirKey string
+
+	// ProfileEnvVar is the environment variable that carries a profile's auth
+	// directory to the provider CLI. Adapters and the interactive login flow
+	// both export it, and both unset it first so one profile's directory can
+	// never leak into another profile's process.
+	ProfileEnvVar string
 
 	// Onboarding / provider checks (consumed by internal/providercheck).
 	InstallPackage string
@@ -88,10 +95,11 @@ var providerInfos = []ProviderInfo{
 		ID:                  ProviderClaude,
 		DisplayName:         "Claude",
 		ProfileDirKey:       "config_dir",
+		ProfileEnvVar:       "CLAUDE_CONFIG_DIR",
 		InstallPackage:      "@anthropic-ai/claude-code",
-		LoginArgs:           []string{"/login"},
+		LoginArgs:           []string{"auth", "login"},
 		InstallHint:         "Install Claude Code with Anthropic's current instructions, commonly: npm install -g @anthropic-ai/claude-code",
-		LoginHint:           "Run claude /login and follow the native Claude Code login prompts.",
+		LoginHint:           "Run claude auth login and follow the native Claude Code login prompts.",
 		InstructionDelivery: "claude_import",
 		NativeAgentSep:      "-",
 		PlanReadOnlyTools:   []string{"read", "ls", "glob", "grep", "webfetch", "websearch"},
@@ -108,6 +116,7 @@ var providerInfos = []ProviderInfo{
 		ID:                         ProviderCodex,
 		DisplayName:                "Codex",
 		ProfileDirKey:              "home_dir",
+		ProfileEnvVar:              "CODEX_HOME",
 		InstallPackage:             "@openai/codex",
 		LoginArgs:                  []string{"login", "--device-auth"},
 		InstallHint:                "Install Codex CLI with OpenAI's current instructions, commonly: npm install -g @openai/codex",

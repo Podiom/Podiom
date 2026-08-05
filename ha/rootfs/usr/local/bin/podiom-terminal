@@ -39,13 +39,16 @@ banner() {
 }
 
 shell_help() {
-    echo "For provider re-authentication later, run one of:"
-    echo "  claude /login"
+    echo "Provider re-authentication normally happens in the UI:"
+    echo "  Settings -> Global config -> profile -> Sign in"
+    echo
+    echo "If you would rather do it here, run one of:"
+    echo "  claude auth login"
     echo "  codex login --device-auth"
     echo
     echo "For profile-scoped re-authentication, create the directory first and prefix"
     echo "the CLI's environment variable, for example:"
-    echo "  mkdir -p /data/home/.claude-work && CLAUDE_CONFIG_DIR=/data/home/.claude-work claude /login"
+    echo "  mkdir -p /data/home/.claude-work && CLAUDE_CONFIG_DIR=/data/home/.claude-work claude auth login"
     echo "  mkdir -p /data/home/.codex-work && CODEX_HOME=/data/home/.codex-work codex login --device-auth"
 }
 

@@ -154,6 +154,62 @@ export interface ProfileInfo {
   HomeDir?: string;
 }
 
+// ProviderAuthStatus mirrors GET /api/provider-status: one row per provider
+// account (the implicit default login plus every named profile).
+export interface ProviderAuthStatus {
+  provider: Provider;
+  // Empty means the CLI's own global login — the "default · global login" chip.
+  profile: string;
+  found: boolean;
+  version?: string;
+  // False when the CLI exposes no probe we understand; show "unknown" rather
+  // than claiming the account is signed out.
+  login_checked: boolean;
+  logged_in: boolean;
+  // False when Podiom can't drive this provider's login from the browser; the
+  // UI then falls back to login_hint.
+  supports_login: boolean;
+  install_hint?: string;
+  login_hint?: string;
+  error?: string;
+}
+
+// AuthRequired names the signed-out account that killed a turn, so the chat can
+// offer to sign in to that exact profile instead of showing the provider's raw
+// "run /login" text.
+export interface AuthRequired {
+  provider: Provider;
+  // Empty means the provider's own global login.
+  profile: string;
+  // The provider's own wording, shown as supporting detail.
+  message?: string;
+}
+
+export type ProviderLoginPhase =
+  | "starting"
+  | "awaiting_code"
+  | "awaiting_authorization"
+  | "verifying"
+  | "succeeded"
+  | "failed";
+
+// ProviderLoginSession mirrors the /api/provider-login session shape. It never
+// carries credential material: url and user_code are meant to be shown, and the
+// submitted authorization code is never echoed back.
+export interface ProviderLoginSession {
+  id: string;
+  provider: Provider;
+  profile: string;
+  phase: ProviderLoginPhase;
+  url?: string;
+  // Set for device-code providers (Codex); Claude uses needs_code instead.
+  user_code?: string;
+  message?: string;
+  // True when the user must paste a code back (Claude's manual OAuth redirect).
+  needs_code: boolean;
+  expires_at: string;
+}
+
 export interface Session {
   ID: string;
   AgentName: string;
@@ -862,6 +918,7 @@ export interface TurnState {
   pending_permission?: PermissionRequest;
   pending_user_input?: UserInputRequest;
   pending_fallback?: FallbackRequest;
+  pending_auth?: AuthRequired;
   native_agent_activities?: NativeAgentActivity[];
   interview?: InterviewState;
   error?: string;
@@ -972,6 +1029,7 @@ export interface ServerMessage {
     | "permission_request"
     | "user_input_request"
     | "fallback_request"
+    | "auth_required"
     | "native_agent_activity"
     | "turn_state"
     | "interview_state"
@@ -998,6 +1056,7 @@ export interface ServerMessage {
   request?: PermissionRequest;
   input?: UserInputRequest;
   fallback?: FallbackRequest;
+  auth_required?: AuthRequired;
   native_agent?: NativeAgentActivity;
   turn_state?: TurnState;
   interview?: InterviewState;

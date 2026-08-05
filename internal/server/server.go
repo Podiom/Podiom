@@ -19,6 +19,7 @@ import (
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
 	"github.com/Podiom/Podiom/internal/marketplace"
 	"github.com/Podiom/Podiom/internal/notify"
+	"github.com/Podiom/Podiom/internal/providerlogin"
 	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/Podiom/Podiom/internal/usage"
@@ -48,9 +49,15 @@ type Server struct {
 	interviews  *interviewCoordinator
 	fallback    *fallbackBroker
 	turns       *activeTurnHub
-	paths       config.Paths
-	log         *slog.Logger
-	notifier    *notify.Dispatcher
+	// logins drives the provider CLIs' own browser login from Settings, so a
+	// profile can be authenticated without a terminal.
+	logins *providerlogin.Manager
+	// providerStatus caches the per-profile login fan-out; each entry costs a
+	// CLI spawn.
+	providerStatus providerStatusCache
+	paths          config.Paths
+	log            *slog.Logger
+	notifier       *notify.Dispatcher
 	// vapidPublic is the VAPID public key served to browsers so they can create
 	// a Web Push subscription bound to this daemon. Empty disables push.
 	vapidPublic string
@@ -128,6 +135,7 @@ func New(opts Options) *Server {
 		interviews:  newInterviewCoordinator(),
 		fallback:    newFallbackBroker(log),
 		turns:       newActiveTurnHub(),
+		logins:      providerlogin.New(providerlogin.Options{}),
 		paths:       opts.Paths,
 		log:         log,
 		notifier:    opts.Notifier,
@@ -228,6 +236,10 @@ func (s *Server) Start() error {
 
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	// In-flight logins hold a child CLI open; they must not outlive the daemon.
+	if s.logins != nil {
+		s.logins.Shutdown()
+	}
 	return s.httpSrv.Shutdown(ctx)
 }
 

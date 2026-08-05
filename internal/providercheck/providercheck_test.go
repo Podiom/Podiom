@@ -53,7 +53,7 @@ func TestLoginArgsAreContainerSafe(t *testing.T) {
 		provider config.Provider
 		want     []string
 	}{
-		{config.ProviderClaude, []string{"/login"}},
+		{config.ProviderClaude, []string{"auth", "login"}},
 		{config.ProviderCodex, []string{"login", "--device-auth"}},
 	}
 	for _, tc := range cases {
@@ -125,6 +125,63 @@ func TestCheckCodexLoginStatus(t *testing.T) {
 				t.Fatalf("status = %+v, want ready checked:%v logged:%v", status, tc.wantChecked, tc.wantLoggedIn)
 			}
 		})
+	}
+}
+
+// TestCheckScopesLoginProbeToProfileDir pins the property the profile UI relies
+// on: the probe reports the login state of the profile's own directory, and an
+// inherited CLAUDE_CONFIG_DIR never makes the default profile borrow it.
+func TestCheckScopesLoginProbeToProfileDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a Unix shell script")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	// The fake reports logged in only for the "work" directory.
+	writeFakeCLI(t, bin, "#!/usr/bin/env sh\n"+
+		"if [ \"$1\" = \"--version\" ]; then echo 'claude 1.2.3'; exit 0; fi\n"+
+		"if [ \"$1\" = \"auth\" ] && [ \"$2\" = \"status\" ]; then\n"+
+		"  case \"$CLAUDE_CONFIG_DIR\" in\n"+
+		"    */work) echo '{\"loggedIn\":true}'; exit 0 ;;\n"+
+		"    *) echo '{\"loggedIn\":false}'; exit 1 ;;\n"+
+		"  esac\n"+
+		"fi\nexit 1\n")
+	t.Setenv("CLAUDE_BIN", bin)
+	// An ambient value that must not leak into the default-profile probe.
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "work"))
+
+	discovery := podiomexec.Discovery{ExtraDirs: []string{dir}}
+	work := Check(context.Background(), config.ProviderClaude, Options{
+		Discovery: discovery, Profile: "work", ProfileDir: filepath.Join(dir, "work"),
+	})
+	if !work.LoginChecked || !work.LoggedIn || work.Profile != "work" {
+		t.Fatalf("work profile = %+v, want logged in", work)
+	}
+
+	def := Check(context.Background(), config.ProviderClaude, Options{Discovery: discovery})
+	if !def.LoginChecked || def.LoggedIn {
+		t.Fatalf("default profile = %+v, want logged out (ambient dir must not leak)", def)
+	}
+}
+
+func TestTargetsCoverDefaultsAndProfiles(t *testing.T) {
+	targets := Targets([]config.Profile{
+		{Name: "work", Provider: config.ProviderClaude, ConfigDir: "/tmp/work"},
+	})
+	var sawDefault, sawProfile bool
+	for _, target := range targets {
+		if target.Provider == config.ProviderClaude && target.Profile == "" && target.Dir == "" {
+			sawDefault = true
+		}
+		if target.Profile == "work" && target.Dir == "/tmp/work" {
+			sawProfile = true
+		}
+	}
+	if !sawDefault || !sawProfile {
+		t.Fatalf("targets = %+v, want a default per provider plus the named profile", targets)
+	}
+	if len(targets) != len(config.ProviderIDs())+1 {
+		t.Fatalf("targets = %d, want one per provider plus one profile", len(targets))
 	}
 }
 

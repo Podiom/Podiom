@@ -1223,6 +1223,12 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 					sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 					return
 				}
+				if codexAuthFailure(event.params) {
+					c.log.Warn("provider not signed in", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "error", podiomlog.RedactTail(codexErrorMessage(event.params), 4096))
+					sendAdapterEvent(ctx, out, Event{Kind: EventAuthRequired, Content: codexErrorMessage(event.params)})
+					sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
+					return
+				}
 				c.log.Warn("provider error notification", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, "error", podiomlog.RedactTail(codexErrorMessage(event.params), 4096))
 				sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: codexErrorMessage(event.params)})
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
@@ -2061,6 +2067,24 @@ func codexRateLimited(params json.RawMessage) bool {
 		strings.Contains(lower, `"code":429`)
 }
 
+// codexAuthFailure reports whether an app-server error notification means this
+// Codex account is not signed in. Phrasings come from the CLI's own strings
+// ("Not logged in", "not signed in", "Please sign in again", "re-run `codex
+// login`", "authentication required").
+//
+// A bare "unauthorized"/401 is deliberately not matched: it also appears when a
+// tool call hits some unrelated API, and offering to sign in to Codex would be
+// the wrong fix.
+func codexAuthFailure(params json.RawMessage) bool {
+	lower := strings.ToLower(string(params))
+	return strings.Contains(lower, "not logged in") ||
+		strings.Contains(lower, "not signed in") ||
+		strings.Contains(lower, "sign in again") ||
+		strings.Contains(lower, "codex login") ||
+		strings.Contains(lower, "authentication required") ||
+		strings.Contains(lower, "chatgpt auth not available")
+}
+
 func codexRateStatus(params json.RawMessage) (RateStatus, bool) {
 	var value any
 	if err := json.Unmarshal(params, &value); err != nil {
@@ -2583,11 +2607,8 @@ func codexIDKey(raw json.RawMessage) string {
 // server at the next turn boundary (or immediately when idle) after a credential
 // is stored, so it reaches Codex-backed turns without a daemon restart.
 func codexEnv(profileDir string) []string {
-	env := os.Environ()
-	if profileDir == "" {
-		return unsetEnv(env, "CODEX_HOME")
-	}
-	return append(unsetEnv(env, "CODEX_HOME"), "CODEX_HOME="+profileDir)
+	info, _ := config.ProviderInfoFor(config.ProviderCodex)
+	return podiomexec.ProfileEnv(os.Environ(), info.ProfileEnvVar, profileDir)
 }
 
 func firstNonEmptyString(values ...string) string {

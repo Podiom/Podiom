@@ -38,6 +38,7 @@ type TurnState struct {
 	PendingPermission     *adapter.PermissionRequest    `json:"pending_permission,omitempty"`
 	PendingUserInput      *adapter.UserInputRequest     `json:"pending_user_input,omitempty"`
 	PendingFallback       *core.FallbackRequest         `json:"pending_fallback,omitempty"`
+	PendingAuth           *core.AuthRequired            `json:"pending_auth,omitempty"`
 	Interview             *InterviewState               `json:"interview,omitempty"`
 	NativeAgentActivities []adapter.NativeAgentActivity `json:"native_agent_activities,omitempty"`
 	Error                 string                        `json:"error,omitempty"`
@@ -53,6 +54,7 @@ type activeTurn struct {
 	pendingPermission     *adapter.PermissionRequest
 	pendingUserInput      *adapter.UserInputRequest
 	pendingFallback       *core.FallbackRequest
+	pendingAuth           *core.AuthRequired
 	interview             *InterviewState
 	nativeAgentActivities []adapter.NativeAgentActivity
 	err                   string
@@ -116,7 +118,7 @@ func (h *activeTurnHub) notifyAttention(sessionID, kind string, approval *adapte
 }
 
 // attentionText renders the human-facing notification strings for a blocked
-// turn. kind is "permission" or "question".
+// turn. kind is "permission", "question", "fallback", or "auth".
 func attentionText(agent, kind string) (title, body string) {
 	if agent == "" {
 		agent = "An agent"
@@ -128,6 +130,8 @@ func attentionText(agent, kind string) (title, body string) {
 		return agent + " has a question", "Answer to let the agent continue."
 	case "fallback":
 		return agent + " hit a session limit", "Choose how to continue after the rate limit."
+	case "auth":
+		return agent + " needs you to sign in", "The account behind this session is signed out."
 	default:
 		return agent + " needs your attention", ""
 	}
@@ -460,6 +464,24 @@ func (h *activeTurnHub) recordFallback(sessionID string, req *core.FallbackReque
 	h.notifyAttention(sessionID, "fallback", nil)
 }
 
+// recordAuthRequired marks the turn as blocked on a signed-out account. It is
+// kept on the turn state (not just broadcast) so a tab that reconnects still
+// sees the sign-in card instead of an unexplained dead turn.
+func (h *activeTurnHub) recordAuthRequired(sessionID string, req *core.AuthRequired) {
+	h.mu.Lock()
+	turn := h.turns[sessionID]
+	if turn == nil {
+		h.mu.Unlock()
+		return
+	}
+	turn.pendingAuth = cloneAuthRequired(req)
+	writers := activeTurnWritersLocked(turn)
+	requestID := turn.requestID
+	h.mu.Unlock()
+	h.broadcast(writers, ServerMessage{Type: "auth_required", RequestID: requestID, SessionID: sessionID, AuthRequired: req})
+	h.notifyAttention(sessionID, "auth", nil)
+}
+
 func (h *activeTurnHub) finish(sessionID string) {
 	h.mu.Lock()
 	turn := h.turns[sessionID]
@@ -543,6 +565,7 @@ func activeTurnStateLocked(turn *activeTurn) TurnState {
 		PendingPermission:     clonePermissionRequest(turn.pendingPermission),
 		PendingUserInput:      cloneUserInputRequest(turn.pendingUserInput),
 		PendingFallback:       cloneFallbackRequest(turn.pendingFallback),
+		PendingAuth:           cloneAuthRequired(turn.pendingAuth),
 		Interview:             cloneInterviewStatePtr(turn.interview),
 		NativeAgentActivities: cloneNativeAgentActivities(turn.nativeAgentActivities),
 		Error:                 turn.err,
@@ -602,6 +625,14 @@ func cloneFallbackRequest(req *core.FallbackRequest) *core.FallbackRequest {
 	}
 	cp := *req
 	cp.Targets = append([]core.FallbackTarget(nil), req.Targets...)
+	return &cp
+}
+
+func cloneAuthRequired(req *core.AuthRequired) *core.AuthRequired {
+	if req == nil {
+		return nil
+	}
+	cp := *req
 	return &cp
 }
 

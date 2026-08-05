@@ -46,7 +46,9 @@ import type {
   ProjectGit,
   ProjectInstructions,
   Provider,
+  ProviderAuthStatus,
   ProviderCapabilities,
+  ProviderLoginSession,
   ScheduleStatus,
   Session,
   SessionDetail,
@@ -307,6 +309,46 @@ export async function updateProfile(name: string, req: ProfileRequest): Promise<
 
 export async function deleteProfile(name: string): Promise<void> {
   await asJSON(await request(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" }));
+}
+
+// --- Provider sign-in (Settings > profiles) ---
+// The daemon runs the provider's own login CLI and reports an authorization URL;
+// the browser opens it in a popup and, for Claude, posts back the code the
+// redirect page shows. Podiom never sees the resulting token.
+
+// providerStatus reports login state per provider account. The daemon caches the
+// fan-out because each row costs a CLI spawn — pass refresh after a sign-in.
+export async function providerStatus(refresh = false): Promise<ProviderAuthStatus[]> {
+  const path = refresh ? "/api/provider-status?refresh=1" : "/api/provider-status";
+  return (await asJSON<ProviderAuthStatus[] | null>(await request(path))) ?? [];
+}
+
+export async function startProviderLogin(provider: Provider, profile = ""): Promise<ProviderLoginSession> {
+  return asJSON(
+    await request("/api/provider-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, profile }),
+    }),
+  );
+}
+
+export async function pollProviderLogin(id: string): Promise<ProviderLoginSession> {
+  return asJSON(await request(`/api/provider-login/${encodeURIComponent(id)}`));
+}
+
+export async function submitProviderLoginCode(id: string, code: string): Promise<ProviderLoginSession> {
+  return asJSON(
+    await request(`/api/provider-login/${encodeURIComponent(id)}/code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
+  );
+}
+
+export async function cancelProviderLogin(id: string): Promise<void> {
+  await request(`/api/provider-login/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function getConfig(): Promise<GlobalConfig> {

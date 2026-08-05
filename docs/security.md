@@ -167,7 +167,18 @@ config dir via an environment variable and **never handles credentials**:
 When no profile is set, Podiom **unsets** that variable so the CLI uses its normal
 global login — it never leaks one profile's variable into another profile's
 process. (Agent *workspaces* are intentionally shared across agents, §5.8; it is
-only the auth state that stays isolated.)
+only the auth state that stays isolated.) The variable name lives in the registry
+(`ProviderInfo.ProfileEnvVar`) and the strip-then-set is one shared helper,
+`exec.ProfileEnv`, used by the adapters, the login probe, and the sign-in flow.
+
+Signing in from Settings (`POST /api/provider-login`) keeps that boundary: the
+daemon runs the provider's own login CLI scoped to the profile directory, relays
+only the authorization URL to the browser and the user's pasted code to the
+CLI's stdin, and never reads or stores the resulting token. The code is rejected
+if it contains a newline (which would inject a second answer into the CLI), is
+never logged, and is never echoed back in a response. `/api/provider-login`
+and `/api/provider-status` are human-only: no agent tool wraps them, so an agent
+cannot authenticate on the user's behalf.
 
 ### Voice-input OpenAI key
 

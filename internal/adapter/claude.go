@@ -263,7 +263,11 @@ func (c *Claude) consumeProcess(ctx context.Context, req TurnRequest, run claude
 }
 
 type claudeStreamTrack struct {
-	lastMessage      string
+	lastMessage string
+	// authReported means the stream already explained the failure as a
+	// signed-out account. The process then exits non-zero, and the generic
+	// "claude exited with error" bubble would only bury the sign-in card.
+	authReported     bool
 	nativeAgentTasks map[string]NativeAgentActivity
 }
 
@@ -273,6 +277,9 @@ func (c *Claude) trackClaudeStream(ctx context.Context, req TurnRequest, in <-ch
 	for event := range in {
 		if event.Kind == EventAssistantMessage && strings.TrimSpace(event.Content) != "" {
 			track.lastMessage = event.Content
+		}
+		if event.Kind == EventAuthRequired {
+			track.authReported = true
 		}
 		if event.Kind == EventHandleUpdated && event.Handle != nil {
 			if event.Handle.ID != lastHandleID {
@@ -383,7 +390,13 @@ func claudeWaitEvent(waitErr error, stderrText string, track claudeStreamTrack) 
 	if claudeRateLimitedText(stderrText) {
 		return Event{Kind: EventRateLimited, Content: stderrText}, true
 	}
-	if track.lastMessage != "" {
+	// Checked before the lastMessage guard: a logged-out CLI can print a
+	// partial message and still die on auth, and the sign-in affordance is
+	// more useful than silence.
+	if claudeAuthFailureText(stderrText) {
+		return Event{Kind: EventAuthRequired, Content: strings.TrimSpace(stderrText)}, true
+	}
+	if track.lastMessage != "" || track.authReported {
 		return Event{}, false
 	}
 	message := fmt.Sprintf("claude exited with error: %v", waitErr)
@@ -627,10 +640,8 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 func (c *Claude) env(profileDir string, toolPathDirs []string) []string {
 	env := prependPath(os.Environ(), toolPathDirs)
 	env = applyExtraEnv(env, c.extraEnv)
-	if profileDir == "" {
-		return unsetEnv(env, "CLAUDE_CONFIG_DIR")
-	}
-	return append(unsetEnv(env, "CLAUDE_CONFIG_DIR"), "CLAUDE_CONFIG_DIR="+profileDir)
+	info, _ := config.ProviderInfoFor(config.ProviderClaude)
+	return podiomexec.ProfileEnv(env, info.ProfileEnvVar, profileDir)
 }
 
 // applyExtraEnv overlays supplier pairs onto env; a stored value replaces an
@@ -786,6 +797,15 @@ func parseClaudeLineWithOptions(line []byte, opts claudeStreamOptions) ([]Event,
 			}
 		}
 	case "assistant", "message":
+		// The CLI reports auth failures as a synthetic assistant message rather
+		// than a stream error, so this — not the process-exit path — is where a
+		// signed-out account actually surfaces. Caught before the text is
+		// treated as model output, which is what used to put "Please run
+		// /login" in the transcript as if the agent had said it.
+		if text, ok := claudeAuthFailureMessage(raw); ok {
+			events = append(events, Event{Kind: EventAuthRequired, Content: text})
+			return events, nil
+		}
 		if req, ok := claudeStreamUserInputRequest(raw, line, opts); ok {
 			events = append(events, Event{Kind: EventUserInputRequest, UserInputRequest: req})
 		} else {
@@ -808,6 +828,13 @@ func parseClaudeLineWithOptions(line []byte, opts claudeStreamOptions) ([]Event,
 	case "result":
 		if claudeResultRateLimited(raw) {
 			events = append(events, Event{Kind: EventRateLimited, Content: firstString(raw, "result", "content")})
+			return events, nil
+		}
+		// The terminal line repeats the synthetic auth message. Core drops the
+		// duplicate, but classify it the same way so a run that somehow skipped
+		// the assistant line still yields a sign-in card, not a chat bubble.
+		if text, ok := claudeAuthFailureMessage(raw); ok {
+			events = append(events, Event{Kind: EventAuthRequired, Content: text})
 			return events, nil
 		}
 		if text := firstString(raw, "result", "content"); text != "" {
@@ -843,9 +870,12 @@ func parseClaudeLineWithOptions(line []byte, opts claudeStreamOptions) ([]Event,
 		}
 	case "error":
 		message := claudeErrorMessage(raw)
-		if claudeRateLimitedText(message) {
+		switch {
+		case claudeRateLimitedText(message):
 			events = append(events, Event{Kind: EventRateLimited, Content: message})
-		} else if message != "" {
+		case claudeAuthFailureText(message):
+			events = append(events, Event{Kind: EventAuthRequired, Content: message})
+		case message != "":
 			events = append(events, Event{Kind: EventAssistantMessage, Content: "claude error: " + message})
 		}
 	}
@@ -1144,6 +1174,74 @@ func claudeRateLimitedText(message string) bool {
 		strings.Contains(message, "usage_limit") ||
 		strings.Contains(message, "too many requests") ||
 		strings.Contains(message, "429")
+}
+
+// claudeAuthFailureText reports whether a provider error means "this account is
+// not signed in", as opposed to any other failure. The phrasings come from
+// Claude Code's own error table:
+//
+//	Not logged in · Please run /login
+//	Login expired · Please run /login
+//	OAuth token revoked · Please run /login
+//	Your organization has disabled API key authentication · Run /login to …
+//
+// Deliberately excluded: "Authentication error · This may be a temporary
+// network issue" (transient — retrying is the fix, not signing in) and
+// "Invalid API key · Fix external API key" (an ANTHROPIC_API_KEY problem that a
+// subscription sign-in would not resolve).
+func claudeAuthFailureText(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "not logged in") ||
+		strings.Contains(message, "run /login") ||
+		strings.Contains(message, "claude auth login") ||
+		strings.Contains(message, "login expired") ||
+		strings.Contains(message, "oauth token revoked")
+}
+
+// claudeAuthFailureMessage classifies a CLI line as "this account is signed
+// out" and returns the text to show. Claude Code reports auth failures as a
+// *synthetic assistant message* rather than a stream error, so without this the
+// text reads as something the agent said.
+//
+// The envelope carries explicit markers, which are preferred over prose:
+//
+//	"model": "<synthetic>"          — CLI-generated, never model output
+//	"is_api_error_message": true
+//	"error": "authentication_failed"
+//	"is_error": true                — on the terminal result line
+//
+// The wording is only consulted once a line is already known to be a CLI error,
+// so a model that merely talks about logging in is never misread.
+func claudeAuthFailureMessage(raw map[string]any) (string, bool) {
+	text := firstString(raw, "result", "content")
+	if text == "" {
+		text = extractText(raw)
+	}
+	if text == "" {
+		return "", false
+	}
+	if strings.EqualFold(firstString(raw, "error"), "authentication_failed") {
+		return text, true
+	}
+	if !claudeSyntheticErrorLine(raw) {
+		return "", false
+	}
+	return text, claudeAuthFailureText(text)
+}
+
+// claudeSyntheticErrorLine reports whether a line is the CLI's own error
+// message rather than model output.
+func claudeSyntheticErrorLine(raw map[string]any) bool {
+	if boolValue(raw, "is_api_error_message") || boolValue(raw, "is_error") {
+		return true
+	}
+	message, ok := raw["message"].(map[string]any)
+	return ok && firstString(message, "model") == "<synthetic>"
+}
+
+func boolValue(raw map[string]any, key string) bool {
+	value, _ := raw[key].(bool)
+	return value
 }
 
 func claudeErrorMessage(raw map[string]any) string {

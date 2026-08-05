@@ -719,6 +719,8 @@ func (s *Server) recordWSTurnEvent(ctx context.Context, sessionID string, event 
 		}
 	case adapter.EventNativeAgentActivity:
 		s.turns.recordNativeAgentActivity(sessionID, event.NativeAgent)
+	case adapter.EventAuthRequired:
+		s.turns.recordAuthRequired(sessionID, event.AuthRequired)
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		s.turns.finish(sessionID)
@@ -765,6 +767,8 @@ func (s *Server) writeTurnEvent(ctx context.Context, writer *wsWriter, requestID
 		return writer.write(ctx, ServerMessage{Type: "session_usage", RequestID: requestID, SessionID: sessionID, SessionUsage: est})
 	case adapter.EventNativeAgentActivity:
 		return writer.write(ctx, ServerMessage{Type: "native_agent_activity", RequestID: requestID, SessionID: sessionID, NativeAgent: event.NativeAgent})
+	case adapter.EventAuthRequired:
+		return writer.write(ctx, ServerMessage{Type: "auth_required", RequestID: requestID, SessionID: sessionID, AuthRequired: event.AuthRequired})
 	case adapter.EventTurnDone:
 		s.markRoadmapSessionFinished(ctx, sessionID)
 		return writer.write(ctx, ServerMessage{Type: "done", RequestID: requestID})

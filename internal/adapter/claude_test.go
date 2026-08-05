@@ -623,12 +623,55 @@ func TestClaudeWaitErrorKeepsProviderMessage(t *testing.T) {
 }
 
 func TestClaudeWaitErrorUsesStderrWhenNoProviderMessage(t *testing.T) {
-	event, send := claudeWaitEvent(errors.New("exit status 1"), "not logged in", claudeStreamTrack{})
+	event, send := claudeWaitEvent(errors.New("exit status 1"), "workspace trust prompt declined", claudeStreamTrack{})
 	if !send {
 		t.Fatal("expected generic event when no provider message was emitted")
 	}
-	if event.Kind != EventAssistantMessage || !strings.Contains(event.Content, "not logged in") {
+	if event.Kind != EventAssistantMessage || !strings.Contains(event.Content, "workspace trust prompt declined") {
 		t.Fatalf("unexpected event: %+v", event)
+	}
+}
+
+// A signed-out CLI must produce the structured auth event, not a chat bubble
+// telling the user to go find a terminal.
+func TestClaudeWaitErrorSignalsAuthRequired(t *testing.T) {
+	for _, stderr := range []string{
+		"Not logged in · Please run /login",
+		"Login expired · Please run /login",
+		"OAuth token revoked · Please run /login",
+		"Your organization has disabled API key authentication · Run /login to sign in with your claude.ai account",
+	} {
+		event, send := claudeWaitEvent(errors.New("exit status 1"), stderr, claudeStreamTrack{})
+		if !send || event.Kind != EventAuthRequired {
+			t.Fatalf("stderr %q produced %+v (send=%v), want EventAuthRequired", stderr, event, send)
+		}
+		if event.Content != stderr {
+			t.Fatalf("content = %q, want the provider's own wording %q", event.Content, stderr)
+		}
+	}
+}
+
+// Transient and API-key failures must stay ordinary errors: signing in would
+// not fix either, and offering to would send the user down the wrong path.
+func TestClaudeAuthFailureTextExcludesNonSignInErrors(t *testing.T) {
+	for _, message := range []string{
+		"Authentication error · This may be a temporary network issue, please try again",
+		"Invalid API key · Fix external API key",
+		"Credit balance is too low",
+		"Prompt is too long",
+	} {
+		if claudeAuthFailureText(message) {
+			t.Fatalf("%q should not be classified as a sign-in failure", message)
+		}
+	}
+}
+
+// A message already delivered to the user wins: the turn said something, so
+// replacing it with a sign-in card would drop real output.
+func TestClaudeWaitErrorPrefersDeliveredMessageOverAuthCard(t *testing.T) {
+	event, send := claudeWaitEvent(errors.New("exit status 1"), "", claudeStreamTrack{lastMessage: "partial answer"})
+	if send {
+		t.Fatalf("expected no event, got %+v", event)
 	}
 }
 
@@ -791,4 +834,60 @@ func TestClaudeEnvAppliesExtraEnv(t *testing.T) {
 			t.Fatal("malformed supplier pairs must be dropped")
 		}
 	}
+}
+
+// The CLI reports a signed-out account as a synthetic *assistant* message, not
+// a stream error — this envelope is copied from a real `claude -p` run against
+// a logged-out CLAUDE_CONFIG_DIR. Classifying it as model output is what used
+// to put "Please run /login" in the transcript as if the agent had said it.
+func TestParseClaudeStreamRoutesSyntheticAuthMessageToAuthEvent(t *testing.T) {
+	line := `{"type":"assistant","message":{"id":"1","model":"<synthetic>","role":"assistant",` +
+		`"type":"message","content":[{"type":"text","text":"Not logged in · Please run /login"}]},` +
+		`"error":"authentication_failed","is_api_error_message":true}`
+	events := parseClaudeLineForTest(t, line)
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want exactly the auth event", events)
+	}
+	if events[0].Kind != EventAuthRequired {
+		t.Fatalf("kind = %q, want %q", events[0].Kind, EventAuthRequired)
+	}
+	if events[0].Content != "Not logged in · Please run /login" {
+		t.Fatalf("content = %q", events[0].Content)
+	}
+}
+
+// The terminal result line repeats the same text with is_error set.
+func TestParseClaudeStreamRoutesAuthResultLineToAuthEvent(t *testing.T) {
+	line := `{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error",` +
+		`"result":"Not logged in · Please run /login"}`
+	events := parseClaudeLineForTest(t, line)
+	if len(events) != 1 || events[0].Kind != EventAuthRequired {
+		t.Fatalf("events = %+v, want exactly the auth event", events)
+	}
+}
+
+// A real model answer that merely talks about signing in stays an ordinary
+// message: the wording is only consulted on lines already marked as CLI errors.
+func TestParseClaudeStreamKeepsGenuineMessageMentioningLogin(t *testing.T) {
+	line := `{"type":"assistant","message":{"id":"1","model":"claude-opus-4-8","role":"assistant",` +
+		`"type":"message","content":[{"type":"text","text":"You are not logged in yet — run /login to continue."}]}}`
+	events := parseClaudeLineForTest(t, line)
+	if len(events) != 1 || events[0].Kind != EventAssistantMessage {
+		t.Fatalf("events = %+v, want an ordinary assistant message", events)
+	}
+}
+
+// parseClaudeLineForTest runs one stream-json line through the real parser.
+func parseClaudeLineForTest(t *testing.T, line string) []Event {
+	t.Helper()
+	out := make(chan Event, 8)
+	if err := parseClaudeStream(context.Background(), strings.NewReader(line+"\n"), out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	close(out)
+	var events []Event
+	for event := range out {
+		events = append(events, event)
+	}
+	return events
 }

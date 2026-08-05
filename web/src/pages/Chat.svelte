@@ -25,6 +25,7 @@
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import PhotoAttachment from "../lib/PhotoAttachment.svelte";
+  import ProviderSignIn from "../lib/ProviderSignIn.svelte";
   import {
     MAX_PHOTOS_PER_MESSAGE,
     normalizePhoto,
@@ -40,6 +41,7 @@
   import type {
     Agent,
     Attachment,
+    AuthRequired,
     ClientMessage,
     FallbackRequest,
     FallbackTarget,
@@ -130,6 +132,10 @@
   let pendingUserInput = $state<UserInputRequest | null>(null);
   let userInputAnswers = $state<Record<string, string[]>>({});
   let pendingFallback = $state<FallbackRequest | null>(null);
+  // The turn's backing account is signed out. Rendered as a sign-in card rather
+  // than the provider's raw "run /login" text, which tells the user to go find
+  // a terminal they may not have.
+  let pendingAuth = $state<AuthRequired | null>(null);
   let fallbackTargetKey = $state("");
   let permissionRemaining = $state(0);
   let messageText = $state("");
@@ -488,6 +494,7 @@
         resetApprovalForm();
         pendingUserInput = null;
         setPendingFallback(null);
+        pendingAuth = null;
         break;
       case "message":
         if (!messageForActiveSession(msg)) break;
@@ -559,6 +566,11 @@
         if (!messageForActiveSession(msg)) break;
         setPendingFallback(msg.fallback ?? null);
         if (pendingFallback) forceScrollToBottom();
+        break;
+      case "auth_required":
+        if (!messageForActiveSession(msg)) break;
+        pendingAuth = msg.auth_required ?? null;
+        if (pendingAuth) forceScrollToBottom();
         break;
       case "notice":
         // The toast owns messaging for its own compaction; swallow the server's
@@ -653,6 +665,8 @@
     resetApprovalForm();
     if (pendingUserInput && !userInputEndsTurn(pendingUserInput)) pendingUserInput = null;
     setPendingFallback(null);
+    // Output means the account works now, so a leftover sign-in card is stale.
+    pendingAuth = null;
   }
 
   // setPendingFallback swaps the session-limit prompt and seeds the target picker
@@ -789,6 +803,7 @@
     pendingUserInput = state.pending_user_input ?? null;
     if (pendingUserInput) userInputAnswers = initialUserInputAnswers(pendingUserInput);
     setPendingFallback(state.pending_fallback ?? null);
+    pendingAuth = state.pending_auth ?? null;
     if (state.error) error = state.error;
     updatePermissionRemaining();
   }
@@ -2196,6 +2211,32 @@
                   </div>
                 </div>
               {/if}
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if pendingAuth}
+        <div class="row-start question-wrap">
+          <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
+          <div class="question-card auth-card">
+            <div class="question-head">
+              <span class="approve-tag mono">
+                sign-in needed · {pendingAuth.provider}{pendingAuth.profile ? ` · ${pendingAuth.profile}` : ""}
+              </span>
+            </div>
+            <div class="question-body">
+              <div class="fallback-text">
+                This session's {providerMeta(pendingAuth.provider).label} account is signed out, so the turn
+                couldn't run. Sign in and send your message again.
+              </div>
+              {#if pendingAuth.message}
+                <div class="auth-detail mono">{pendingAuth.message}</div>
+              {/if}
+              <ProviderSignIn
+                provider={pendingAuth.provider}
+                profile={pendingAuth.profile}
+                onSignedIn={() => { pendingAuth = null; notice = "Signed in. Send your message again."; }} />
             </div>
           </div>
         </div>
@@ -4176,6 +4217,34 @@
 
   .fallback-card .approve-tag {
     color: #b57414;
+  }
+
+  /* Sign-in prompt: a red-accented sibling of the fallback card, because a
+     signed-out account blocks the turn outright rather than offering a
+     different route like a rate limit does. */
+  .auth-card {
+    border-color: #f0cdc4;
+    box-shadow: 0 8px 22px -14px rgba(180, 70, 45, 0.34);
+  }
+
+  .auth-card .question-head {
+    background: #fdeee9;
+    border-bottom-color: #f0cdc4;
+  }
+
+  .auth-card .approve-tag {
+    color: #a8452c;
+  }
+
+  .auth-detail {
+    font: 500 11.5px/1.5 "JetBrains Mono", monospace;
+    color: var(--muted-2);
+    background: var(--surface-3);
+    border: 1px solid var(--line-3);
+    border-radius: 9px;
+    padding: 8px 11px;
+    margin-bottom: 12px;
+    overflow-wrap: anywhere;
   }
 
   .fallback-text {

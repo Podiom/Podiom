@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"os/exec"
+	"strings"
 )
 
 // Command builds an *exec.Cmd for a discovered binary with a platform-specific
@@ -15,6 +16,27 @@ func Command(ctx context.Context, bin string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	configureProcGroup(cmd)
 	return cmd
+}
+
+// ProfileEnv returns env with name set to dir, or with name removed entirely
+// when dir is empty. name is always stripped first, so an inherited value can
+// never leak from one profile's directory into another profile's process
+// (R8.32, R8.34-R8.37). The input slice is not modified.
+func ProfileEnv(env []string, name, dir string) []string {
+	if name == "" {
+		return env
+	}
+	prefix := name + "="
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, prefix) {
+			out = append(out, kv)
+		}
+	}
+	if dir == "" {
+		return out
+	}
+	return append(out, prefix+dir)
 }
 
 // Kill terminates the process and its entire process group. It is safe to call

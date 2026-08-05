@@ -44,8 +44,10 @@ registrations, not a codebase-wide sweep. The boundary:
   comment on `providerInfos` is the authoritative checklist.
 - **Per-layer tables** — one-line entries where behavior can't live in config:
   `usage.usageProviders` (usage endpoint), `providercheck.authProbes` (login
-  probe), and optionally `mcp.nativeImports` / `skills.nativeRoots` when the
-  provider has native MCP config or skill directories.
+  probe), `providerlogin.loginFlows` (browser sign-in parser; omit it and the
+  UI falls back to printing the CLI's login command), and optionally
+  `mcp.nativeImports` / `skills.nativeRoots` when the provider has native MCP
+  config or skill directories.
 - **Frontend** — one `PROVIDERS` entry in `web/src/lib/providers.ts` plus a
   logo component in `web/src/lib/logos/`.
 - **Store** — nothing. Provider validity is Go-side (`config.KnownProvider`);

@@ -37,27 +37,31 @@ type ClientMessage struct {
 
 // ServerMessage is the daemon-to-browser WebSocket contract.
 type ServerMessage struct {
-	Type        string                       `json:"type"`
-	RequestID   string                       `json:"request_id,omitempty"`
-	SessionID   string                       `json:"session_id,omitempty"`
-	Agents      []store.Agent                `json:"agents,omitempty"`
-	Sessions    []store.Session              `json:"sessions,omitempty"`
-	ActiveTurns []ActiveTurnSummary          `json:"active_turns,omitempty"`
-	Usage       []usage.Snapshot             `json:"usage,omitempty"`
-	Session     *store.Session               `json:"session,omitempty"`
-	Plan        *store.PlanInfo              `json:"plan,omitempty"`
-	NextMessage string                       `json:"next_message,omitempty"`
-	History     []store.Message              `json:"history,omitempty"`
-	Message     *store.Message               `json:"message,omitempty"`
-	Delta       string                       `json:"delta,omitempty"`
-	Notice      string                       `json:"notice,omitempty"`
-	Request     *adapter.PermissionRequest   `json:"request,omitempty"`
-	Input       *adapter.UserInputRequest    `json:"input,omitempty"`
-	Fallback    *core.FallbackRequest        `json:"fallback,omitempty"`
-	NativeAgent *adapter.NativeAgentActivity `json:"native_agent,omitempty"`
-	TurnState   *TurnState                   `json:"turn_state,omitempty"`
-	Interview   *InterviewState              `json:"interview,omitempty"`
-	Context     *ContextUsage                `json:"context,omitempty"`
+	Type        string                     `json:"type"`
+	RequestID   string                     `json:"request_id,omitempty"`
+	SessionID   string                     `json:"session_id,omitempty"`
+	Agents      []store.Agent              `json:"agents,omitempty"`
+	Sessions    []store.Session            `json:"sessions,omitempty"`
+	ActiveTurns []ActiveTurnSummary        `json:"active_turns,omitempty"`
+	Usage       []usage.Snapshot           `json:"usage,omitempty"`
+	Session     *store.Session             `json:"session,omitempty"`
+	Plan        *store.PlanInfo            `json:"plan,omitempty"`
+	NextMessage string                     `json:"next_message,omitempty"`
+	History     []store.Message            `json:"history,omitempty"`
+	Message     *store.Message             `json:"message,omitempty"`
+	Delta       string                     `json:"delta,omitempty"`
+	Notice      string                     `json:"notice,omitempty"`
+	Request     *adapter.PermissionRequest `json:"request,omitempty"`
+	Input       *adapter.UserInputRequest  `json:"input,omitempty"`
+	Fallback    *core.FallbackRequest      `json:"fallback,omitempty"`
+	// AuthRequired carries an "auth_required" message: the turn's backing
+	// account is signed out, and the client should offer to sign it in rather
+	// than render the provider's raw "run /login" text.
+	AuthRequired *core.AuthRequired           `json:"auth_required,omitempty"`
+	NativeAgent  *adapter.NativeAgentActivity `json:"native_agent,omitempty"`
+	TurnState    *TurnState                   `json:"turn_state,omitempty"`
+	Interview    *InterviewState              `json:"interview,omitempty"`
+	Context      *ContextUsage                `json:"context,omitempty"`
 	// SessionUsage is a session's cumulative billed-token total expressed as an
 	// estimated share of the 5-hour and weekly limits. Sent with a "session"
 	// message (on open) and pushed as a "session_usage" message after each turn.

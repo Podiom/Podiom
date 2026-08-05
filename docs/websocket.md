@@ -135,6 +135,7 @@ automatically along the configured chain.
 | `permission_request` | Tool approval request. |
 | `user_input_request` | Provider/user clarification request. |
 | `fallback_request` | Session limit reached; the user must pick how to continue. Carries the rate-limited target, the configured next fallback, and the selectable `targets`. |
+| `auth_required` | The turn's backing account is signed out. Carries `provider` and `profile` plus the provider's own wording, so the client can offer an inline sign-in rather than repeating "run /login". The turn ends; a transcript error row explains it after a reload. |
 | `turn_state` | Current active-turn snapshot for a session. |
 | `interview_state` | USER.md interview progress (`answered`, covered topics, status) and the server-rendered review draft when ready. |
 | `notice` | Non-history UI notice, usually from slash commands. |

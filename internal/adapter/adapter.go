@@ -263,6 +263,12 @@ const (
 	// EventRateLimited reports that the active turn cannot continue on this
 	// backing target because the provider rate-limited it.
 	EventRateLimited EventKind = "rate_limited"
+	// EventAuthRequired reports that the turn died because the backing target
+	// is not signed in. Content is the provider's own wording. It exists so the
+	// client can offer a sign-in affordance instead of rendering the CLI's raw
+	// "Not logged in · Please run /login" as an assistant message, which tells
+	// the user to go find a terminal.
+	EventAuthRequired EventKind = "auth_required"
 	// EventTurnDone marks the end of a turn stream.
 	EventTurnDone EventKind = "turn_done"
 )

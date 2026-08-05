@@ -51,8 +51,19 @@ This does not require Git or GitHub CLI.
 ## `profiles`
 
 Optional named auth contexts, each 1:1 with one underlying account. Podiom owns
-only the directory path + name — never credentials; you log in yourself with the
-CLI's own auth flow against the profile dir.
+only the directory path + name — never credentials; the login runs the CLI's own
+auth flow against the profile dir.
+
+Sign in from **Settings → Global config → profile**: pick a profile chip and
+press **Sign in**. Podiom runs the provider's login CLI, opens the
+authorization page in a popup, and (for Claude) forwards the code you paste
+back. The CLI performs the token exchange and writes to the profile dir itself
+— Podiom never handles the resulting credential. The same flow works from a
+phone, since the browser never has to reach the daemon's own localhost.
+
+If a turn dies because its account is signed out, chat shows the same sign-in
+card inline, scoped to that session's provider and profile — so the fix is one
+click from where the failure happened rather than a trip to a terminal.
 
 | Field | Values | Meaning |
 | --- | --- | --- |

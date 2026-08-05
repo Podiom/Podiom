@@ -28,21 +28,22 @@ func TestProviderKnowledgeStaysInRegistry(t *testing.T) {
 
 	// Repo-relative files/prefixes where provider identity may appear in code.
 	allowed := []string{
-		"internal/adapter/",               // the provider implementations themselves
-		"internal/config/provider.go",     // the registry
-		"internal/config/config.go",       // the Provider constants
-		"internal/usage/providers.go",     // per-layer table: usage fetchers
-		"internal/usage/claude.go",        // per-provider usage endpoint
-		"internal/usage/codex.go",         // per-provider usage endpoint
-		"internal/providercheck/",         // per-layer table: CLI auth probes
-		"internal/claudeauth/",            // Claude credential-path sidecar
-		"internal/mcp/mcp.go",             // Source constants, API-frozen Check fields, native imports
-		"internal/skills/skills.go",       // Source constants + nativeRoots table
-		"cmd/podiomd/main.go",             // adapter composition root
-		"cmd/podiom/main.go",              // CLI flag defaults/help prose
-		"internal/store/migrate.go",       // shipped migrations are frozen history (v25 dropped the CHECKs)
-		"web/src/lib/providers.ts",        // the frontend registry
-		"web/src/lib/logos/",              // per-provider logo components
+		"internal/adapter/",           // the provider implementations themselves
+		"internal/config/provider.go", // the registry
+		"internal/config/config.go",   // the Provider constants
+		"internal/usage/providers.go", // per-layer table: usage fetchers
+		"internal/usage/claude.go",    // per-provider usage endpoint
+		"internal/usage/codex.go",     // per-provider usage endpoint
+		"internal/providercheck/",     // per-layer table: CLI auth probes
+		"internal/providerlogin/",     // per-layer table: browser login flows
+		"internal/claudeauth/",        // Claude credential-path sidecar
+		"internal/mcp/mcp.go",         // Source constants, API-frozen Check fields, native imports
+		"internal/skills/skills.go",   // Source constants + nativeRoots table
+		"cmd/podiomd/main.go",         // adapter composition root
+		"cmd/podiom/main.go",          // CLI flag defaults/help prose
+		"internal/store/migrate.go",   // shipped migrations are frozen history (v25 dropped the CHECKs)
+		"web/src/lib/providers.ts",    // the frontend registry
+		"web/src/lib/logos/",          // per-provider logo components
 	}
 	skipDirs := map[string]bool{
 		".git": true, "node_modules": true, "dist": true, "bin": true,

@@ -1,6 +1,17 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { createProfile, deleteProfile, getConfig, gitStatus, listProfiles, setGitIdentity, updateConfig, updateProfile } from "../lib/api";
+  import {
+    createProfile,
+    deleteProfile,
+    getConfig,
+    gitStatus,
+    listProfiles,
+    providerStatus,
+    setGitIdentity,
+    updateConfig,
+    updateProfile,
+  } from "../lib/api";
+  import ProviderSignIn from "../lib/ProviderSignIn.svelte";
   import {
     capabilityKey,
     effortOptions as capabilityEffortOptions,
@@ -10,7 +21,18 @@
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import type { PushState } from "../lib/live.svelte";
-  import type { Agent, GitStatus, GlobalConfig, Health, PermissionMode, ProfileInfo, Provider, ProviderCapabilities, UpdateStatus } from "../lib/types";
+  import type {
+    Agent,
+    GitStatus,
+    GlobalConfig,
+    Health,
+    PermissionMode,
+    ProfileInfo,
+    Provider,
+    ProviderAuthStatus,
+    ProviderCapabilities,
+    UpdateStatus,
+  } from "../lib/types";
   import AboutYou from "./AboutYou.svelte";
   import Credentials from "./Credentials.svelte";
   import Agents from "./Agents.svelte";
@@ -167,6 +189,11 @@
   onMount(() => {
     void load();
     void refreshGit();
+    void refreshAuth();
+    return () => {
+      // A login left running would keep a provider CLI alive on the daemon.
+      void abortLogin();
+    };
   });
 
   $effect(() => {
@@ -218,6 +245,48 @@
     return p[providerMeta(p.Provider).profileDir.infoKey] ?? "";
   }
 
+  // ── Provider sign-in ───────────────────────────────────────────────────
+  // Each profile is a separate provider account, so each has its own login.
+  // The flow itself lives in ProviderSignIn so Settings and the chat CTA behave
+  // identically; this page only owns the per-profile status badges.
+  let authStatuses = $state<ProviderAuthStatus[]>([]);
+  let authLoading = $state(true);
+  let authError = $state<string | null>(null);
+  let signIn = $state<ProviderSignIn | null>(null);
+
+  function authFor(p: Provider, name: string): ProviderAuthStatus | undefined {
+    return authStatuses.find((s) => s.provider === p && s.profile === name);
+  }
+
+  // Three states, like the git card: an unprobed CLI is "unknown", not "signed
+  // out" — claiming the latter would be a guess.
+  function authBadge(p: Provider, name: string): { label: string; tone: string } {
+    const st = authFor(p, name);
+    if (!st || !st.found) return { label: "CLI missing", tone: "amber" };
+    if (!st.login_checked) return { label: "sign-in unknown", tone: "amber" };
+    return st.logged_in ? { label: "signed in", tone: "green" } : { label: "signed out", tone: "red" };
+  }
+
+  const selectedAuth = $derived(authFor(provider, profile));
+  const selectedBadge = $derived(authBadge(provider, profile));
+
+  async function refreshAuth(refresh = false) {
+    authLoading = true;
+    try {
+      authStatuses = await providerStatus(refresh);
+    } catch (e) {
+      authError = e instanceof Error ? e.message : String(e);
+    } finally {
+      authLoading = false;
+    }
+  }
+
+  // A login belongs to the account selected when it started, so switching
+  // target abandons it.
+  function abortLogin() {
+    void signIn?.abort();
+  }
+
   // Profiles selectable for the current default provider (chips).
   const profileChips = $derived(profiles.filter((p) => p.Provider === provider).map((p) => p.Name));
   const npDirPh = $derived(providerMeta(provider).profileDir.placeholder);
@@ -225,6 +294,8 @@
   function setProfile(name: string) {
     profile = name;
     saved = false;
+    // A login belongs to the account that was selected when it started.
+    void abortLogin();
     void ensureCapabilities(provider, profile);
   }
 
@@ -271,6 +342,7 @@
       }
       profiles = await listProfiles();
       if (!npEditing) setProfile(name); // "Create & select"
+      void refreshAuth(true); // a new/moved directory has its own sign-in state
       void ensureCapabilities(provider, name);
       npOpen = false;
       npEditing = null;
@@ -289,6 +361,7 @@
     try {
       await deleteProfile(name);
       profiles = await listProfiles();
+      void refreshAuth(true);
       if (profile === name) setProfile("");
       if (npEditing === name) {
         npOpen = false;
@@ -358,6 +431,7 @@
     saved = false;
     // The default profile is tied to the provider; drop it if it no longer fits.
     if (profile && !profiles.some((x) => x.Name === profile && x.Provider === p)) profile = "";
+    void abortLogin();
     void ensureCapabilities(p, profile);
     npOpen = false;
     npEditing = null;
@@ -583,9 +657,13 @@
             <span class="row-key">profile</span>
             <div class="chips-col">
               <div class="chips">
-                <button class="chip" class:on={profile === ""} onclick={() => setProfile("")}>default · global login</button>
+                <button class="chip" class:on={profile === ""} onclick={() => setProfile("")}>
+                  <span class="auth-dot {authBadge(provider, '').tone}" title={authBadge(provider, "").label}></span>
+                  default · global login
+                </button>
                 {#each profileChips as name}
                   <button class="chip prof-chip" class:on={profile === name} onclick={() => setProfile(name)}>
+                    <span class="auth-dot {authBadge(provider, name).tone}" title={authBadge(provider, name).label}></span>
                     <span class="prof-label">{name}</span>
                     <span class="prof-tools">
                       <span
@@ -614,6 +692,31 @@
               <div class="hint">
                 Connect multiple Claude or Codex accounts. Each profile has its own login and rate limit, so Podiom can
                 switch accounts when one runs out. No profile means your normal login is used.
+              </div>
+
+              <div class="auth-panel">
+                <div class="auth-head">
+                  <span class="auth-dot {selectedBadge.tone}"></span>
+                  <span class="auth-state">{authLoading && !authStatuses.length ? "checking…" : selectedBadge.label}</span>
+                  <span class="auth-target">{profile || "default · global login"}</span>
+                </div>
+
+                {#if selectedAuth && !selectedAuth.found}
+                  <p class="auth-help">{selectedAuth.install_hint}</p>
+                {:else if selectedAuth && !selectedAuth.supports_login}
+                  <p class="auth-help">{selectedAuth.login_hint}</p>
+                {:else}
+                  <ProviderSignIn
+                    bind:this={signIn}
+                    {provider}
+                    {profile}
+                    startLabel={selectedAuth?.logged_in ? "Sign in again" : "Sign in"}
+                    onSignedIn={() => void refreshAuth(true)} />
+                {/if}
+
+                {#if authError}
+                  <div class="error-banner" style="margin-top:10px">{authError}</div>
+                {/if}
               </div>
               {#if npOpen}
                 <div class="np-panel">
@@ -1379,6 +1482,79 @@
     font: 600 13px "Hanken Grotesk";
     cursor: pointer;
   }
+
+  /* provider sign-in */
+  /* Scoped to chips that carry a dot so the other chip rows keep their
+     inline-block layout untouched. */
+  .chip:has(.auth-dot) {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .chip .auth-dot {
+    margin-right: 7px;
+  }
+
+  .auth-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex: none;
+    background: var(--muted-2);
+  }
+
+  .auth-dot.green {
+    background: #3f7a5f;
+  }
+
+  .auth-dot.amber {
+    background: #c08a22;
+  }
+
+  .auth-dot.red {
+    background: #b4553f;
+  }
+
+  .auth-panel {
+    margin-top: 11px;
+    background: var(--surface-3);
+    border: 1px solid var(--line-3);
+    border-radius: 14px;
+    padding: 14px;
+    max-width: 380px;
+  }
+
+  .auth-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .auth-state {
+    font: 600 10.5px "JetBrains Mono", monospace;
+    letter-spacing: 0.06em;
+    color: var(--muted-2);
+    text-transform: uppercase;
+  }
+
+  .auth-target {
+    font: 500 12px "Hanken Grotesk";
+    color: var(--faint);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .auth-help {
+    margin: 10px 0 0;
+    font: 500 12.5px "Hanken Grotesk";
+    color: var(--muted-2);
+    line-height: 1.5;
+  }
+
 
   /* fallback route summary */
   .route {

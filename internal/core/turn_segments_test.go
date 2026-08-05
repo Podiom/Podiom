@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/adapter"
@@ -400,5 +401,67 @@ func TestAppendTurnWithoutInterimProseKeepsTwoAssistantRows(t *testing.T) {
 	}
 	if written[2].Kind != store.KindMessage || written[2].Content != "visible answer" {
 		t.Fatalf("written[2] = (%q, %q)", written[2].Kind, written[2].Content)
+	}
+}
+
+// A signed-out provider must reach the client as a structured auth event that
+// names the exact account, and must not land in history: the provider's "run
+// /login" wording is an instruction to the operator, and replaying it into
+// later turns would only confuse the model.
+func TestStreamTurnSurfacesAuthRequiredWithoutPersistingIt(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+	c.noBg = true
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "locked", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "locked", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	fake.Script = []adapter.Event{
+		{Kind: adapter.EventAuthRequired, Content: "Not logged in · Please run /login"},
+	}
+	events, err := c.StreamTurn(ctx, session.ID, "go", TurnOptions{})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	var auth *AuthRequired
+	for event := range events {
+		if event.Kind == adapter.EventAuthRequired {
+			auth = event.AuthRequired
+		}
+	}
+	if auth == nil {
+		t.Fatal("no auth_required event reached the client")
+	}
+	if auth.Provider != config.ProviderClaude || auth.Profile != "" {
+		t.Fatalf("auth target = %+v, want claude with the default profile", auth)
+	}
+	if auth.Message != "Not logged in · Please run /login" {
+		t.Fatalf("message = %q, want the provider's own wording", auth.Message)
+	}
+
+	// The turn ends here, so history must still explain the dead turn after a
+	// reload — but in Podiom's words, pointing at the in-app fix rather than
+	// the provider's "run /login".
+	history, err := c.History(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	var explained bool
+	for _, msg := range history {
+		if strings.Contains(msg.Content, "/login") {
+			t.Fatalf("the provider's terminal instruction leaked into history: %+v", msg)
+		}
+		if msg.Kind == store.KindError && strings.Contains(msg.Content, "signed out") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Fatalf("history has no error row explaining the signed-out turn: %+v", history)
 	}
 }
