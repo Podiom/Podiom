@@ -19,6 +19,8 @@ import type {
   GoalPatchRequest,
   GoalRateLimitBlock,
   AgentQuestion,
+  GoalActionItem,
+  GoalActionItemStatus,
   CredentialInfo,
   WorkspaceTool,
   DreamResult,
@@ -1050,6 +1052,23 @@ export async function answerAgentQuestion(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ answers }),
+    }),
+  );
+}
+
+// respondGoalActionItem records the user's verdict on a step the agent handed
+// them. Stored, not delivered: the agent reads it in its next review, so this
+// never starts a run. A verdict can only be given once.
+export async function respondGoalActionItem(
+  id: string,
+  status: GoalActionItemStatus,
+  response: string,
+): Promise<GoalActionItem> {
+  return asJSON(
+    await request(`/api/goal-action-items/${encodeURIComponent(id)}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, response }),
     }),
   );
 }

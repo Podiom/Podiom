@@ -129,12 +129,64 @@ with its error and can be re-approved after you fix the cause. Agents can
 never decide requests: there is deliberately no agent tool for the decision
 endpoints.
 
+## Action items for you
+
+Some steps only you can take: posting from your personal account, signing
+something, making a call, anything off-machine. When the agent hits one of
+those it hands it back as an **action item** — a title, instructions written so
+you can act without knowing anything about its plan, and one sentence on why it
+needs you. Filing one sends a push notification and shows the item on the goal.
+
+This is a different thing from its three neighbours, and the agent is told to
+pick between them deliberately:
+
+| Channel | What it means | Does it pause the goal? |
+| --- | --- | --- |
+| **Action item** | Work only you can carry out | **No** |
+| Access request | A capability Podiom can wire (MCP server, skill, credential) | No |
+| Question (`podiom_ask_user`) | A decision that is yours to make | **Yes** — reviews stop until you answer |
+| Next step | The single move the *agent* will make next | No |
+
+**Reviews keep running.** An action item is a hand-off, not a gate: the agent
+carries on with the rest of the goal and plans around the item. Every review
+shows it the items still open and when they were filed, so it can chase one in
+its progress entry or find another route — but it is told never to file the same
+ask twice.
+
+### Answering
+
+Open items appear in a card carousel on the goal page, oldest ask first — swipe
+sideways on a phone, use the arrows or the dots on a desktop. Each card shows
+the agent's instructions and gives you a note box and three verdicts:
+
+| Verdict | What the agent does with it |
+| --- | --- |
+| **Done** | Treats the step as complete and builds on it |
+| **Couldn't do** | Looks for another route to the same outcome |
+| **Not doing** | Drops that approach and says so at the next review |
+
+The note is free text — a link, the outcome, why you couldn't. A verdict is
+given **once**; after that the card stays on the goal read-only, behind the open
+ones, as the record of what you said.
+
+### When the agent reads it
+
+Your response is stored, not delivered. It lands in the agent's next planning or
+review prompt, exactly like [feedback](#adding-feedback) — responding never
+starts a run on its own. If you want it acted on now, respond and then use
+**Review now**.
+
+Both sides land on the timeline: `action_requested` when the agent files one and
+`action_responded` when you answer, so the hand-off is auditable like everything
+else the goal does. A goal with an open action item counts as **Needs you** in
+the goals list and on the Goals nav badge.
+
 ## The timeline (audit trail)
 
 Every goal has an append-only activity timeline: planning and review runs,
 your feedback, progress entries with evidence, metric changes (old → new), plan
-changes, access requests and your decisions, status changes, and the completion
-proposal. Each agent-produced entry links to the exact run that produced it.
+changes, access requests and your decisions, action items and your verdicts on
+them, status changes, and the completion proposal. Each agent-produced entry links to the exact run that produced it.
 **View run** opens that activity, the other events from the same turn, and only
 that turn's transcript; opening the full continuing conversation remains a
 secondary action. Append-only is enforced in the database schema, not by
@@ -154,10 +206,11 @@ whole files.
 ## Notifications
 
 You get web push (see the notification settings) when an access request is
-filed and when completion is proposed; tapping the notification deep-links to
-the goal. In-app, the Goals nav entry shows a badge whenever a goal needs you
-(pending or failed requests, or proposed completion), and the goals list sorts
-those goals first under **Needs you**.
+filed, when the agent hands you an action item, and when completion is proposed;
+tapping the notification deep-links to the goal. In-app, the Goals nav entry
+shows a badge whenever a goal needs you (pending or failed requests, an
+unanswered question, an open action item, or proposed completion), and the goals
+list sorts those goals first under **Needs you**.
 
 ## HTTP API
 
@@ -174,10 +227,13 @@ those goals first under **Needs you**.
 - `POST /api/goals/<id>/review` — trigger a review now
 - `GET  /api/access-requests` (`?goal_id=&status=`), `POST /api/access-requests`
 - `POST /api/access-requests/<id>/approve`, `POST /api/access-requests/<id>/deny`
+- `POST /api/goal-action-items` — file an action item (agent tool)
+- `POST /api/goal-action-items/<id>/respond` — your verdict and note
 
 Agents drive goals through `podiom_*` tools on the built-in `podiom_manage`
 MCP server (`podiom_get_goal`, `podiom_record_goal_progress`,
-`podiom_request_access`, `podiom_propose_goal_completion`, …). Tool calls are
+`podiom_request_access`, `podiom_request_user_action`,
+`podiom_propose_goal_completion`, …). Tool calls are
 stamped with the calling session's identity server-side, so timeline
 provenance never depends on the model identifying itself. `podiom_create_task`
 takes a `goal_id` (also on `POST /api/tasks`) — the lead agent passes it when a

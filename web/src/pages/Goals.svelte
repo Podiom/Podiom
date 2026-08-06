@@ -16,6 +16,7 @@
     listProjects,
     patchGoal,
     resolveGoalRateLimit,
+    respondGoalActionItem,
     runGoalReview,
     updateGoalFeedback,
   } from "../lib/api";
@@ -28,12 +29,14 @@
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import UsageBar from "../lib/UsageBar.svelte";
+  import GoalActionItems from "../lib/GoalActionItems.svelte";
   import type {
     AccessRequest,
     AccessRequestKind,
     Agent,
     AgentQuestion,
     Goal,
+    GoalActionItemStatus,
     GoalDetail,
     GoalEvent,
     GoalEventKind,
@@ -152,6 +155,8 @@
     tool_use: { c: "#6b6257", t: "#f0ece6", label: "Tool call", ic: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>' },
     question_asked: { c: "#9a6e1e", t: "#fbf1dd", label: "Question asked", ic: '<path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/>' },
     question_answered: { c: "#4f9e78", t: "#eaf1ed", label: "Question answered", ic: '<path d="M20 6 9 17l-5-5"/>' },
+    action_requested: { c: "#b14e2a", t: "#fbeae0", label: "Handed to you", ic: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>' },
+    action_responded: { c: "#4f9e78", t: "#eaf1ed", label: "You responded", ic: '<path d="M20 6 9 17l-5-5"/>' },
   };
 
   const RK: Record<AccessRequestKind, { label: string; c: string; t: string; b: string; ic: string }> = {
@@ -328,7 +333,7 @@
     return map;
   });
 
-  const needsAttention = (g: Goal) => g.Status === "review" || (openReqsByGoal.get(g.ID)?.length ?? 0) > 0 || rateLimitByGoal.has(g.ID) || questionByGoal.has(g.ID);
+  const needsAttention = (g: Goal) => g.Status === "review" || (openReqsByGoal.get(g.ID)?.length ?? 0) > 0 || rateLimitByGoal.has(g.ID) || questionByGoal.has(g.ID) || (g.open_action_items ?? 0) > 0;
   const attention = $derived(goals.filter((g) => needsAttention(g) && g.Status !== "done" && g.Status !== "abandoned" && g.Status !== "paused"));
   const activeRest = $derived(goals.filter((g) => g.Status === "active" && !needsAttention(g)));
   const paused = $derived(goals.filter((g) => g.Status === "paused"));
@@ -904,6 +909,21 @@
     }
   }
 
+  // ---- action items (work the agent handed back to the user) -----------------
+  const detailActionItems = $derived(detail?.action_items ?? []);
+
+  async function submitActionResponse(id: string, status: GoalActionItemStatus, response: string) {
+    try {
+      await respondGoalActionItem(id, status, response);
+      await refreshDetail();
+      await refreshAll();
+      await live.refreshGoalAttention();
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Couldn't save your response.";
+    }
+  }
+
   const reqStatusChip: Record<string, [string, string, string, string]> = {
     pending: ["#fbf1dd", "#ecd9ae", "#9a6e1e", "pending"],
     failed: ["#fbeae0", "#f2d6c5", "#b14e2a", "grant failed"],
@@ -971,6 +991,7 @@
                     {@const rate = rateLimitByGoal.get(g.ID)}
                     {@const question = questionByGoal.get(g.ID)}
                     {@const failed = pend.some((r) => r.Status === "failed")}
+                    {@const actions = g.open_action_items ?? 0}
                     {@const primary = g.Metrics[0]}
                     <button
                       class="card"
@@ -998,7 +1019,7 @@
                         <div class="card-usage"><UsageBar usage={g.Usage} compact /></div>
                       {/if}
 
-                      {#if g.Status === "review" || pend.length > 0 || rate || question}
+                      {#if g.Status === "review" || pend.length > 0 || rate || question || actions > 0}
                         <div class="card-attn" class:hot={g.Status === "review"}>
                           <span class="attn-dot" class:hot={g.Status === "review"}></span>
                           {#if g.Status === "review"}
@@ -1009,8 +1030,10 @@
                             Rate limit reached — choose a model to continue
                           {:else if failed}
                             {pend.length} request{pend.length > 1 ? "s" : ""} need you · an auto-grant failed
-                          {:else}
+                          {:else if pend.length > 0}
                             {pend.length} access request{pend.length > 1 ? "s" : ""} waiting
+                          {:else}
+                            {actions} action item{actions > 1 ? "s" : ""} for you to do
                           {/if}
                         </div>
                       {/if}
@@ -1299,6 +1322,14 @@
               {/each}
             </div>
           </div>
+        {/if}
+
+        <!-- ACTION ITEMS — work handed back to you. Below the blocking cards
+             above (question, rate limit, access requests) because the goal keeps
+             running while these wait, and above Next step because that is what
+             the agent will do around them. -->
+        {#if detailActionItems.length > 0}
+          <GoalActionItems items={detailActionItems} onRespond={submitActionResponse} />
         {/if}
 
         <!-- NEXT STEP -->

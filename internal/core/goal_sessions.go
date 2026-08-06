@@ -14,11 +14,12 @@ import (
 
 // GoalPlanningPrompt renders the decomposition contract for a goal's initial
 // planning session.
-func GoalPlanningPrompt(goal store.Goal, feedback []store.GoalEvent) string {
+func GoalPlanningPrompt(goal store.Goal, feedback []store.GoalEvent, actions GoalActionItems) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a new Podiom goal. Plan how to reach it.\n\n")
 	writeGoalBrief(&b, goal)
 	writeUserFeedback(&b, feedback)
+	writeGoalActionItems(&b, actions)
 	b.WriteString(`## How you run
 
 You have full autonomous access (yolo mode): you may run shell commands, edit
@@ -33,11 +34,12 @@ exactly what you did while they were away.
    - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id so they run as part of this goal's autonomous chain.
 2. Do quick setup and investigation directly (install a CLI tool, read the repo, run a probe command) — but push the substantial and recurring work into the tasks and schedules above so it is tracked and survives this session.
 3. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
-4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before your first review (e.g. "Post the launch thread on r/selfhosted", "Benchmark the three candidate libraries"), not a restatement of a task or schedule you just created, and not a list; next_step_why is one sentence on why that is the right first move. This is what the user reads to understand where the goal is heading.
+4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before your first review (e.g. "Benchmark the three candidate libraries"), not a restatement of a task or schedule you just created, and not a list, and it must be something YOU will do: if the move is really the user's to carry out, hand it to them with podiom_request_user_action (duty 7) and make next_step your own move around it. next_step_why is one sentence on why that is the right first move. This is what the user reads to understand where the goal is heading.
 5. File podiom_request_access only for things you genuinely cannot do yourself: assigning an MCP server, installing a marketplace skill, or a credential / environment variable — when you are blocked on missing auth (e.g. a GitHub token), request it by variable name and purpose, never the secret value itself; the user enters the value privately and it becomes available in your environment on later runs. You do not need to request CLI-tool installs or a permission level — you already have full access.
 6. If — and only if — you are genuinely blocked on a decision that is the user's to make (a strategic choice, a missing value, a preference you cannot infer), call podiom_ask_user with the question and a few selectable answers. This pauses the goal's reviews and surfaces the question on the goal page; the user's answer is fed into your next session. Do not ask about things you can decide yourself.
+7. When a step needs the user's own hands — posting from their personal account, signing something, making a call, anything outside what you can reach — hand it over with podiom_request_user_action: a title saying what to do, instructions they can follow without knowing anything about your plan, and one sentence on why it needs them. This does NOT pause your reviews: keep working on everything else and plan around it. It is not podiom_ask_user (that is for a decision, and it does pause you), and it is not something to bury in a progress entry where nobody can respond to it. Never re-file an item that is still open above — chase it in your progress entry instead. Act on the user's verdict and note when they respond.
 
-The user is away. They will see your plan, your access requests, and this goal's timeline when they return.
+The user is away. They will see your plan, your access requests, anything you handed them, and this goal's timeline when they return.
 `)
 	return b.String()
 }
@@ -45,12 +47,13 @@ The user is away. They will see your plan, your access requests, and this goal's
 // GoalReviewPrompt renders the periodic review contract: recent timeline and
 // access-request decisions (including the user's notes — their channel back to
 // the agent) plus the review duties.
-func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, feedback []store.GoalEvent, answers []store.AgentQuestion) string {
+func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, feedback []store.GoalEvent, answers []store.AgentQuestion, actions GoalActionItems) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a Podiom goal. This is a scheduled review session.\n\n")
 	writeGoalBrief(&b, goal)
 	writeUserFeedback(&b, feedback)
 	writeAnsweredQuestions(&b, answers)
+	writeGoalActionItems(&b, actions)
 
 	if len(requests) > 0 {
 		b.WriteString("## Your access requests\n\n")
@@ -93,11 +96,12 @@ tool-call entries to stay readable; the full record is on the goal page.)
 
 1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted.
 2. Consider the user's recent feedback above as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
-3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed. If you stated a next step last time (see the goal brief above), say in the body whether it happened. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before the next review (e.g. "Post the launch thread on r/selfhosted", "Benchmark the three candidate libraries"), not a restatement of a task or schedule you created, and not a list; next_step_why is one sentence on why that is the right move now. This is what the user reads to understand where the goal is heading, so keep it current.
+3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed. If you stated a next step last time (see the goal brief above), say in the body whether it happened. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before the next review (e.g. "Benchmark the three candidate libraries"), not a restatement of a task or schedule you created, and not a list, and it must be something YOU will do: if the move is really the user's to carry out, hand it to them with podiom_request_user_action (duty 7) and make next_step your own move around it. next_step_why is one sentence on why that is the right move now. This is what the user reads to understand where the goal is heading, so keep it current.
 4. Take direct corrective action when it is quick and unblocks progress (run a command, fix a file, unstick a task); push larger or recurring work into tasks and schedules (with goal_id) so it is tracked.
 5. File podiom_request_access only for what you cannot do yourself (an MCP server, a marketplace skill, a credential by variable name — never the value). An env_var request marked [executed] means the credential is already set in your environment — use it directly and never echo its value. If the user answered a previous request (see above), act on their note.
 6. If — and only if — you are genuinely blocked on a decision that is the user's to make, call podiom_ask_user with the question and a few selectable answers. This pauses reviews and surfaces it on the goal page; the answer reaches your next session. If the user answered a previous question (see above), act on their answer. Do not ask about things you can decide yourself.
-7. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
+7. When a step needs the user's own hands — posting from their personal account, signing something, making a call, anything outside what you can reach — hand it over with podiom_request_user_action: a title saying what to do, instructions they can follow without knowing anything about your plan, and one sentence on why it needs them. This does NOT pause your reviews: keep working on everything else and plan around it. It is not podiom_ask_user (that is for a decision, and it does pause you), and it is not something to bury in this progress entry where nobody can respond to it. Never re-file an item still listed as open above — chase it in your progress entry instead. If the user responded to an item (see above), act on their verdict and note: "Couldn't do" means find another route, "Not doing" means drop that approach and say so.
+8. If — and only if — every success criterion is met, call podiom_propose_goal_completion with a closing report that walks through each criterion. The user makes the final call.
 `)
 	return b.String()
 }
@@ -153,6 +157,52 @@ func writeUserFeedback(b *strings.Builder, feedback []store.GoalEvent) {
 		fmt.Fprintf(b, "- %s: %s\n", ev.CreatedAt, body)
 	}
 	b.WriteString("\n")
+}
+
+// GoalActionItems is the action-item context a goal session receives: what the
+// agent is still waiting on the user for, and how the user answered the items it
+// already handed over.
+type GoalActionItems struct {
+	Open      []store.GoalActionItem
+	Responded []store.GoalActionItem
+}
+
+// writeGoalActionItems renders the work the agent handed back to the user. Open
+// items carry the date they were filed so the agent can see how long an ask has
+// been sitting and decide whether to chase it or route around it — reviews keep
+// running either way.
+func writeGoalActionItems(b *strings.Builder, actions GoalActionItems) {
+	if len(actions.Open) == 0 && len(actions.Responded) == 0 {
+		return
+	}
+	b.WriteString("## Action items you handed to the user\n\n")
+	if len(actions.Open) > 0 {
+		b.WriteString("Open — they have not responded yet. Do not re-file these:\n")
+		for _, item := range actions.Open {
+			fmt.Fprintf(b, "- [filed %s] %s\n", item.CreatedAt, strings.TrimSpace(item.Title))
+			if why := strings.TrimSpace(item.Why); why != "" {
+				fmt.Fprintf(b, "  Why it needs them: %s\n", why)
+			}
+		}
+		b.WriteString("\n")
+	}
+	if len(actions.Responded) > 0 {
+		b.WriteString("Responded (newest first):\n")
+		for _, item := range actions.Responded {
+			verdict := goalActionVerdicts[item.Status]
+			if verdict == "" {
+				verdict = string(item.Status)
+			}
+			fmt.Fprintf(b, "- [%s] %s\n", verdict, strings.TrimSpace(item.Title))
+			if note := strings.TrimSpace(item.Response); note != "" {
+				if len(note) > 500 {
+					note = note[:500] + "…"
+				}
+				fmt.Fprintf(b, "  Their response: %s\n", note)
+			}
+		}
+		b.WriteString("\n")
+	}
 }
 
 // writeAnsweredQuestions renders the answers the user gave to questions this
@@ -393,8 +443,12 @@ func (c *Core) StartGoalPlanning(ctx context.Context, goalID string) (store.Sess
 	if err != nil {
 		return store.Session{}, err
 	}
+	actions, err := c.goalActionContext(ctx, goal.ID)
+	if err != nil {
+		return store.Session{}, err
+	}
 	c.log.Info("goal planning started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal, feedback))
+	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal, feedback, actions))
 }
 
 // goalReviewContextEvents caps how much timeline a review prompt replays.
@@ -430,8 +484,28 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if err != nil {
 		return store.Session{}, err
 	}
+	actions, err := c.goalActionContext(ctx, goal.ID)
+	if err != nil {
+		return store.Session{}, err
+	}
 	c.log.Info("goal review started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, feedback, answers))
+	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, feedback, answers, actions))
+}
+
+// goalActionContext loads what the agent handed to the user and what came back.
+// Open items are unbounded — every one of them is still owed an answer, so none
+// may be silently dropped from the prompt — while answered ones are capped like
+// feedback and question answers.
+func (c *Core) goalActionContext(ctx context.Context, goalID string) (GoalActionItems, error) {
+	open, err := c.store.ListOpenGoalActionItems(ctx, goalID)
+	if err != nil {
+		return GoalActionItems{}, err
+	}
+	responded, err := c.store.ListRespondedGoalActionItems(ctx, goalID, goalFeedbackContextEvents)
+	if err != nil {
+		return GoalActionItems{}, err
+	}
+	return GoalActionItems{Open: open, Responded: responded}, nil
 }
 
 // AdvanceGoalReviewClock moves next_review_at one cadence forward from now.

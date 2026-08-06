@@ -94,7 +94,7 @@ when the goal itself is deleted.
 Kinds: `created`, `planning_started`, `review_started`, `progress`,
 `metric_update`, `plan_change`, `user_feedback`, `access_requested`,
 `access_decided`, `status_change`, `completion_proposed`, `rate_limited`,
-`rate_limit_resolved`.
+`rate_limit_resolved`, `action_requested`, `action_responded`.
 
 `metric_update` events are the single write path for metric values: appending
 one applies its payload (`{name, current}` deltas) to `goals.metrics_json`
@@ -127,6 +127,49 @@ stored in `credentials.yaml` (0600) and injected into agent subprocess
 environments — never persisted on the request row, never returned by any
 API response, and never logged. Approval without a value remains
 acknowledge-only (the user sets the variable on the host themselves).
+
+### 2.4 Action items
+
+A step the agent decided only a human can carry out — posting from the user's
+personal account, signing or paying for something, a phone call, anything
+off-machine. Without this, such a step has nowhere to live: an access request is
+a capability Podiom can wire, a question (§9) is a *decision*, and `next_step`
+(§2.1) is the agent's own move. The agent would otherwise bury the ask in a
+`progress` body, where the user cannot respond to it.
+
+| Field | Notes |
+|---|---|
+| `id`, `goal_id`, `created_at` | `goal_id` cascades on goal delete |
+| `session_id`, `run_id`, `agent_name` | the run that filed it, for attribution |
+| `title` | the one-line imperative ask; required |
+| `instructions` | markdown the user can act on without knowing the plan |
+| `why` | one sentence on why it needs a human |
+| `status` | `open → done \| blocked \| declined` |
+| `response` | the user's free-text note, written with the verdict |
+| `responded_at` | RFC3339 |
+
+Design constraints, each deliberate:
+
+- **Non-blocking.** An open item never suppresses a review — it is a hand-off,
+  not a gate. This is the opposite of a question (§9), which does pause reviews,
+  and the distinction is what stops one un-actioned errand from freezing a goal
+  for days. `ListDueGoalReviews` therefore excludes goals on pending *questions*
+  and rate limits, but never on open action items.
+- **Store-and-replay, not delivery.** Responding appends `action_responded` and
+  nothing else: no run is started and the review clock is untouched, the same
+  contract as `user_feedback` (§2.2) and access-request decision notes. The
+  verdict and note reach the agent in its next planning or review prompt (§4).
+  "Review now" is the user's lever if they want it acted on immediately.
+- **A verdict is given once.** The status update is guarded on `open`, so a
+  second response fails rather than silently rewriting what the agent may
+  already have read. Answered items stay on the goal read-only.
+- **The verdict is structured, the reason is prose.** `done | blocked |
+  declined` is a value the agent can branch on ("couldn't do" means find another
+  route; "not doing" means drop the approach); the note carries the detail.
+- **Goal chain only.** Origin is derived from the filing session's `goal_id`, so
+  a goal-linked task or schedule run files onto the goal it belongs to — the
+  same routing precedence questions use. A standalone scheduled run has no goal
+  to hand work back on and the tool is rejected there.
 
 ## 3. Lifecycle & state machines
 
@@ -173,21 +216,33 @@ its next review. An `env_var` approved **with** a value continues to
   tasks (`podiom_create_task`, delegating to other agents where sensible)
   and/or schedules (`podiom_create_schedule`), (b) record the plan via
   `podiom_record_goal_progress` (kind `plan_change`) **including `next_step` and
-  `next_step_why`** (§2.1), and (c) file `podiom_request_access` for any missing
-  capability. Feedback is guidance, not a direct conversation, and must not
-  override explicit success criteria.
+  `next_step_why`** (§2.1), (c) file `podiom_request_access` for any missing
+  capability, and (d) hand any human-only step to the user with
+  `podiom_request_user_action` (§2.4). Feedback is guidance, not a direct
+  conversation, and must not override explicit success criteria.
 - **Review session** — fired on the goal's cadence (§5) or manually
   ("Review now"). Prompt contract: goal definition + recent `user_feedback`
   events + recent timeline + decided access requests **including
-  `decision_note` texts** + duties: assess progress against criteria, adjust
+  `decision_note` texts** + **every open action item with the date it was filed,
+  and the recently answered ones with their verdict and note** (§2.4) + duties:
+  assess progress against criteria, adjust
   tasks/schedules while considering feedback as guidance (starting a planned task
   is `podiom_start_task`, which runs it in the background; `podiom_update_task`
   to `in_progress` only moves the card), record a `progress`
-  event with evidence and metric updates, file access requests if blocked, and
+  event with evidence and metric updates, file access requests if blocked, hand
+  human-only steps over and act on the verdicts already given, and
   call `podiom_propose_goal_completion` when the success criteria are met.
   The prompt also carries the goal's **current `next_step` with its age**, and the
   progress duty requires the agent to report whether that step happened before
   restating it — the loop that keeps a stated intent from going stale.
+- Both prompts constrain `next_step` to a move the **agent** will make, and
+  route anything belonging to the user into `podiom_request_user_action`
+  instead. Without that clause the two collapse: the canonical example of a
+  strategic move ("post the launch thread") is exactly the kind of step an agent
+  cannot perform, so it would claim the user's work as its own intent and the
+  ask would never reach them.
+- Neither prompt may re-file an action item that is still open; the agent chases
+  it in its progress entry instead.
 - Both run **unattended** in **yolo** (full autonomous access): Claude
   `bypassPermissions`, Codex `approvalPolicy: never` + `sandbox:
   danger-full-access`. No permission relay and no allow-list are attached — a
@@ -250,17 +305,24 @@ Two layers, mirroring the existing permission/question notifications:
 - **Push (web push)** — fired off the hot path when (a) an access request is
   filed → kind `goal_access_request`, "\<agent\> requests access"; (b)
   completion is proposed → kind `goal_review`, "\<agent\> proposes goal
-  completion". Payload carries `goal_id`; tapping the notification deep-links
-  to the goal.
+  completion"; (c) an action item is filed → kind `goal_action_item`,
+  "\<agent\> needs you to do something". Payload carries `goal_id`; tapping the
+  notification deep-links to the goal.
 - **In-app** — a `goal_event` WebSocket broadcast on every appended event and
   request decision. The frontend raises toasts for `access_requested` and
-  `completion_proposed`, keeps a goal-attention set (goals with pending
-  requests or in `review`) for the Goals nav badge, and live-refreshes an
-  open goal without polling.
+  `completion_proposed`, keeps a goal-attention set (goals with pending or
+  failed requests, an unanswered question, an open action item, or in `review`)
+  for the Goals nav badge, and live-refreshes an open goal without polling.
 
 The Goals list is **triaged for the returning user**: goals needing attention
-(review status, pending or failed requests) sort first and are visually
-distinct.
+(review status, pending or failed requests, open action items) sort first and
+are visually distinct.
+
+Action items are surfaced on the goal detail as a horizontally scrolling card
+carousel rather than a stacked list: a goal accumulates them over its life, and
+each card carries markdown instructions plus a response control, so stacking
+would bury everything below it. Open items lead, oldest ask first; answered ones
+follow read-only.
 
 ## 8. Audit
 
@@ -272,6 +334,10 @@ distinct.
   events.
 - Access decisions are auditable: `access_requested` and `access_decided`
   events bracket every grant, including denials and execution failures.
+- Hand-offs to the user are auditable the same way: `action_requested` and
+  `action_responded` bracket every action item, so what the agent asked for and
+  what the user answered are both on the record. Like `access_decided`, the
+  response event carries no `session_id` — it is the user acting.
 - Append-only is enforced in the schema, not by convention.
 
 ## 9. Agent tool surface
@@ -290,6 +356,15 @@ server-side, so provenance never depends on the model remembering to pass it.
 | `podiom_propose_goal_completion` | closing report → status `review` + notification |
 | `podiom_request_access` | file a typed access request |
 | `podiom_list_access_requests` | see prior decisions incl. `decision_note` |
+| `podiom_request_user_action` | hand a human-only step to the user (§2.4); non-blocking |
+| `podiom_ask_user` | ask a blocking decision question; **pauses reviews** until answered |
+
+The last two are the agent→user channels for anything a capability grant cannot
+fix, and the tool descriptions must draw the line between them explicitly:
+`podiom_ask_user` is a *decision* and stops the review loop,
+`podiom_request_user_action` is *work* and does not. Open action items are
+returned by `podiom_get_goal` so the agent can see what it is already waiting on
+and avoid re-filing.
 
 Deliberately absent: create/delete goal (goals are user-created), and any
 approve/deny surface (decisions are human-only). `podiom_update_goal` also
@@ -299,7 +374,10 @@ entry explaining what moved.
 
 User feedback is also human-only: `POST /api/goals/<id>/feedback` appends a
 `user_feedback` event, and there is deliberately no agent tool for creating
-one.
+one. Responding to an action item is human-only for the same reason: the agent
+files it via `podiom_request_user_action`, and no tool maps to
+`POST /api/goal-action-items/<id>/respond` so an agent can never report on the
+user's behalf.
 
 ## 10. Security considerations
 

@@ -234,17 +234,22 @@ class LiveStore {
     this.goalNavigator?.(goalId);
   }
 
-  // refreshGoalAttention recomputes which goals need the user: any goal in
-  // review status, plus any goal with a pending or failed access request.
+  // refreshGoalAttention recomputes which goals need the user: a proposed
+  // completion, an unanswered question, an action item handed to them, or a
+  // pending/failed access request. Listing every goal rather than only the ones
+  // in review is what lets the badge see the first three — they are fields on
+  // the goal, not a separate query.
   async refreshGoalAttention(): Promise<void> {
     try {
       const [goals, pending, failed] = await Promise.all([
-        listGoals("review"),
+        listGoals(""),
         listAccessRequests("", "pending"),
         listAccessRequests("", "failed"),
       ]);
       const ids = new Set<string>();
-      for (const g of goals) ids.add(g.ID);
+      for (const g of goals) {
+        if (g.Status === "review" || g.pending_question || (g.open_action_items ?? 0) > 0) ids.add(g.ID);
+      }
       for (const r of [...pending, ...failed]) ids.add(r.GoalID);
       this.goalAttention = ids;
     } catch {

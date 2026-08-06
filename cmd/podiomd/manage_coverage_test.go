@@ -60,6 +60,7 @@ var notManageable = map[string]string{
 	"/api/access-requests/":      "approve/deny decisions are human-only; an agent must never grant its own request",
 	"/api/goal-rate-limits/":     "rate-limit recovery changes goal run targets; human-only decision",
 	"/api/agent-questions/":      "answering a deferred agent question is human-only; the agent asks via podiom_ask_user",
+	"/api/goal-action-items/":    "responding to an action item is human-only; the agent hands work over via podiom_request_user_action",
 	"/api/user-profile":          "USER.md is human-authored via the interview UI; agents receive it as context",
 	"/api/credentials":           "secrets management, human-only",
 	"/api/credentials/":          "secrets management, human-only",

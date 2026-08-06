@@ -416,6 +416,13 @@ const (
 	// GoalEventQuestionAnswered records the user answering that question from the
 	// goal page; the answer is fed into the next review session.
 	GoalEventQuestionAnswered GoalEventKind = "question_answered"
+	// GoalEventActionRequested records the agent handing a step back to the user
+	// because only a human can do it. Unlike a question this does not pause
+	// reviews — the agent keeps working around it.
+	GoalEventActionRequested GoalEventKind = "action_requested"
+	// GoalEventActionResponded records the user's verdict on an action item; it
+	// reaches the agent in its next review prompt.
+	GoalEventActionResponded GoalEventKind = "action_responded"
 )
 
 // GoalEvent is one timeline entry in the goal's audit trail. Entries are
@@ -573,6 +580,51 @@ type AgentQuestion struct {
 	Answers    map[string][]string // question id → selected/freeform answers
 	CreatedAt  string
 	AnsweredAt string
+}
+
+// GoalActionItemStatus is the lifecycle state of an action item. The user sets
+// every terminal value; the agent only ever files an item as open.
+type GoalActionItemStatus string
+
+const (
+	// GoalActionOpen means the user has not responded yet. Open items do not
+	// pause the goal's reviews — the agent works around them.
+	GoalActionOpen GoalActionItemStatus = "open"
+	// GoalActionDone means the user carried the action out.
+	GoalActionDone GoalActionItemStatus = "done"
+	// GoalActionBlocked means the user tried but could not, so the agent must
+	// find another route.
+	GoalActionBlocked GoalActionItemStatus = "blocked"
+	// GoalActionDeclined means the user chose not to do it.
+	GoalActionDeclined GoalActionItemStatus = "declined"
+)
+
+// GoalActionItem is a step a goal's agent handed back to the user because only
+// a human can carry it out — posting from a personal account, signing something,
+// making a call. It is the fourth agent→user channel, distinct from an access
+// request (a capability Podiom can wire), a question (a decision, which pauses
+// reviews), and next_step (the agent's own move).
+//
+// The exchange is instruction → verdict: the agent writes Title/Instructions/Why,
+// the user answers with a Status and a free-text Response, and that response
+// reaches the agent in its next planning or review prompt — the same
+// store-and-replay contract as user feedback, not a live conversation.
+type GoalActionItem struct {
+	ID        string
+	GoalID    string
+	SessionID string
+	RunID     string
+	AgentName string
+	// Title is the one-line ask, e.g. "Post the launch thread on r/selfhosted".
+	Title string
+	// Instructions is markdown the user can follow without further context.
+	Instructions string
+	// Why is one sentence on why this needs a human.
+	Why         string
+	Status      GoalActionItemStatus
+	Response    string
+	CreatedAt   string
+	RespondedAt string
 }
 
 // AccessRequestKind is what capability the agent asked for.

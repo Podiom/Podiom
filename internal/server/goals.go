@@ -104,8 +104,11 @@ type GoalDetail struct {
 	AccessRequests  []store.AccessRequest      `json:"access_requests"`
 	RateLimitBlocks []store.GoalRateLimitBlock `json:"rate_limit_blocks"`
 	PendingQuestion *store.AgentQuestion       `json:"pending_question,omitempty"`
-	Usage           *tokenmeter.Estimate       `json:"usage,omitempty"`
-	RunningRun      *store.GoalRun             `json:"running_run,omitempty"`
+	// ActionItems is the work the agent handed back to the user: everything still
+	// open, then the recently answered ones, in the order the carousel shows them.
+	ActionItems []store.GoalActionItem `json:"action_items"`
+	Usage       *tokenmeter.Estimate   `json:"usage,omitempty"`
+	RunningRun  *store.GoalRun         `json:"running_run,omitempty"`
 }
 
 type goalRunDetail struct {
@@ -123,6 +126,7 @@ type goalListItem struct {
 	store.Goal
 	PendingRateLimit *store.GoalRateLimitBlock `json:"pending_rate_limit,omitempty"`
 	PendingQuestion  *store.AgentQuestion      `json:"pending_question,omitempty"`
+	OpenActionItems  int                       `json:"open_action_items,omitempty"`
 	Usage            *tokenmeter.Estimate      `json:"Usage,omitempty"`
 }
 
@@ -182,7 +186,12 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, nil, err)
 				return
 			}
-			items = append(items, goalListItem{Goal: g, PendingRateLimit: pending, PendingQuestion: question, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
+			openActions, err := s.core.CountOpenGoalActionItems(r.Context(), g.ID)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			items = append(items, goalListItem{Goal: g, PendingRateLimit: pending, PendingQuestion: question, OpenActionItems: openActions, Usage: s.goalUsageEstimate(r.Context(), g.ID)})
 		}
 		writeJSON(w, items, nil)
 	case http.MethodPost:
@@ -384,7 +393,12 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 			writeJSON(w, nil, err)
 			return
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running}, nil)
+		actions, err := s.goalActionItems(r.Context(), id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, ActionItems: actions, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

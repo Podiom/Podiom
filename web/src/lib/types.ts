@@ -533,6 +533,9 @@ export interface Goal {
   Usage?: UsageEstimate;
   pending_rate_limit?: GoalRateLimitBlock;
   pending_question?: AgentQuestion;
+  // How many action items the agent is waiting on the user for. Open items never
+  // pause the goal, but they do make it "needs you".
+  open_action_items?: number;
 }
 
 export type GoalEventKind =
@@ -551,7 +554,9 @@ export type GoalEventKind =
   | "rate_limit_resolved"
   | "tool_use"
   | "question_asked"
-  | "question_answered";
+  | "question_answered"
+  | "action_requested"
+  | "action_responded";
 
 // GoalEvent mirrors store.GoalEvent: one append-only audit timeline entry.
 export interface GoalEvent {
@@ -583,6 +588,28 @@ export interface AccessRequest {
   CreatedAt: string;
   DecidedAt: string;
   ExecutedAt: string;
+}
+
+// GoalActionItemStatus is the user's verdict on an action item. "open" is the
+// only value the agent can set.
+export type GoalActionItemStatus = "open" | "done" | "blocked" | "declined";
+
+// GoalActionItem mirrors store.GoalActionItem: a step the goal's agent handed
+// back because only a human can do it. Instruction from the agent, verdict from
+// the user; the response reaches the agent at its next review.
+export interface GoalActionItem {
+  ID: string;
+  GoalID: string;
+  SessionID: string;
+  RunID: string;
+  AgentName: string;
+  Title: string;
+  Instructions: string;
+  Why: string;
+  Status: GoalActionItemStatus;
+  Response: string;
+  CreatedAt: string;
+  RespondedAt: string;
 }
 
 export type GoalRateLimitStatus = "pending" | "resolved";
@@ -641,6 +668,8 @@ export interface GoalDetail {
   access_requests: AccessRequest[];
   rate_limit_blocks: GoalRateLimitBlock[];
   pending_question?: AgentQuestion;
+  // Open items first (oldest ask leading), then recently answered ones.
+  action_items: GoalActionItem[];
   usage?: UsageEstimate;
   running_run?: GoalRun;
 }

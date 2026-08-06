@@ -1244,6 +1244,79 @@ var migrations = []migration{
 			ALTER TABLE messages_new RENAME TO messages;
 			CREATE INDEX idx_messages_session_seq ON messages(session_id, seq);`,
 	},
+	{
+		// Work a goal's agent decided only the user can do (post from a personal
+		// account, sign something, make a call) had no home: access requests are
+		// capability grants, podiom_ask_user is a decision that pauses reviews, and
+		// next_step is the agent's own move. Action items are that fourth channel —
+		// an instruction from the agent and a verdict from the user — and because
+		// they surface on the goal timeline, goal_events' CHECK needs the
+		// table-rebuild dance again (migration 24's, trigger and both indexes
+		// included).
+		//
+		// The FK cascade is the whole cleanup story: unlike agent_questions (which
+		// keys on origin/ref_id and needs DeleteAgentQuestions), deleting a goal
+		// takes its action items with it.
+		version: 31,
+		name:    "goal_action_items",
+		sql: `DROP TRIGGER IF EXISTS goal_events_append_only;
+
+		CREATE TABLE goal_events_new (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT,
+			run_id       TEXT,
+			kind         TEXT NOT NULL CHECK (kind IN ('created', 'planning_started', 'review_started',
+				'progress', 'metric_update', 'plan_change', 'user_feedback', 'access_requested', 'access_decided',
+				'status_change', 'completion_proposed', 'rate_limited', 'rate_limit_resolved', 'tool_use',
+				'question_asked', 'question_answered', 'action_requested', 'action_responded')),
+			body         TEXT NOT NULL DEFAULT '',
+			payload_json TEXT NOT NULL DEFAULT '{}',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		INSERT INTO goal_events_new (id, goal_id, session_id, run_id, kind, body, payload_json, created_at)
+		SELECT id, goal_id, session_id, run_id, kind, body, payload_json, created_at FROM goal_events;
+
+		DROP TABLE goal_events;
+		ALTER TABLE goal_events_new RENAME TO goal_events;
+		CREATE INDEX idx_goal_events_goal ON goal_events(goal_id, id DESC);
+		CREATE INDEX idx_goal_events_run ON goal_events(run_id, id);
+
+		CREATE TRIGGER goal_events_append_only
+		BEFORE UPDATE ON goal_events
+		WHEN NOT (
+			OLD.kind = 'user_feedback'
+			AND NEW.id = OLD.id
+			AND NEW.kind = OLD.kind
+			AND NEW.goal_id = OLD.goal_id
+			AND COALESCE(NEW.session_id, '') = COALESCE(OLD.session_id, '')
+			AND COALESCE(NEW.run_id, '') = COALESCE(OLD.run_id, '')
+			AND NEW.payload_json = OLD.payload_json
+			AND NEW.created_at = OLD.created_at
+		)
+		BEGIN
+			SELECT RAISE(ABORT, 'goal events are append-only');
+		END;
+
+		CREATE TABLE goal_action_items (
+			id           TEXT PRIMARY KEY,
+			goal_id      TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			session_id   TEXT NOT NULL DEFAULT '',
+			run_id       TEXT NOT NULL DEFAULT '',
+			agent_name   TEXT NOT NULL DEFAULT '',
+			title        TEXT NOT NULL,
+			instructions TEXT NOT NULL DEFAULT '',
+			why          TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL DEFAULT 'open'
+				CHECK (status IN ('open', 'done', 'blocked', 'declined')),
+			response     TEXT NOT NULL DEFAULT '',
+			created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+			responded_at TEXT
+		);
+
+		CREATE INDEX idx_goal_action_items_goal ON goal_action_items(goal_id, status, created_at DESC);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

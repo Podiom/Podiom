@@ -245,6 +245,33 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			},
 		},
 		{
+			Name:      "podiom_request_user_action",
+			APIRoutes: []string{"/api/goal-action-items"},
+			Description: "Hand a step back to the user because only a human can do it — post from their personal account, sign or pay for something, make a call, do anything physical or off-machine. The item appears on the goal page with your instructions and a box for their verdict. " +
+				"Your reviews are NOT paused: do not wait on it, carry on with the rest of the goal, and plan around it. Their verdict (Done / Couldn't do / Not doing) and note reach you at your next review. " +
+				"Choose this over the alternatives deliberately: podiom_ask_user is for a DECISION that is theirs to make and it does pause your reviews; podiom_request_access is for a capability Podiom can wire for you (an MCP server, a skill, a credential); next_step is a move YOU will make. Writing the ask into a progress entry instead is wrong — nobody can respond to that. " +
+				"Do not file an item you already have open (podiom_get_goal shows them) — chase it in your progress entry instead. Write instructions the user can follow without knowing anything about your plan: exact text to post, the URL, the timing, whatever they need.",
+			InputSchema: objectSchema([]string{"goal_id", "title", "instructions"}, map[string]any{
+				"goal_id":      strProp("Goal id this action belongs to."),
+				"title":        strProp("The one-line ask, imperative (e.g. \"Post the launch thread on r/selfhosted\")."),
+				"instructions": strProp("Markdown the user can act on without further context: the steps, the exact content, links, timing."),
+				"why":          strProp("One sentence on why this needs them rather than you."),
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				for _, field := range []string{"goal_id", "title", "instructions"} {
+					if err := requireField(m, field); err != nil {
+						return "", err
+					}
+				}
+				body := stamp(bodyFrom(m, "goal_id", "title", "instructions", "why"))
+				return c.post(ctx, "/api/goal-action-items", body)
+			},
+		},
+		{
 			Name:        "podiom_list_access_requests",
 			APIRoutes:   []string{"/api/access-requests"},
 			Description: "List access requests (optionally by goal and/or status: pending, approved, denied, executed, failed). Approved/denied entries carry the user's decision note — read it and act on it.",

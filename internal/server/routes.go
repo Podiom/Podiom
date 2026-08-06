@@ -60,6 +60,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/goal-rate-limits/", s.handleGoalRateLimit},
 		{"/api/agent-questions", s.handleAgentQuestions},
 		{"/api/agent-questions/", s.handleAgentQuestion},
+		{"/api/goal-action-items", s.handleGoalActionItems},
+		{"/api/goal-action-items/", s.handleGoalActionItem},
 		{"/api/credentials", s.handleCredentials},
 		{"/api/credentials/", s.handleCredential},
 		{"/api/skills", s.handleSkills},
