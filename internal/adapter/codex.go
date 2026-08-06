@@ -442,14 +442,17 @@ type codexClient struct {
 	initialized  bool
 	needsRespawn bool
 
-	meta        codexMeta
-	pending     map[string]chan codexCallResponse
-	loaded      map[string]string
-	watchers    map[codexTurnKey]chan codexStreamEvent
-	buffered    map[codexTurnKey][]codexStreamEvent
-	active      map[codexTurnKey]codexActiveTurn
-	fileChanges map[codexTurnKey]map[string]string
-	stderrTail  []string
+	meta     codexMeta
+	pending  map[string]chan codexCallResponse
+	loaded   map[string]string
+	watchers map[codexTurnKey]chan codexStreamEvent
+	buffered map[codexTurnKey][]codexStreamEvent
+	// Latest account-scoped notification that arrived with no turn to deliver it
+	// to, held for the next turn to pick up (see dispatchAccountNotification).
+	pendingAccount *codexStreamEvent
+	active         map[codexTurnKey]codexActiveTurn
+	fileChanges    map[codexTurnKey]map[string]string
+	stderrTail     []string
 }
 
 type osProcess struct {
@@ -819,6 +822,10 @@ func (c *codexClient) dispatchNotification(msg codexRPCMessage) {
 			return
 		}
 	}
+	if msg.Method == "account/rateLimits/updated" {
+		c.dispatchAccountNotification(msg)
+		return
+	}
 	key, ok := codexNotificationKey(msg.Method, msg.Params)
 	if !ok {
 		return
@@ -841,6 +848,34 @@ func (c *codexClient) dispatchNotification(msg codexRPCMessage) {
 	}
 	c.mu.Unlock()
 	ch <- event
+}
+
+// dispatchAccountNotification delivers an account-scoped notification to every
+// live turn watcher. Rate limits carry no thread or turn id — they describe the
+// signed-in account — so they cannot be keyed like the rest, and one client is
+// one profile, so every watcher on it shares the account being reported. One
+// that lands before the turn registers is held for it: the app-server reports
+// limits right after turn/start, which is exactly that window.
+func (c *codexClient) dispatchAccountNotification(msg codexRPCMessage) {
+	event := codexStreamEvent{
+		method: msg.Method,
+		params: append(json.RawMessage(nil), msg.Params...),
+	}
+	c.mu.Lock()
+	channels := make([]chan codexStreamEvent, 0, len(c.watchers))
+	for _, ch := range c.watchers {
+		if ch != nil {
+			channels = append(channels, ch)
+		}
+	}
+	if len(channels) == 0 {
+		// Only the newest snapshot matters; an older one it replaces is stale.
+		c.pendingAccount = &event
+	}
+	c.mu.Unlock()
+	for _, ch := range channels {
+		ch <- event
+	}
 }
 
 func (c *codexClient) dispatchThreadStartedNotification(msg codexRPCMessage) bool {
@@ -1084,6 +1119,12 @@ func (c *codexClient) registerTurn(key codexTurnKey, active codexActiveTurn) <-c
 	c.mu.Lock()
 	buffered := c.buffered[key]
 	delete(c.buffered, key)
+	if account := c.pendingAccount; account != nil {
+		c.pendingAccount = nil
+		// Ahead of the buffered turn notifications: those end with
+		// turn/completed, after which the stream loop stops reading.
+		buffered = append([]codexStreamEvent{*account}, buffered...)
+	}
 	// Size the channel to hold every replayed notification so the sends below
 	// cannot block while the lock is held (dispatchNotification caps a key's
 	// backlog at 256).
@@ -1122,6 +1163,10 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 	// duplicate can be dropped and item boundaries kept.
 	var streamedReasoning bool
 	var lastReasoningItem string
+	// Thread-cumulative token total from the last token-usage notification, used
+	// to drop repeats: each notification's "last" node is one request's usage, so
+	// billing them again when nothing advanced would double-count the turn.
+	var lastTokenTotal int64
 	defer close(out)
 	defer c.unregisterTurn(key)
 	for _, event := range first {
@@ -1207,12 +1252,6 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 						return
 					}
 				}
-				if status, ok := codexContextStatus(event.params); ok {
-					sendAdapterEvent(ctx, out, Event{Kind: EventContextStatus, ContextStatus: &status})
-				}
-				if usage, ok := codexTurnUsage(event.params); ok {
-					sendAdapterEvent(ctx, out, Event{Kind: EventTurnUsage, TurnUsage: &usage})
-				}
 				c.log.Info("provider turn stream completed", "event", "provider", "stage", "stream_turn", "thread", key.threadID, "turn", key.turnID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 				return
@@ -1233,15 +1272,27 @@ func (c *codexClient) streamTurn(ctx context.Context, key codexTurnKey, settings
 				sendAdapterEvent(ctx, out, Event{Kind: EventAssistantMessage, Content: codexErrorMessage(event.params)})
 				sendAdapterEvent(ctx, out, Event{Kind: EventTurnDone})
 				return
-			case "token_count", "account/updated":
+			case "account/rateLimits/updated":
 				if status, ok := codexRateStatus(event.params); ok {
 					if !sendAdapterEvent(ctx, out, Event{Kind: EventRateStatus, RateStatus: &status}) {
 						return
 					}
 				}
+			case "thread/tokenUsage/updated":
+				// The only place the app-server reports tokens: turn/completed
+				// carries the turn's items and status, nothing about usage.
 				if status, ok := codexContextStatus(event.params); ok {
 					if !sendAdapterEvent(ctx, out, Event{Kind: EventContextStatus, ContextStatus: &status}) {
 						return
+					}
+				}
+				total := codexCumulativeTokenTotal(event.params)
+				if total > lastTokenTotal {
+					lastTokenTotal = total
+					if usage, ok := codexTurnUsage(event.params); ok {
+						if !sendAdapterEvent(ctx, out, Event{Kind: EventTurnUsage, TurnUsage: &usage}) {
+							return
+						}
 					}
 				}
 			}
@@ -1596,7 +1647,7 @@ func codexNotificationKey(method string, params json.RawMessage) (codexTurnKey, 
 		return codexTurnKey{}, false
 	}
 	switch method {
-	case "item/agentMessage/delta", "item/started", "item/completed", "turn/completed", "error", "turn/started", "token_count", "account/updated":
+	case "item/agentMessage/delta", "item/started", "item/completed", "turn/completed", "error", "turn/started", "thread/tokenUsage/updated":
 		return codexTurnKey{threadID: p.ThreadID, turnID: turnID}, true
 	default:
 		return codexTurnKey{}, false
@@ -2101,8 +2152,8 @@ func codexRateStatus(params json.RawMessage) (RateStatus, bool) {
 }
 
 // codexParseRateWindows extracts the primary (5-hour) and secondary (weekly)
-// rate-limit windows from a token_count/account/updated payload. It searches for
-// a "rate_limits" node anywhere in the tree so it is resilient to nesting.
+// rate-limit windows from an account/rateLimits/updated payload. It searches for
+// a "rateLimits" node anywhere in the tree so it is resilient to nesting.
 func codexParseRateWindows(value any) []RateWindow {
 	node := findRateLimitsNode(value)
 	if node == nil {
@@ -2155,21 +2206,37 @@ func codexWindowFromNode(value any, key string) (RateWindow, bool) {
 	w := RateWindow{Key: key, UsedPercent: percent}
 	if secs, ok := numFromMap(m, "window_seconds", "limit_window_seconds"); ok {
 		w.WindowSeconds = int64(secs)
-	} else if mins, ok := numFromMap(m, "window_minutes"); ok {
+	} else if mins, ok := numFromMap(m, "window_minutes", "windowDurationMins"); ok {
 		w.WindowSeconds = int64(mins) * 60
 	}
 	if secs, ok := numFromMap(m, "resets_in_seconds"); ok {
 		w.ResetsAt = time.Now().Add(time.Duration(secs) * time.Second)
-	} else if at, ok := numFromMap(m, "reset_at", "resets_at"); ok && at > 0 {
+	} else if at, ok := numFromMap(m, "reset_at", "resets_at", "resetsAt"); ok && at > 0 {
 		w.ResetsAt = time.Unix(int64(at), 0)
 	}
 	return w, true
 }
 
-// codexContextStatus extracts context-window utilization from a token_count or
-// turn/completed payload. Codex reports both the tokens the last exchange left
-// in the window (last_token_usage) and the model's window (model_context_window),
-// so the gauge is fully deterministic — no per-model lookup table needed.
+// codexTokenUsageNode returns one breakdown out of a thread/tokenUsage/updated
+// payload's tokenUsage node: "last" is the most recent request's tokens,
+// "total" the thread's running sum since it started.
+func codexTokenUsageNode(params json.RawMessage, key string) map[string]any {
+	var value any
+	if err := json.Unmarshal(params, &value); err != nil {
+		return nil
+	}
+	usage := findMapByKey(value, "tokenUsage", "token_usage")
+	if usage == nil {
+		return nil
+	}
+	node, _ := usage[key].(map[string]any)
+	return node
+}
+
+// codexContextStatus extracts context-window utilization from a
+// thread/tokenUsage/updated payload. Codex reports both the tokens the last
+// request left in the window and the model's window, so the gauge is fully
+// deterministic — no per-model lookup table needed.
 func codexContextStatus(params json.RawMessage) (ContextStatus, bool) {
 	var value any
 	if err := json.Unmarshal(params, &value); err != nil {
@@ -2179,28 +2246,27 @@ func codexContextStatus(params json.RawMessage) (ContextStatus, bool) {
 	if !ok || max <= 0 {
 		return ContextStatus{}, false
 	}
-	// last_token_usage reflects the tokens occupying the window after the latest
-	// turn; total_token_usage (cumulative) is the fallback if it is absent.
-	usage := findMapByKey(value, "last_token_usage", "lastTokenUsage")
-	if usage == nil {
-		usage = findMapByKey(value, "total_token_usage", "totalTokenUsage")
-	}
-	used := codexTokenUsageTotal(usage)
+	// "last" is what currently occupies the window; "total" is the thread's
+	// lifetime sum and would climb past the window within a few turns.
+	used := codexTokenUsageTotal(codexTokenUsageNode(params, "last"))
 	if used <= 0 {
 		return ContextStatus{}, false
 	}
 	return ContextStatus{UsedTokens: used, MaxTokens: int64(max)}, true
 }
 
-// codexTurnUsage extracts the per-turn billed-token breakdown from a
-// turn/completed payload's last_token_usage node (the tokens for the latest
-// exchange only, so it is naturally incremental — one emission per turn).
+// codexCumulativeTokenTotal reports the thread's running token total, which the
+// stream loop uses to tell a genuinely new request from a repeated notification.
+func codexCumulativeTokenTotal(params json.RawMessage) int64 {
+	return codexTokenUsageTotal(codexTokenUsageNode(params, "total"))
+}
+
+// codexTurnUsage extracts the billed-token breakdown for the latest request from
+// a thread/tokenUsage/updated payload's "last" node, so it is naturally
+// incremental — one emission per request, which core sums into the session's
+// lifetime total.
 func codexTurnUsage(params json.RawMessage) (TurnUsage, bool) {
-	var value any
-	if err := json.Unmarshal(params, &value); err != nil {
-		return TurnUsage{}, false
-	}
-	usage := findMapByKey(value, "last_token_usage", "lastTokenUsage")
+	usage := codexTokenUsageNode(params, "last")
 	if usage == nil {
 		return TurnUsage{}, false
 	}
@@ -2210,10 +2276,14 @@ func codexTurnUsage(params json.RawMessage) (TurnUsage, bool) {
 		}
 		return 0
 	}
+	cached := num("cached_input_tokens", "cachedInputTokens")
 	tu := TurnUsage{
-		Input:      num("input_tokens", "inputTokens"),
+		// Codex counts cache reads inside inputTokens; the classes are billed
+		// separately here, so the cached share is subtracted out rather than
+		// counted in both.
+		Input:      max(num("input_tokens", "inputTokens")-cached, 0),
 		Output:     num("output_tokens", "outputTokens") + num("reasoning_output_tokens", "reasoningOutputTokens"),
-		CacheRead:  num("cached_input_tokens", "cachedInputTokens"),
+		CacheRead:  cached,
 		CacheWrite: 0, // Codex does not report a cache-creation class.
 	}
 	if tu.Total() <= 0 {
@@ -2222,7 +2292,7 @@ func codexTurnUsage(params json.RawMessage) (TurnUsage, bool) {
 	return tu, true
 }
 
-// codexTokenUsageTotal totals a Codex token-usage node: total_tokens when the
+// codexTokenUsageTotal totals a Codex token-usage node: totalTokens when the
 // provider supplies it, else the sum of the component token classes.
 func codexTokenUsageTotal(m map[string]any) int64 {
 	if m == nil {
@@ -2232,8 +2302,11 @@ func codexTokenUsageTotal(m map[string]any) int64 {
 		return int64(total)
 	}
 	var sum float64
-	for _, key := range []string{"input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"} {
-		if v, ok := numFromMap(m, key); ok {
+	for _, keys := range [][]string{
+		{"input_tokens", "inputTokens"},
+		{"output_tokens", "outputTokens"},
+	} {
+		if v, ok := numFromMap(m, keys...); ok {
 			sum += v
 		}
 	}

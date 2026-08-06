@@ -666,10 +666,10 @@ summarise. Podiom therefore prepares ahead of time:
 - **R8.27** Where the provider exposes live rate-limit status, Podiom uses it as
   a **proactive trigger** to refresh/extend the summary before a switch is
   forced. This is **provider-asymmetric** (verified):
-  - **Codex** streams rate status in `token_count` events
-    (`rate_limits.primary.used_percent`, `secondary.used_percent`, `resets_at`)
-    and via `account/updated` — usable directly to summarise proactively at a
-    configurable threshold (e.g. 80%).
+  - **Codex** streams rate status in `account/rateLimits/updated` notifications
+    (`rateLimits.primary.usedPercent`, `secondary.usedPercent`, `resetsAt`) —
+    usable directly to summarise proactively at a configurable threshold (e.g.
+    80%). The notification is account-scoped and carries no thread or turn id.
   - **Claude** parses utilization headers internally but does not yet expose them
     cleanly in stream-json; the reliable live signal today is the `api_retry`
     event (status 429), which arrives only once already limited. Until Claude

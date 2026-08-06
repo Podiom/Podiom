@@ -695,39 +695,44 @@ func indexOf(values []string, want string) int {
 }
 
 func TestClaudeContextEventAndWindow(t *testing.T) {
-	// result event: usage lives at the top level.
-	var result map[string]any
-	if err := json.Unmarshal([]byte(`{"type":"result","result":"done","usage":{"input_tokens":50000,"cache_creation_input_tokens":1000,"cache_read_input_tokens":30000,"output_tokens":400}}`), &result); err != nil {
-		t.Fatal(err)
-	}
-	event, ok := claudeContextEvent(result)
-	if !ok || event.Kind != EventContextStatus {
-		t.Fatalf("expected context event, got %+v ok=%v", event, ok)
-	}
-	// Context size is the whole prompt: input + both cache classes (output excluded).
-	if event.ContextStatus.UsedTokens != 81000 {
-		t.Errorf("used tokens = %d, want 81000", event.ContextStatus.UsedTokens)
-	}
-	if event.ContextStatus.MaxTokens != 0 {
-		t.Errorf("max tokens should be stamped later, got %d", event.ContextStatus.MaxTokens)
+	contextStatus := func(t *testing.T, line string) *ContextStatus {
+		t.Helper()
+		events, err := parseClaudeLine([]byte(line))
+		if err != nil {
+			t.Fatalf("parse %s: %v", line, err)
+		}
+		for _, event := range events {
+			if event.Kind == EventContextStatus {
+				return event.ContextStatus
+			}
+		}
+		return nil
 	}
 
-	// assistant event: usage is nested under message.usage.
-	var assistant map[string]any
-	if err := json.Unmarshal([]byte(`{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":5}}}`), &assistant); err != nil {
-		t.Fatal(err)
+	// An assistant line's message.usage is one API request's prompt: input plus
+	// both cache classes, output excluded.
+	status := contextStatus(t, `{"type":"assistant","message":{"usage":{"input_tokens":50000,"cache_creation_input_tokens":1000,"cache_read_input_tokens":30000,"output_tokens":400}}}`)
+	if status == nil || status.UsedTokens != 81000 {
+		t.Fatalf("assistant context status = %+v, want 81000 used", status)
 	}
-	if event, ok := claudeContextEvent(assistant); !ok || event.ContextStatus.UsedTokens != 15 {
-		t.Errorf("nested usage event = %+v ok=%v", event, ok)
+	if status.MaxTokens != 0 {
+		t.Errorf("max tokens should be stamped later, got %d", status.MaxTokens)
+	}
+
+	// The result line's usage sums every API call the run made — reading it as a
+	// window snapshot is what reported multiples of the window on long turns.
+	if status := contextStatus(t, `{"type":"result","result":"done","usage":{"input_tokens":50000,"cache_creation_input_tokens":1000,"cache_read_input_tokens":30000,"output_tokens":400}}`); status != nil {
+		t.Errorf("result line should not report context, got %+v", status)
+	}
+
+	// Subagent lines describe their own window, not the session's.
+	if status := contextStatus(t, `{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"usage":{"input_tokens":900,"cache_read_input_tokens":100}}}`); status != nil {
+		t.Errorf("sidechain line should not report context, got %+v", status)
 	}
 
 	// No usage → no event.
-	var bare map[string]any
-	if err := json.Unmarshal([]byte(`{"type":"result","result":"hi"}`), &bare); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := claudeContextEvent(bare); ok {
-		t.Error("expected no context event without usage")
+	if status := contextStatus(t, `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`); status != nil {
+		t.Errorf("expected no context event without usage, got %+v", status)
 	}
 
 	if got := claudeContextWindow("claude-sonnet-4-5"); got != claudeDefaultContextWindow {

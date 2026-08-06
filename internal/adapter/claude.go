@@ -822,8 +822,13 @@ func parseClaudeLineWithOptions(line []byte, opts claudeStreamOptions) ([]Event,
 		for _, tu := range claudeToolUses(raw) {
 			events = append(events, Event{Kind: EventToolUse, ToolUse: tu})
 		}
-		if ctxEvent, ok := claudeContextEvent(raw); ok {
-			events = append(events, ctxEvent)
+		// Subagent lines carry their own (much smaller) window usage under a
+		// parent_tool_use_id; only the main thread's messages describe the
+		// session's context.
+		if firstString(raw, "parent_tool_use_id", "parentToolUseId") == "" {
+			if ctxEvent, ok := claudeContextEvent(raw); ok {
+				events = append(events, ctxEvent)
+			}
 		}
 	case "result":
 		if claudeResultRateLimited(raw) {
@@ -844,9 +849,9 @@ func parseClaudeLineWithOptions(line []byte, opts claudeStreamOptions) ([]Event,
 				events = append(events, Event{Kind: EventAssistantMessage, Content: text})
 			}
 		}
-		if ctxEvent, ok := claudeContextEvent(raw); ok {
-			events = append(events, ctxEvent)
-		}
+		// Billed usage only: this line's `usage` is the run's cumulative total,
+		// which is what a turn's billing wants and what a window snapshot must
+		// never be read from (see claudeContextEvent).
 		if usageEvent, ok := claudeTurnUsageEvent(raw); ok {
 			events = append(events, usageEvent)
 		}
@@ -1418,10 +1423,13 @@ func claudeContextWindow(model string) int64 {
 }
 
 // claudeContextEvent extracts a context-window usage event from a Claude
-// stream-json line. The token usage lives at top-level `usage` (result events)
-// or nested under `message.usage` (assistant/message events). Current context
-// size is the last request's whole prompt: input + both cache-token classes.
-// MaxTokens is left 0 here and stamped per-model in trackClaudeStream.
+// stream-json line. Current context size is the last request's whole prompt:
+// input + both cache-token classes. Only assistant/message lines qualify (usage
+// nested under `message.usage`): the terminal result line's top-level `usage`
+// aggregates every API call the run made — main loop, subagents, compaction —
+// so reading it as a window snapshot reported multiples of the window on
+// tool-heavy turns. MaxTokens is left 0 here and stamped per-model in
+// trackClaudeStream.
 func claudeContextEvent(raw map[string]any) (Event, bool) {
 	usage := claudeUsageMap(raw)
 	if usage == nil {

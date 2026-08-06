@@ -70,6 +70,21 @@ Deleting a session cascades its attachment metadata and removes its live
 attachment directory. Backing up `$PODIOM_HOME` includes both canonical SQLite
 metadata and live photo files; restore both together.
 
+## Context Window
+
+The composer ring shows how full the model's context window is for the active
+session. Both numbers come from the provider's own stream: the tokens are the
+last request's prompt (not the turn's cumulative usage, which counts a long tool
+loop's cached prompt once per call), and the window is the model's limit — Codex
+reports it per thread, Claude never does, so it is looked up per model. `/compact`
+resets the ring to zero.
+
+The percentage is deliberately measured against the full model window. Claude
+Code's own `/context` measures against its auto-compact window instead, which is
+smaller and not exposed on the wire, so Podiom reads a little lower there; Codex
+subtracts a fixed baseline from both sides of its "context left" figure, about a
+point apart from Podiom's. Neither difference is a defect.
+
 When an **interactive** turn hits a provider session limit, Podiom does not fall
 back silently: it blocks the turn and prompts the user (a `fallback_request` over
 the WebSocket) to either advance their configured fallback chain or switch to a

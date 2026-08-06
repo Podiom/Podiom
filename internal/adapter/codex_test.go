@@ -330,14 +330,19 @@ func TestCodexAuthFailureDetection(t *testing.T) {
 	}
 }
 
+// codexTokenUsageParams is the shape of a real thread/tokenUsage/updated
+// notification: "last" is the newest request, "total" the thread's running sum.
+const codexTokenUsageParams = `{"threadId":"t-1","turnId":"turn-1","tokenUsage":{` +
+	`"total":{"totalTokens":150000,"inputTokens":140000,"cachedInputTokens":100000,"outputTokens":10000,"reasoningOutputTokens":4000},` +
+	`"last":{"totalTokens":92000,"inputTokens":90000,"cachedInputTokens":10000,"outputTokens":2000,"reasoningOutputTokens":500},` +
+	`"modelContextWindow":200000}}`
+
 func TestCodexContextStatusParsing(t *testing.T) {
-	// A token_count payload nests token usage and the window under "info".
-	params := json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":150000},"last_token_usage":{"input_tokens":80000,"cached_input_tokens":10000,"output_tokens":2000},"model_context_window":200000}}`)
-	status, ok := codexContextStatus(params)
+	status, ok := codexContextStatus(json.RawMessage(codexTokenUsageParams))
 	if !ok {
 		t.Fatal("expected context status to parse")
 	}
-	// Prefers last_token_usage (the tokens occupying the window after the turn).
+	// The window holds the last request's tokens, not the thread's lifetime sum.
 	if status.UsedTokens != 92000 {
 		t.Errorf("used tokens = %d, want 92000", status.UsedTokens)
 	}
@@ -345,24 +350,23 @@ func TestCodexContextStatusParsing(t *testing.T) {
 		t.Errorf("max tokens = %d, want 200000", status.MaxTokens)
 	}
 
-	// Falls back to total_token_usage.total_tokens when last_token_usage is absent.
-	fallback := json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":120000},"model_context_window":272000}}`)
-	status, ok = codexContextStatus(fallback)
-	if !ok || status.UsedTokens != 120000 || status.MaxTokens != 272000 {
-		t.Errorf("fallback status = %+v ok=%v", status, ok)
+	// No window reported → no context status (nothing to fill the ring against).
+	if _, ok := codexContextStatus(json.RawMessage(`{"tokenUsage":{"last":{"totalTokens":10}}}`)); ok {
+		t.Error("expected no context status without modelContextWindow")
 	}
 
-	// No window reported → no context status (nothing to fill the ring against).
-	if _, ok := codexContextStatus(json.RawMessage(`{"info":{"last_token_usage":{"total_tokens":10}}}`)); ok {
-		t.Error("expected no context status without model_context_window")
+	// turn/completed carries the turn's items and status but no tokens at all.
+	turnCompleted := json.RawMessage(`{"threadId":"t-1","turn":{"id":"turn-1","status":"completed","items":[]}}`)
+	if _, ok := codexContextStatus(turnCompleted); ok {
+		t.Error("expected no context status from turn/completed")
 	}
 }
 
 func TestCodexTurnUsageParsing(t *testing.T) {
-	// last_token_usage is the per-turn breakdown: reasoning output folds into output,
-	// cached input maps to cache-read, and Codex reports no cache-write class.
-	params := json.RawMessage(`{"info":{"last_token_usage":{"input_tokens":80000,"cached_input_tokens":10000,"output_tokens":2000,"reasoning_output_tokens":500},"model_context_window":200000}}`)
-	tu, ok := codexTurnUsage(params)
+	// The "last" node is the per-request breakdown: reasoning output folds into
+	// output, cached input maps to cache-read (and is subtracted from input,
+	// which Codex reports inclusive of it), and there is no cache-write class.
+	tu, ok := codexTurnUsage(json.RawMessage(codexTokenUsageParams))
 	if !ok {
 		t.Fatal("expected turn usage to parse")
 	}
@@ -373,9 +377,36 @@ func TestCodexTurnUsageParsing(t *testing.T) {
 		t.Errorf("total = %d, want 92500", tu.Total())
 	}
 
-	// No last_token_usage → no event (avoids counting turn/completed twice).
-	if _, ok := codexTurnUsage(json.RawMessage(`{"info":{"total_token_usage":{"total_tokens":10},"model_context_window":200000}}`)); ok {
-		t.Error("expected no turn usage without last_token_usage")
+	// The running total drives repeat suppression in the stream loop.
+	if got := codexCumulativeTokenTotal(json.RawMessage(codexTokenUsageParams)); got != 150000 {
+		t.Errorf("cumulative total = %d, want 150000", got)
+	}
+
+	// No tokenUsage node → no event.
+	if _, ok := codexTurnUsage(json.RawMessage(`{"threadId":"t-1","turn":{"id":"turn-1"}}`)); ok {
+		t.Error("expected no turn usage without a tokenUsage node")
+	}
+}
+
+func TestCodexRateStatusParsing(t *testing.T) {
+	// account/rateLimits/updated: camelCase window fields, no thread or turn id.
+	params := json.RawMessage(`{"rateLimits":{"limitId":"codex","primary":{"usedPercent":18,"windowDurationMins":10080,"resetsAt":1786481609},"secondary":null,"planType":"plus"}}`)
+	status, ok := codexRateStatus(params)
+	if !ok {
+		t.Fatal("expected rate status to parse")
+	}
+	if status.UsedPercent != 18 {
+		t.Errorf("used percent = %v, want 18", status.UsedPercent)
+	}
+	if len(status.Windows) != 1 {
+		t.Fatalf("windows = %+v, want 1", status.Windows)
+	}
+	w := status.Windows[0]
+	if w.Key != "primary" || w.UsedPercent != 18 || w.WindowSeconds != 10080*60 {
+		t.Errorf("window = %+v", w)
+	}
+	if w.ResetsAt.Unix() != 1786481609 {
+		t.Errorf("resets at = %v", w.ResetsAt)
 	}
 }
 
@@ -899,6 +930,67 @@ func TestCodexKeepsCompletionReasoningWhenNoDeltasStreamed(t *testing.T) {
 	}
 }
 
+// TestCodexStreamsTokenUsage covers the routing, not just the parsing: the
+// context/usage notification is keyed by thread and turn like any other, while
+// the account-scoped rate-limit one carries neither id and has to be fanned out.
+func TestCodexStreamsTokenUsage(t *testing.T) {
+	t.Setenv("PODIOM_CODEX_FAKE_MODE", "token_usage")
+	codex := newTestCodex(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("workspace instructions\n"), 0o644); err != nil {
+		t.Fatalf("write agents: %v", err)
+	}
+
+	handle, err := codex.Start(ctx, StartRequest{
+		SessionID:      "session-1",
+		AgentName:      "Builder",
+		Provider:       config.ProviderCodex,
+		PermissionMode: config.PermissionApprove,
+		WorkspaceDir:   workspace,
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	events, err := codex.SendTurn(ctx, TurnRequest{
+		SessionID: "session-1",
+		Handle:    handle,
+		Message:   "count my tokens",
+		Settings: TurnSettings{
+			AgentName:      "Builder",
+			PermissionMode: config.PermissionApprove,
+			WorkspaceDir:   workspace,
+		},
+	})
+	if err != nil {
+		t.Fatalf("send turn: %v", err)
+	}
+
+	var context *ContextStatus
+	var usage *TurnUsage
+	var rate *RateStatus
+	for _, event := range collectCodexEvents(t, events) {
+		switch event.Kind {
+		case EventContextStatus:
+			context = event.ContextStatus
+		case EventTurnUsage:
+			usage = event.TurnUsage
+		case EventRateStatus:
+			rate = event.RateStatus
+		}
+	}
+	if context == nil || context.UsedTokens != 16770 || context.MaxTokens != 258400 {
+		t.Fatalf("context status = %+v", context)
+	}
+	if usage == nil || usage.Input != 14317 || usage.CacheRead != 2432 || usage.Output != 35 {
+		t.Fatalf("turn usage = %+v", usage)
+	}
+	if rate == nil || rate.UsedPercent != 18 || len(rate.Windows) != 1 {
+		t.Fatalf("rate status = %+v", rate)
+	}
+}
+
 func TestCodexStreamsNativeAgentActivity(t *testing.T) {
 	t.Setenv("PODIOM_CODEX_FAKE_MODE", "native_agent")
 	codex := newTestCodex(t)
@@ -1226,6 +1318,10 @@ func runFakeCodexAppServer() {
 				// Reasoning summaries off: nothing streams, so the completion is the
 				// only place the reasoning appears.
 				writeFakeCompletedWithReasoning(enc, params.ThreadID, turnID, []string{"silent thought"}, "all green")
+			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "token_usage" {
+				writeFakeTokenUsage(enc, params.ThreadID, turnID)
+				writeFakeRateLimits(enc)
+				writeFakeCompleted(enc, params.ThreadID, turnID, "counted")
 			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "native_agent" {
 				writeFakeNativeAgentStarted(enc, params.ThreadID, turnID)
 				writeFakeSubAgentActivity(enc, params.ThreadID, turnID, "started")
@@ -1278,6 +1374,37 @@ func writeFakeDelta(enc *json.Encoder, threadID, turnID, delta string) {
 			"turnId":   turnID,
 			"itemId":   "assistant-1",
 			"delta":    delta,
+		},
+	})
+}
+
+func writeFakeTokenUsage(enc *json.Encoder, threadID, turnID string) {
+	_ = enc.Encode(map[string]any{
+		"method": "thread/tokenUsage/updated",
+		"params": map[string]any{
+			"threadId": threadID,
+			"turnId":   turnID,
+			"tokenUsage": map[string]any{
+				"total": map[string]any{"totalTokens": 16770, "inputTokens": 16749, "cachedInputTokens": 2432, "outputTokens": 21, "reasoningOutputTokens": 14},
+				"last":  map[string]any{"totalTokens": 16770, "inputTokens": 16749, "cachedInputTokens": 2432, "outputTokens": 21, "reasoningOutputTokens": 14},
+				// gpt-5-codex's window, as the app-server reports it.
+				"modelContextWindow": 258400,
+			},
+		},
+	})
+}
+
+// writeFakeRateLimits mirrors the account/rateLimits/updated notification, which
+// carries no thread or turn id.
+func writeFakeRateLimits(enc *json.Encoder) {
+	_ = enc.Encode(map[string]any{
+		"method": "account/rateLimits/updated",
+		"params": map[string]any{
+			"rateLimits": map[string]any{
+				"limitId":  "codex",
+				"primary":  map[string]any{"usedPercent": 18, "windowDurationMins": 10080, "resetsAt": 1786481609},
+				"planType": "plus",
+			},
 		},
 	})
 }
