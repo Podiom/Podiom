@@ -1078,7 +1078,7 @@
   {#if view === "detail" && detail}
     {@const g = detail.goal}
     {@const [bg, bd, tc, lbl, pulse] = isPlanning ? STATUS_PILL.planning : statusPill(g)}
-    <div class="page narrow">
+    <div class="page detail-page">
       <button class="back" onclick={() => { view = "list"; void refreshAll(); }}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>All goals
       </button>
@@ -1086,7 +1086,7 @@
       <!-- header -->
       <div class="detail-head">
         <div class="detail-head-main">
-          <div class="card-meta" style="margin-bottom:9px">
+          <div class="card-meta" style="margin-bottom:10px">
             <span class="pill mono lg" style="background:{bg};border-color:{bd};color:{tc}">
               {#if pulse}<span class="pill-dot" style="background:{tc};box-shadow:0 0 0 3px {bg}"></span>{/if}
               {isPlanning ? "planning" : lbl}
@@ -1096,25 +1096,8 @@
               {g.LeadAgent}
             </span>
             {#if g.ProjectID}<span class="proj mono">◆ {g.ProjectID}</span>{/if}
-            <span class="yolo-pill mono" title="This goal runs autonomously with full access (yolo): its sessions, tasks, and schedules run shell commands, edit files, and install software without per-action approval. Every tool call is recorded on the timeline below.">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4-3 6.7-7 8-4-1.3-7-4-7-8V6z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>
-              autonomous · full access
-            </span>
           </div>
           <div class="detail-title">{g.Title}</div>
-          <div class="detail-meta">
-            <span class="meta-item">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-              reviews {cadenceLabel(g)}
-            </span>
-            <span class="meta-item next">next review <b>{nextLabel(g)}</b></span>
-          </div>
-          {#if detail.usage}
-            <div class="detail-usage">
-              <span class="detail-usage-label">token usage</span>
-              <div class="detail-usage-bars"><UsageBar usage={detail.usage} /></div>
-            </div>
-          {/if}
         </div>
         <div class="detail-actions">
           {#if g.Status === "active"}
@@ -1152,7 +1135,10 @@
         </div>
       </div>
 
-      <div class="stack">
+      <div class="detail-cols">
+        <!-- LEFT: what's happening — everything that needs a decision, then the
+             agent's stated intent, then the record of what it has done. -->
+        <div class="detail-main">
         <!-- PLANNING banner -->
         {#if isPlanning}
           <div class="banner planning">
@@ -1334,75 +1320,35 @@
 
         <!-- NEXT STEP -->
         {#if nextStepVisible}
-          <div class="panel">
+          <div class="panel ns-panel">
             <div class="ns-head">
-              <span class="section-label mono ns-label">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M12 5l7 7-7 7"/></svg>
-                Next step
-              </span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--teal-deep)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M12 5l7 7-7 7"/></svg>
+              <span class="section-label mono ns-label">Next step — what {g.LeadAgent} does next</span>
               {#if g.NextStepAt}
                 <span class="ns-age mono">stated {relTime(g.NextStepAt)}</span>
               {/if}
             </div>
-            {#if g.NextStep}
-              <div class="ns-action">{g.NextStep}</div>
-              {#if g.NextStepWhy}
-                <div class="ns-why">{g.NextStepWhy}</div>
-              {/if}
-              <div class="ns-foot mono">
-                <AgentAvatar name={g.LeadAgent} size={17} radius={5} fontSize={8} />
-                {g.LeadAgent} decided this · restated at every review
-              </div>
-            {:else}
-              <div class="desc muted">
-                No next step stated yet — {g.LeadAgent} sets one at its next review.
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- OUTCOME -->
-        <div class="panel">
-          {#if g.Description}
-            <div class="desc">{g.Description}</div>
-          {/if}
-          {#if g.SuccessCriteria}
-            <div class="criteria" class:mt={!!g.Description}>
-              <div class="criteria-label mono">Success criteria — what “done” means</div>
-              <div class="criteria-text">{g.SuccessCriteria}</div>
-            </div>
-          {/if}
-          {#if !g.Description && !g.SuccessCriteria}
-            <div class="desc muted">No description or success criteria yet.</div>
-          {/if}
-        </div>
-
-        <!-- METRICS -->
-        {#if g.Metrics.length > 0}
-          <div class="panel">
-            <div class="section-label mono">Metrics</div>
-            <div class="metrics">
-              {#each g.Metrics as m (m.name)}
-                <div>
-                  <div class="metric-row">
-                    <span class="metric-name strong">{m.name}</span>
-                    {#if metricMet(m)}
-                      <span class="met mono">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                        target met
-                      </span>
-                    {/if}
-                    <span class="metric-val mono">{metricValue(m)}</span>
-                  </div>
-                  <div class="bar lg"><div class="fill" class:met={metricMet(m)} style="width:{metricPct(m)}%"></div></div>
+            <div class="ns-body">
+              {#if g.NextStep}
+                <div class="ns-action">{g.NextStep}</div>
+                {#if g.NextStepWhy}
+                  <div class="ns-why">{g.NextStepWhy}</div>
+                {/if}
+                <div class="ns-foot mono">
+                  <AgentAvatar name={g.LeadAgent} size={17} radius={5} fontSize={8} />
+                  {g.LeadAgent} decided this · restated at every review · next review <b>{nextLabel(g)}</b>
                 </div>
-              {/each}
+              {:else}
+                <div class="desc muted">
+                  No next step stated yet — {g.LeadAgent} sets one at its next review.
+                </div>
+              {/if}
             </div>
           </div>
         {/if}
 
         <!-- TIMELINE -->
-        <div class="panel">
+        <div class="panel timeline">
           <div class="timeline-head">
             <span class="section-label mono" style="margin-bottom:0">Activity</span>
             <span class="group-rule"></span>
@@ -1540,6 +1486,91 @@
             </button>
           {/if}
         </div>
+        </div>
+
+        <!-- RIGHT RAIL: the goal at a glance — what it is, how far along it is,
+             and how it runs. Reference material, so it stays put while the
+             left column scrolls. -->
+        <aside class="detail-rail">
+          <!-- OUTCOME -->
+          <div class="panel rail-panel">
+            <div class="section-label mono rail-label">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.6"/></svg>
+              The outcome
+            </div>
+            {#if g.Description}
+              <div class="desc">{g.Description}</div>
+            {/if}
+            {#if g.SuccessCriteria}
+              <div class="criteria" class:mt={!!g.Description}>
+                <div class="criteria-label mono">Success criteria — what “done” means</div>
+                <div class="criteria-text">{g.SuccessCriteria}</div>
+              </div>
+            {/if}
+            {#if !g.Description && !g.SuccessCriteria}
+              <div class="desc muted">No description or success criteria yet.</div>
+            {/if}
+          </div>
+
+          <!-- METRICS -->
+          {#if g.Metrics.length > 0}
+            <div class="panel rail-panel">
+              <div class="section-label mono">Progress to done</div>
+              <div class="metrics">
+                {#each g.Metrics as m (m.name)}
+                  <div>
+                    <div class="metric-row">
+                      <span class="metric-name strong">{m.name}</span>
+                      {#if metricMet(m)}
+                        <span class="met mono">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                          met
+                        </span>
+                      {/if}
+                      <span class="metric-val mono">{metricValue(m)}</span>
+                    </div>
+                    <div class="bar lg"><div class="fill" class:met={metricMet(m)} style="width:{metricPct(m)}%"></div></div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          <!-- HOW THIS GOAL RUNS -->
+          <div class="panel rail-panel">
+            <div class="section-label mono">How this goal runs</div>
+            <div class="runs-agent">
+              <AgentAvatar name={g.LeadAgent} size={22} radius={7} fontSize={10} />
+              <div>
+                <div class="runs-agent-name">{g.LeadAgent}</div>
+                <div class="runs-agent-role mono">lead agent</div>
+              </div>
+            </div>
+            <div class="runs-meta">
+              <span class="meta-item">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                reviews {cadenceLabel(g)}
+              </span>
+              <span class="meta-item next">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M12 5l7 7-7 7"/></svg>
+                <span>next review <b>{nextLabel(g)}</b></span>
+              </span>
+            </div>
+            <div class="runs-yolo">
+              <span class="yolo-pill mono" title="This goal runs autonomously with full access (yolo): its sessions, tasks, and schedules run shell commands, edit files, and install software without per-action approval. Every tool call is recorded on the activity feed.">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4-3 6.7-7 8-4-1.3-7-4-7-8V6z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>
+                autonomous · full access
+              </span>
+              <div class="runs-yolo-note">Works unattended between reviews; every tool call lands on the activity feed.</div>
+            </div>
+            {#if detail.usage}
+              <div class="runs-usage">
+                <div class="detail-usage-label">token usage</div>
+                <UsageBar usage={detail.usage} />
+              </div>
+            {/if}
+          </div>
+        </aside>
       </div>
     </div>
   {/if}
@@ -1944,8 +1975,11 @@
     margin: 0 auto;
     padding: 26px 30px 70px;
   }
-  .page.narrow {
-    max-width: 900px;
+  .page.detail-page {
+    max-width: 1150px;
+    /* The two-column body flattens on its own width, not the viewport's — the
+       sidebar eats 236px of the window and disappears entirely on mobile. */
+    container-type: inline-size;
   }
   .page.form-page {
     max-width: 660px;
@@ -2377,27 +2411,11 @@
     min-width: 280px;
   }
   .detail-title {
-    font-size: 26px;
+    font-size: 28px;
     font-weight: 800;
-    line-height: 1.2;
+    line-height: 1.15;
     letter-spacing: -0.02em;
-  }
-  .detail-meta {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-top: 11px;
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--muted-2);
-    flex-wrap: wrap;
-  }
-  .detail-usage {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 13px;
-    max-width: 380px;
+    text-wrap: balance;
   }
   .detail-usage-label {
     font-size: 10px;
@@ -2406,9 +2424,6 @@
     text-transform: uppercase;
     color: var(--faint);
     flex: none;
-  }
-  .detail-usage-bars {
-    flex: 1;
   }
   .meta-item {
     display: inline-flex;
@@ -2495,11 +2510,53 @@
   .menu-item.danger {
     color: #a23e22;
   }
-  .stack {
+  /* Detail body: what's happening on the left, the goal at a glance on a
+     sticky right rail. */
+  .detail-cols {
+    display: flex;
+    gap: 18px;
+    margin-top: 20px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .detail-main {
+    flex: 999 1 540px;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    margin-top: 20px;
+  }
+  .detail-rail {
+    flex: 1 1 300px;
+    min-width: 280px;
+    max-width: 400px;
+    position: sticky;
+    top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  /* Below the natural wrap point (540 + 300 + 18 gap) the rail would land under
+     the whole timeline. Flatten both columns instead and slot the rail in ahead
+     of the activity feed, keeping the single-column reading order. */
+  @container (max-width: 880px) {
+    .detail-cols {
+      flex-direction: column;
+      /* align-items:flex-start would stop the flattened panels stretching once
+         the cross axis is horizontal. */
+      align-items: stretch;
+      gap: 16px;
+    }
+    .detail-main,
+    .detail-rail {
+      display: contents;
+    }
+    .detail-rail > * {
+      order: 1;
+    }
+    .panel.timeline {
+      order: 2;
+    }
   }
   .panel {
     background: var(--surface);
@@ -2556,46 +2613,152 @@
   /* Next step: the agent's stated intent. Action-first typography and a teal
      accent, deliberately unlike the header's "next review" clock — one is what
      the agent will do, the other is only when it wakes up. */
+  .panel.ns-panel {
+    padding: 0;
+    overflow: hidden;
+    border-color: #cbe2d8;
+    box-shadow:
+      0 1px 2px rgba(43, 37, 32, 0.04),
+      0 14px 30px -24px rgba(47, 110, 96, 0.35);
+  }
   .ns-head {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: #f2f8f5;
+    border-bottom: 1px solid #dcede6;
   }
   .ns-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--teal);
-    margin-bottom: 12px;
+    color: var(--teal-deep);
+    margin-bottom: 0;
   }
   .ns-age {
+    margin-left: auto;
     font-size: 11px;
-    color: var(--faint);
+    color: #7fa396;
     white-space: nowrap;
   }
+  .ns-body {
+    padding: 17px 20px 18px;
+  }
   .ns-action {
-    font-size: 16.5px;
-    line-height: 1.45;
-    font-weight: 600;
+    font-size: 17px;
+    line-height: 1.4;
+    font-weight: 700;
     color: var(--ink);
     letter-spacing: -0.01em;
+    text-wrap: pretty;
   }
   .ns-why {
-    margin-top: 8px;
+    margin-top: 7px;
     font-size: 13.5px;
     line-height: 1.65;
-    color: var(--ink-soft);
+    color: #5a5048;
   }
   .ns-foot {
     display: flex;
     align-items: center;
     gap: 7px;
-    margin-top: 15px;
-    padding-top: 13px;
-    border-top: 1px solid var(--line-2);
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #eaf2ee;
     font-size: 11px;
     color: var(--faint);
+    flex-wrap: wrap;
+  }
+  .ns-foot b {
+    font-weight: 700;
+    color: #a8825e;
+  }
+
+  /* Right rail: same panel chrome, one density step down so three panels read
+     as reference material rather than competing with the left column. */
+  .rail-panel {
+    padding: 20px;
+  }
+  .rail-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .rail-panel .desc {
+    font-size: 13.5px;
+    line-height: 1.65;
+  }
+  .rail-panel .criteria {
+    padding: 13px 15px;
+  }
+  .rail-panel .criteria.mt {
+    margin-top: 14px;
+  }
+  .rail-panel .criteria-text {
+    font-size: 13px;
+  }
+  .rail-panel .metrics {
+    gap: 15px;
+  }
+  .rail-panel .metric-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .rail-panel .metric-name.strong {
+    font-size: 12.5px;
+    min-width: 0;
+  }
+  .rail-panel .bar.lg {
+    height: 8px;
+  }
+  .runs-agent {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .runs-agent-name {
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--ink);
+  }
+  .runs-agent-role {
+    font-size: 10.5px;
+    color: var(--faint);
+  }
+  .runs-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 13px;
+    padding-top: 12px;
+    border-top: 1px solid #f1eae0;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .runs-meta .meta-item {
+    gap: 7px;
+  }
+  .runs-meta b {
+    font-weight: 700;
+  }
+  .runs-yolo {
+    margin-top: 12px;
+  }
+  .runs-yolo-note {
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--faint);
+    margin-top: 7px;
+  }
+  .runs-usage {
+    margin-top: 13px;
+    padding-top: 12px;
+    border-top: 1px solid #f1eae0;
+  }
+  .runs-usage .detail-usage-label {
+    display: block;
+    margin-bottom: 6px;
   }
 
   .banner {
