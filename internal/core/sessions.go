@@ -101,6 +101,10 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 	if err != nil {
 		return store.Session{}, err
 	}
+	created, err = c.prepareNewSessionGit(ctx, created)
+	if err != nil {
+		return store.Session{}, err
+	}
 
 	projectCtx, err := c.sessionProjectExecutionContext(ctx, created)
 	if err != nil {

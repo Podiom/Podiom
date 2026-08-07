@@ -1317,6 +1317,12 @@ var migrations = []migration{
 
 		CREATE INDEX idx_goal_action_items_goal ON goal_action_items(goal_id, status, created_at DESC);`,
 	},
+	{
+		version: 32,
+		name:    "session_source_control_warning",
+		sql: `ALTER TABLE sessions
+			ADD COLUMN source_control_warning TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

@@ -61,6 +61,7 @@ A project may also declare a `git:` block saying how it wants to be versioned:
   git:
     enabled: true                        # false → this project uses no source control
     remote: git@github.com:me/app.git    # "" → a local repo, created in place
+    pull_on_session_start: false         # update the default branch for each new session
     default_branch: main
     branching: branch-per-task           # or: direct
     commit: ask                          # ask | auto

@@ -44,9 +44,10 @@ These are all **public identifiers — never secrets**. Do not put tokens, priva
 keys, or client secrets here. Authorization happens via GitHub's device flow, and
 the resulting access token is stored separately in `~/.podiom/github/token.json`.
 
-Connected repos are downloaded as source snapshots into each project's `repo/`
-subdirectory.
-This does not require Git or GitHub CLI.
+Projects created from GitHub prefer a real clone in the project's `repo/`
+subdirectory using the user's Git credentials. When that is unavailable, Podiom
+falls back to an App-authorized archive snapshot, which does not require Git or
+GitHub CLI.
 
 ## `profiles`
 

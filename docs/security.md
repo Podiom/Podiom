@@ -225,8 +225,12 @@ flow, and Podiom stores the returned local token under
 
 GitHub tokens, temporary archive redirect URLs, and downloaded archive URLs are
 treated as sensitive and must not be logged or returned from API responses.
-Connected repositories are downloaded as source snapshots into project `repo/`
-subdirectories; v1 does not create Git remotes, commits, pushes, or PRs.
+GitHub-created projects attempt a real clone with the user's own Git credentials
+and store only a clean remote URL. The GitHub App token remains confined to API
+and archive requests and is never passed to Git or embedded in repository
+configuration. If the clone fails, Podiom downloads the existing archive
+snapshot fallback instead. Podiom's automatic sync path is fetch plus
+fast-forward only; it does not create commits, push, reset, rebase, or stash.
 
 ## Structured run logging (R11.5)
 

@@ -120,9 +120,13 @@ type Session struct {
 	CreatedAt      string
 	UpdatedAt      string
 	ProjectID      string
-	PlanState      PlanState
-	PlanExplicit   bool
-	PlanInfo       PlanInfo
+	// SourceControlWarning records a non-fatal checkout/update problem observed
+	// while this session was created so both the UI and resumed agent context can
+	// explain why the working copy may not be current.
+	SourceControlWarning string
+	PlanState            PlanState
+	PlanExplicit         bool
+	PlanInfo             PlanInfo
 	// DreamedAt is set once a session has been consolidated into the agent's
 	// MEMORY.md. Empty means the session is un-dreamed (pending consolidation).
 	DreamedAt string

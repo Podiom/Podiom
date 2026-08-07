@@ -50,11 +50,18 @@ repo:
   source_kind: archive
 ```
 
-Connecting a repo downloads a GitHub archive snapshot into the project's
-`repo/` directory (`~/.podiom/projects/<project>/repo/`) and writes
-`.podiom-source.json` in the project directory (`~/.podiom/projects/<project>/`).
-A snapshot is source context for agents, not a Git checkout: there is no `.git`,
-no remote, and no push path.
+Creating a project from GitHub first attempts a real clone into the project's
+`repo/` directory using the user's normal Git credentials. The project is
+created with Git enabled, the repository's default branch, and a clean SSH or
+HTTPS remote URL; GitHub App tokens are never embedded in remotes or passed to
+Git. If cloning is unavailable, Podiom downloads the GitHub archive instead and
+marks it as a snapshot fallback. The fallback has the intended Git policy and
+remote recorded, but remains source context rather than a checkout until a user
+or agent creates or clones a repository there.
+
+Archive snapshots write `.podiom-source.json` in the project directory. Syncing
+a snapshot replaces it through the existing backup flow; syncing a real checkout
+fetches and fast-forwards its default branch without rewriting local work.
 
 For real source control, declare a `git:` block on the project instead — Podiom
 then materializes a working copy (cloned, or `git init`'d in place) that the
@@ -73,9 +80,10 @@ The web flow is:
 2. Choose which repositories the Podiom GitHub App may read.
 3. Pick one repository for the project.
 
-Podiom downloads the selected ref as a source snapshot. Re-syncing replaces the
-snapshot contents after staging and path validation, preserving previous contents
-under `.podiom-backups/` when a backup is needed.
+Podiom clones the selected ref when the user's Git credentials work, otherwise
+it uses the snapshot fallback. Re-syncing a fallback replaces snapshot contents
+after staging and path validation, preserving previous contents under
+`.podiom-backups/` when a backup is needed.
 
 Create and browse projects from the **Projects** page in the web UI, or list them
 with `podiom projects list`.

@@ -63,11 +63,12 @@ func TestGitBlockSurvivesTheLedgerRoundTrip(t *testing.T) {
 		ID:   "app",
 		Name: "App",
 		Git: &Git{
-			Enabled:       true,
-			Remote:        "git@github.com:me/app.git",
-			DefaultBranch: "trunk",
-			Branching:     BranchingPerTask,
-			Commit:        CommitAuto,
+			Enabled:            true,
+			Remote:             "git@github.com:me/app.git",
+			DefaultBranch:      "trunk",
+			Branching:          BranchingPerTask,
+			Commit:             CommitAuto,
+			PullOnSessionStart: true,
 		},
 	}); err != nil {
 		t.Fatalf("create: %v", err)
@@ -85,6 +86,9 @@ func TestGitBlockSurvivesTheLedgerRoundTrip(t *testing.T) {
 		got.Git.Branching != BranchingPerTask ||
 		got.Git.Commit != CommitAuto {
 		t.Fatalf("git block altered on the round trip: %#v", got.Git)
+	}
+	if !got.Git.PullOnSessionStart {
+		t.Fatal("pull_on_session_start was lost on the ledger round trip")
 	}
 
 	// And a project written before the block existed reads back as undeclared,

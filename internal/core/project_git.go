@@ -3,12 +3,316 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	podiomexec "github.com/Podiom/Podiom/internal/exec"
 	podiomgit "github.com/Podiom/Podiom/internal/git"
 	"github.com/Podiom/Podiom/internal/projects"
+	"github.com/Podiom/Podiom/internal/store"
 )
+
+func (c *Core) projectGitLock(projectID string) *sync.Mutex {
+	lock, _ := c.projectGitLocks.LoadOrStore(projectID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func (c *Core) projectCodeDir(proj projects.Project) string {
+	root := filepath.Join(c.paths.ProjectsDir, proj.Path)
+	if proj.Repo != nil {
+		return filepath.Join(root, "repo")
+	}
+	return root
+}
+
+// inspectProjectGit reads the checkout without materializing or changing it.
+func (c *Core) inspectProjectGit(ctx context.Context, proj projects.Project) projects.GitState {
+	state := projects.GitState{}
+	dir := c.projectCodeDir(proj)
+	runner, err := c.gitRunner()
+	if err != nil {
+		if podiomgit.IsRepo(dir) {
+			state.Detected = true
+			state.Root = dir
+		}
+		state.Warning = "git is not installed on this machine"
+		return state
+	}
+	root, err := runner.RepositoryRoot(ctx, dir)
+	if err != nil {
+		if proj.Git != nil && proj.Git.Enabled {
+			state.Warning = "Git is configured, but no repository is present in the project workspace."
+		}
+		return state
+	}
+	projectDir := filepath.Join(c.paths.ProjectsDir, proj.Path)
+	compareProjectDir, compareRoot := projectDir, root
+	if resolved, resolveErr := filepath.EvalSymlinks(projectDir); resolveErr == nil {
+		compareProjectDir = resolved
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
+		compareRoot = resolved
+	}
+	rel, err := filepath.Rel(compareProjectDir, compareRoot)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		state.Warning = "The detected repository root is outside the project directory."
+		return state
+	}
+	state.Detected = true
+	state.Root = root
+	state.Branch, _ = runner.CurrentBranch(ctx, dir)
+	remoteNames, _ := runner.RemoteNames(ctx, dir)
+	remoteName, _ := runner.PreferredRemote(ctx, dir)
+	if remoteName != "" {
+		state.Remote, _ = runner.RemoteURL(ctx, dir, remoteName)
+	}
+	if remoteName == "" && len(remoteNames) > 1 {
+		state.RemoteAmbiguous = true
+	}
+	host := podiomgit.Check(ctx, podiomexec.Discovery{})
+	state.Ready = host.Ready
+	if !host.Ready {
+		state.Warning = firstLine(firstNonEmpty(host.Hint, host.Error, "git is not fully set up"))
+	}
+	if state.RemoteAmbiguous {
+		state.Warning = "Multiple Git remotes are configured and none is named origin; Podiom cannot choose one automatically."
+	}
+	if proj.Git != nil && !proj.Git.Enabled {
+		state.Ready = false
+		state.Warning = "A Git repository is present, but source control is explicitly disabled for this project."
+	}
+	return state
+}
+
+// reconcileProjectGit adopts repositories created by users or agents and keeps
+// the persisted remote aligned with the checkout. An explicit disabled block is
+// an override; only an undeclared project is automatically enabled.
+func (c *Core) reconcileProjectGit(ctx context.Context, projectID string) (projects.Project, error) {
+	lock := c.projectGitLock(projectID)
+	lock.Lock()
+	defer lock.Unlock()
+	return c.reconcileProjectGitLocked(ctx, projectID)
+}
+
+func (c *Core) reconcileProjectGitLocked(ctx context.Context, projectID string) (projects.Project, error) {
+	proj, err := c.ledger.Get(projectID)
+	if err != nil {
+		return projects.Project{}, err
+	}
+	state := c.inspectProjectGit(ctx, proj)
+	patch := projects.ProjectPatch{}
+	changed := false
+	if state.Detected {
+		switch {
+		case proj.Git == nil:
+			branch := c.detectedDefaultBranch(ctx, proj, state)
+			patch.Git = &projects.Git{Enabled: true, Remote: state.Remote, DefaultBranch: branch}
+			changed = true
+		case proj.Git.Enabled && !state.RemoteAmbiguous && proj.Git.Remote != state.Remote:
+			next := *proj.Git
+			next.Remote = state.Remote
+			patch.Git = &next
+			changed = true
+		}
+		if proj.Repo != nil && proj.Repo.Mode == "snapshot" {
+			next := *proj.Repo
+			next.Mode = "git"
+			next.SourceKind = "checkout"
+			patch.Repo = &next
+			changed = true
+		}
+	}
+	if changed {
+		proj, err = c.ledger.Update(projectID, patch)
+		if err != nil {
+			return projects.Project{}, err
+		}
+		state = c.inspectProjectGit(ctx, proj)
+	}
+	proj.GitState = &state
+	return proj, nil
+}
+
+func (c *Core) detectedDefaultBranch(ctx context.Context, proj projects.Project, state projects.GitState) string {
+	runner, err := c.gitRunner()
+	if err == nil && state.Detected {
+		remote, _ := runner.PreferredRemote(ctx, c.projectCodeDir(proj))
+		if remote != "" {
+			if branch, err := runner.RemoteDefaultBranch(ctx, c.projectCodeDir(proj), remote); err == nil && branch != "" {
+				return branch
+			}
+		}
+	}
+	if state.Branch != "" {
+		return state.Branch
+	}
+	return "main"
+}
+
+// PrepareProjectGit performs the immediate, non-destructive side effect behind
+// the UI's Use Git checkbox. Existing files are initialized in place; an
+// existing checkout is adopted. Disabling is handled by the ordinary patch and
+// never removes .git.
+func (c *Core) PrepareProjectGit(ctx context.Context, projectID string, requested projects.Git) (projects.Git, error) {
+	lock := c.projectGitLock(projectID)
+	lock.Lock()
+	defer lock.Unlock()
+	proj, err := c.ledger.Get(projectID)
+	if err != nil {
+		return projects.Git{}, err
+	}
+	state := c.inspectProjectGit(ctx, proj)
+	if requested.Remote == "" && state.Remote != "" {
+		requested.Remote = state.Remote
+	}
+	if requested.Remote == "" && proj.Repo != nil {
+		requested.Remote = strings.TrimSpace(proj.Repo.HTMLURL)
+	}
+	if requested.DefaultBranch == "" {
+		requested.DefaultBranch = c.detectedDefaultBranch(ctx, proj, state)
+	}
+	if !state.Detected {
+		runner, err := c.gitRunner()
+		if err != nil {
+			return projects.Git{}, err
+		}
+		dir := c.projectCodeDir(proj)
+		if err := runner.Init(ctx, dir, requested.DefaultBranch); err != nil {
+			return projects.Git{}, err
+		}
+		if requested.Remote != "" {
+			if err := runner.SetRemote(ctx, dir, "origin", requested.Remote); err != nil {
+				return projects.Git{}, err
+			}
+		}
+	}
+	requested.Enabled = true
+	return requested, nil
+}
+
+// CloneGitHubProject tries the user's ordinary Git credentials against each
+// clean remote URL and records a real checkout on success. Callers retain the
+// archive fallback; no GitHub App token crosses into this path.
+func (c *Core) CloneGitHubProject(ctx context.Context, projectID string, repo projects.Repo, remotes []string) (projects.Project, error) {
+	lock := c.projectGitLock(projectID)
+	lock.Lock()
+	defer lock.Unlock()
+	proj, err := c.ledger.Get(projectID)
+	if err != nil {
+		return projects.Project{}, err
+	}
+	if len(remotes) == 0 {
+		return projects.Project{}, fmt.Errorf("repository has no clone URL")
+	}
+	projectDir := filepath.Join(c.paths.ProjectsDir, proj.Path)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		return projects.Project{}, err
+	}
+	stage, err := os.MkdirTemp(projectDir, ".podiom-clone-*")
+	if err != nil {
+		return projects.Project{}, err
+	}
+	defer os.RemoveAll(stage)
+	checkout := filepath.Join(stage, "checkout")
+	runner, err := c.gitRunner()
+	if err != nil {
+		return projects.Project{}, err
+	}
+	var remote string
+	var cloneErr error
+	for _, candidate := range remotes {
+		_ = os.RemoveAll(checkout)
+		if err := runner.Clone(ctx, candidate, checkout); err != nil {
+			cloneErr = err
+			continue
+		}
+		remote = candidate
+		break
+	}
+	if remote == "" {
+		return projects.Project{}, cloneErr
+	}
+	target := filepath.Join(projectDir, "repo")
+	if entries, err := os.ReadDir(target); err == nil && len(entries) > 0 {
+		return projects.Project{}, fmt.Errorf("project source directory is not empty")
+	}
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return projects.Project{}, err
+	}
+	if err := os.Rename(checkout, target); err != nil {
+		return projects.Project{}, err
+	}
+	repo.Mode = "git"
+	repo.SourceKind = "clone"
+	repo.SyncedAt = time.Now().UTC().Format(time.RFC3339)
+	updated, err := c.ledger.Update(projectID, projects.ProjectPatch{
+		Repo: &repo,
+		Git:  &projects.Git{Enabled: true, Remote: remote, DefaultBranch: repo.DefaultBranch},
+	})
+	if err != nil {
+		return projects.Project{}, err
+	}
+	state := c.inspectProjectGit(ctx, updated)
+	updated.GitState = &state
+	return updated, nil
+}
+
+// SyncProjectGit performs the Projects-page Sync action for a real checkout.
+// It has the same no-rewrite guarantees as session startup, but returns an
+// error to the explicit caller instead of degrading to a warning.
+func (c *Core) SyncProjectGit(ctx context.Context, projectID string) (projects.Project, error) {
+	lock := c.projectGitLock(projectID)
+	lock.Lock()
+	defer lock.Unlock()
+	proj, err := c.ledger.Get(projectID)
+	if err != nil {
+		return projects.Project{}, err
+	}
+	state := c.inspectProjectGit(ctx, proj)
+	if !state.Detected {
+		return projects.Project{}, fmt.Errorf("project is not a Git checkout")
+	}
+	runner, err := c.gitRunner()
+	if err != nil {
+		return projects.Project{}, err
+	}
+	dir := c.projectCodeDir(proj)
+	dirty, err := runner.StatusPorcelain(ctx, dir)
+	if err != nil {
+		return projects.Project{}, err
+	}
+	if strings.TrimSpace(dirty) != "" {
+		return projects.Project{}, fmt.Errorf("working tree has uncommitted changes")
+	}
+	remote, err := runner.PreferredRemote(ctx, dir)
+	if err != nil || remote == "" {
+		return projects.Project{}, fmt.Errorf("repository has no unambiguous remote")
+	}
+	if err := runner.Fetch(ctx, dir); err != nil {
+		return projects.Project{}, err
+	}
+	branch := firstNonEmpty(proj.Git.DefaultBranch, state.Branch, "main")
+	if err := runner.CheckoutDefault(ctx, dir, remote, branch); err != nil {
+		return projects.Project{}, err
+	}
+	if err := runner.FastForwardUpstream(ctx, dir); err != nil {
+		return projects.Project{}, err
+	}
+	if proj.Repo != nil {
+		repo := *proj.Repo
+		repo.SyncedAt = time.Now().UTC().Format(time.RFC3339)
+		proj, err = c.ledger.Update(projectID, projects.ProjectPatch{Repo: &repo})
+		if err != nil {
+			return projects.Project{}, err
+		}
+	}
+	state = c.inspectProjectGit(ctx, proj)
+	proj.GitState = &state
+	return proj, nil
+}
 
 // ProjectGitState is what Podiom knows about a project's source control right
 // now: the declared policy plus whether the host can actually act on it.
@@ -74,9 +378,14 @@ func (c *Core) materializeProjectGit(ctx context.Context, proj projects.Project,
 	// required for git init or git clone — only for git commit — so we do this
 	// before the identity check so that the repository exists even when the
 	// user has not yet configured one.
-	if !podiomgit.IsRepo(root) {
+	_, repoErr := runner.RepositoryRoot(ctx, root)
+	if repoErr != nil {
 		switch {
 		case proj.Git.Remote != "":
+			if entries, readErr := os.ReadDir(root); readErr == nil && len(entries) > 0 {
+				state.Reason = "the project contains a source snapshot, not a Git checkout; create or clone a repository there to enable Git operations."
+				return state
+			}
 			// Cloning into a directory Podiom already created would fail, so the
 			// caller must not have pre-created it for remote-backed projects.
 			if err := runner.Clone(ctx, proj.Git.Remote, root); err != nil {
@@ -105,6 +414,105 @@ func (c *Core) materializeProjectGit(ctx context.Context, proj projects.Project,
 	state.Branch, _ = runner.CurrentBranch(ctx, root)
 	state.Ready = true
 	return state
+}
+
+// prepareNewSessionGit applies the optional startup update once, before the
+// provider is started. Every failure is converted into a durable warning; a
+// session must never be blocked merely because source control is unavailable.
+func (c *Core) prepareNewSessionGit(ctx context.Context, sess store.Session) (store.Session, error) {
+	if strings.TrimSpace(sess.ProjectID) == "" {
+		return sess, nil
+	}
+	proj, err := c.reconcileProjectGit(ctx, sess.ProjectID)
+	if err != nil || proj.Git == nil || !proj.Git.Enabled || !proj.Git.PullOnSessionStart {
+		return sess, nil
+	}
+	lock := c.projectGitLock(proj.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	warning := c.updateProjectDefaultBranch(ctx, proj, sess.ID)
+	if warning == "" {
+		return sess, nil
+	}
+	updated, err := c.store.UpdateSessionSourceControlWarning(ctx, sess.ID, warning)
+	if err != nil {
+		return sess, err
+	}
+	c.log.Warn("project startup update skipped", "event", "project", "project", proj.ID, "session", sess.ID, "warning", warning)
+	return updated, nil
+}
+
+func (c *Core) updateProjectDefaultBranch(ctx context.Context, proj projects.Project, newSessionID string) string {
+	root := c.projectCodeDir(proj)
+	materializeReason := ""
+	if proj.Git != nil && proj.Git.Enabled {
+		if proj.Git.Remote == "" {
+			_ = os.MkdirAll(root, 0o755)
+		}
+		materialized := c.materializeProjectGit(ctx, proj, root)
+		materializeReason = materialized.Reason
+	}
+	state := c.inspectProjectGit(ctx, proj)
+	if !state.Detected {
+		if proj.Repo != nil && proj.Repo.Mode == "snapshot" {
+			return "Could not pull the default branch because this GitHub source is a snapshot fallback, not a Git checkout."
+		}
+		if materializeReason != "" {
+			return "Could not pull the default branch: " + strings.TrimSuffix(materializeReason, ".") + "."
+		}
+		return "Could not pull the default branch because no Git repository is present in the project workspace."
+	}
+	if c.projectHasActiveTurn(ctx, proj.ID, newSessionID) {
+		return "Skipped the startup pull because another session is actively using this project's shared checkout."
+	}
+	runner, err := c.gitRunner()
+	if err != nil {
+		return "Could not pull the default branch: " + firstLine(err.Error())
+	}
+	dir := c.projectCodeDir(proj)
+	dirty, err := runner.StatusPorcelain(ctx, dir)
+	if err != nil {
+		return "Could not inspect the working tree before pulling: " + firstLine(err.Error())
+	}
+	if strings.TrimSpace(dirty) != "" {
+		return "Skipped the startup pull because the project's shared working tree has uncommitted changes."
+	}
+	remote, err := runner.PreferredRemote(ctx, dir)
+	if err != nil || remote == "" {
+		return "Could not pull the default branch because the repository has no unambiguous remote."
+	}
+	if err := runner.Fetch(ctx, dir); err != nil {
+		return "Could not fetch remote changes: " + firstLine(err.Error())
+	}
+	branch := strings.TrimSpace(proj.Git.DefaultBranch)
+	if branch == "" {
+		branch = c.detectedDefaultBranch(ctx, proj, state)
+	}
+	if err := runner.CheckoutDefault(ctx, dir, remote, branch); err != nil {
+		return "Could not check out the default branch " + branch + ": " + firstLine(err.Error())
+	}
+	if err := runner.FastForwardUpstream(ctx, dir); err != nil {
+		return "Could not fast-forward the default branch " + branch + ": " + firstLine(err.Error())
+	}
+	c.log.Info("project default branch updated", "event", "project", "project", proj.ID, "session", newSessionID, "branch", branch, "remote", remote)
+	return ""
+}
+
+func (c *Core) projectHasActiveTurn(ctx context.Context, projectID, excludeSessionID string) bool {
+	if c.activeTurn == nil {
+		return false
+	}
+	sessions, err := c.store.ListSessions(ctx)
+	if err != nil {
+		return false
+	}
+	for _, session := range sessions {
+		if session.ID != excludeSessionID && session.ProjectID == projectID && c.activeTurn(session.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // SessionProjectContext is the pull-based project view the agent asks for.

@@ -53,6 +53,7 @@
     branching: ProjectGit["branching"];
     branch_prefixes: GitPrefixDraft[];
     commit: ProjectGit["commit"];
+    pull_on_session_start: boolean;
   }
   let gitDrafts = $state<Record<string, GitDraft>>({});
   let savingGit = $state("");
@@ -123,6 +124,7 @@
   let ghCreated = $state<Project | null>(null);
   let ghAuthWindow: Window | null = null;
   let ghPollTimer: number | undefined;
+  let gitRefreshTimer: number | undefined;
 
   onMount(() => {
     void load();
@@ -130,13 +132,32 @@
       if (ghModalOpen && ghStatus?.authed && ghInstallOpened && !ghBusy) {
         void refreshGitHub();
       }
+      void refreshProjectGitState();
     };
     window.addEventListener("focus", refreshAfterGitHub);
+    gitRefreshTimer = window.setInterval(() => void refreshProjectGitState(), 5_000);
     return () => {
       window.removeEventListener("focus", refreshAfterGitHub);
       clearGitHubPolling();
+      if (gitRefreshTimer) window.clearInterval(gitRefreshTimer);
     };
   });
+
+  async function refreshProjectGitState() {
+    try {
+      const fresh = await listProjects();
+      const currentByID = new Map(projects.map((p) => [p.id, p]));
+      const nextGitDrafts = { ...gitDrafts };
+      for (const project of fresh) {
+        const current = currentByID.get(project.id);
+        if (!current || !gitDirty(current)) nextGitDrafts[project.id] = gitDraftFor(project);
+      }
+      projects = fresh;
+      gitDrafts = nextGitDrafts;
+    } catch {
+      // Background discovery is best-effort; explicit actions still surface errors.
+    }
+  }
 
   async function load() {
     try {
@@ -195,6 +216,7 @@
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([kind, prefix]) => ({ kind, prefix })),
       commit: p.git?.commit ?? "ask",
+      pull_on_session_start: p.git?.pull_on_session_start ?? false,
     };
   }
 
@@ -208,6 +230,7 @@
         .map(({ kind, prefix }) => ({ kind: kind.trim(), prefix: prefix.trim() }))
         .sort((a, b) => a.kind.localeCompare(b.kind) || a.prefix.localeCompare(b.prefix)),
       commit: draft.commit,
+      pull_on_session_start: draft.pull_on_session_start,
     });
   }
 
@@ -290,6 +313,7 @@
           branching: draft.branching,
           branch_prefixes: branchPrefixes,
           commit: draft.commit,
+          pull_on_session_start: draft.pull_on_session_start,
         },
       });
       projects = projects.map((project) => (project.id === p.id ? updated : project));
@@ -376,6 +400,7 @@
                 default_branch: "main",
                 branching: npGitBranching,
                 commit: "ask",
+                pull_on_session_start: false,
               },
       });
       const connectAfterCreate = npConnectGitHub;
@@ -534,6 +559,8 @@
         name: repo.name,
         full_name: repo.full_name,
         html_url: repo.html_url,
+        clone_url: repo.clone_url,
+        ssh_url: repo.ssh_url,
         default_branch: repo.default_branch,
         ref: repo.default_branch,
         force,
@@ -565,6 +592,8 @@
         name: repo.name,
         full_name: repo.full_name,
         html_url: repo.html_url,
+        clone_url: repo.clone_url,
+        ssh_url: repo.ssh_url,
         default_branch: repo.default_branch,
         ref: repo.default_branch,
         description: repo.description,
@@ -749,6 +778,9 @@
               <div>
                 <div class="label-mono">source control</div>
                 <div class="repo-meta mono">{gitDraft.enabled ? "git enabled" : "git disabled"}</div>
+                {#if p.git_state?.detected}
+                  <div class="repo-meta mono">{p.git_state.branch || "detached"}{p.git_state.remote ? ` · ${p.git_state.remote}` : " · local"}</div>
+                {/if}
               </div>
               <label class="git-toggle">
                 <input
@@ -759,6 +791,10 @@
                 <span>Use Git</span>
               </label>
             </div>
+
+            {#if p.git_state?.warning}
+              <div class="git-error">{p.git_state.warning}</div>
+            {/if}
 
             <div class="git-field">
               <label class="label-mono" for="git-remote-{p.id}">remote (read-only)</label>
@@ -800,6 +836,15 @@
                 </select>
               </label>
             </div>
+
+            <label class="repo-check git-pull-check">
+              <input
+                type="checkbox"
+                checked={gitDraft.pull_on_session_start}
+                onchange={(e) => updateGitDraft(p.id, { pull_on_session_start: e.currentTarget.checked })}
+              />
+              <span>Pull the default branch when a new session starts</span>
+            </label>
 
             <div class="git-prefix-head">
               <span class="label-mono">branch prefixes</span>
@@ -858,14 +903,14 @@
             <div class="label-mono">github repo</div>
             {#if p.repo}
               <div class="repo-name">{p.repo.full_name}</div>
-              <div class="repo-meta mono">{p.repo.ref || p.repo.default_branch} · synced {p.repo.synced_at || "never"}</div>
+              <div class="repo-meta mono">{p.repo.mode === "git" ? "git checkout" : "snapshot fallback"} · {p.repo.ref || p.repo.default_branch} · synced {p.repo.synced_at || "never"}</div>
             {:else}
               <div class="repo-meta mono">not connected</div>
             {/if}
           </div>
           <div class="repo-actions">
             {#if p.repo}
-              <button class="mini-action" disabled={ghBusy === "sync:" + p.id} onclick={() => syncRepo(p)}>{ghBusy === "sync:" + p.id ? "Syncing…" : "Sync"}</button>
+              <button class="mini-action" disabled={ghBusy === "sync:" + p.id} onclick={() => syncRepo(p)}>{ghBusy === "sync:" + p.id ? "Syncing…" : p.repo.mode === "git" ? "Pull" : "Sync"}</button>
               <button class="mini-action danger" disabled={ghBusy === "disconnect:" + p.id} onclick={() => disconnectRepo(p)}>Disconnect</button>
             {:else}
               <button class="mini-action" onclick={() => openGitHub(p)}>Connect</button>

@@ -721,6 +721,8 @@ export interface ConnectProjectRepoRequest {
   name: string;
   full_name: string;
   html_url: string;
+  clone_url?: string;
+  ssh_url?: string;
   default_branch: string;
   ref?: string;
   description?: string;

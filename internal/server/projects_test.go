@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -181,6 +183,43 @@ func TestProjectGitPatchPersistsToLedger(t *testing.T) {
 		persisted.Git.BranchPrefixes["feature"] != "feat/" ||
 		persisted.Git.BranchPrefixes["spike"] != "spike/" {
 		t.Fatalf("persisted git block = %#v", persisted.Git)
+	}
+}
+
+func TestProjectGitEnableInitializesImmediately(t *testing.T) {
+	ctx := context.Background()
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+	if _, err := srv.core.CreateProject(ctx, projects.Project{ID: "plain", Name: "Plain"}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/projects/plain", bytes.NewBufferString(`{
+		"git": {
+			"enabled": true,
+			"default_branch": "trunk",
+			"branching": "direct",
+			"commit": "ask",
+			"pull_on_session_start": true
+		}
+	}`))
+	rr := httptest.NewRecorder()
+	srv.handleProject(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(paths.ProjectsDir, "plain", ".git")); err != nil {
+		t.Fatalf("Git was not initialized immediately: %v", err)
+	}
+	project, err := srv.core.GetProject(ctx, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Git == nil || !project.Git.Enabled || !project.Git.PullOnSessionStart || project.Git.DefaultBranch != "trunk" {
+		t.Fatalf("git = %#v", project.Git)
+	}
+	if project.GitState == nil || !project.GitState.Detected {
+		t.Fatalf("git state = %#v", project.GitState)
 	}
 }
 

@@ -132,14 +132,125 @@ func (r *Runner) Clone(ctx context.Context, remote, dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
-	_, err := r.capture(ctx, "", "clone", remote, dir)
+	ctx, cancel := longCommandContext(ctx)
+	defer cancel()
+	_, err := r.captureEnv(ctx, "", []string{"GIT_TERMINAL_PROMPT=0"}, "clone", remote, dir)
 	return err
 }
 
 // Fetch updates remote refs.
 func (r *Runner) Fetch(ctx context.Context, dir string) error {
-	_, err := r.capture(ctx, dir, "fetch", "--all", "--prune")
+	ctx, cancel := longCommandContext(ctx)
+	defer cancel()
+	_, err := r.captureEnv(ctx, dir, []string{"GIT_TERMINAL_PROMPT=0"}, "fetch", "--all", "--prune")
 	return err
+}
+
+// RepositoryRoot returns the top-level working-tree directory containing dir.
+// Unlike checking for dir/.git, this supports linked worktrees and callers
+// operating in a subdirectory of the checkout.
+func (r *Runner) RepositoryRoot(ctx context.Context, dir string) (string, error) {
+	out, err := r.capture(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(strings.TrimSpace(out)), nil
+}
+
+// RemoteNames lists configured remotes in git's stable name order.
+func (r *Runner) RemoteNames(ctx context.Context, dir string) ([]string, error) {
+	out, err := r.capture(ctx, dir, "remote")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// PreferredRemote chooses origin, or the sole configured remote. Multiple
+// non-origin remotes are intentionally ambiguous and yield no selection.
+func (r *Runner) PreferredRemote(ctx context.Context, dir string) (string, error) {
+	names, err := r.RemoteNames(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	for _, name := range names {
+		if name == "origin" {
+			return name, nil
+		}
+	}
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	return "", nil
+}
+
+// RemoteURL returns one remote's fetch URL.
+func (r *Runner) RemoteURL(ctx context.Context, dir, name string) (string, error) {
+	out, err := r.capture(ctx, dir, "remote", "get-url", name)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// SetRemote creates or updates a named remote without touching credentials.
+func (r *Runner) SetRemote(ctx context.Context, dir, name, remote string) error {
+	name, remote = strings.TrimSpace(name), strings.TrimSpace(remote)
+	if name == "" || remote == "" {
+		return fmt.Errorf("remote name and URL are required")
+	}
+	if _, err := r.RemoteURL(ctx, dir, name); err == nil {
+		_, err = r.capture(ctx, dir, "remote", "set-url", name, remote)
+		return err
+	}
+	_, err := r.capture(ctx, dir, "remote", "add", name, remote)
+	return err
+}
+
+// RemoteDefaultBranch reads <remote>/HEAD when the server advertises it.
+func (r *Runner) RemoteDefaultBranch(ctx context.Context, dir, remote string) (string, error) {
+	out, err := r.capture(ctx, dir, "symbolic-ref", "--quiet", "--short", "refs/remotes/"+remote+"/HEAD")
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(out)
+	return strings.TrimPrefix(value, remote+"/"), nil
+}
+
+// CheckoutDefault checks out an existing local branch or creates it tracking
+// the matching remote branch. It never resets an existing branch.
+func (r *Runner) CheckoutDefault(ctx context.Context, dir, remote, branch string) error {
+	if r.BranchExists(ctx, dir, branch) {
+		return r.Checkout(ctx, dir, branch)
+	}
+	if remote == "" || !r.remoteBranchExists(ctx, dir, remote, branch) {
+		return fmt.Errorf("default branch %q is not available locally or on a remote", branch)
+	}
+	_, err := r.capture(ctx, dir, "checkout", "-b", branch, "--track", remote+"/"+branch)
+	return err
+}
+
+// FastForwardUpstream advances the checked-out branch without creating a merge
+// commit. A missing upstream and a diverged branch both fail without rewriting
+// local history.
+func (r *Runner) FastForwardUpstream(ctx context.Context, dir string) error {
+	upstream, err := r.capture(ctx, dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	if err != nil || strings.TrimSpace(upstream) == "" {
+		return fmt.Errorf("checked-out branch has no upstream")
+	}
+	_, err = r.capture(ctx, dir, "merge", "--ff-only", strings.TrimSpace(upstream))
+	return err
+}
+
+func (r *Runner) remoteBranchExists(ctx context.Context, dir, remote, branch string) bool {
+	_, err := r.capture(ctx, dir, "rev-parse", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch)
+	return err == nil
 }
 
 // CurrentBranch returns the checked-out branch, or "" when HEAD is detached.
@@ -197,6 +308,13 @@ func (r *Runner) CanReach(ctx context.Context, remote string) error {
 	defer cancel()
 	_, err := r.captureEnv(ctx, "", []string{"GIT_TERMINAL_PROMPT=0"}, "ls-remote", "--exit-code", "-h", remote)
 	return err
+}
+
+func longCommandContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, 2*time.Minute)
 }
 
 // IsRepo reports whether dir is inside a git working tree.

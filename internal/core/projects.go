@@ -25,7 +25,17 @@ func (c *Core) ListProjects(ctx context.Context) ([]projects.Project, error) {
 	if err := c.syncProjectRoadmaps(ctx); err != nil {
 		return nil, err
 	}
-	return c.ledger.List()
+	list, err := c.ledger.List()
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		list[i], err = c.reconcileProjectGit(ctx, list[i].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return list, nil
 }
 
 // GetProject returns one project by id.
@@ -33,7 +43,7 @@ func (c *Core) GetProject(ctx context.Context, id string) (projects.Project, err
 	if err := c.syncProjectRoadmaps(ctx); err != nil {
 		return projects.Project{}, err
 	}
-	return c.ledger.Get(id)
+	return c.reconcileProjectGit(ctx, id)
 }
 
 // CreateProject adds a project to the shared ledger and creates its directory.
@@ -45,7 +55,7 @@ func (c *Core) CreateProject(ctx context.Context, p projects.Project) (projects.
 	if err := c.syncProjectRoadmaps(ctx); err != nil {
 		return projects.Project{}, err
 	}
-	project, err := c.ledger.Get(created.ID)
+	project, err := c.reconcileProjectGit(ctx, created.ID)
 	if err != nil {
 		return projects.Project{}, err
 	}
@@ -98,7 +108,7 @@ func (c *Core) UpdateProject(ctx context.Context, id string, patch projects.Proj
 	if err := c.syncProjectRoadmaps(ctx); err != nil {
 		return projects.Project{}, err
 	}
-	project, err := c.ledger.Get(updated.ID)
+	project, err := c.reconcileProjectGit(ctx, updated.ID)
 	if err != nil {
 		return projects.Project{}, err
 	}
@@ -886,7 +896,7 @@ func (c *Core) taskProjectPromptContext(ctx context.Context, projectID string) (
 	if strings.TrimSpace(projectID) == "" {
 		return "No project is selected for this task.", nil
 	}
-	proj, err := c.ledger.Get(projectID)
+	proj, err := c.reconcileProjectGit(ctx, projectID)
 	if err != nil {
 		return fmt.Sprintf("No matching project ledger entry for project_id %q.", projectID), nil
 	}
@@ -954,10 +964,13 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 	if projectID == "" {
 		return projectExecutionContext{}, nil
 	}
-	proj, err := c.ledger.Get(projectID)
+	proj, err := c.reconcileProjectGit(ctx, projectID)
 	if err != nil {
 		return projectExecutionContext{}, nil
 	}
+	lock := c.projectGitLock(proj.ID)
+	lock.Lock()
+	defer lock.Unlock()
 	projectDir := filepath.Join(c.paths.ProjectsDir, proj.Path)
 	root := projectDir
 	if proj.Repo != nil {
@@ -1010,6 +1023,9 @@ func (c *Core) sessionProjectExecutionContext(ctx context.Context, sess store.Se
 		"Do not create project artifacts in the agent workspace.\n" +
 		gitPromptLine(gitState) + "\n" +
 		"Call podiom_project_context for the full project and source-control detail."
+	if strings.TrimSpace(sess.SourceControlWarning) != "" {
+		prompt += " Source-control startup warning: " + strings.TrimSpace(sess.SourceControlWarning)
+	}
 	// A snapshot-mode repo without git really is just extracted files, and the
 	// agent must not assume otherwise. Git-enabled projects get the source
 	// control line above instead.

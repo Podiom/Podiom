@@ -227,6 +227,7 @@ export interface Session {
   TaskID: string;
   GoalID: string;
   ProjectID: string;
+  SourceControlWarning: string;
   ProviderHandle: string;
   PlanState: PlanState;
   PlanExplicit: boolean;
@@ -326,6 +327,7 @@ export interface Project {
   stack: string[];
   repo: ProjectRepo | null;
   git: ProjectGit | null;
+  git_state?: ProjectGitState;
   roadmap: string[];
   notes: string;
   instructions: string;
@@ -341,6 +343,17 @@ export interface ProjectGit {
   branching: "direct" | "branch-per-task";
   branch_prefixes?: Record<string, string>;
   commit: "ask" | "auto";
+  pull_on_session_start: boolean;
+}
+
+export interface ProjectGitState {
+  detected: boolean;
+  ready: boolean;
+  root?: string;
+  branch?: string;
+  remote?: string;
+  remote_ambiguous?: boolean;
+  warning?: string;
 }
 
 // GitStatus is the host's readiness to do source control at all, independent of
@@ -404,6 +417,8 @@ export interface GitHubRepo {
   name: string;
   full_name: string;
   html_url: string;
+  clone_url: string;
+  ssh_url: string;
   default_branch: string;
   description: string;
   private: boolean;

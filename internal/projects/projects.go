@@ -22,18 +22,19 @@ var safeProjectID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // Project mirrors one entry in projects.yaml (R5.10). `Path` is relative to the
 // projects directory.
 type Project struct {
-	ID           string   `yaml:"id" json:"id"`
-	Name         string   `yaml:"name" json:"name"`
-	Description  string   `yaml:"description" json:"description"`
-	Color        string   `yaml:"color,omitempty" json:"color"`
-	Path         string   `yaml:"path" json:"path"`
-	Status       string   `yaml:"status" json:"status"`
-	Stack        []string `yaml:"stack" json:"stack"`
-	Repo         *Repo    `yaml:"repo" json:"repo"`
-	Git          *Git     `yaml:"git,omitempty" json:"git,omitempty"`
-	Roadmap      []string `yaml:"roadmap" json:"roadmap"`
-	Notes        string   `yaml:"notes" json:"notes"`
-	Instructions string   `yaml:"instructions,omitempty" json:"instructions"`
+	ID           string    `yaml:"id" json:"id"`
+	Name         string    `yaml:"name" json:"name"`
+	Description  string    `yaml:"description" json:"description"`
+	Color        string    `yaml:"color,omitempty" json:"color"`
+	Path         string    `yaml:"path" json:"path"`
+	Status       string    `yaml:"status" json:"status"`
+	Stack        []string  `yaml:"stack" json:"stack"`
+	Repo         *Repo     `yaml:"repo" json:"repo"`
+	Git          *Git      `yaml:"git,omitempty" json:"git,omitempty"`
+	GitState     *GitState `yaml:"-" json:"git_state,omitempty"`
+	Roadmap      []string  `yaml:"roadmap" json:"roadmap"`
+	Notes        string    `yaml:"notes" json:"notes"`
+	Instructions string    `yaml:"instructions,omitempty" json:"instructions"`
 }
 
 // Branching policies.
@@ -75,6 +76,23 @@ type Git struct {
 	BranchPrefixes map[string]string `yaml:"branch_prefixes,omitempty" json:"branch_prefixes"`
 	// Commit is CommitAsk or CommitAuto.
 	Commit string `yaml:"commit,omitempty" json:"commit"`
+	// PullOnSessionStart updates the default branch before a newly-created
+	// session starts. It is deliberately opt-in so existing projects never gain
+	// network or branch-changing behaviour on upgrade.
+	PullOnSessionStart bool `yaml:"pull_on_session_start,omitempty" json:"pull_on_session_start"`
+}
+
+// GitState is the computed, non-persistent view of the repository currently on
+// disk. The Git block above is policy; this state lets the UI distinguish that
+// policy from a checkout that is missing, ignored, or temporarily unready.
+type GitState struct {
+	Detected        bool   `json:"detected"`
+	Ready           bool   `json:"ready"`
+	Root            string `json:"root,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	Remote          string `json:"remote,omitempty"`
+	RemoteAmbiguous bool   `json:"remote_ambiguous,omitempty"`
+	Warning         string `json:"warning,omitempty"`
 }
 
 // defaultBranchPrefixes are used when a project does not name its own.
@@ -453,6 +471,7 @@ func (p *Project) UnmarshalYAML(value *yaml.Node) error {
 	p.Instructions = raw.Instructions
 	p.Repo = repoFromNode(raw.Repo)
 	p.Git = normalizeGit(raw.Git)
+	p.GitState = nil
 	return nil
 }
 
@@ -517,6 +536,15 @@ func SnapshotRepo(owner, name, htmlURL, defaultBranch, ref string) Repo {
 		SourceKind:    "archive",
 	}
 	normalizeRepo(&repo)
+	return repo
+}
+
+// CheckoutRepo returns normalized metadata for a real Git checkout obtained
+// from GitHub rather than an archive snapshot.
+func CheckoutRepo(owner, name, htmlURL, defaultBranch, ref string) Repo {
+	repo := SnapshotRepo(owner, name, htmlURL, defaultBranch, ref)
+	repo.Mode = "git"
+	repo.SourceKind = "clone"
 	return repo
 }
 

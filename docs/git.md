@@ -35,6 +35,7 @@ projects:
       branching: branch-per-task           # or: direct
       branch_prefixes: {feature: feature/, bugfix: fix/, chore: chore/}
       commit: ask                          # ask | auto
+      pull_on_session_start: false         # update default branch for each new session
 ```
 
 Three postures, expressed by two fields:
@@ -53,6 +54,19 @@ did until you opt in.
 puts each piece of work on its own branch, named `<prefix><slug>`.
 `commit: ask` means the agent commits only when you ask; `commit: auto` lets it
 commit its own completed work.
+
+When `pull_on_session_start` is true, Podiom fetches and fast-forwards the
+configured default branch before creating a new session. It never resets,
+rebases, merges with a merge commit, or stashes automatically. A dirty tree,
+divergence, missing upstream, active turn in the shared checkout, or network or
+authentication failure becomes a visible session warning; the session still
+opens with the checkout unchanged.
+
+Podiom also inspects the project workspace whenever projects are read and before
+project work starts. A repository created later by a user or agent is adopted
+when the project has no explicit `git:` declaration, including its current
+branch and `origin` (or sole) remote. An explicitly disabled block remains an
+override even when `.git` exists.
 
 ## How the agent sees it
 

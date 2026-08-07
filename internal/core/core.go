@@ -85,6 +85,9 @@ type Core struct {
 	// turn. The dream excludes such sessions so it never contends with live work.
 	// nil means "assume no active turns" (e.g. tests without a server).
 	activeTurn func(sessionID string) bool
+	// projectGitLocks serializes repository discovery, materialization, and
+	// startup updates per project without making unrelated projects wait.
+	projectGitLocks sync.Map
 
 	capMu    sync.Mutex
 	capCache map[string]capabilityCacheEntry

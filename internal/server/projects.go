@@ -9,6 +9,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	podiomgit "github.com/Podiom/Podiom/internal/git"
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
@@ -67,6 +68,8 @@ type projectRepoRequest struct {
 	Name          string `json:"name"`
 	FullName      string `json:"full_name"`
 	HTMLURL       string `json:"html_url"`
+	CloneURL      string `json:"clone_url"`
+	SSHURL        string `json:"ssh_url"`
 	DefaultBranch string `json:"default_branch"`
 	Ref           string `json:"ref"`
 	Description   string `json:"description"`
@@ -171,6 +174,14 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if req.Git != nil && req.Git.Enabled {
+			prepared, err := s.core.PrepareProjectGit(r.Context(), id, *req.Git)
+			if err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+			req.Git = &prepared
+		}
 		updated, err := s.core.UpdateProject(r.Context(), id, projects.ProjectPatch{
 			Name:        req.Name,
 			Description: req.Description,
@@ -222,13 +233,27 @@ func (s *Server) handleProjectFromGitHub(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, nil, err)
 		return
 	}
+	remotes := preferredGitHubRemotes(req.SSHURL, req.CloneURL, req.HTMLURL)
+	remote := ""
+	if len(remotes) > 0 {
+		remote = remotes[0]
+	}
+	if cloned, cloneErr := s.core.CloneGitHubProject(r.Context(), project.ID, projects.CheckoutRepo(owner, name, req.HTMLURL, req.DefaultBranch, req.Ref), remotes); cloneErr == nil {
+		writeJSON(w, cloned, nil)
+		return
+	} else {
+		s.log.Warn("github project clone failed; using snapshot fallback", "event", "github", "project", project.ID, "repo", owner+"/"+name, "error", cloneErr)
+	}
 	repo := projects.SnapshotRepo(owner, name, req.HTMLURL, req.DefaultBranch, req.Ref)
 	result, err := s.github.SyncProject(r.Context(), podiomgithub.SyncRequest{Project: project, Repo: repo, Force: req.Force})
 	if writeGitHubProjectError(w, err) {
 		return
 	}
 	synced := result.Repo
-	updated, err := s.core.UpdateProject(r.Context(), project.ID, projects.ProjectPatch{Repo: &synced})
+	updated, err := s.core.UpdateProject(r.Context(), project.ID, projects.ProjectPatch{
+		Repo: &synced,
+		Git:  &projects.Git{Enabled: true, Remote: remote, DefaultBranch: req.DefaultBranch},
+	})
 	writeJSON(w, updated, err)
 }
 
@@ -270,6 +295,11 @@ func (s *Server) handleProjectRepo(w http.ResponseWriter, r *http.Request, id st
 		}
 		if project.Repo == nil {
 			http.Error(w, "project has no connected repo", http.StatusBadRequest)
+			return
+		}
+		if project.Repo.Mode == "git" {
+			updated, err := s.core.SyncProjectGit(r.Context(), id)
+			writeJSON(w, updated, err)
 			return
 		}
 		var req struct {
@@ -346,6 +376,25 @@ func repoOwnerName(req projectRepoRequest) (string, string) {
 		return parts[0], parts[1]
 	}
 	return "", ""
+}
+
+func preferredGitHubRemotes(sshURL, cloneURL, htmlURL string) []string {
+	sshURL, cloneURL, htmlURL = strings.TrimSpace(sshURL), strings.TrimSpace(cloneURL), strings.TrimSpace(htmlURL)
+	var candidates []string
+	if podiomgit.PublicKey() != "" {
+		candidates = []string{sshURL, cloneURL, htmlURL}
+	} else {
+		candidates = []string{cloneURL, htmlURL, sshURL}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, candidate := range candidates {
+		if candidate != "" && !seen[candidate] {
+			seen[candidate] = true
+			out = append(out, candidate)
+		}
+	}
+	return out
 }
 
 type taskCreateRequest struct {

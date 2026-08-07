@@ -135,6 +135,38 @@ func TestStatusPorcelainReportsWorkingTree(t *testing.T) {
 	}
 }
 
+func TestRepositoryRootAndRemoteDiscovery(t *testing.T) {
+	r := testRunner(t)
+	ctx := context.Background()
+	dir := newRepo(t, r)
+	nested := filepath.Join(dir, "pkg", "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.RepositoryRoot(ctx, nested)
+	if err != nil {
+		t.Fatalf("repository root: %v", err)
+	}
+	wantRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != wantRoot {
+		t.Fatalf("repository root = %q, want %q", root, wantRoot)
+	}
+	remote := filepath.Join(t.TempDir(), "origin.git")
+	if err := r.SetRemote(ctx, dir, "origin", remote); err != nil {
+		t.Fatalf("set remote: %v", err)
+	}
+	name, err := r.PreferredRemote(ctx, nested)
+	if err != nil || name != "origin" {
+		t.Fatalf("preferred remote = %q, %v", name, err)
+	}
+	if got, err := r.RemoteURL(ctx, nested, name); err != nil || got != remote {
+		t.Fatalf("remote URL = %q, %v; want %q", got, err, remote)
+	}
+}
+
 // A missing config key is "not set", not a failure — Check depends on this to
 // report a missing identity rather than erroring.
 func TestConfigGetMissingKeyIsEmpty(t *testing.T) {

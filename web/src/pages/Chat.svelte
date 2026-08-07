@@ -2044,6 +2044,13 @@
       </div>
     {/if}
 
+    {#if activeSession?.SourceControlWarning}
+      <div class="plan-banner awaiting">
+        <span class="plan-banner-dot"></span>
+        <span>{activeSession.SourceControlWarning}</span>
+      </div>
+    {/if}
+
     <div
       class="msgs"
       bind:this={msgsEl}

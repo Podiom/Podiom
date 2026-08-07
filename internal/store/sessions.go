@@ -20,8 +20,8 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions
 		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, goal_id, project_id, rolling_summary, provider_handle,
-		 plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 source_control_warning, plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
 		sess.AgentName,
 		sess.Name,
@@ -40,6 +40,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 		sess.ProjectID,
 		sess.RollingSummary,
 		sess.ProviderHandle,
+		sess.SourceControlWarning,
 		sess.PlanState,
 		boolInt(sess.PlanExplicit),
 		sess.PlanInfo.FilePath,
@@ -58,7 +59,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
-		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
 		created_at, updated_at
@@ -78,7 +79,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
-		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
 		created_at, updated_at
@@ -105,7 +106,7 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
-		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
 		created_at, updated_at
@@ -132,7 +133,7 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
-		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
 		created_at, updated_at
@@ -158,7 +159,7 @@ func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Sessio
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
-		plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
+		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
 		created_at, updated_at
@@ -190,6 +191,24 @@ func (s *Store) UpdateSessionSettings(ctx context.Context, id, model, effort str
 	changed, err := res.RowsAffected()
 	if err != nil {
 		return Session{}, fmt.Errorf("update session %q rows affected: %w", id, err)
+	}
+	if changed == 0 {
+		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
+	}
+	return s.GetSession(ctx, id)
+}
+
+// UpdateSessionSourceControlWarning stores a non-fatal startup warning.
+func (s *Store) UpdateSessionSourceControlWarning(ctx context.Context, id, warning string) (Session, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET source_control_warning = ?, updated_at = datetime('now')
+		WHERE id = ?`, warning, id)
+	if err != nil {
+		return Session{}, fmt.Errorf("update session %q source-control warning: %w", id, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return Session{}, fmt.Errorf("update session %q source-control warning rows affected: %w", id, err)
 	}
 	if changed == 0 {
 		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
@@ -578,6 +597,7 @@ func scanSession(row scanner) (Session, error) {
 		&sess.ProjectID,
 		&sess.RollingSummary,
 		&sess.ProviderHandle,
+		&sess.SourceControlWarning,
 		&sess.PlanState,
 		&sess.PlanExplicit,
 		&sess.PlanInfo.FilePath,
