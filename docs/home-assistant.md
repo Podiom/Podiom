@@ -116,6 +116,29 @@ Everything persistent lives on `/data` (`PODIOM_HOME=/data/podiom`,
   disabled in HA mode). Each release pins specific `claude`/`codex` CLI
   versions — the changelog lists them.
 
+## Language toolchains
+
+The container is sealed — agents cannot `apt install` a compiler, and anything
+written outside `/data` is lost on the next app update. So the **Language
+toolchains** option on the app's Configuration page decides what the container
+provides: `go`, `node`, `python`, `rust`, `swift`.
+
+Ticked toolchains install into `/data/podiom/toolchains/` in the background at
+start and are on `PATH` for every agent process, Claude- and Codex-backed
+alike — unlike per-agent [workspace tools](workspace-tools.md), these come from
+the container environment, which the long-lived Codex app-server inherits.
+Unticking one deletes it. `node` is listed but fixed, because the bundled
+`claude` and `codex` run on it.
+
+This is HA-only by design. On a standalone install you already own the host —
+install what you need there.
+
+Note on Swift: this is the open-source toolchain (SwiftPM, `swift build`,
+`swift test`). `xcodebuild`, the iOS Simulator and code signing need Xcode,
+which is macOS-only and cannot run in this container.
+
+Full behaviour, disk costs and caveats: `ha/addon/DOCS.md`.
+
 ## Always-on scheduling
 
 The app starts on boot and is watchdog-supervised, so [schedules](scheduling.md)

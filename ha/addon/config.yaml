@@ -28,9 +28,20 @@ hassio_api: true
 # gateway_token is pseudo-read-only: HA schemas have no true read-only field,
 # so token-sync rewrites it from disk truth on every start and the translation
 # labels it "managed by Podiom".
+#
+# `toolchains` picks which language toolchains the container provides. They are
+# installed into /data on start by the `toolchains` service, never baked into
+# the image — see ha/rootfs/usr/local/bin/podiom-toolchains. node is listed for
+# visibility but is image-provided and cannot be removed: the bundled claude
+# and codex CLIs run on it.
 options:
   gateway_token: ""
   rotate_token: false
+  toolchains:
+    - node
+    - python
 schema:
   gateway_token: str?
   rotate_token: bool
+  toolchains:
+    - "list(go|node|python|rust|swift)"

@@ -1,0 +1,10 @@
+#!/command/with-contenv bashio
+# toolchains longrun: installs the language toolchains the user ticked in the
+# add-on options into /data, then parks. Deliberately NOT a dependency of
+# podiomd — a Swift toolchain is a multi-hundred-MB download and must not hold
+# up the daemon or trip the HA watchdog. All logic lives in the script so it
+# can also be exercised outside s6 (smoke test).
+#
+# No `finish` script, unlike podiomd/ttyd: a failed toolchain install must
+# never halt the container.
+exec s6-setuidgid podiom /usr/local/bin/podiom-toolchains

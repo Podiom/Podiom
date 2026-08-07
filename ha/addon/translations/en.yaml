@@ -15,3 +15,15 @@ configuration:
       generates a new token, invalidates the old one everywhere (open browser
       tabs will ask for the new token), updates the field above, and switches
       this toggle back off.
+  toolchains:
+    name: Language toolchains
+    description: >-
+      Compilers and runtimes your agents can use. Saving restarts the add-on,
+      then the toolchains you picked download in the background — watch the Log
+      tab for progress; they stay on /data across restarts and updates.
+      Approximate disk use: go ~265 MB, python ~90 MB, rust ~1.5 GB, swift
+      ~3.3 GB. Removing one from the list deletes it and frees the space. "node"
+      is built into the add-on and cannot be removed — the bundled Claude and
+      Codex CLIs run on it. "swift" is the open-source toolchain (swift build,
+      swift test, SwiftPM); building iOS .app bundles, running simulators and
+      code signing all need Xcode on a Mac and are not possible here.

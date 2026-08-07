@@ -30,6 +30,21 @@ trap cleanup EXIT
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok: $*"; }
 
+# run_toolchains <ticked-list> [extra docker -e flags…]
+# Drives podiom-toolchains with a given `toolchains` selection. There is no
+# Supervisor here, so PODIOM_TOOLCHAINS stands in for /data/options.json.
+# PODIOM_TOOLCHAINS_NO_PARK stops the script from parking on `sleep infinity`
+# as it does under s6 — otherwise every call would have to be killed by its
+# own timeout and the suite would spend minutes asleep. The timeout is then
+# only a backstop against a genuinely hung download.
+run_toolchains() {
+    local ticked="$1"; shift
+    docker exec --user podiom \
+        -e "PODIOM_TOOLCHAINS=${ticked}" \
+        -e PODIOM_TOOLCHAINS_NO_PARK=1 \
+        "$@" "${cid}" timeout 600 podiom-toolchains
+}
+
 echo "== starting ${IMAGE}"
 cid="$(
     docker run -d \
@@ -240,6 +255,114 @@ if echo "${out}" | grep -qF "${STUB_TOKEN}"; then
     fail "token-sync printed the stubbed token value"
 fi
 pass "token-sync no-ops quietly without a Supervisor"
+
+echo "== toolchain bin dirs are on PATH even when nothing is installed"
+# PATH entries for absent directories are harmless, and lookup happens at exec
+# time — that is what lets a background install become usable without a second
+# restart. Assert the image env, which is what podiomd and its children inherit.
+tc_path="$(docker exec --user podiom "${cid}" printenv PATH)"
+for d in python go cargo swiftly; do
+    case ":${tc_path}:" in
+        *":/data/podiom/toolchains/${d}/bin:"*) ;;
+        *) fail "/data/podiom/toolchains/${d}/bin missing from PATH: ${tc_path}" ;;
+    esac
+done
+# The /data Python must win over the image's, or ticking `python` does nothing.
+case "${tc_path}" in
+    /data/podiom/toolchains/python/bin:*) ;;
+    *) fail "toolchains/python/bin does not precede the rest of PATH: ${tc_path}" ;;
+esac
+pass "all four toolchain bin dirs on PATH, python first"
+
+echo "== cargo/swift shims can find their toolchain at runtime"
+# These are runtime settings, not just install-time: without them the shims
+# look under $HOME and a successful install still yields a broken `swift`.
+for v in RUSTUP_HOME:/data/podiom/toolchains/rustup \
+         CARGO_HOME:/data/podiom/toolchains/cargo \
+         SWIFTLY_HOME_DIR:/data/podiom/toolchains/swiftly \
+         SWIFTLY_BIN_DIR:/data/podiom/toolchains/swiftly/bin \
+         SWIFTLY_TOOLCHAINS_DIR:/data/podiom/toolchains/swiftly/toolchains; do
+    name="${v%%:*}"; want="${v#*:}"
+    got="$(docker exec --user podiom "${cid}" printenv "${name}" || true)"
+    [ "${got}" = "${want}" ] || fail "${name} is '${got}', expected '${want}'"
+done
+# A login shell re-runs /etc/profile, which rewrites PATH — profile.d must put
+# the toolchain entries back rather than leave the terminal without them.
+docker exec --user podiom "${cid}" bash -lc \
+    'case ":$PATH:" in *":/data/podiom/toolchains/go/bin:"*) exit 0 ;; *) exit 1 ;; esac' \
+    || fail "login shell lost the toolchain PATH entries"
+pass "toolchain home dirs exported, and login shells keep the PATH"
+
+echo "== toolchains reconciler: node is a no-op, and cannot be removed"
+out="$(run_toolchains node 2>&1 || true)"
+echo "${out}" | grep -q "built into the add-on image" \
+    || fail "node not reported as image-provided; output: ${out}"
+out="$(run_toolchains "" 2>&1 || true)"
+echo "${out}" | grep -q "node cannot be removed" \
+    || fail "unticking node was not refused; output: ${out}"
+docker exec --user podiom "${cid}" node --version >/dev/null \
+    || fail "node disappeared after being unticked"
+docker exec --user podiom "${cid}" claude --version >/dev/null \
+    || fail "claude broke after node was unticked"
+docker exec --user podiom "${cid}" codex --version >/dev/null \
+    || fail "codex broke after node was unticked"
+pass "node no-ops when ticked, is refused when unticked, and the CLIs survive"
+
+echo "== toolchains reconciler is idempotent and removes on untick"
+docker exec --user podiom "${cid}" mkdir -p /data/podiom/toolchains/go/bin
+out="$(run_toolchains go 2>&1 || true)"
+echo "${out}" | grep -q "go already installed" \
+    || fail "reconciler did not treat an existing directory as installed; output: ${out}"
+out="$(run_toolchains "" 2>&1 || true)"
+echo "${out}" | grep -q "reclaimed" \
+    || fail "removal did not report reclaimed space; output: ${out}"
+docker exec "${cid}" test ! -d /data/podiom/toolchains/go \
+    || fail "unticked go directory still present"
+pass "existing installs are left alone; unticking deletes and reports"
+
+echo "== toolchains reconciler names a missing pin instead of dying on it"
+# bashio enables nounset; the script turns it back off precisely so a pin that
+# did not survive s6's with-contenv envdir reports itself rather than aborting
+# the loop with "unbound variable".
+out="$(run_toolchains "go node" -e GO_VERSION= 2>&1 || true)"
+echo "${out}" | grep -q "missing pin(s) in the container environment: GO_VERSION" \
+    || fail "a missing pin was not reported by name; output: ${out}"
+echo "${out}" | grep -q "unbound variable" \
+    && fail "a missing pin still aborted with an unbound-variable error"
+echo "${out}" | grep -q "built into the add-on image" \
+    || fail "reconciler stopped at the failed toolchain instead of continuing; output: ${out}"
+pass "a missing pin is named, and the remaining toolchains are still processed"
+
+echo "== toolchains reconciler rejects a bad checksum without leaving debris"
+out="$(run_toolchains go \
+    -e GO_SHA256_AMD64=0000000000000000000000000000000000000000000000000000000000000000 \
+    -e GO_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000 \
+    2>&1 || true)"
+echo "${out}" | grep -q "Checksum mismatch" \
+    || fail "a bad checksum was not detected; output: ${out}"
+docker exec "${cid}" test ! -d /data/podiom/toolchains/go \
+    || fail "failed install left a go directory behind"
+docker exec "${cid}" test ! -f /data/podiom/toolchains/.go-download.tar.gz \
+    || fail "failed install left its download behind"
+pass "checksum mismatch is refused and leaves /data clean"
+
+# Real installs are large; opt in with SMOKE_TOOLCHAINS=1.
+if [ "${SMOKE_TOOLCHAINS:-0}" = "1" ]; then
+    echo "== python installs into /data and shadows the image interpreter"
+    run_toolchains python >/dev/null 2>&1 || true
+    [ "$(docker exec --user podiom "${cid}" bash -c 'command -v python3')" \
+        = "/data/podiom/toolchains/python/bin/python3" ] \
+        || fail "python3 does not resolve into /data after install"
+    # The load-bearing claim: pipx venvs pin their interpreter absolutely, so
+    # shadowing python3 on PATH must not disturb mcp-proxy or uv.
+    docker exec --user podiom "${cid}" mcp-proxy --help >/dev/null 2>&1 \
+        || fail "mcp-proxy broke once /data python shadowed the image python3"
+    docker exec --user podiom "${cid}" uvx --version >/dev/null 2>&1 \
+        || fail "uvx broke once /data python shadowed the image python3"
+    pass "python installs to /data, and mcp-proxy/uv are unaffected"
+else
+    echo "  skip: real toolchain installs (set SMOKE_TOOLCHAINS=1)"
+fi
 
 echo "== container log must not contain the real gateway token"
 if [ -n "${real_token}" ]; then

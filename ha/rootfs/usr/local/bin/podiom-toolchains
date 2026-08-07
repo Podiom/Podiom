@@ -1,0 +1,401 @@
+#!/usr/bin/env bashio
+# ==============================================================================
+# podiom-toolchains: reconcile /data/podiom/toolchains/ against the add-on's
+# `toolchains` option.
+#
+# Runs as the `podiom` user, in the background, alongside podiomd — a Swift
+# toolchain is a multi-hundred-MB download and must never block startup or trip
+# the HA watchdog. Progress is the add-on Log tab.
+#
+# State is the filesystem: a toolchain is installed iff its directory exists.
+# No state file, so nothing can drift out of sync with what is on disk, and a
+# failed install is simply retried on the next start.
+#
+# PATH and the RUSTUP_HOME/SWIFTLY_HOME_DIR runtime settings come from the
+# image environment (see ha/Dockerfile), not from here — the installers and the
+# shims they produce must never disagree about where a toolchain lives.
+#
+# Contract: this script must NOT exit — the s6 longrun would restart-loop.
+# Every path ends at park(). The service also has no `finish` script, so a
+# failed install never halts the container.
+# ==============================================================================
+
+# bashio turns on errexit, errtrace and nounset for us. All three are wrong
+# here and are switched back off deliberately: one toolchain failing must not
+# abandon the others, and a pin arriving empty (with-contenv rebuilds the
+# environment from s6's envdir) must produce a readable error rather than
+# "unbound variable" halfway through a loop. Failures are handled explicitly
+# instead — see require_pins and the per-installer error paths.
+set +o errexit +o errtrace +o nounset
+set -o pipefail
+
+readonly TOOLCHAINS_DIR="${PODIOM_TOOLCHAINS_DIR:-/data/podiom/toolchains}"
+readonly OPTIONS_FILE="/data/options.json"
+
+# Normally these come from the image env (ha/Dockerfile), which is also what
+# the cargo/swift shims read at runtime. Defaulting them here keeps the script
+# runnable on its own without any path resolving to the empty string.
+: "${RUSTUP_HOME:=${TOOLCHAINS_DIR}/rustup}"
+: "${CARGO_HOME:=${TOOLCHAINS_DIR}/cargo}"
+: "${SWIFTLY_HOME_DIR:=${TOOLCHAINS_DIR}/swiftly}"
+: "${SWIFTLY_BIN_DIR:=${SWIFTLY_HOME_DIR}/bin}"
+# swiftly does NOT derive this from SWIFTLY_HOME_DIR: left unset, the ~3 GB
+# toolchain installs under $HOME/.local/share/swiftly, outside anything we
+# manage or could reclaim on untick.
+: "${SWIFTLY_TOOLCHAINS_DIR:=${SWIFTLY_HOME_DIR}/toolchains}"
+export RUSTUP_HOME CARGO_HOME SWIFTLY_HOME_DIR SWIFTLY_BIN_DIR SWIFTLY_TOOLCHAINS_DIR
+
+# Every toolchain that can be ticked. `node` is here but is image-provided —
+# see install_node.
+readonly ALL_TOOLCHAINS="go node python rust swift"
+
+# Rough installed footprint in MiB, for the pre-install free-space check.
+# Deliberately generous: refusing an install is far kinder than filling up the
+# SD card a Home Assistant install is usually running from.
+readonly SIZE_go=300
+readonly SIZE_node=0
+readonly SIZE_python=100
+readonly SIZE_rust=1500
+readonly SIZE_swift=3400
+
+# Longruns must not exit (s6 would restart-loop); park instead of quitting.
+# PODIOM_TOOLCHAINS_NO_PARK is a test seam: the smoke test drives this script
+# many times over, and without it every run would have to be killed by its own
+# timeout, turning the suite into minutes of waiting. Never set in the add-on.
+park() {
+    if [ -n "${PODIOM_TOOLCHAINS_NO_PARK:-}" ]; then
+        return 0
+    fi
+    exec sleep infinity
+}
+
+# ---- helpers ----------------------------------------------------------------
+
+# arch_suffix <style> — map the container arch onto each vendor's naming.
+# Callers use this in a command substitution, so the error goes to stderr —
+# anything on stdout here would be captured as if it were the answer.
+arch_suffix() {
+    local style="$1" machine
+    machine="$(uname -m)"
+    case "${style}:${machine}" in
+        go:x86_64)      echo "amd64" ;;
+        go:aarch64)     echo "arm64" ;;
+        uname:x86_64)   echo "x86_64" ;;
+        uname:aarch64)  echo "aarch64" ;;
+        triple:x86_64)  echo "x86_64-unknown-linux-gnu" ;;
+        triple:aarch64) echo "aarch64-unknown-linux-gnu" ;;
+        *)
+            bashio::log.error "Unsupported architecture: ${machine}" >&2
+            return 1
+            ;;
+    esac
+}
+
+# pin_suffix — the AMD64/ARM64 half of a per-arch pin variable name.
+pin_suffix() {
+    case "$(uname -m)" in
+        x86_64)  echo "AMD64" ;;
+        aarch64) echo "ARM64" ;;
+        *) return 1 ;;
+    esac
+}
+
+# pin <NAME> — read a per-arch pin (NAME_AMD64 / NAME_ARM64) from the env.
+pin() {
+    local suffix
+    suffix="$(pin_suffix)" || return 1
+    local var="$1_${suffix}"
+    echo "${!var:-}"
+}
+
+# fetch_verified <url> <sha256> <dest> — download, check the pinned digest, and
+# only then move it into place. A mismatch discards the download.
+fetch_verified() {
+    local url="$1" want="$2" dest="$3" tmp got
+    # Stage next to the destination, not in /tmp: these run to a couple of
+    # hundred MB, and a same-filesystem mv is a rename rather than a copy.
+    tmp="$(mktemp "${dest}.XXXXXX")" || return 1
+
+    if ! curl -fsSL -o "${tmp}" "${url}"; then
+        bashio::log.error "Download failed: ${url}"
+        rm -f "${tmp}"
+        return 1
+    fi
+    got="$(sha256sum "${tmp}" | cut -d' ' -f1)"
+    if [ "${got}" != "${want}" ]; then
+        bashio::log.error "Checksum mismatch for ${url}"
+        bashio::log.error "  expected ${want}"
+        bashio::log.error "  got      ${got}"
+        bashio::log.error "Download discarded; toolchain not installed."
+        rm -f "${tmp}"
+        return 1
+    fi
+    mv "${tmp}" "${dest}"
+}
+
+# require_pins <toolchain> <VAR>… — every pin an installer needs must have
+# arrived from the image environment. They can go missing if a build-arg was
+# dropped or if s6's with-contenv envdir is incomplete, and the failure is far
+# easier to act on named than as a URL with an empty version in it.
+require_pins() {
+    local name="$1"; shift
+    local var missing=""
+    for var in "$@"; do
+        [ -z "${!var:-}" ] && missing="${missing} ${var}"
+    done
+    if [ -n "${missing}" ]; then
+        bashio::log.error "${name}: missing pin(s) in the container environment:${missing}"
+        bashio::log.error "These come from ha/versions.env via docker build-args; the image may be built wrong."
+        return 1
+    fi
+    return 0
+}
+
+# have_space <toolchain> — refuse to start an install that would not fit.
+have_space() {
+    local name="$1" need_var="SIZE_$1" need avail
+    need="${!need_var:-0}"
+    [ "${need}" -eq 0 ] && return 0
+
+    avail="$(df -Pm "${TOOLCHAINS_DIR}" 2>/dev/null | awk 'NR==2 {print $4}')"
+    if [ -z "${avail}" ]; then
+        bashio::log.warning "Could not determine free space on /data; attempting ${name} anyway"
+        return 0
+    fi
+    # Keep a 500 MiB margin so an install never fills the volume completely.
+    if [ "${avail}" -lt "$((need + 500))" ]; then
+        bashio::log.error \
+            "Not enough space for ${name}: needs ~${need} MiB plus a 500 MiB margin, ${avail} MiB free on /data"
+        bashio::log.error "Free up space or untick ${name}, then restart the add-on."
+        return 1
+    fi
+    return 0
+}
+
+# ---- installers -------------------------------------------------------------
+# Each installs into TOOLCHAINS_DIR and must leave nothing behind on failure —
+# the reconciler treats a surviving directory as proof of a successful install.
+
+install_go() {
+    local arch url tmp
+    require_pins go GO_VERSION "GO_SHA256_$(pin_suffix)" || return 1
+    arch="$(arch_suffix go)" || return 1
+    url="https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"
+    tmp="${TOOLCHAINS_DIR}/.go-download.tar.gz"
+
+    bashio::log.info "Installing Go ${GO_VERSION} (${arch})…"
+    fetch_verified "${url}" "$(pin GO_SHA256)" "${tmp}" || return 1
+
+    # The tarball unpacks a top-level go/ directory, which is exactly the
+    # layout TOOLCHAINS_DIR wants. `go` derives GOROOT from its own location,
+    # so no further wiring is needed.
+    if ! tar -C "${TOOLCHAINS_DIR}" -xzf "${tmp}"; then
+        bashio::log.error "Go: unpack failed"
+        rm -rf "${tmp}" "${TOOLCHAINS_DIR}/go"
+        return 1
+    fi
+    rm -f "${tmp}"
+}
+
+install_rust() {
+    local triple boot init
+    require_pins rust RUST_VERSION RUSTUP_INIT_VERSION \
+        "RUSTUP_INIT_SHA256_$(pin_suffix)" || return 1
+    triple="$(arch_suffix triple)" || return 1
+    # rustup-init is a multi-call binary: it dispatches on argv[0] and refuses
+    # to run under any other name ("unknown proxy name"). So it gets its own
+    # directory rather than a dot-prefixed filename.
+    boot="${TOOLCHAINS_DIR}/.rustup-boot"
+    init="${boot}/rustup-init"
+
+    bashio::log.info "Installing Rust ${RUST_VERSION} via rustup ${RUSTUP_INIT_VERSION}…"
+    rm -rf "${boot}"
+    mkdir -p "${boot}"
+    fetch_verified \
+        "https://static.rust-lang.org/rustup/archive/${RUSTUP_INIT_VERSION}/${triple}/rustup-init" \
+        "$(pin RUSTUP_INIT_SHA256)" "${init}" || { rm -rf "${boot}"; return 1; }
+    chmod 0755 "${init}"
+
+    # RUSTUP_HOME/CARGO_HOME come from the image env. --no-modify-path because
+    # PATH is the image's job, not a shell profile's.
+    if ! "${init}" -y --no-modify-path --default-toolchain "${RUST_VERSION}"; then
+        bashio::log.error "Rust: rustup-init failed"
+        rm -rf "${boot}" "${RUSTUP_HOME}" "${CARGO_HOME}"
+        return 1
+    fi
+    rm -rf "${boot}"
+}
+
+install_swift() {
+    local arch tmp boot
+    require_pins swift SWIFT_VERSION SWIFTLY_VERSION SWIFTLY_PLATFORM \
+        "SWIFTLY_SHA256_$(pin_suffix)" || return 1
+    arch="$(arch_suffix uname)" || return 1
+    tmp="${TOOLCHAINS_DIR}/.swiftly-download.tar.gz"
+    boot="${TOOLCHAINS_DIR}/.swiftly-bootstrap"
+
+    bashio::log.info "Installing Swift ${SWIFT_VERSION} via swiftly ${SWIFTLY_VERSION} (${arch})…"
+    bashio::log.info "This is a large download and can take several minutes."
+
+    # Unpack the bootstrap somewhere other than SWIFTLY_HOME_DIR so `swiftly
+    # init` gets to create that directory itself.
+    rm -rf "${boot}"
+    mkdir -p "${boot}"
+    if ! fetch_verified \
+            "https://download.swift.org/swiftly/linux/swiftly-${SWIFTLY_VERSION}-${arch}.tar.gz" \
+            "$(pin SWIFTLY_SHA256)" "${tmp}"; then
+        rm -rf "${boot}"
+        return 1
+    fi
+    if ! tar -C "${boot}" -xzf "${tmp}"; then
+        bashio::log.error "Swift: swiftly unpack failed"
+        rm -rf "${tmp}" "${boot}"
+        return 1
+    fi
+    rm -f "${tmp}"
+
+    # SWIFTLY_HOME_DIR/SWIFTLY_BIN_DIR come from the image env, so the shims
+    # this produces resolve the same paths at runtime.
+    # --skip-install: init only bootstraps swiftly; the toolchain version we
+    # actually want is pinned on the next line.
+    # --platform: swiftly cannot auto-detect Debian Trixie and would abort with
+    # "Unsupported Linux platform"; see SWIFTLY_PLATFORM in ha/versions.env.
+    if ! "${boot}/swiftly" init --assume-yes --skip-install --no-modify-profile \
+            --platform "${SWIFTLY_PLATFORM:-debian12}"; then
+        bashio::log.error "Swift: swiftly init failed"
+        rm -rf "${boot}" "${SWIFTLY_HOME_DIR}"
+        return 1
+    fi
+    rm -rf "${boot}"
+
+    # swiftly exits non-zero when it merely *warns* about a host dependency,
+    # even after installing the toolchain successfully — trusting the exit code
+    # would delete a working 1 GB install. Judge it on whether a usable `swift`
+    # actually appeared instead.
+    #
+    # Expect one such warning on Trixie: swiftly's debian12 profile checks for
+    # `libstdc++-12-dev` by name, while Trixie ships those headers as
+    # libstdc++-14-dev (pulled in by g++ in the image). The C++ headers ARE
+    # present and `swift build` links fine — the check is a false negative from
+    # the platform pin, not a real missing dependency.
+    "${SWIFTLY_BIN_DIR}/swiftly" install "${SWIFT_VERSION}" --assume-yes --use
+    local rc=$?
+
+    if ! "${SWIFTLY_BIN_DIR}/swift" --version >/dev/null 2>&1; then
+        bashio::log.error "Swift: toolchain install failed (swiftly exit ${rc}; no usable swift produced)"
+        rm -rf "${SWIFTLY_HOME_DIR}"
+        return 1
+    fi
+    if [ "${rc}" -ne 0 ]; then
+        bashio::log.warning "swiftly exited ${rc} but produced a working toolchain; see its output above"
+    fi
+}
+
+install_python() {
+    require_pins python PYTHON_VERSION || return 1
+    bashio::log.info "Installing Python ${PYTHON_VERSION}…"
+    # --default also creates the unversioned `python`/`python3` shims, which is
+    # what makes the PATH entry useful.
+    if ! UV_PYTHON_INSTALL_DIR="${TOOLCHAINS_DIR}/python" \
+         UV_PYTHON_BIN_DIR="${TOOLCHAINS_DIR}/python/bin" \
+         uv python install "${PYTHON_VERSION}" --default; then
+        bashio::log.error "Python: uv python install failed"
+        rm -rf "${TOOLCHAINS_DIR}/python"
+        return 1
+    fi
+}
+
+# node is image-provided: the bundled claude and codex are global npm packages
+# whose shims resolve `node` through PATH, so a /data Node would silently
+# become the runtime both coding CLIs execute under. Listing it keeps the
+# option honest about what the container has; installing it is a no-op.
+install_node() {
+    bashio::log.info "Node $(node --version 2>/dev/null) is built into the add-on image; nothing to install."
+}
+
+# ---- reconcile --------------------------------------------------------------
+
+# dir_for <toolchain> — the directory whose existence means "installed".
+# Multi-directory toolchains name the one created last.
+dir_for() {
+    case "$1" in
+        go)     echo "${TOOLCHAINS_DIR}/go" ;;
+        python) echo "${TOOLCHAINS_DIR}/python" ;;
+        rust)   echo "${CARGO_HOME}" ;;
+        swift)  echo "${SWIFTLY_HOME_DIR}" ;;
+        *)      echo "" ;;
+    esac
+}
+
+remove_toolchain() {
+    local name="$1" dir reclaimed
+    dir="$(dir_for "${name}")"
+    [ -z "${dir}" ] && return 0
+
+    reclaimed="$(du -sm "${dir}" 2>/dev/null | cut -f1)"
+    bashio::log.warning "Removing ${name} (unticked): ${dir}"
+    rm -rf "${dir}"
+    # Rust owns a second directory.
+    [ "${name}" = "rust" ] && rm -rf "${RUSTUP_HOME}"
+    bashio::log.warning "Removed ${name}; reclaimed ~${reclaimed:-?} MiB on /data"
+}
+
+reconcile() {
+    local wanted=" $1 " name dir
+
+    for name in ${ALL_TOOLCHAINS}; do
+        if [[ "${wanted}" == *" ${name} "* ]]; then
+            if [ "${name}" = "node" ]; then
+                install_node
+                continue
+            fi
+            dir="$(dir_for "${name}")"
+            if [ -d "${dir}" ]; then
+                bashio::log.info "${name} already installed at ${dir}"
+                continue
+            fi
+            have_space "${name}" || continue
+            if "install_${name}"; then
+                bashio::log.info "${name} ready"
+            else
+                bashio::log.error "${name} install failed; it will be retried on the next add-on restart"
+            fi
+        else
+            if [ "${name}" = "node" ]; then
+                bashio::log.warning \
+                    "node cannot be removed: the bundled claude and codex CLIs run on it. Keeping the image's Node."
+                continue
+            fi
+            dir="$(dir_for "${name}")"
+            [ -d "${dir}" ] && remove_toolchain "${name}"
+        fi
+    done
+}
+
+# wanted_toolchains — the ticked list, space separated. Writes nothing but the
+# answer to stdout: the caller reads it through a command substitution.
+# /data/options.json is what the Supervisor writes; outside HA (local docker
+# run / smoke test) there is none, so PODIOM_TOOLCHAINS drives the reconciler.
+wanted_toolchains() {
+    if [ -f "${OPTIONS_FILE}" ]; then
+        jq -r '(.toolchains // []) | join(" ")' "${OPTIONS_FILE}" 2>/dev/null
+        return
+    fi
+    echo "${PODIOM_TOOLCHAINS:-}"
+}
+
+main() {
+    mkdir -p "${TOOLCHAINS_DIR}"
+
+    local wanted
+    wanted="$(wanted_toolchains)"
+    [ -f "${OPTIONS_FILE}" ] \
+        || bashio::log.info "No ${OPTIONS_FILE}; driving from PODIOM_TOOLCHAINS"
+
+    bashio::log.info "Toolchains requested: ${wanted:-(none)}"
+    reconcile "${wanted}"
+    bashio::log.info "Toolchain reconciliation done"
+}
+
+main "$@"
+park

@@ -14,6 +14,8 @@ Nabu Casa) without opening a single port yourself.
 - **mcp-proxy** — bridges remote MCP servers for the CLIs
 - **uv / uvx** — runs MCP servers distributed as Python packages (e.g. `uvx some-mcp`)
 - **ttyd** — the web terminal behind the `/terminal/...` onboarding links
+- **Node and Python** — the runtimes the above are built on, and also the first
+  two entries in **Language toolchains** below
 
 Exact bundled versions are listed in the changelog for every release.
 
@@ -72,6 +74,52 @@ start and copied into the browser at the end of setup.
   value; the `podiom` CLI inside the container picks it up automatically.
 - The *Gateway token* field looks editable but is managed by Podiom — edits
   are overwritten with the real value on the next start.
+
+## Language toolchains
+
+Unlike a standalone Podiom install, this container is sealed: your agents
+cannot `apt install` a compiler, and anything written outside `/data` is lost
+on the next add-on update. So the toolchains available to agents are a
+**Configuration page setting** instead.
+
+Tick what you need under **Language toolchains** and save.
+
+| Toolchain | Provides | Approx. disk |
+| --- | --- | --- |
+| `go` | `go`, `gofmt` | ~265 MB |
+| `node` | `node`, `npm`, `npx` | built in |
+| `python` | `python`, `python3`, `pip` | ~90 MB |
+| `rust` | `rustc`, `cargo`, `rustup` | ~1.5 GB |
+| `swift` | `swift`, `swiftc`, `swift build`, `swift test`, SwiftPM | ~3.3 GB (1 GB download) |
+
+**How it behaves**
+
+- Saving the option **restarts the add-on** — that is how the new list is read
+  and how the toolchains reach every agent's `PATH`.
+- The install then runs **in the background**, so the UI is available
+  immediately. Progress, and any failure, appear in the add-on's **Log** tab.
+  A failed install is retried on the next restart.
+- Toolchains live on `/data/podiom/toolchains/`, so they survive restarts,
+  add-on updates, and land in your Home Assistant backups.
+- **Removing one from the list deletes it** and frees the space.
+- Podiom refuses an install that would not leave ~500 MB free on `/data`, and
+  says so in the log. Worth knowing if you run Home Assistant from an SD card.
+
+**`node` cannot be removed.** It is listed so the set is honest about what the
+container has, but the bundled `claude` and `codex` are npm packages that run
+on it — unticking it is refused and logged. `python` has no such constraint: a
+ticked Python is installed to `/data` and takes precedence for your projects,
+while `mcp-proxy` and `uv` keep using their own bundled interpreter.
+
+**Swift here does not mean iOS builds.** You get the open-source toolchain —
+SwiftPM packages, shared logic modules, `swift build` and `swift test`.
+Building `.app` bundles, running the iOS Simulator and code signing all require
+Xcode, which is macOS-only and cannot run in this container. For those steps,
+point your agent at a Mac (SSH, or a macOS CI runner).
+
+**If an agent asks for a toolchain**, it files a CLI-tool access request.
+Approving it acknowledges the request — Podiom cannot install a system-wide
+toolchain on your behalf — then you tick the box here and save.
 
 ## Backups — free, and worth protecting
 

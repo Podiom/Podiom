@@ -1,5 +1,11 @@
 # Workspace tools
 
+> **Not the same thing as container toolchains.** Workspace tools are per-agent,
+> agent-requested, and work on every installation type. Language *toolchains*
+> (Go, Rust, Swift, …) in the Home Assistant app are container-wide, chosen by
+> you on the app's Configuration page, and shared by every agent — see
+> [home-assistant.md](home-assistant.md#language-toolchains).
+
 Agents can ask for command-line tools they are missing, and — on your approval —
 Podiom installs the tool **into that agent's own workspace**, never host-wide.
 The tool appears on that agent's PATH only, every install is recorded in a
