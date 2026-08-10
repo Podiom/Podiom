@@ -91,7 +91,7 @@ A session on a git-enabled project still opens and still works when git is
 missing or unconfigured — it just cannot do source control. The agent is told
 to:
 
-1. ask **once**, pointing you at Settings → Git;
+1. ask **once**, pointing you at Settings → Credentials → Git;
 2. if you decline, do the work anyway, run no git commands, and say plainly that
    the changes are uncommitted;
 3. never ask again.
@@ -121,4 +121,4 @@ their `.git` directories) remain writable by Podiom.
 
 Podiom itself reads the public key from either home (`sshDirs` in
 `internal/git/git.go`), so a key sitting in a passwd home Podiom's `$HOME` does
-not point at is still found and shown in Settings → Git.
+not point at is still found and shown in Settings → Credentials → Git.

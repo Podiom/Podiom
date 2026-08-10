@@ -66,8 +66,8 @@ opens Shell for maintenance.
 
 ### Re-authenticating later
 
-Use **Settings → Global config → profile**. Every profile chip carries a
-sign-in dot (green signed in, red signed out, amber unknown); pick the account
+Use **Settings → Providers**. Every account row carries a
+sign-in dot (green signed in, red signed out, amber unknown); find the account
 and press **Sign in**. Podiom runs the provider's own login and opens the
 authorization page in a popup — Claude then asks you to paste back the code
 that page shows, Codex shows a one-time code and finishes on its own. Nothing

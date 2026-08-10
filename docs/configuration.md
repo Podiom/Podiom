@@ -20,7 +20,11 @@ Defaults applied across all agents unless overridden per agent.
 | `permission_mode` | `approve` \| `auto` \| `yolo` | `approve` relays each side effect to you (safe default); `auto` runs edits inside the session's working directory unattended and still asks for the rest; `yolo` auto-approves with whole-machine access. |
 | `permission_timeout` | duration | Approve-mode prompt timeout before auto-deny, e.g. `30s` or `3m`. |
 | `fallback` | list of profile names or `default` | Optional default fallback chain used when an agent declares none. |
-| `collapse_reasoning` | bool | Fold a finished thinking/working note in chat down to one clickable line once the turn's answer arrives. Default `false` (notes stay expanded). Editable from Settings → Chat display. |
+| `collapse_reasoning` | bool | Fold a finished thinking/working note in chat down to one clickable line once the turn's answer arrives. Default `false` (notes stay expanded). Editable from Settings → General. |
+
+`provider`, `profile` and `fallback` are editable from **Settings → Providers**.
+`model`, `effort`, `permission_mode` and `permission_timeout` are set in this
+file only — the web UI does not edit them, and per-agent overrides still apply.
 
 ## `github`
 
@@ -55,10 +59,11 @@ Optional named auth contexts, each 1:1 with one underlying account. Podiom owns
 only the directory path + name — never credentials; the login runs the CLI's own
 auth flow against the profile dir.
 
-Sign in from **Settings → Global config → profile**: pick a profile chip and
-press **Sign in**. Podiom runs the provider's login CLI, opens the
-authorization page in a popup, and (for Claude) forwards the code you paste
-back. The CLI performs the token exchange and writes to the profile dir itself
+Sign in from **Settings → Providers**: each provider gets a card listing its
+accounts — the CLI's own login first, then every profile pointed at that
+provider. Press **Sign in** on the account's row. Podiom runs the provider's
+login CLI, opens the authorization page in a popup, and (for Claude) forwards
+the code you paste back. The CLI performs the token exchange and writes to the profile dir itself
 — Podiom never handles the resulting credential. The same flow works from a
 phone, since the browser never has to reach the daemon's own localhost.
 
@@ -101,7 +106,7 @@ configured.
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `openai_api_key` | string | OpenAI API key used server-side for Whisper transcription. **A secret stored in plain text** — prefer the `PODIOM_OPENAI_API_KEY` or `OPENAI_API_KEY` environment variables, which take precedence. Editable from Settings → Voice input; never returned by the API or logged. |
+| `openai_api_key` | string | OpenAI API key used server-side for Whisper transcription. **A secret stored in plain text** — prefer the `PODIOM_OPENAI_API_KEY` or `OPENAI_API_KEY` environment variables, which take precedence. Editable from Settings → Credentials → Voice input; never returned by the API or logged. |
 
 ## `server`
 

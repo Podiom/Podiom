@@ -32,7 +32,7 @@ three ways, checked in this order:
 2. **Environment variable `OPENAI_API_KEY`** — the conventional name, if you
    already export it.
 3. **`voice.openai_api_key` in `config.yaml`** — settable from the UI under
-   **Settings → Voice input** (Save key / Clear), or by editing the file:
+   **Settings → Credentials → Voice input** (Save key / Clear), or by editing the file:
 
    ```yaml
    voice:
@@ -70,7 +70,7 @@ so uploads stay small (well under a megabyte).
 
 | Symptom | Cause / fix |
 | --- | --- |
-| "no OpenAI API key configured" | Add a key under Settings → Voice input, or set `voice.openai_api_key` in config.yaml, or export an env var. |
+| "no OpenAI API key configured" | Add a key under Settings → Credentials → Voice input, or set `voice.openai_api_key` in config.yaml, or export an env var. |
 | "OpenAI rejected the API key" | The key is wrong, revoked, or lacks access — replace it in Settings. |
 | "Microphone needs HTTPS (or localhost)" | You're on an insecure origin (e.g. `http://<lan-ip>`). Use the HA app / an HTTPS proxy, or open the UI on the daemon machine. |
 | "Microphone access denied" | The browser permission was declined — re-allow it in the browser's site settings. |

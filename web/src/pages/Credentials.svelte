@@ -98,6 +98,47 @@
 {/if}
 
 <style>
+  /* Card chrome, matching the sibling cards on the Settings tab this renders
+     inside — component-scoped styles do not reach here from the host. */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    border-radius: 20px;
+    padding: 24px 26px;
+    margin-bottom: 18px;
+  }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .card-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+
+  .card-icon.teal {
+    background: #eaf2ee;
+    color: #2f6e60;
+  }
+
+  .card-title {
+    font: 800 17px "Hanken Grotesk";
+    letter-spacing: -0.01em;
+  }
+
+  .card-sub {
+    font: 400 12.5px "Hanken Grotesk";
+    color: var(--muted-2);
+  }
+
   .cred-table {
     width: 100%;
     border-collapse: collapse;

@@ -34,7 +34,7 @@
   import type { PushState } from "./lib/live.svelte";
 
   type Route = "chat" | "roadmap" | "goals" | "projects" | "schedules" | "skills" | "terminal" | "settings";
-  type SettingsTab = "global" | "agents" | "about-you" | "updates" | "notifications" | "logs";
+  type SettingsTab = "providers" | "general" | "agents" | "about-you" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
     sessionId?: string;
@@ -113,7 +113,7 @@
   let chatTarget = $state<ChatTarget | null>(null);
   let goalTarget = $state<string | null>(null);
   let releaseNotesFocusToken = $state(0);
-  let settingsFocusTab = $state<SettingsTab>("global");
+  let settingsFocusTab = $state<SettingsTab>("providers");
   let settingsFocusToken = $state(0);
   let settingsFocusAccount = $state<SettingsAccountTarget | null>(null);
   let providerAuthStatuses = $state<ProviderAuthStatus[]>([]);
@@ -361,7 +361,7 @@
     route = "chat";
   }
 
-  function openSettings(tab: SettingsTab = "global", account: SettingsAccountTarget | null = null) {
+  function openSettings(tab: SettingsTab = "providers", account: SettingsAccountTarget | null = null) {
     settingsFocusTab = tab;
     settingsFocusAccount = account;
     settingsFocusToken += 1;
@@ -551,7 +551,7 @@
       <SidebarUsage
         snapshots={live.usage}
         authStatuses={providerAuthStatuses}
-        onOpenSignIn={(provider, profile) => openSettings("global", { provider, profile })} />
+        onOpenSignIn={(provider, profile) => openSettings("providers", { provider, profile })} />
       <div class="daemon">
         <span class="daemon-dot" class:live={daemonStatus === "live"}></span>
         <div class="daemon-text mono">

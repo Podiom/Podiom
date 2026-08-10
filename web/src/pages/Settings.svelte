@@ -11,12 +11,6 @@
     updateProfile,
   } from "../lib/api";
   import ProviderSignIn from "../lib/ProviderSignIn.svelte";
-  import {
-    capabilityKey,
-    effortOptions as capabilityEffortOptions,
-    loadProviderCapabilities,
-    modelOptions as capabilityModelOptions,
-  } from "../lib/capabilities";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import type { PushState } from "../lib/live.svelte";
@@ -25,11 +19,9 @@
     GitStatus,
     GlobalConfig,
     Health,
-    PermissionMode,
     ProfileInfo,
     Provider,
     ProviderAuthStatus,
-    ProviderCapabilities,
     UpdateStatus,
   } from "../lib/types";
   import AboutYou from "./AboutYou.svelte";
@@ -38,7 +30,17 @@
   import Logs from "./Logs.svelte";
 
   type UpdateState = "idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed";
-  type SettingsTab = "global" | "agents" | "about-you" | "credentials" | "updates" | "notifications" | "logs";
+  type SettingsTab = "providers" | "general" | "agents" | "about-you" | "credentials" | "updates" | "notifications" | "logs";
+
+  // One row in a provider card's account list. The unnamed account (name "")
+  // is the provider CLI's own login directory — Podiom did not create it, so it
+  // can be signed into but not renamed or deleted.
+  interface AccountRow {
+    name: string;
+    label: string;
+    sub: string;
+    canEdit: boolean;
+  }
 
   interface ChatTarget {
     sessionId?: string;
@@ -97,8 +99,6 @@
     onUserProfileSaved?: () => void;
   } = $props();
 
-  const PERMISSIONS: PermissionMode[] = ["approve", "auto", "yolo"];
-
   // ── Git ────────────────────────────────────────────────────────────────
   // Source control needs three things to be usable: the binary, a commit
   // identity, and credentials that can reach a remote. The card reports each
@@ -152,28 +152,29 @@
       // Clipboard access can be denied; the key is on screen to copy by hand.
     }
   }
-  const TIMEOUT_PRESETS = ["30s", "1m", "3m", "5m", "10m"];
 
   let loading = $state(true);
   let error = $state<string | null>(null);
   let saving = $state(false);
   let saved = $state(false);
   let profiles = $state<ProfileInfo[]>([]);
-  // Inline "new / edit profile" panel state (chip-driven, per design).
   let profileError = $state<string | null>(null);
+  // Which card shows profileError. A failed delete has no panel open, so the
+  // message needs its own provider rather than borrowing the panel's.
+  let profileErrorProvider = $state<Provider | null>(null);
   let profileSaving = $state(false);
+  // Inline "add / edit account" panel state. npProvider names the card the
+  // panel belongs to, so a create writes to that provider rather than to
+  // whichever one happens to be the default.
   let npOpen = $state(false);
+  let npProvider = $state<Provider | null>(null);
   let npEditing = $state<string | null>(null); // profile name being edited, else null
   let npName = $state("");
   let npDir = $state("");
 
-  // Editable default config + fallback.
+  // Editable default engine + fallback.
   let provider = $state<Provider>(DEFAULT_PROVIDER);
   let profile = $state(""); // "" = default global login
-  let model = $state(""); // "" = provider default
-  let effort = $state("medium");
-  let permission = $state<PermissionMode>("approve");
-  let permissionTimeout = $state("3m");
   let fbTarget = $state<"none" | Provider>("none");
   let fbProfile = $state<string | null>(null);
 
@@ -196,38 +197,17 @@
   // Canonical JSON snapshot of the last-saved state, for dirty tracking.
   let baseline = $state("");
   let releaseNotesEl = $state<HTMLElement | null>(null);
-  let authPanelEl = $state<HTMLElement | null>(null);
-  let tab = $state<SettingsTab>("global");
-  let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
-  let loadingCapabilities = new Set<string>();
+  let tab = $state<SettingsTab>("providers");
+  // Account row the chat sign-in CTA pointed at: scrolled to and ringed, but
+  // never promoted to "used by new runs" — arriving from a failed turn should
+  // not silently re-point every future run at that account.
+  let focusedAccount = $state<string | null>(null);
   let handledSettingsFocusToken = 0;
 
   onMount(() => {
     void load();
     void refreshGit();
-    return () => {
-      // A login left running would keep a provider CLI alive on the daemon.
-      void abortLogin();
-    };
   });
-
-  $effect(() => {
-    void ensureCapabilities(provider, profile);
-  });
-
-  async function ensureCapabilities(p: Provider, prof = "") {
-    const key = capabilityKey(p, prof);
-    if (capabilitiesByKey[key] || loadingCapabilities.has(key)) return;
-    loadingCapabilities.add(key);
-    try {
-      const caps = await loadProviderCapabilities(p, prof);
-      capabilitiesByKey = { ...capabilitiesByKey, [key]: caps };
-    } catch {
-      // Preserve current custom settings if the endpoint cannot be reached.
-    } finally {
-      loadingCapabilities.delete(key);
-    }
-  }
 
   $effect(() => {
     const token = settingsFocusToken;
@@ -235,14 +215,12 @@
     const ready = !loading;
     if (token <= 0) return;
     tab = settingsFocusTab;
-    if (!target || settingsFocusTab !== "global" || !ready || handledSettingsFocusToken === token) return;
+    if (!target || settingsFocusTab !== "providers" || !ready || handledSettingsFocusToken === token) return;
     handledSettingsFocusToken = token;
     const targetProfile = target.profile && profiles.some((p) => p.Provider === target.provider && p.Name === target.profile)
       ? target.profile
       : "";
-    setProvider(target.provider);
-    setProfile(targetProfile);
-    void focusAuthPanel();
+    void focusAccount(accountKey(target.provider, targetProfile));
   });
 
   $effect(() => {
@@ -270,11 +248,45 @@
     return p[providerMeta(p.Provider).profileDir.infoKey] ?? "";
   }
 
-  // ── Provider sign-in ───────────────────────────────────────────────────
-  // Each profile is a separate provider account, so each has its own login.
-  // The flow itself lives in ProviderSignIn so Settings and the chat CTA behave
-  // identically; this page only owns the per-profile status badges.
-  let signIn = $state<ProviderSignIn | null>(null);
+  // ── Provider accounts ──────────────────────────────────────────────────
+  // A provider card lists its accounts: the provider CLI's own login directory
+  // first, then every named profile pointed at that provider. Each account is a
+  // separate login, so each carries its own sign-in state. The flow itself
+  // lives in ProviderSignIn so Settings and the chat CTA behave identically;
+  // this page only owns the per-account badges.
+  function accountsFor(p: Provider): AccountRow[] {
+    const rows: AccountRow[] = [
+      {
+        name: "",
+        label: "default · global login",
+        sub: `the ${providerMeta(p).label} CLI's own login directory`,
+        canEdit: false,
+      },
+    ];
+    for (const prof of profiles) {
+      if (prof.Provider !== p) continue;
+      rows.push({
+        name: prof.Name,
+        label: prof.Name,
+        sub: pathForProfile(prof) || "provider default directory",
+        canEdit: true,
+      });
+    }
+    return rows;
+  }
+
+  function accountKey(p: Provider, name: string): string {
+    return `${p}:${name}`;
+  }
+
+  // Card sub-line. An unprobed account counts as neither signed in nor out, so
+  // the summary only ever claims what the daemon confirmed.
+  function accountSummary(p: Provider): string {
+    const rows = accountsFor(p);
+    const label = rows.length === 1 ? "1 account" : `${rows.length} accounts`;
+    if (authLoading && authStatuses.length === 0) return `${label} · checking sign-in…`;
+    return `${label} · ${rows.filter((r) => authFor(p, r.name)?.logged_in).length} signed in`;
+  }
 
   function authFor(p: Provider, name: string): ProviderAuthStatus | undefined {
     return authStatuses.find((s) => s.provider === p && s.profile === name);
@@ -290,109 +302,80 @@
     return st.logged_in ? { label: "signed in", tone: "green" } : { label: "signed out", tone: "red" };
   }
 
-  const selectedAuth = $derived(authFor(provider, profile));
-  const selectedAuthView = $derived.by(() => {
-    if (authLoading && !selectedAuth) {
-      return {
-        kind: "checking" as const,
-        tone: "amber",
-        title: "Checking sign-in",
-        body: "Checking whether this account is ready to use.",
-      };
-    }
-    if (!selectedAuth) {
-      return {
-        kind: "unknown" as const,
-        tone: "amber",
-        title: "Sign-in status unavailable",
-        body: "Podiom couldn't verify this account. Check again to retry.",
-      };
-    }
-    if (!selectedAuth.found) {
-      return {
-        kind: "missing" as const,
-        tone: "amber",
-        title: "Provider CLI not installed",
-        body: selectedAuth.install_hint || `Install ${providerMeta(provider).label} before signing in.`,
-      };
-    }
-    if (!selectedAuth.login_checked) {
-      return {
-        kind: "unknown" as const,
-        tone: "amber",
-        title: "Sign-in status unavailable",
-        body: selectedAuth.login_hint || "Podiom cannot verify this provider's sign-in state automatically.",
-      };
-    }
-    if (selectedAuth.logged_in) {
-      return {
-        kind: "signed-in" as const,
-        tone: "green",
-        title: "Signed in",
-        body: `This ${providerMeta(provider).label} account is ready to use.`,
-      };
-    }
-    return {
-      kind: "signed-out" as const,
-      tone: "red",
-      title: "Sign-in required",
-      body: `Sign in to use this ${providerMeta(provider).label} account and refresh its usage limits.`,
-    };
-  });
-
-  // A login belongs to the account selected when it started, so switching
-  // target abandons it.
-  function abortLogin() {
-    void signIn?.abort();
+  // Only accounts whose CLI is present and which the provider lets us drive can
+  // be signed in from here.
+  function canSignIn(p: Provider, name: string): boolean {
+    const st = authFor(p, name);
+    return !!st?.found && !!st.supports_login;
   }
 
-  // Profiles selectable for the current default provider (chips).
-  const profileChips = $derived(profiles.filter((p) => p.Provider === provider).map((p) => p.Name));
-  const npDirPh = $derived(providerMeta(provider).profileDir.placeholder);
+  // Why an account's state is what it is, when that needs saying: a missing
+  // CLI, or a provider whose sign-in Podiom cannot read.
+  function authHint(p: Provider, name: string): string {
+    const st = authFor(p, name);
+    if (!st) return authLoading ? "" : "Podiom couldn't verify this account. Check again to retry.";
+    if (!st.found) return st.install_hint || `Install ${providerMeta(p).label} before signing in.`;
+    if (!st.login_checked) return st.login_hint || "Podiom cannot verify this provider's sign-in state automatically.";
+    return "";
+  }
 
-  function setProfile(name: string) {
+  const npDirPh = $derived(providerMeta(npProvider ?? provider).profileDir.placeholder);
+
+  // Clicking an account row points every new agent, task and session at it.
+  function setDefaultAccount(p: Provider, name: string) {
+    provider = p;
     profile = name;
     saved = false;
-    // A login belongs to the account that was selected when it started.
-    void abortLogin();
-    void ensureCapabilities(provider, profile);
+    focusedAccount = null;
   }
 
-  function toggleNewProfile() {
-    if (npOpen) {
+  function toggleAddAccount(p: Provider) {
+    if (npOpen && !npEditing && npProvider === p) {
       npOpen = false;
-      npEditing = null;
-    } else {
-      npOpen = true;
-      npEditing = null;
-      npName = "";
-      npDir = "";
-      profileError = null;
+      npProvider = null;
+      return;
     }
+    npOpen = true;
+    npProvider = p;
+    npEditing = null;
+    npName = "";
+    npDir = "";
+    profileError = null;
+    profileErrorProvider = null;
   }
 
   function startEditProfile(name: string) {
     const p = profiles.find((x) => x.Name === name);
     if (!p) return;
     npOpen = true;
+    npProvider = p.Provider;
     npEditing = name;
     npName = p.Name;
     npDir = pathForProfile(p);
     profileError = null;
+    profileErrorProvider = null;
+  }
+
+  function closeAccountPanel() {
+    npOpen = false;
+    npProvider = null;
+    npEditing = null;
   }
 
   async function saveInlineProfile() {
     const name = npName.trim();
+    const target = npProvider ?? provider;
     if (!name) return;
     profileSaving = true;
     profileError = null;
+    profileErrorProvider = null;
     try {
       const body = {
         name,
-        provider,
+        provider: target,
         config_dir: "",
         home_dir: "",
-        [providerMeta(provider).profileDir.bodyKey]: npDir.trim(),
+        [providerMeta(target).profileDir.bodyKey]: npDir.trim(),
       };
       if (npEditing) {
         await updateProfile(npEditing, body);
@@ -400,15 +383,13 @@
         await createProfile(body);
       }
       profiles = await listProfiles();
-      if (!npEditing) setProfile(name); // "Create & select"
       void onRefreshAuth(true); // a new/moved directory has its own sign-in state
-      void ensureCapabilities(provider, name);
-      npOpen = false;
-      npEditing = null;
+      closeAccountPanel();
       npName = "";
       npDir = "";
     } catch (e) {
       profileError = e instanceof Error ? e.message : String(e);
+      profileErrorProvider = target;
     } finally {
       profileSaving = false;
     }
@@ -416,18 +397,26 @@
 
   async function removeProfile(name: string) {
     if (!window.confirm(`Delete profile ${name}?`)) return;
+    const owner = profiles.find((x) => x.Name === name)?.Provider ?? provider;
     profileError = null;
+    profileErrorProvider = null;
     try {
       await deleteProfile(name);
       profiles = await listProfiles();
       void onRefreshAuth(true);
-      if (profile === name) setProfile("");
-      if (npEditing === name) {
-        npOpen = false;
-        npEditing = null;
+      // The account is gone: anything still pointing at it has to let go.
+      if (profile === name) {
+        profile = "";
+        saved = false;
       }
+      if (fbProfile === name) {
+        fbProfile = null;
+        saved = false;
+      }
+      if (npEditing === name) closeAccountPanel();
     } catch (e) {
       profileError = e instanceof Error ? e.message : String(e);
+      profileErrorProvider = owner;
     }
   }
 
@@ -436,10 +425,6 @@
     collapseReasoning = cfg.collapse_reasoning ?? false;
     provider = cfg.provider;
     profile = cfg.profile ?? "";
-    model = cfg.model;
-    effort = cfg.effort || "medium";
-    permission = cfg.permission_mode;
-    permissionTimeout = cfg.permission_timeout || "3m";
     const fb = cfg.fallback ?? [];
     if (fb.length === 0) {
       fbTarget = "none";
@@ -462,14 +447,9 @@
     saved = false;
   }
 
-  const settingsCapabilityKey = $derived(capabilityKey(provider, profile));
-  const settingsCapabilities = $derived(capabilitiesByKey[settingsCapabilityKey] ?? null);
-  const modelChips = $derived(capabilityModelOptions(settingsCapabilities, model));
-  const effortChips = $derived(capabilityEffortOptions(settingsCapabilities, model, effort));
   const fbProfileOptions = $derived(
     fbTarget === "none" ? [] : profiles.filter((p) => p.Provider === fbTarget).map((p) => p.Name),
   );
-  const fbHasProfiles = $derived(fbProfileOptions.length > 0);
 
   function buildFallback(): string[] {
     if (fbTarget === "none") return [];
@@ -477,74 +457,57 @@
     return [fbTarget];
   }
 
+  // One flat list of fallback destinations: no fallback, each provider on its
+  // own login, then each named account. Mirrors what the config accepts.
+  const fbChips = $derived.by(() => {
+    const chips: { key: string; label: string; target: "none" | Provider; profile: string | null }[] = [
+      { key: "none", label: "None", target: "none", profile: null },
+    ];
+    for (const p of PROVIDERS) {
+      chips.push({ key: p.id, label: p.label, target: p.id, profile: null });
+      for (const prof of profiles) {
+        if (prof.Provider !== p.id) continue;
+        chips.push({ key: `${p.id}:${prof.Name}`, label: `${p.label} · ${prof.Name}`, target: p.id, profile: prof.Name });
+      }
+    }
+    return chips;
+  });
+  const fbSelectedKey = $derived(
+    fbTarget === "none" ? "none" : fbProfile && fbProfileOptions.includes(fbProfile) ? `${fbTarget}:${fbProfile}` : fbTarget,
+  );
+  const fbDestLabel = $derived(fbChips.find((c) => c.key === fbSelectedKey)?.label ?? "None");
+  const fbSummary = $derived(
+    fbTarget === "none"
+      ? "No fallback — rate-limited runs pause and retry automatically when the limit resets. Nothing is dropped."
+      : `Rate-limited ${providerMeta(provider).label} runs re-route to ${fbDestLabel}.`,
+  );
+
   function canonical(): string {
-    return JSON.stringify({ provider, profile, model, effort, permission, permission_timeout: permissionTimeout, fallback: buildFallback() });
+    return JSON.stringify({ provider, profile, fallback: buildFallback() });
   }
 
   const dirty = $derived(canonical() !== baseline);
-  const timeoutInvalid = $derived(!validDuration(permissionTimeout));
 
   function setProvider(p: Provider) {
     if (p === provider) return;
     provider = p;
     saved = false;
-    // The default profile is tied to the provider; drop it if it no longer fits.
+    // The default account is tied to the provider; drop it if it no longer fits.
     if (profile && !profiles.some((x) => x.Name === profile && x.Provider === p)) profile = "";
-    void abortLogin();
-    void ensureCapabilities(p, profile);
-    npOpen = false;
-    npEditing = null;
+    closeAccountPanel();
   }
-  function setModel(m: string) {
-    model = m;
-    saved = false;
-  }
-  function setEffort(e: string) {
-    effort = e;
-    saved = false;
-  }
-  function setPermission(m: PermissionMode) {
-    permission = m;
-    saved = false;
-  }
-  function setPermissionTimeout(value: string) {
-    permissionTimeout = value;
-    saved = false;
-  }
-  function setFbTarget(t: "none" | Provider) {
-    fbTarget = t;
-    saved = false;
-    if (t === "none") {
-      fbProfile = null;
-    } else {
-      const opts = profiles.filter((p) => p.Provider === t).map((p) => p.Name);
-      if (fbProfile && !opts.includes(fbProfile)) fbProfile = null;
-    }
-  }
-  function setFbProfile(name: string) {
+
+  function setFallback(target: "none" | Provider, name: string | null) {
+    fbTarget = target;
     fbProfile = name;
     saved = false;
   }
 
   async function save() {
-    if (timeoutInvalid) {
-      error = "approval wait must be a positive duration like 30s, 3m, or 1h";
-      saved = false;
-      return;
-    }
-    const timeout = permissionTimeout.trim();
     saving = true;
     error = null;
     try {
-      const cfg = await updateConfig({
-        provider,
-        profile,
-        model,
-        effort,
-        permission_mode: permission,
-        permission_timeout: timeout,
-        fallback: buildFallback(),
-      });
+      const cfg = await updateConfig({ provider, profile, fallback: buildFallback() });
       applyConfig(cfg);
       saved = true;
     } catch (e) {
@@ -586,35 +549,22 @@
     }
   }
 
-  function validDuration(raw: string): boolean {
-    const value = raw.trim();
-    if (!value) return false;
-    const parts = value.match(/\d+(?:\.\d+)?(?:ns|us|ms|s|m|h)/g);
-    if (!parts || parts.join("") !== value) return false;
-    return parts.some((part) => Number.parseFloat(part) > 0);
-  }
-
   async function focusReleaseNotes() {
     await tick();
     releaseNotesEl?.scrollIntoView({ behavior: "smooth", block: "start" });
     releaseNotesEl?.focus({ preventScroll: true });
   }
 
-  async function focusAuthPanel() {
+  // Arriving from the chat sign-in CTA: show the account, don't touch it.
+  async function focusAccount(key: string) {
+    focusedAccount = key;
     await tick();
-    authPanelEl?.scrollIntoView({ behavior: "smooth", block: "center" });
-    authPanelEl?.focus({ preventScroll: true });
+    const el = document.querySelector<HTMLElement>(`[data-account="${CSS.escape(key)}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.focus({ preventScroll: true });
   }
 
   // ---- Version & updates: presentation of App.svelte's update state ----
-  const primaryLabel = $derived(model ? `${provider} · ${model}` : `${provider} · provider default`);
-  const fbRouteLabel = $derived(
-    fbTarget === "none"
-      ? "pause · retry on reset"
-      : fbProfile && fbProfileOptions.includes(fbProfile)
-        ? `${fbTarget} · ${fbProfile}`
-        : fbTarget,
-  );
   const canCheck = $derived(updateState === "idle" || updateState === "current" || updateState === "failed");
   const updateBadge = $derived(updateBadgeFor(updateState));
   const releaseNotes = $derived(update?.release_notes ?? "");
@@ -682,7 +632,8 @@
     {/if}
 
     <div class="tabs">
-      <button class:active={tab === "global"} onclick={() => (tab = "global")}>Global config</button>
+      <button class:active={tab === "providers"} onclick={() => (tab = "providers")}>Providers</button>
+      <button class:active={tab === "general"} onclick={() => (tab = "general")}>General</button>
       <button class:active={tab === "agents"} onclick={() => (tab = "agents")}>Agents</button>
       <button class:active={tab === "about-you"} onclick={() => (tab = "about-you")}>About you</button>
       <button class:active={tab === "credentials"} onclick={() => (tab = "credentials")}>Credentials</button>
@@ -691,250 +642,207 @@
       <button class:active={tab === "logs"} onclick={() => (tab = "logs")}>Logs</button>
     </div>
 
-    {#if tab === "global"}
-    <!-- ===== DEFAULT CONFIGURATION ===== -->
-    <section class="card">
-      <div class="card-head">
-        <div class="card-icon teal">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"/><path d="M20 6h-2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h2"/><path d="M12 12h8"/><circle cx="9" cy="12" r="2"/><path d="M4 18h10"/><path d="M20 18h-2"/><circle cx="16" cy="18" r="2"/></svg>
-        </div>
-        <div>
-          <div class="card-title">Default configuration</div>
-          <div class="card-sub">Applied to every new colleague and ad-hoc run.</div>
-        </div>
-      </div>
-
-      {#if loading}
-        <div class="empty-note">Loading defaults…</div>
-      {:else}
-        <div class="rows">
-          <div class="row">
-            <span class="row-key">provider</span>
-            <div class="seg-group">
-              {#each PROVIDERS as p (p.id)}
-                <button class="seg provider-choice" class:on={provider === p.id} onclick={() => setProvider(p.id)}>
-                  <ProviderLogo provider={p.id} />{p.label}
-                </button>
-              {/each}
+    {#if tab === "providers"}
+    <!-- ===== PROVIDERS ===== -->
+    {#if loading}
+      <div class="empty-note">Loading providers…</div>
+    {:else}
+      {#each PROVIDERS as p (p.id)}
+        {@const isDefault = provider === p.id}
+        <section class="prov-card" class:is-default={isDefault}>
+          <div class="prov-head">
+            <span class="prov-logo" style="background:{p.accent.bg};border-color:{p.accent.bd}">
+              <ProviderLogo provider={p.id} size={23} />
+            </span>
+            <div class="grow">
+              <div class="prov-name">
+                {p.label}
+                {#if isDefault}<span class="prov-pill">DEFAULT ENGINE</span>{/if}
+              </div>
+              <div class="prov-sub">{accountSummary(p.id)}</div>
             </div>
+            {#if !isDefault}
+              <button class="prov-default-btn" onclick={() => setProvider(p.id)}>Make default</button>
+            {/if}
           </div>
-          <div class="row top">
-            <span class="row-key">profile</span>
-            <div class="chips-col">
-              <div class="chips">
-                <button class="chip" class:on={profile === ""} onclick={() => setProfile("")}>
-                  <span class="auth-dot {authBadge(provider, '').tone}" title={authBadge(provider, "").label}></span>
-                  default · global login
-                </button>
-                {#each profileChips as name}
-                  <button class="chip prof-chip" class:on={profile === name} onclick={() => setProfile(name)}>
-                    <span class="auth-dot {authBadge(provider, name).tone}" title={authBadge(provider, name).label}></span>
-                    <span class="prof-label">{name}</span>
-                    <span class="prof-tools">
-                      <span
-                        class="prof-edit"
-                        role="button"
-                        tabindex="0"
-                        title="Edit profile"
-                        onclick={(e) => { e.stopPropagation(); startEditProfile(name); }}
-                        onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); startEditProfile(name); } }}>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+
+          <div class="accounts">
+            {#each accountsFor(p.id) as acct (acct.name)}
+              {@const key = accountKey(p.id, acct.name)}
+              {@const badge = authBadge(p.id, acct.name)}
+              {@const hint = authHint(p.id, acct.name)}
+              {@const inUse = isDefault && profile === acct.name}
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+              <div class="acct" class:focused={focusedAccount === key} data-account={key} tabindex="-1">
+                <div class="acct-row">
+                  <button
+                    class="acct-pick"
+                    class:on={inUse}
+                    title="Use this account for new agents, tasks and sessions"
+                    onclick={() => setDefaultAccount(p.id, acct.name)}>
+                    <span class="auth-dot {badge.tone}" title={badge.label}></span>
+                    <span class="acct-id">
+                      <span class="acct-label">
+                        {acct.label}
+                        {#if inUse}<span class="acct-inuse">used by new runs</span>{/if}
                       </span>
-                      <span
-                        class="prof-del"
-                        role="button"
-                        tabindex="0"
-                        title="Delete profile"
-                        onclick={(e) => { e.stopPropagation(); removeProfile(name); }}
-                        onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); removeProfile(name); } }}>×</span>
+                      <span class="acct-sub mono">{acct.sub}</span>
                     </span>
                   </button>
-                {/each}
-                <button class="chip-new" onclick={toggleNewProfile}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>New
-                </button>
-              </div>
-              <div class="hint">
-                Connect multiple Claude or Codex accounts. Each profile has its own login and rate limit, so Podiom can
-                switch accounts when one runs out. No profile means your normal login is used.
-              </div>
 
-              <div
-                class="auth-panel {selectedAuthView.tone}"
-                class:signed-in={selectedAuthView.kind === "signed-in"}
-                bind:this={authPanelEl}
-                tabindex="-1"
-              >
-                <div class="auth-overview">
-                  <span class="auth-status-icon" aria-hidden="true">
-                    {#if selectedAuthView.kind === "signed-in"}
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
-                    {:else}
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.7 2.4 18a2 2 0 0 0 1.8 3h15.6a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
-                    {/if}
-                  </span>
-                  <div class="auth-summary">
-                    <div class="auth-title">{selectedAuthView.title}</div>
-                    <div class="auth-target">
-                      <ProviderLogo {provider} size={14} />
-                      <span>{providerMeta(provider).label} · {profile || "default · global login"}</span>
+                  {#if acct.canEdit}
+                    <button class="acct-tool" title="Edit account" aria-label="Edit account {acct.label}" onclick={() => startEditProfile(acct.name)}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    </button>
+                    <button class="acct-tool del" title="Delete account" aria-label="Delete account {acct.label}" onclick={() => removeProfile(acct.name)}>×</button>
+                  {/if}
+
+                  <span class="acct-badge {badge.tone}">{badge.label}</span>
+
+                  {#if canSignIn(p.id, acct.name)}
+                    <div class="acct-auth" class:signed-in={authFor(p.id, acct.name)?.logged_in}>
+                      <ProviderSignIn
+                        provider={p.id}
+                        profile={acct.name}
+                        startLabel={authFor(p.id, acct.name)?.logged_in ? "Sign in again" : "Sign in"}
+                        onSignedIn={() => void onRefreshAuth(true)} />
+                    </div>
+                  {:else}
+                    <button class="acct-recheck" disabled={authLoading} onclick={() => void onRefreshAuth(true)}>
+                      {authLoading ? "Checking…" : "Check again"}
+                    </button>
+                  {/if}
+                </div>
+
+                {#if hint}
+                  <div class="acct-note">{hint}</div>
+                {/if}
+
+                {#if npOpen && npEditing === acct.name}
+                  <div class="np-panel inline">
+                    <div class="np-title">edit account · {providerMeta(p.id).label}</div>
+                    <input class="np-input" bind:value={npName} disabled placeholder="account name" />
+                    <input class="np-input mono" bind:value={npDir} placeholder={npDirPh} />
+                    <div class="np-actions">
+                      <button class="np-create" disabled={profileSaving || !npName.trim()} onclick={saveInlineProfile}>
+                        {profileSaving ? "Saving…" : "Save changes"}
+                      </button>
+                      <button class="np-cancel" onclick={closeAccountPanel}>Cancel</button>
                     </div>
                   </div>
-                </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
 
-                <p class="auth-help">{selectedAuthView.body}</p>
-
-                {#if (selectedAuthView.kind === "signed-in" || selectedAuthView.kind === "signed-out") && selectedAuth?.supports_login}
-                  <div class="auth-actions">
-                    <ProviderSignIn
-                      bind:this={signIn}
-                      {provider}
-                      {profile}
-                      startLabel={selectedAuthView.kind === "signed-in" ? "Sign in again" : "Sign in"}
-                      onSignedIn={() => void onRefreshAuth(true)} />
-                  </div>
-                {:else if selectedAuthView.kind !== "checking"}
-                  {#if selectedAuth?.login_hint && selectedAuthView.body !== selectedAuth.login_hint}
-                    <p class="auth-help">{selectedAuth.login_hint}</p>
-                  {/if}
-                  <button class="auth-recheck" disabled={authLoading} onclick={() => void onRefreshAuth(true)}>
-                    {authLoading ? "Checking…" : "Check again"}
+          <div class="prov-foot">
+            <button class="acct-add" onclick={() => toggleAddAccount(p.id)}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add account
+            </button>
+            {#if npOpen && !npEditing && npProvider === p.id}
+              <div class="np-panel">
+                <div class="np-title">new account · {providerMeta(p.id).label}</div>
+                <input class="np-input" bind:value={npName} placeholder="account name — e.g. work" />
+                <input class="np-input mono" bind:value={npDir} placeholder={npDirPh} />
+                <div class="np-actions">
+                  <button class="np-create" disabled={profileSaving || !npName.trim()} onclick={saveInlineProfile}>
+                    {profileSaving ? "Saving…" : "Create account"}
                   </button>
-                {/if}
+                  <button class="np-cancel" onclick={closeAccountPanel}>Cancel</button>
+                </div>
+              </div>
+            {/if}
+            <div class="hint">
+              Each account is its own login with its own rate limit, so Podiom can switch accounts when one runs out.
+              The default account is whatever the {providerMeta(p.id).label} CLI is already signed into.
+            </div>
+            {#if profileError && profileErrorProvider === p.id}
+              <div class="error-banner" style="margin-top:10px">{profileError}</div>
+            {/if}
+          </div>
 
-                {#if authError}
-                  <div class="error-banner" style="margin-top:10px">{authError}</div>
-                {/if}
+          {#if isDefault}
+            <!-- Fallback is one chain on the global config, and it only applies
+                 to runs that start on the default engine — so it belongs here. -->
+            <div class="fb-strip">
+              <div class="fb-route">
+                <span class="fb-tag">fallback</span>
+                <span class="fb-badge"><ProviderLogo provider={p.id} size={13} />{p.label}</span>
+                <svg class="fb-arrow" width="44" height="12" viewBox="0 0 44 12" fill="none" aria-hidden="true">
+                  <path d="M2 6h32" stroke="#c9a24e" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 4"/>
+                  <path d="M35 1.5 42 6l-7 4.5" stroke="#c9a24e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="fb-badge dest" class:muted={fbTarget === "none"}>{fbDestLabel}</span>
+                <span class="fb-when">when rate-limited · 429</span>
               </div>
-              {#if npOpen}
-                <div class="np-panel">
-                  <div class="np-title">{npEditing ? `edit profile · ${provider}` : "new profile · uses selected provider"}</div>
-                  <input class="np-input" bind:value={npName} disabled={Boolean(npEditing)} placeholder="profile name" />
-                  <input class="np-input mono" bind:value={npDir} placeholder={npDirPh} />
-                  <div class="np-actions">
-                    <button class="np-create" disabled={profileSaving || !npName.trim()} onclick={saveInlineProfile}>
-                      {profileSaving ? "Saving…" : npEditing ? "Save changes" : "Create & select"}
-                    </button>
-                    <button class="np-cancel" onclick={toggleNewProfile}>Cancel</button>
-                  </div>
-                </div>
-              {/if}
-              {#if profileError}
-                <div class="error-banner" style="margin-top:10px">{profileError}</div>
-              {/if}
-            </div>
-          </div>
-          <div class="row top">
-            <span class="row-key">model</span>
-            <div class="chips">
-              <button class="chip" class:on={model === ""} onclick={() => setModel("")}>✦ default</button>
-              {#each modelChips as m}
-                <button class="chip" class:on={model === m} onclick={() => setModel(m)}>{m}</button>
-              {/each}
-              <input class="field-input mono" style="max-width:220px;padding:8px 10px;font-size:12px" bind:value={model} placeholder="custom model" oninput={() => (saved = false)} />
-            </div>
-          </div>
-          <div class="row top">
-            <span class="row-key">effort</span>
-            <div class="chips">
-              {#each effortChips as e}
-                <button class="chip" class:on={effort === e} onclick={() => setEffort(e)}>{e}</button>
-              {/each}
-            </div>
-          </div>
-          <div class="row top">
-            <span class="row-key">permission</span>
-            <div class="chips">
-              {#each PERMISSIONS as m}
-                <button class="chip" class:on={permission === m} onclick={() => setPermission(m)}>{m}</button>
-              {/each}
-            </div>
-          </div>
-          <div class="row top">
-            <span class="row-key">approval wait</span>
-            <div class="chips-col">
-              <div class="timeout-control">
-                <div class="chips">
-                  {#each TIMEOUT_PRESETS as value}
-                    <button class="chip" class:on={permissionTimeout === value} onclick={() => setPermissionTimeout(value)}>{value}</button>
-                  {/each}
-                </div>
-                <input
-                  class="timeout-input mono"
-                  class:invalid={timeoutInvalid}
-                  bind:value={permissionTimeout}
-                  placeholder="custom"
-                  aria-label="Approval prompt wait time" />
+              <div class="fb-chips">
+                {#each fbChips as c (c.key)}
+                  <button class="chip" class:on={fbSelectedKey === c.key} onclick={() => setFallback(c.target, c.profile)}>{c.label}</button>
+                {/each}
               </div>
-              <div class="hint">How long approval prompts wait before auto-denying. Use values like 45s, 3m, or 1h.</div>
-              {#if timeoutInvalid}
-                <div class="field-error">Enter a positive duration like 30s, 3m, or 1h.</div>
-              {/if}
+              <div class="fb-summary">{fbSummary}</div>
             </div>
-          </div>
-        </div>
+          {/if}
+        </section>
+      {/each}
+
+      {#if authError}
+        <div class="error-banner" style="margin-top:16px">{authError}</div>
       {/if}
-    </section>
 
-    <!-- ===== FALLBACK PROVIDER ===== -->
+      <!-- ===== SAVE ===== -->
+      <div class="save-row">
+        <button class="btn-save" disabled={saving} onclick={save}>{saving ? "Saving…" : "Save defaults"}</button>
+        {#if saved && !dirty}
+          <span class="save-ok"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Saved to config.yaml</span>
+        {:else}
+          <span class="save-hint">Changes apply to new runs immediately.</span>
+        {/if}
+      </div>
+    {/if}
+
+    {:else if tab === "general"}
+    <!-- ===== CHAT DISPLAY ===== -->
     <section class="card">
       <div class="card-head">
-        <div class="card-icon gold">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.36 2.64L3 8"/><path d="M3 4v4h4"/></svg>
+        <div class="card-icon violet">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         </div>
-        <div>
-          <div class="card-title">Fallback provider</div>
-          <div class="card-sub">Where runs re-route when your provider is rate-limited or unreachable.</div>
-        </div>
-      </div>
-
-      <div class="route">
-        <div class="route-end">
-          <div class="route-tag">primary</div>
-          <div class="route-val">{primaryLabel}</div>
-        </div>
-        <div class="route-arrow">
-          <span class="route-cond">429 · limited</span>
-          <svg width="36" height="14" viewBox="0 0 36 14" fill="none" stroke="#c9a24e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h30"/><path d="M27 2l6 5-6 5"/></svg>
-        </div>
-        <div class="route-end right">
-          <div class="route-tag">fallback</div>
-          <div class="route-val" class:muted={fbTarget === "none"}>{fbRouteLabel}</div>
+        <div class="grow">
+          <div class="card-title">Chat display</div>
+          <div class="card-sub">How an agent's thinking and working notes read once its answer has arrived.</div>
         </div>
       </div>
 
       <div class="rows">
-        <div class="row">
-          <span class="row-key">route to</span>
-          <div class="seg-group">
-            <button class="seg" class:on={fbTarget === "none"} onclick={() => setFbTarget("none")}>None</button>
-            {#each PROVIDERS as p (p.id)}
-              <button class="seg provider-choice" class:on={fbTarget === p.id} onclick={() => setFbTarget(p.id)}>
-                <ProviderLogo provider={p.id} />{p.label}
-              </button>
-            {/each}
+        <div class="row top">
+          <span class="row-key">notes</span>
+          <div class="chips-col">
+            <div class="chips">
+              <button class="chip" class:on={!collapseReasoning} disabled={collapseSaving} onclick={() => setCollapseReasoning(false)}>always expanded</button>
+              <button class="chip" class:on={collapseReasoning} disabled={collapseSaving} onclick={() => setCollapseReasoning(true)}>collapse when done</button>
+            </div>
+            <div class="hint">
+              Notes always stream in full while a turn runs. Collapsing folds each finished one down to a single clickable
+              line so long turns stay readable.
+            </div>
+            {#if collapseError}
+              <div class="field-error">{collapseError}</div>
+            {/if}
           </div>
         </div>
-        {#if fbTarget !== "none" && fbHasProfiles}
-          <div class="row top">
-            <span class="row-key">profile</span>
-            <div class="chips-col">
-              <div class="chips">
-                {#each fbProfileOptions as name}
-                  <button class="chip" class:on={fbProfile === name} onclick={() => setFbProfile(name)}>{name}</button>
-                {/each}
-              </div>
-              <div class="hint">Which account on the fallback provider to run under.</div>
-            </div>
-          </div>
-        {/if}
-        {#if fbTarget === "none"}
-          <div class="fb-disabled"><span class="dot-amber">●</span>No fallback — rate-limited runs pause and retry automatically when the limit resets. Nothing is dropped.</div>
-        {/if}
       </div>
     </section>
 
-    <!-- ===== VOICE INPUT ===== -->
+    {:else if tab === "agents"}
+    <!-- ===== AGENTS ===== -->
+    <Agents embedded {agents} onHire={onHireAgent} {onOpenChat} onChanged={onAgentsChanged} />
+
+    {:else if tab === "about-you"}
+    <!-- ===== ABOUT YOU (USER.md) ===== -->
+    <AboutYou {agents} onSaved={onUserProfileSaved} />
+
+    {:else if tab === "credentials"}
     <!-- ===== GIT ===== -->
     <section class="card">
       <div class="card-head">
@@ -1013,6 +921,7 @@
       </div>
     </section>
 
+    <!-- ===== VOICE INPUT ===== -->
     <section class="card">
       <div class="card-head">
         <div class="card-icon teal">
@@ -1062,58 +971,7 @@
       </div>
     </section>
 
-    <!-- ===== CHAT DISPLAY ===== -->
-    <section class="card">
-      <div class="card-head">
-        <div class="card-icon violet">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        </div>
-        <div class="grow">
-          <div class="card-title">Chat display</div>
-          <div class="card-sub">How an agent's thinking and working notes read once its answer has arrived.</div>
-        </div>
-      </div>
-
-      <div class="rows">
-        <div class="row top">
-          <span class="row-key">notes</span>
-          <div class="chips-col">
-            <div class="chips">
-              <button class="chip" class:on={!collapseReasoning} disabled={collapseSaving} onclick={() => setCollapseReasoning(false)}>always expanded</button>
-              <button class="chip" class:on={collapseReasoning} disabled={collapseSaving} onclick={() => setCollapseReasoning(true)}>collapse when done</button>
-            </div>
-            <div class="hint">
-              Notes always stream in full while a turn runs. Collapsing folds each finished one down to a single clickable
-              line so long turns stay readable.
-            </div>
-            {#if collapseError}
-              <div class="field-error">{collapseError}</div>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== SAVE ===== -->
-    <div class="save-row">
-      <button class="btn-save" disabled={saving || loading || timeoutInvalid} onclick={save}>{saving ? "Saving…" : "Save defaults"}</button>
-      {#if saved && !dirty}
-        <span class="save-ok"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Saved to config.yaml</span>
-      {:else}
-        <span class="save-hint">Changes apply to new runs immediately.</span>
-      {/if}
-    </div>
-
-    {:else if tab === "agents"}
-    <!-- ===== AGENTS ===== -->
-    <Agents embedded {agents} onHire={onHireAgent} {onOpenChat} onChanged={onAgentsChanged} />
-
-    {:else if tab === "about-you"}
-    <!-- ===== ABOUT YOU (USER.md) ===== -->
-    <AboutYou {agents} onSaved={onUserProfileSaved} />
-
-    {:else if tab === "credentials"}
-    <!-- ===== CREDENTIALS ===== -->
+    <!-- ===== AGENT-GRANTED SECRETS ===== -->
     <Credentials />
 
     {:else if tab === "updates"}
@@ -1364,28 +1222,6 @@
     padding-top: 0;
   }
 
-  .seg-group {
-    flex: 1;
-    display: flex;
-    gap: 9px;
-  }
-
-  .seg {
-    flex: 1;
-    padding: 11px;
-    border-radius: 11px;
-    font: 600 13.5px "Hanken Grotesk";
-    border: 1px solid var(--field-line);
-    background: #fff;
-    color: var(--muted);
-  }
-
-  .seg.on {
-    border-color: #bfe0d6;
-    background: #e3f1ec;
-    color: var(--teal-deep);
-  }
-
   .chips {
     display: flex;
     flex-wrap: wrap;
@@ -1418,13 +1254,6 @@
     color: var(--muted-2);
   }
 
-  .timeout-control {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
   .timeout-input {
     width: 104px;
     border: 1px solid var(--field-line);
@@ -1440,65 +1269,358 @@
     box-shadow: 0 0 0 3px rgba(63, 143, 126, 0.12);
   }
 
-  .timeout-input.invalid {
-    border-color: #d99a78;
-    box-shadow: 0 0 0 3px rgba(217, 154, 120, 0.13);
-  }
-
   .field-error {
     font: 600 12px "Hanken Grotesk";
     color: #9a4e2f;
   }
 
-  /* profile chips: select the default profile + manage inline */
-  .prof-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0;
+  /* ── provider cards ─────────────────────────────────────────────────── */
+  .prov-card {
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    border-radius: 20px;
+    margin-bottom: 18px;
+    overflow: hidden;
+    box-shadow:
+      0 1px 2px rgba(43, 37, 32, 0.04),
+      0 16px 40px -28px rgba(43, 37, 32, 0.22);
   }
 
-  .prof-tools {
-    display: inline-flex;
+  .prov-head {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    padding: 20px 22px 16px;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    border-bottom: 1px solid var(--line);
+  }
+
+  .prov-card.is-default .prov-head {
+    background: linear-gradient(180deg, #eef6f2, var(--surface));
+  }
+
+  .prov-logo {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+    display: grid;
+    place-items: center;
+    flex: none;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+  }
+
+  .prov-name {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font: 800 19px "Hanken Grotesk";
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+
+  .prov-pill {
+    padding: 4px 11px;
+    border-radius: 999px;
+    font: 700 9.5px "JetBrains Mono", monospace;
+    letter-spacing: 0.07em;
+    background: linear-gradient(150deg, #47997f, var(--teal-deep));
+    color: var(--surface);
+  }
+
+  .prov-sub {
+    font: 400 12.5px "Hanken Grotesk";
+    color: var(--faint);
+    margin-top: 2px;
+  }
+
+  .prov-default-btn {
+    flex: none;
+    border: 1px solid var(--field-line);
+    border-radius: 11px;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, 0.85);
+    color: var(--muted);
+    font: 600 12.5px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .prov-default-btn:hover {
+    border-color: #bfe0d6;
+    background: #e3f1ec;
+    color: var(--teal-deep);
+  }
+
+  /* ── account rows ───────────────────────────────────────────────────── */
+  .accounts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 22px 0;
+  }
+
+  .acct {
+    border: 1px solid var(--line-3);
+    border-radius: 14px;
+    background: var(--surface-3);
+    outline: none;
+  }
+
+  .acct:hover {
+    border-color: #e2d6c6;
+  }
+
+  .acct.focused {
+    border-color: #9ecdc0;
+    box-shadow: 0 0 0 3px rgba(63, 143, 126, 0.14);
+  }
+
+  .acct-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 15px;
+  }
+
+  /* The row's own button: activating it makes this the account new runs use. */
+  .acct-pick {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .acct-id {
+    min-width: 0;
+    display: block;
+  }
+
+  .acct-label {
+    display: flex;
     align-items: center;
     gap: 8px;
-    margin-left: 7px;
-    padding-left: 8px;
-    border-left: 1px solid rgba(90, 80, 72, 0.16);
+    font: 700 13.5px "Hanken Grotesk";
+    color: var(--ink);
   }
 
-  .prof-edit {
+  .acct-pick.on .acct-label {
+    color: var(--teal-ink);
+  }
+
+  .acct-inuse {
+    font: 600 9.5px "JetBrains Mono", monospace;
+    letter-spacing: 0.05em;
+    color: #8a7560;
+    background: #f1eadf;
+    border: 1px solid #e6dbcb;
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+
+  .acct-sub {
+    display: block;
+    font: 500 11px "JetBrains Mono", monospace;
+    color: var(--faint);
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .acct-tool {
+    flex: none;
     display: inline-flex;
     align-items: center;
+    border: none;
+    background: transparent;
+    padding: 2px;
     color: #a0937f;
     cursor: pointer;
   }
 
-  .prof-edit:hover {
+  .acct-tool:hover {
     color: var(--teal-deep);
   }
 
-  .prof-del {
+  .acct-tool.del {
     color: #b79e86;
-    font-weight: 700;
-    line-height: 1;
-    cursor: pointer;
+    font: 700 15px/1 "Hanken Grotesk";
   }
 
-  .prof-del:hover {
+  .acct-tool.del:hover {
     color: #c2705e;
   }
 
-  .chip-new {
+  .acct-badge {
+    flex: none;
+    padding: 5px 11px;
+    border-radius: 999px;
+    font: 600 11px "Hanken Grotesk";
+    background: #f1eadf;
+    border: 1px solid #e6dbcb;
+    color: var(--muted);
+  }
+
+  .acct-badge.green {
+    background: #eaf1ed;
+    border-color: #cfe3d8;
+    color: #3f7a5f;
+  }
+
+  .acct-badge.amber {
+    background: #fcf8ee;
+    border-color: #eadbb8;
+    color: #9a6c17;
+  }
+
+  .acct-badge.red {
+    background: #fceee8;
+    border-color: #f2d6c8;
+    color: #b14e2a;
+  }
+
+  .acct-auth {
+    flex: none;
+  }
+
+  /* Re-authenticating a working account is rare — keep the button quiet so the
+     rows that actually need attention are the ones that read as urgent. */
+  .acct-auth.signed-in :global(.signin-btn) {
+    border: 1px solid #b9d4c1;
+    background: #fff;
+    color: #35674f;
+  }
+
+  /* Once a login is running the component grows a help line, inputs and a
+     cancel button — too much for the row, so it drops to its own strip. */
+  .acct-auth:has(:global(.signin-help)) {
+    flex: 1 0 100%;
+    border-top: 1px dashed var(--line);
+    padding-top: 12px;
+    animation: popIn 0.18s ease;
+  }
+
+  .acct-recheck {
+    flex: none;
+    padding: 7px 12px;
+    border: 1px solid var(--field-line);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--muted-2);
+    font: 650 12px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .acct-recheck:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .acct-note {
+    border-top: 1px dashed var(--line);
+    padding: 11px 15px;
+    font: 500 12.5px/1.5 "Hanken Grotesk";
+    color: var(--muted-2);
+  }
+
+  .prov-foot {
+    padding: 12px 22px 18px;
+  }
+
+  .acct-add {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 6px 12px;
-    border-radius: 9px;
+    padding: 7px 13px;
+    border-radius: 10px;
     cursor: pointer;
     font: 600 12px "JetBrains Mono", monospace;
     border: 1px dashed #c9bdad;
     background: transparent;
     color: #8a7560;
+  }
+
+  .acct-add:hover {
+    border-color: var(--teal);
+    background: #eff6f1;
+    color: var(--teal-deep);
+  }
+
+  .prov-foot .hint {
+    margin-top: 11px;
+    max-width: 560px;
+  }
+
+  /* ── fallback strip (default engine only) ───────────────────────────── */
+  .fb-strip {
+    padding: 14px 22px 17px;
+    background: linear-gradient(180deg, #fcf7ec, #f9f1e0);
+    border-top: 1px solid #f0e4cc;
+  }
+
+  .fb-route {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .fb-tag {
+    font: 600 9.5px "JetBrains Mono", monospace;
+    letter-spacing: 0.08em;
+    color: #b29b72;
+    text-transform: uppercase;
+    flex: none;
+  }
+
+  .fb-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #efe3cb;
+    font: 700 11.5px "Hanken Grotesk";
+    color: var(--ink);
+  }
+
+  .fb-badge.muted {
+    background: transparent;
+    color: var(--muted-2);
+    font-weight: 600;
+  }
+
+  .fb-arrow {
+    flex: none;
+  }
+
+  .fb-when {
+    font: 600 9.5px "JetBrains Mono", monospace;
+    letter-spacing: 0.08em;
+    color: #c4af87;
+    text-transform: uppercase;
+    margin-left: auto;
+  }
+
+  .fb-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 10px;
+  }
+
+  .fb-summary {
+    font: 400 11.5px/1.5 "Hanken Grotesk";
+    color: var(--muted-2);
+    margin-top: 9px;
   }
 
   .np-panel {
@@ -1571,18 +1693,6 @@
     cursor: pointer;
   }
 
-  /* provider sign-in */
-  /* Scoped to chips that carry a dot so the other chip rows keep their
-     inline-block layout untouched. */
-  .chip:has(.auth-dot) {
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .chip .auth-dot {
-    margin-right: 7px;
-  }
-
   .auth-dot {
     width: 7px;
     height: 7px;
@@ -1603,188 +1713,11 @@
     background: #b4553f;
   }
 
-  .auth-panel {
-    margin-top: 11px;
-    background: var(--surface-3);
-    border: 1px solid var(--line-3);
-    border-radius: 14px;
-    padding: 14px;
-    max-width: 430px;
-    outline: none;
-  }
-
-  .auth-panel.green {
-    background: #f2f8f4;
-    border-color: #cfe2d5;
-  }
-
-  .auth-panel.amber {
-    background: #fcf8ee;
-    border-color: #eadbb8;
-  }
-
-  .auth-panel.red {
-    background: #fdf3f1;
-    border-color: #eccfc8;
-  }
-
-  .auth-panel:focus-visible {
-    box-shadow: 0 0 0 3px rgba(42, 143, 138, 0.18);
-  }
-
-  .auth-overview {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .auth-status-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 9px;
-    display: grid;
-    place-items: center;
-    flex: none;
-  }
-
-  .auth-panel.green .auth-status-icon {
-    color: #3f7a5f;
-    background: #dcecdf;
-  }
-
-  .auth-panel.amber .auth-status-icon {
-    color: #9a6c17;
-    background: #f3e6c8;
-  }
-
-  .auth-panel.red .auth-status-icon {
-    color: #a94a36;
-    background: #f4ddd8;
-  }
-
-  .auth-summary {
-    min-width: 0;
-  }
-
-  .auth-title {
-    color: var(--ink);
-    font: 700 13px "Hanken Grotesk";
-  }
-
-  .auth-target {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    margin-top: 2px;
-    font: 500 12px "Hanken Grotesk";
-    color: var(--faint);
-    min-width: 0;
-  }
-
-  .auth-target span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .auth-help {
-    margin: 10px 0 0;
-    font: 500 12.5px "Hanken Grotesk";
-    color: var(--muted-2);
-    line-height: 1.5;
-  }
-
-  .auth-actions {
-    margin-top: 12px;
-  }
-
-  .auth-recheck {
-    margin-top: 12px;
-    padding: 7px 12px;
-    border: 1px solid var(--field-line);
-    border-radius: 10px;
-    background: #fff;
-    color: var(--muted-2);
-    font: 650 12px "Hanken Grotesk";
-    cursor: pointer;
-  }
-
-  .auth-recheck:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
-
-  .auth-panel.signed-in :global(.signin-btn) {
-    border: 1px solid #b9d4c1;
-    background: #fff;
-    color: #35674f;
-  }
-
-
-  /* fallback route summary */
-  .route {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: var(--surface-3);
-    border: 1px solid var(--line-3);
-    border-radius: 14px;
-    padding: 15px 18px;
-    margin-top: 20px;
-  }
-
-  .route-end {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .route-end.right {
-    text-align: right;
-  }
-
   .route-tag {
     font: 600 9.5px "JetBrains Mono", monospace;
     letter-spacing: 0.12em;
     color: var(--faint);
     text-transform: uppercase;
-  }
-
-  .route-val {
-    font: 700 14.5px "Hanken Grotesk";
-    color: var(--ink);
-    margin-top: 3px;
-  }
-
-  .route-val.muted {
-    color: var(--muted-2);
-  }
-
-  .route-arrow {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    flex: none;
-    padding: 0 6px;
-  }
-
-  .route-cond {
-    font: 600 9.5px "JetBrains Mono", monospace;
-    color: #b07a22;
-    letter-spacing: 0.03em;
-  }
-
-  .fb-disabled {
-    font: 400 12.5px/1.5 "Hanken Grotesk";
-    color: var(--muted-2);
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-
-  .dot-amber {
-    color: #c9a24e;
-    flex: none;
   }
 
   /* save row */
