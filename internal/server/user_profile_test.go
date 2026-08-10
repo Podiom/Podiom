@@ -157,7 +157,29 @@ func TestWebSocketStartInterview(t *testing.T) {
 	if state.Interview.Status == "draft" || state.Interview.Draft != "" {
 		t.Fatalf("plain assistant Markdown became a draft: %+v", state.Interview)
 	}
-	_ = wsjson.Write(ctx, conn, ClientMessage{Type: "stop_turn", SessionID: sessionID})
+	// The recovery state is written before its turn goroutine starts. Wait until
+	// that turn is registered before stopping it, then reattach until the hub no
+	// longer reports it as active. Otherwise TempDir cleanup can race a late
+	// recovery turn that is still writing session files.
+	readWSTestUntil(t, conn, "interview recovery turn", func(msg ServerMessage) bool {
+		return msg.Type == "turn_state" && msg.SessionID == sessionID && msg.TurnState != nil && msg.TurnState.Status == turnStatusRunning
+	})
+	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "stop_turn", SessionID: sessionID}); err != nil {
+		t.Fatalf("stop interview recovery: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		const requestID = "wait-interview-idle"
+		if err := wsjson.Write(ctx, conn, ClientMessage{Type: "attach_session", RequestID: requestID, SessionID: sessionID}); err != nil {
+			t.Fatalf("check interview recovery stopped: %v", err)
+		}
+		settled := readWSTestUntil(t, conn, "stopped interview recovery", func(msg ServerMessage) bool {
+			return msg.Type == "interview_state" && msg.RequestID == requestID && msg.Interview != nil
+		})
+		if settled.Interview.Status == "failed" {
+			return
+		}
+	}
+	t.Fatal("interview recovery turn did not stop")
 }
 
 func TestWebSocketInterviewBridgeProducesStructuredDraft(t *testing.T) {
