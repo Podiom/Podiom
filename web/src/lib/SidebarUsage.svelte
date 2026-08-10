@@ -2,13 +2,24 @@
   import { onMount } from "svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { PROVIDERS, providerMeta } from "./providers";
-  import type { UsageSnapshot, UsageWindow } from "./types";
+  import type { Provider, ProviderAuthStatus, UsageSnapshot, UsageWindow } from "./types";
 
-  let { snapshots }: { snapshots: UsageSnapshot[] } = $props();
+  const COLLAPSED_KEY = "podiom.sidebar-usage-collapsed";
+
+  let {
+    snapshots,
+    authStatuses,
+    onOpenSignIn,
+  }: {
+    snapshots: UsageSnapshot[];
+    authStatuses: ProviderAuthStatus[];
+    onOpenSignIn: (provider: Provider, profile: string) => void;
+  } = $props();
 
   interface UsageRow {
     key: string;
     snapshot: UsageSnapshot;
+    authProfile: string;
     label: string;
     sessionWindow?: UsageWindow;
     weeklyWindow?: UsageWindow;
@@ -18,9 +29,16 @@
   }
 
   let expandedKey = $state<string | null>(null);
+  let collapsed = $state(false);
   let now = $state(Date.now());
 
   onMount(() => {
+    try {
+      const saved = window.localStorage.getItem(COLLAPSED_KEY);
+      collapsed = saved === "true" ? true : saved === "false" ? false : false;
+    } catch {
+      collapsed = false;
+    }
     const id = window.setInterval(() => (now = Date.now()), 60_000);
     return () => window.clearInterval(id);
   });
@@ -46,6 +64,7 @@
         result.push({
           key: `${snapshot.provider}:${snapshot.profile}`,
           snapshot,
+          authProfile: snapshot.default ? "" : snapshot.profile,
           label: snapshot.default ? provider.label : `${provider.label} · ${snapshot.profile}`,
           sessionWindow,
           weeklyWindow,
@@ -57,6 +76,25 @@
     }
     return result;
   });
+
+  function authFor(row: UsageRow): ProviderAuthStatus | undefined {
+    return authStatuses.find(
+      (status) => status.provider === row.snapshot.provider && status.profile === row.authProfile,
+    );
+  }
+
+  function usageNeedsSignIn(snapshot: UsageSnapshot): boolean {
+    return snapshot.status === "no_credentials"
+      || snapshot.status === "stale_credentials"
+      || snapshot.status === "unauthorized";
+  }
+
+  function rowNeedsSignIn(row: UsageRow): boolean {
+    const auth = authFor(row);
+    return usageNeedsSignIn(row.snapshot) || Boolean(auth?.found && auth.login_checked && !auth.logged_in);
+  }
+
+  const hasSignInWarning = $derived(rows.some(rowNeedsSignIn));
 
   function clampPercent(percent: number): number {
     if (!Number.isFinite(percent)) return 0;
@@ -115,12 +153,35 @@
     if (!row.expandable) return;
     expandedKey = expandedKey === row.key ? null : row.key;
   }
+
+  function toggleCollapsed() {
+    collapsed = !collapsed;
+    if (collapsed) expandedKey = null;
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, String(collapsed));
+    } catch {
+      // Storage can be blocked; the control still works for this page load.
+    }
+  }
+
+  function openSignIn(row: UsageRow) {
+    onOpenSignIn(row.snapshot.provider, row.authProfile);
+  }
 </script>
+
+{#snippet warningTriangle(label: string)}
+  <span class="warning-triangle" title={label} aria-label={label}>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.7 2.4 18a2 2 0 0 0 1.8 3h15.6a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
+  </span>
+{/snippet}
 
 {#snippet accountName(row: UsageRow, showChevron = false)}
   <span class="account-name" style={`color:${providerMeta(row.snapshot.provider).accent.ink}`}>
     <ProviderLogo provider={row.snapshot.provider} size={13} />
     <span>{row.label}</span>
+    {#if rowNeedsSignIn(row)}
+      {@render warningTriangle(`${row.label} requires sign-in`)}
+    {/if}
   </span>
   {#if showChevron && row.expandable}
     <span class="chevron" class:expanded={expandedKey === row.key} aria-hidden="true">⌄</span>
@@ -154,41 +215,69 @@
 
 {#if rows.length > 0}
   <section class="usage-card" aria-label="Provider usage">
-    <div class="usage-title mono">USAGE</div>
-    <div class="usage-list">
-      {#each rows as row, index (row.key)}
-        <div class="account-row">
-          {#if row.snapshot.status === "ok" && row.primaryWindow}
-            {#if row.expandable}
-              <button
-                class="account-summary interactive"
-                type="button"
-                aria-expanded={expandedKey === row.key}
-                aria-controls={`sidebar-usage-${index}`}
-                onclick={() => toggle(row)}
-              >
-                {@render accountContent(row)}
-              </button>
-            {:else}
-              <div class="account-summary">
-                {@render accountContent(row)}
-              </div>
-            {/if}
+    <button
+      class="usage-header"
+      type="button"
+      aria-expanded={!collapsed}
+      aria-controls="sidebar-usage-list"
+      onclick={toggleCollapsed}
+    >
+      <span class="usage-title mono">USAGE</span>
+      <span class="usage-header-icons">
+        {#if hasSignInWarning}
+          {@render warningTriangle("One or more provider accounts require sign-in")}
+        {/if}
+        <span class="usage-chevron" class:collapsed aria-hidden="true">⌄</span>
+      </span>
+    </button>
+    {#if !collapsed}
+      <div class="usage-list" id="sidebar-usage-list">
+        {#each rows as row, index (row.key)}
+          <div class="account-row">
+            {#if row.snapshot.status === "ok" && row.primaryWindow}
+              {#if row.expandable}
+                <button
+                  class="account-summary interactive"
+                  type="button"
+                  aria-expanded={expandedKey === row.key}
+                  aria-controls={`sidebar-usage-${index}`}
+                  onclick={() => toggle(row)}
+                >
+                  {@render accountContent(row)}
+                </button>
+              {:else}
+                <div class="account-summary">
+                  {@render accountContent(row)}
+                </div>
+              {/if}
 
-            {#if row.expandable && expandedKey === row.key && row.weeklyWindow}
-              <div class="weekly-detail" id={`sidebar-usage-${index}`}>
-                {@render meter(row.weeklyWindow, "Weekly")}
+              {#if rowNeedsSignIn(row)}
+                <button class="signin-link usage-signin-link" type="button" onclick={() => openSignIn(row)}>
+                  Sign-in required
+                </button>
+              {/if}
+
+              {#if row.expandable && expandedKey === row.key && row.weeklyWindow}
+                <div class="weekly-detail" id={`sidebar-usage-${index}`}>
+                  {@render meter(row.weeklyWindow, "Weekly")}
+                </div>
+              {/if}
+            {:else}
+              <div class="status-row">
+                <span class="account-head">{@render accountName(row)}</span>
+                {#if usageNeedsSignIn(row.snapshot)}
+                  <button class="signin-link status-text" type="button" onclick={() => openSignIn(row)}>
+                    {statusMessage(row.snapshot)}
+                  </button>
+                {:else}
+                  <span class="status-text">{statusMessage(row.snapshot)}</span>
+                {/if}
               </div>
             {/if}
-          {:else}
-            <div class="status-row">
-              <span class="account-head">{@render accountName(row)}</span>
-              <span class="status-text">{statusMessage(row.snapshot)}</span>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </section>
 {/if}
 
@@ -200,12 +289,58 @@
     background: var(--surface-3);
   }
 
-  .usage-title {
+  .usage-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
     padding: 9px 10px 7px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .usage-header:hover {
+    background: #f6efe6;
+  }
+
+  .usage-header:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: -2px;
+  }
+
+  .usage-title {
     color: var(--faint);
     font-size: 9.5px;
     font-weight: 600;
     letter-spacing: 0.08em;
+  }
+
+  .usage-header-icons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .warning-triangle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    color: #a86b18;
+  }
+
+  .usage-chevron {
+    color: var(--faint);
+    font-size: 14px;
+    line-height: 1;
+    transition: transform 0.15s ease;
+  }
+
+  .usage-chevron.collapsed {
+    transform: rotate(-90deg);
   }
 
   .usage-list {
@@ -259,7 +394,7 @@
     font: 700 11.5px "Hanken Grotesk";
   }
 
-  .account-name span {
+  .account-name > span:not(.warning-triangle) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -316,6 +451,35 @@
     margin-top: 5px;
     color: var(--faint);
     font: 400 10px/1.3 "Hanken Grotesk";
+  }
+
+  .signin-link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #8d5e17;
+    font-family: "Hanken Grotesk";
+    text-align: left;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  .signin-link:hover {
+    color: #68440e;
+  }
+
+  .signin-link:focus-visible {
+    border-radius: 2px;
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+  }
+
+  .usage-signin-link {
+    display: block;
+    margin: -4px 10px 9px 29px;
+    font-size: 10px;
+    line-height: 1.3;
   }
 
   .weekly-detail {

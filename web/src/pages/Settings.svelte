@@ -6,7 +6,6 @@
     getConfig,
     gitStatus,
     listProfiles,
-    providerStatus,
     setGitIdentity,
     updateConfig,
     updateProfile,
@@ -47,6 +46,11 @@
     seed?: string;
   }
 
+  interface SettingsAccountTarget {
+    provider: Provider;
+    profile: string;
+  }
+
   let {
     health,
     update,
@@ -55,6 +59,10 @@
     releaseNotesFocusToken,
     settingsFocusTab,
     settingsFocusToken,
+    settingsFocusAccount,
+    authStatuses,
+    authLoading,
+    authError,
     pushState,
     agents,
     onCheckUpdate,
@@ -63,6 +71,7 @@
     onHireAgent,
     onOpenChat,
     onAgentsChanged,
+    onRefreshAuth,
     onUserProfileSaved = () => {},
   }: {
     health: Health | null;
@@ -72,6 +81,10 @@
     releaseNotesFocusToken: number;
     settingsFocusTab: SettingsTab;
     settingsFocusToken: number;
+    settingsFocusAccount: SettingsAccountTarget | null;
+    authStatuses: ProviderAuthStatus[];
+    authLoading: boolean;
+    authError: string | null;
     pushState: PushState;
     agents: Agent[];
     onCheckUpdate: () => void;
@@ -80,6 +93,7 @@
     onHireAgent: () => void;
     onOpenChat: (t: ChatTarget) => void;
     onAgentsChanged: () => void;
+    onRefreshAuth: (refresh?: boolean) => Promise<void>;
     onUserProfileSaved?: () => void;
   } = $props();
 
@@ -182,14 +196,15 @@
   // Canonical JSON snapshot of the last-saved state, for dirty tracking.
   let baseline = $state("");
   let releaseNotesEl = $state<HTMLElement | null>(null);
+  let authPanelEl = $state<HTMLElement | null>(null);
   let tab = $state<SettingsTab>("global");
   let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
   let loadingCapabilities = new Set<string>();
+  let handledSettingsFocusToken = 0;
 
   onMount(() => {
     void load();
     void refreshGit();
-    void refreshAuth();
     return () => {
       // A login left running would keep a provider CLI alive on the daemon.
       void abortLogin();
@@ -215,9 +230,19 @@
   }
 
   $effect(() => {
-    if (settingsFocusToken > 0) {
-      tab = settingsFocusTab;
-    }
+    const token = settingsFocusToken;
+    const target = settingsFocusAccount;
+    const ready = !loading;
+    if (token <= 0) return;
+    tab = settingsFocusTab;
+    if (!target || settingsFocusTab !== "global" || !ready || handledSettingsFocusToken === token) return;
+    handledSettingsFocusToken = token;
+    const targetProfile = target.profile && profiles.some((p) => p.Provider === target.provider && p.Name === target.profile)
+      ? target.profile
+      : "";
+    setProvider(target.provider);
+    setProfile(targetProfile);
+    void focusAuthPanel();
   });
 
   $effect(() => {
@@ -249,9 +274,6 @@
   // Each profile is a separate provider account, so each has its own login.
   // The flow itself lives in ProviderSignIn so Settings and the chat CTA behave
   // identically; this page only owns the per-profile status badges.
-  let authStatuses = $state<ProviderAuthStatus[]>([]);
-  let authLoading = $state(true);
-  let authError = $state<string | null>(null);
   let signIn = $state<ProviderSignIn | null>(null);
 
   function authFor(p: Provider, name: string): ProviderAuthStatus | undefined {
@@ -262,24 +284,61 @@
   // out" — claiming the latter would be a guess.
   function authBadge(p: Provider, name: string): { label: string; tone: string } {
     const st = authFor(p, name);
-    if (!st || !st.found) return { label: "CLI missing", tone: "amber" };
+    if (!st) return { label: authLoading ? "checking" : "status unavailable", tone: "amber" };
+    if (!st.found) return { label: "CLI missing", tone: "amber" };
     if (!st.login_checked) return { label: "sign-in unknown", tone: "amber" };
     return st.logged_in ? { label: "signed in", tone: "green" } : { label: "signed out", tone: "red" };
   }
 
   const selectedAuth = $derived(authFor(provider, profile));
-  const selectedBadge = $derived(authBadge(provider, profile));
-
-  async function refreshAuth(refresh = false) {
-    authLoading = true;
-    try {
-      authStatuses = await providerStatus(refresh);
-    } catch (e) {
-      authError = e instanceof Error ? e.message : String(e);
-    } finally {
-      authLoading = false;
+  const selectedAuthView = $derived.by(() => {
+    if (authLoading && !selectedAuth) {
+      return {
+        kind: "checking" as const,
+        tone: "amber",
+        title: "Checking sign-in",
+        body: "Checking whether this account is ready to use.",
+      };
     }
-  }
+    if (!selectedAuth) {
+      return {
+        kind: "unknown" as const,
+        tone: "amber",
+        title: "Sign-in status unavailable",
+        body: "Podiom couldn't verify this account. Check again to retry.",
+      };
+    }
+    if (!selectedAuth.found) {
+      return {
+        kind: "missing" as const,
+        tone: "amber",
+        title: "Provider CLI not installed",
+        body: selectedAuth.install_hint || `Install ${providerMeta(provider).label} before signing in.`,
+      };
+    }
+    if (!selectedAuth.login_checked) {
+      return {
+        kind: "unknown" as const,
+        tone: "amber",
+        title: "Sign-in status unavailable",
+        body: selectedAuth.login_hint || "Podiom cannot verify this provider's sign-in state automatically.",
+      };
+    }
+    if (selectedAuth.logged_in) {
+      return {
+        kind: "signed-in" as const,
+        tone: "green",
+        title: "Signed in",
+        body: `This ${providerMeta(provider).label} account is ready to use.`,
+      };
+    }
+    return {
+      kind: "signed-out" as const,
+      tone: "red",
+      title: "Sign-in required",
+      body: `Sign in to use this ${providerMeta(provider).label} account and refresh its usage limits.`,
+    };
+  });
 
   // A login belongs to the account selected when it started, so switching
   // target abandons it.
@@ -342,7 +401,7 @@
       }
       profiles = await listProfiles();
       if (!npEditing) setProfile(name); // "Create & select"
-      void refreshAuth(true); // a new/moved directory has its own sign-in state
+      void onRefreshAuth(true); // a new/moved directory has its own sign-in state
       void ensureCapabilities(provider, name);
       npOpen = false;
       npEditing = null;
@@ -361,7 +420,7 @@
     try {
       await deleteProfile(name);
       profiles = await listProfiles();
-      void refreshAuth(true);
+      void onRefreshAuth(true);
       if (profile === name) setProfile("");
       if (npEditing === name) {
         npOpen = false;
@@ -541,6 +600,12 @@
     releaseNotesEl?.focus({ preventScroll: true });
   }
 
+  async function focusAuthPanel() {
+    await tick();
+    authPanelEl?.scrollIntoView({ behavior: "smooth", block: "center" });
+    authPanelEl?.focus({ preventScroll: true });
+  }
+
   // ---- Version & updates: presentation of App.svelte's update state ----
   const primaryLabel = $derived(model ? `${provider} · ${model}` : `${provider} · provider default`);
   const fbRouteLabel = $derived(
@@ -694,24 +759,47 @@
                 switch accounts when one runs out. No profile means your normal login is used.
               </div>
 
-              <div class="auth-panel">
-                <div class="auth-head">
-                  <span class="auth-dot {selectedBadge.tone}"></span>
-                  <span class="auth-state">{authLoading && !authStatuses.length ? "checking…" : selectedBadge.label}</span>
-                  <span class="auth-target">{profile || "default · global login"}</span>
+              <div
+                class="auth-panel {selectedAuthView.tone}"
+                class:signed-in={selectedAuthView.kind === "signed-in"}
+                bind:this={authPanelEl}
+                tabindex="-1"
+              >
+                <div class="auth-overview">
+                  <span class="auth-status-icon" aria-hidden="true">
+                    {#if selectedAuthView.kind === "signed-in"}
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                    {:else}
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.7 2.4 18a2 2 0 0 0 1.8 3h15.6a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
+                    {/if}
+                  </span>
+                  <div class="auth-summary">
+                    <div class="auth-title">{selectedAuthView.title}</div>
+                    <div class="auth-target">
+                      <ProviderLogo {provider} size={14} />
+                      <span>{providerMeta(provider).label} · {profile || "default · global login"}</span>
+                    </div>
+                  </div>
                 </div>
 
-                {#if selectedAuth && !selectedAuth.found}
-                  <p class="auth-help">{selectedAuth.install_hint}</p>
-                {:else if selectedAuth && !selectedAuth.supports_login}
-                  <p class="auth-help">{selectedAuth.login_hint}</p>
-                {:else}
-                  <ProviderSignIn
-                    bind:this={signIn}
-                    {provider}
-                    {profile}
-                    startLabel={selectedAuth?.logged_in ? "Sign in again" : "Sign in"}
-                    onSignedIn={() => void refreshAuth(true)} />
+                <p class="auth-help">{selectedAuthView.body}</p>
+
+                {#if (selectedAuthView.kind === "signed-in" || selectedAuthView.kind === "signed-out") && selectedAuth?.supports_login}
+                  <div class="auth-actions">
+                    <ProviderSignIn
+                      bind:this={signIn}
+                      {provider}
+                      {profile}
+                      startLabel={selectedAuthView.kind === "signed-in" ? "Sign in again" : "Sign in"}
+                      onSignedIn={() => void onRefreshAuth(true)} />
+                  </div>
+                {:else if selectedAuthView.kind !== "checking"}
+                  {#if selectedAuth?.login_hint && selectedAuthView.body !== selectedAuth.login_hint}
+                    <p class="auth-help">{selectedAuth.login_hint}</p>
+                  {/if}
+                  <button class="auth-recheck" disabled={authLoading} onclick={() => void onRefreshAuth(true)}>
+                    {authLoading ? "Checking…" : "Check again"}
+                  </button>
                 {/if}
 
                 {#if authError}
@@ -1521,28 +1609,79 @@
     border: 1px solid var(--line-3);
     border-radius: 14px;
     padding: 14px;
-    max-width: 380px;
+    max-width: 430px;
+    outline: none;
   }
 
-  .auth-head {
+  .auth-panel.green {
+    background: #f2f8f4;
+    border-color: #cfe2d5;
+  }
+
+  .auth-panel.amber {
+    background: #fcf8ee;
+    border-color: #eadbb8;
+  }
+
+  .auth-panel.red {
+    background: #fdf3f1;
+    border-color: #eccfc8;
+  }
+
+  .auth-panel:focus-visible {
+    box-shadow: 0 0 0 3px rgba(42, 143, 138, 0.18);
+  }
+
+  .auth-overview {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
   }
 
-  .auth-state {
-    font: 600 10.5px "JetBrains Mono", monospace;
-    letter-spacing: 0.06em;
-    color: var(--muted-2);
-    text-transform: uppercase;
+  .auth-status-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+
+  .auth-panel.green .auth-status-icon {
+    color: #3f7a5f;
+    background: #dcecdf;
+  }
+
+  .auth-panel.amber .auth-status-icon {
+    color: #9a6c17;
+    background: #f3e6c8;
+  }
+
+  .auth-panel.red .auth-status-icon {
+    color: #a94a36;
+    background: #f4ddd8;
+  }
+
+  .auth-summary {
+    min-width: 0;
+  }
+
+  .auth-title {
+    color: var(--ink);
+    font: 700 13px "Hanken Grotesk";
   }
 
   .auth-target {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2px;
     font: 500 12px "Hanken Grotesk";
     color: var(--faint);
-    flex: 1;
     min-width: 0;
+  }
+
+  .auth-target span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1553,6 +1692,32 @@
     font: 500 12.5px "Hanken Grotesk";
     color: var(--muted-2);
     line-height: 1.5;
+  }
+
+  .auth-actions {
+    margin-top: 12px;
+  }
+
+  .auth-recheck {
+    margin-top: 12px;
+    padding: 7px 12px;
+    border: 1px solid var(--field-line);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--muted-2);
+    font: 650 12px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .auth-recheck:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .auth-panel.signed-in :global(.signin-btn) {
+    border: 1px solid #b9d4c1;
+    background: #fff;
+    color: #35674f;
   }
 
 

@@ -11,6 +11,7 @@
     hireAgent,
     listAgents,
     listProfiles,
+    providerStatus,
   } from "./lib/api";
   import { auth } from "./lib/auth.svelte";
   import { avatars } from "./lib/avatars.svelte";
@@ -21,7 +22,7 @@
   import ProviderLogo from "./lib/ProviderLogo.svelte";
   import SidebarUsage from "./lib/SidebarUsage.svelte";
   import { DEFAULT_PROVIDER, PROVIDERS, providerMeta } from "./lib/providers";
-  import type { Agent, Health, PermissionMode, ProfileInfo, Provider, UpdateStatus } from "./lib/types";
+  import type { Agent, Health, PermissionMode, ProfileInfo, Provider, ProviderAuthStatus, UpdateStatus } from "./lib/types";
   import Chat from "./pages/Chat.svelte";
   import Roadmap from "./pages/Roadmap.svelte";
   import Goals from "./pages/Goals.svelte";
@@ -39,6 +40,11 @@
     sessionId?: string;
     agentName?: string;
     seed?: string;
+  }
+
+  interface SettingsAccountTarget {
+    provider: Provider;
+    profile: string;
   }
 
   const NAV: { key: Route; label: string; icon: string }[] = [
@@ -109,6 +115,10 @@
   let releaseNotesFocusToken = $state(0);
   let settingsFocusTab = $state<SettingsTab>("global");
   let settingsFocusToken = $state(0);
+  let settingsFocusAccount = $state<SettingsAccountTarget | null>(null);
+  let providerAuthStatuses = $state<ProviderAuthStatus[]>([]);
+  let providerAuthLoading = $state(true);
+  let providerAuthError = $state<string | null>(null);
 
   // Hire modal.
   let hireOpen = $state(false);
@@ -216,11 +226,24 @@
       goalTarget = goalId;
       route = "goals";
     });
+    void refreshProviderAuth();
     await refreshPushStatus();
     await refreshHealth();
     await refreshAgents();
     await refreshUpdate();
     await refreshProfileInvite();
+  }
+
+  async function refreshProviderAuth(refresh = false) {
+    providerAuthLoading = true;
+    providerAuthError = null;
+    try {
+      providerAuthStatuses = await providerStatus(refresh);
+    } catch (e) {
+      providerAuthError = e instanceof Error ? e.message : String(e);
+    } finally {
+      providerAuthLoading = false;
+    }
   }
 
   async function refreshPushStatus() {
@@ -338,8 +361,9 @@
     route = "chat";
   }
 
-  function openSettings(tab: SettingsTab = "global") {
+  function openSettings(tab: SettingsTab = "global", account: SettingsAccountTarget | null = null) {
     settingsFocusTab = tab;
+    settingsFocusAccount = account;
     settingsFocusToken += 1;
     route = "settings";
   }
@@ -410,6 +434,7 @@
       profileCreateOpen = false;
       profileName = "";
       profilePath = "";
+      void refreshProviderAuth(true);
     } catch (e) {
       hireError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -523,7 +548,10 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html SETTINGS_ICON}</svg>
         Settings
       </button>
-      <SidebarUsage snapshots={live.usage} />
+      <SidebarUsage
+        snapshots={live.usage}
+        authStatuses={providerAuthStatuses}
+        onOpenSignIn={(provider, profile) => openSettings("global", { provider, profile })} />
       <div class="daemon">
         <span class="daemon-dot" class:live={daemonStatus === "live"}></span>
         <div class="daemon-text mono">
@@ -605,6 +633,10 @@
         {releaseNotesFocusToken}
         {settingsFocusTab}
         {settingsFocusToken}
+        {settingsFocusAccount}
+        authStatuses={providerAuthStatuses}
+        authLoading={providerAuthLoading}
+        authError={providerAuthError}
         {pushState}
         {agents}
         onCheckUpdate={() => refreshUpdate()}
@@ -613,6 +645,7 @@
         onHireAgent={openHire}
         onOpenChat={openChat}
         onAgentsChanged={refreshAgents}
+        onRefreshAuth={refreshProviderAuth}
         onUserProfileSaved={() => (profileInvite = false)} />
     {/if}
   </div>
