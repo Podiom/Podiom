@@ -299,6 +299,16 @@
           <span class="fm-chip mono"><span class="fm-k">{f.k}</span><span class="fm-v">{f.v}</span></span>
         {/each}
         <span class="fm-chip mono"><span class="fm-k">enabled</span><span class="fm-v">{s.enabled ? "true" : "false"}</span></span>
+        {#if s.created_by_agent}
+          <button
+            class="fm-chip fm-chip-link mono"
+            disabled={!s.created_by_session}
+            title={s.created_by_session ? "Open the conversation this schedule was created in" : "Created by an agent"}
+            onclick={() => s.created_by_session && onOpenChat({ sessionId: s.created_by_session })}
+          >
+            <span class="fm-k">created by</span><span class="fm-v">{s.created_by_agent}</span>
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -768,6 +778,22 @@
     background: #fff;
     border: 1px solid var(--field-line);
     font: 500 11.5px "JetBrains Mono", monospace;
+  }
+
+  /* The one chip that is a link: it opens the conversation the agent created
+     this schedule in. Styled as the other chips so the row stays even. */
+  .fm-chip-link {
+    cursor: pointer;
+    color: inherit;
+    transition: border-color 0.15s ease;
+  }
+
+  .fm-chip-link:hover:not(:disabled) {
+    border-color: #e4d9cb;
+  }
+
+  .fm-chip-link:disabled {
+    cursor: default;
   }
 
   .fm-k {

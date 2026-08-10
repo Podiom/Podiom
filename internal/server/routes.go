@@ -47,6 +47,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/git/status", s.handleGitStatus},
 		{"/api/git/identity", s.handleGitIdentity},
 		{"/api/session-project/", s.handleSessionProject},
+		{"/api/session-context/", s.handleSessionContext},
 		{"/api/github/status", s.handleGitHubStatus},
 		{"/api/github/device/start", s.handleGitHubDeviceStart},
 		{"/api/github/device/poll", s.handleGitHubDevicePoll},

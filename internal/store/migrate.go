@@ -1323,6 +1323,16 @@ var migrations = []migration{
 		sql: `ALTER TABLE sessions
 			ADD COLUMN source_control_warning TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 33,
+		name:    "task_created_by",
+		// Records which agent session authored a task, so work an agent decided to
+		// create is traceable back to the conversation it came out of. Empty means
+		// the user created it in the web UI or CLI, which is why no backfill is
+		// needed: every pre-existing task is user-authored.
+		sql: `ALTER TABLE tasks ADD COLUMN created_by_session TEXT NOT NULL DEFAULT '';
+		ALTER TABLE tasks ADD COLUMN created_by_agent TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

@@ -19,11 +19,23 @@ Every session has one origin set at creation:
 Origin is provenance only. A session can later be continued from another
 channel, but its origin does not change.
 
-## Schedule Linkage
+## Linkage
 
-Sessions have nullable `schedule_id` and `run_id` fields so scheduled sessions
-can link back to the schedule/run that produced them. The scheduler itself is
-implemented in a later phase.
+Sessions have nullable `schedule_id`, `run_id`, `task_id`, `goal_id`, and
+`project_id` fields, so a session can say what produced it — the schedule and run
+that fired it, the roadmap task it was started for, the goal it belongs to.
+
+The reverse direction is recorded on the artifacts themselves. A roadmap task or
+schedule an agent creates carries `created_by_session` and `created_by_agent`, so
+a session's detail can list what it made and the Roadmap and Schedules pages can
+link an item back to the conversation it came out of. Both halves are derived
+from live data: deleting a task simply drops it from the list rather than leaving
+a record of something that no longer exists. See
+[agent-tools.md](agent-tools.md).
+
+Agents read their own side of this with `podiom_session_context`, which reports
+the session's origin, whether the run is unattended, its links in both
+directions, and its context usage — without replaying the transcript.
 
 ## History
 

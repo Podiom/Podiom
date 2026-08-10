@@ -502,6 +502,9 @@ export interface Task {
   PlanRequired: boolean;
   PickupAt: string;
   GoalID: string;
+  // Set when an agent created this task; empty when the user did.
+  CreatedBySession: string;
+  CreatedByAgent: string;
   CreatedAt: string;
   UpdatedAt: string;
 }
@@ -740,6 +743,10 @@ export interface SessionDetail {
   project_id?: string;
   project_name?: string;
   usage?: UsageEstimate;
+  // What this session created, as opposed to `task` above, which is what created
+  // this session.
+  created_tasks?: Task[];
+  created_schedules?: string[];
 }
 
 export type RunPermission = "preapproved" | "yolo";
@@ -773,6 +780,9 @@ export interface ScheduleStatus {
   allowed_tools: string[];
   enabled: boolean;
   goal_id?: string;
+  // Set when an agent created this schedule; absent when a human did.
+  created_by_session?: string;
+  created_by_agent?: string;
   body: string;
   next_run?: string;
   parse_error?: string;

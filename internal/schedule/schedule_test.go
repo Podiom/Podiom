@@ -71,6 +71,50 @@ func TestRenderIncludesRunTarget(t *testing.T) {
 	}
 }
 
+// TestCreatorProvenanceRoundTrip pins that a schedule an agent authored records
+// which session it came from, and survives the Render -> Parse round trip that
+// every write goes through.
+func TestCreatorProvenanceRoundTrip(t *testing.T) {
+	text := Render(CreateParams{
+		Name:             "nightly",
+		Agent:            "jared",
+		Cron:             "0 1 * * *",
+		CreatedBySession: "sess-1",
+		CreatedByAgent:   "jared",
+		Body:             "Run the audit.",
+	})
+	for _, want := range []string{"created_by_session: sess-1", "created_by_agent: jared"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered schedule missing %q:\n%s", want, text)
+		}
+	}
+
+	path := writeSchedule(t, t.TempDir(), "nightly.md", text)
+	sched, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if sched.CreatedBySession != "sess-1" || sched.CreatedByAgent != "jared" {
+		t.Fatalf("provenance did not survive the round trip: %+v", sched)
+	}
+
+	// A human-authored file carries no attribution rather than a wrong one.
+	plain := writeSchedule(t, t.TempDir(), "manual.md", `---
+agent: jared
+cron: "0 1 * * *"
+enabled: true
+---
+Run the audit.
+`)
+	manual, err := Parse(plain)
+	if err != nil {
+		t.Fatalf("parse manual: %v", err)
+	}
+	if manual.CreatedBySession != "" || manual.CreatedByAgent != "" {
+		t.Fatalf("human-authored schedule should carry no attribution: %+v", manual)
+	}
+}
+
 func TestParseEveryMapsToDescriptor(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSchedule(t, dir, "freq.md", `---

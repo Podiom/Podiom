@@ -707,7 +707,14 @@ type Task struct {
 	// GoalID links this task to a goal when it was created as part of that goal's
 	// plan (""=standalone). Goal-linked task runs are forced yolo and their tool
 	// calls are recorded on the goal's timeline.
-	GoalID    string
-	CreatedAt string
-	UpdatedAt string
+	GoalID string
+	// CreatedBySession and CreatedByAgent record the agent session that authored
+	// this task, so a task an agent decided to create is traceable back to the
+	// conversation it came out of. Both empty means the user created it in the web
+	// UI or CLI. Set at creation only — UpdateTask deliberately leaves them alone
+	// so a later agent cannot claim authorship of the user's own task.
+	CreatedBySession string
+	CreatedByAgent   string
+	CreatedAt        string
+	UpdatedAt        string
 }

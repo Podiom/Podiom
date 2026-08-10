@@ -320,3 +320,99 @@ func TestPickupDueGoalReviews(t *testing.T) {
 		t.Fatalf("paused goal fired a review (total %d)", reviews)
 	}
 }
+
+// TestUpdatePreservesUnpatchedFields pins the contract that makes Update safe to
+// hand an agent: a partial patch keeps everything it did not mention — including
+// the creator attribution and the body — and parking a schedule stops it firing
+// without destroying it.
+func TestUpdatePreservesUnpatchedFields(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	created, err := s.Create(ctx, CreateParams{
+		Name:             "morning",
+		Agent:            "jared",
+		Cron:             "0 7 * * *",
+		GoalID:           "goal-1",
+		CreatedBySession: "sess-1",
+		CreatedByAgent:   "jared",
+		Body:             "Summarise the calendar.",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !created.Enabled {
+		t.Fatalf("a freshly created schedule should be armed")
+	}
+
+	parked := false
+	updated, err := s.Update(ctx, "morning", UpdateParams{Enabled: &parked})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Enabled {
+		t.Errorf("enabled=false did not park the schedule")
+	}
+	if updated.Body != "Summarise the calendar." {
+		t.Errorf("body was lost: %q", updated.Body)
+	}
+	if updated.CreatedBySession != "sess-1" || updated.CreatedByAgent != "jared" {
+		t.Errorf("update dropped the creator attribution: %+v", updated)
+	}
+	if updated.GoalID != "goal-1" {
+		t.Errorf("update dropped the goal link: %q", updated.GoalID)
+	}
+	// Parking unregisters the cron job; the file itself stays on disk.
+	if updated.NextRun != nil {
+		t.Errorf("a parked schedule should have no next run, got %v", updated.NextRun)
+	}
+	if _, err := os.Stat(updated.Path); err != nil {
+		t.Errorf("parked schedule file should still exist: %v", err)
+	}
+
+	// Cadence is exclusive: switching to `every` clears `cron` without the caller
+	// having to blank it.
+	every := "6h"
+	switched, err := s.Update(ctx, "morning", UpdateParams{Every: &every})
+	if err != nil {
+		t.Fatalf("update cadence: %v", err)
+	}
+	if switched.Every != "6h" || switched.Cron != "" {
+		t.Errorf("cadence switch left both set: cron=%q every=%q", switched.Cron, switched.Every)
+	}
+}
+
+// TestUpdateRejectsBadPatchWithoutTouchingTheFile keeps a broken edit from
+// replacing a working schedule.
+func TestUpdateRejectsBadPatchWithoutTouchingTheFile(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	if _, err := s.Create(ctx, CreateParams{
+		Name:  "morning",
+		Agent: "jared",
+		Cron:  "0 7 * * *",
+		Body:  "Summarise the calendar.",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	blank := ""
+	if _, err := s.Update(ctx, "morning", UpdateParams{Body: &blank}); err == nil {
+		t.Fatal("expected an empty body to be rejected")
+	}
+	after, err := s.Status(ctx, "morning")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if after.Body != "Summarise the calendar." {
+		t.Errorf("rejected patch still modified the file: %q", after.Body)
+	}
+
+	armed := true
+	if _, err := s.Update(ctx, "nope", UpdateParams{Enabled: &armed}); err == nil {
+		t.Error("expected an unknown schedule to error")
+	}
+}

@@ -236,23 +236,25 @@ func (s *Scheduler) Sync() {
 // Status is a schedule's current state for the CLI/API: its frontmatter, whether
 // it is registered, its next fire time, any parse error, and recent runs.
 type Status struct {
-	Name          string              `json:"name"`
-	Path          string              `json:"path"`
-	Agent         string              `json:"agent"`
-	Provider      config.Provider     `json:"provider"`
-	Profile       string              `json:"profile"`
-	Model         string              `json:"model"`
-	Effort        string              `json:"effort"`
-	Cron          string              `json:"cron"`
-	Every         string              `json:"every"`
-	RunPermission RunPermission       `json:"run_permission"`
-	AllowedTools  []string            `json:"allowed_tools"`
-	Enabled       bool                `json:"enabled"`
-	GoalID        string              `json:"goal_id,omitempty"`
-	Body          string              `json:"body"`
-	NextRun       *time.Time          `json:"next_run,omitempty"`
-	ParseError    string              `json:"parse_error,omitempty"`
-	Runs          []store.ScheduleRun `json:"runs"`
+	Name             string              `json:"name"`
+	Path             string              `json:"path"`
+	Agent            string              `json:"agent"`
+	Provider         config.Provider     `json:"provider"`
+	Profile          string              `json:"profile"`
+	Model            string              `json:"model"`
+	Effort           string              `json:"effort"`
+	Cron             string              `json:"cron"`
+	Every            string              `json:"every"`
+	RunPermission    RunPermission       `json:"run_permission"`
+	AllowedTools     []string            `json:"allowed_tools"`
+	Enabled          bool                `json:"enabled"`
+	GoalID           string              `json:"goal_id,omitempty"`
+	CreatedBySession string              `json:"created_by_session,omitempty"`
+	CreatedByAgent   string              `json:"created_by_agent,omitempty"`
+	Body             string              `json:"body"`
+	NextRun          *time.Time          `json:"next_run,omitempty"`
+	ParseError       string              `json:"parse_error,omitempty"`
+	Runs             []store.ScheduleRun `json:"runs"`
 }
 
 // List returns the current state of every schedule file, newest-run-aware and
@@ -280,7 +282,10 @@ func (s *Scheduler) List(ctx context.Context) ([]Status, error) {
 			AllowedTools:  sc.AllowedTools,
 			Enabled:       sc.Enabled,
 			GoalID:        sc.GoalID,
-			Body:          sc.Body,
+
+			CreatedBySession: sc.CreatedBySession,
+			CreatedByAgent:   sc.CreatedByAgent,
+			Body:             sc.Body,
 		}
 		if next := s.nextRun(sc.Name); next != nil {
 			status.NextRun = next
@@ -297,6 +302,27 @@ func (s *Scheduler) List(ctx context.Context) ([]Status, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// CreatedBySession returns the names of schedules an agent session authored,
+// sorted. It scans the directory directly rather than going through List: the
+// reverse-provenance view needs the names, not a run history query per schedule.
+func (s *Scheduler) CreatedBySession(sessionID string) ([]string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	schedules, _, err := ScanDir(s.dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, sc := range schedules {
+		if sc.CreatedBySession == sessionID {
+			names = append(names, sc.Name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (s *Scheduler) nextRun(name string) *time.Time {
@@ -492,8 +518,34 @@ type CreateParams struct {
 	Every         string
 	RunPermission RunPermission
 	AllowedTools  []string
+	Enabled       bool
 	GoalID        string
-	Body          string
+	// CreatedBySession/CreatedByAgent attribute the file to the agent session
+	// that authored it. Left empty for schedules a human creates.
+	CreatedBySession string
+	CreatedByAgent   string
+	Body             string
+}
+
+// UpdateParams patches an existing schedule. Every field is a pointer: nil means
+// "leave this alone", so an update never has to restate the whole file.
+//
+// Two fields are deliberately absent. The name is the filename, so renaming
+// means delete-and-recreate. GoalID is not patchable because linking a schedule
+// to a goal silently forces yolo (see Create), and an ordinary edit is the wrong
+// place for a permission escalation.
+type UpdateParams struct {
+	Agent         *string
+	Provider      *config.Provider
+	Profile       *string
+	Model         *string
+	Effort        *string
+	Cron          *string
+	Every         *string
+	RunPermission *RunPermission
+	AllowedTools  *[]string
+	Enabled       *bool
+	Body          *string
 }
 
 // Create authors a new schedule markdown file under the schedules directory,
@@ -535,6 +587,9 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 	if p.RunPermission == "" {
 		p.RunPermission = PermissionPreapproved
 	}
+	// A schedule someone deliberately created is armed; the off switch is an
+	// explicit later edit (Update) rather than a step you have to remember here.
+	p.Enabled = true
 	content := Render(p)
 	// Validate before committing the file to disk so we never leave an invalid
 	// schedule lying around.
@@ -560,6 +615,150 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 	}
 	s.log.Info("schedule created", "event", "schedule", "schedule", name, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	return Status{Name: name, Path: path}, nil
+}
+
+// Status returns one schedule's full state, including its body and recent runs.
+func (s *Scheduler) Status(ctx context.Context, name string) (Status, error) {
+	name = Slug(name)
+	if name == "" {
+		return Status{}, fmt.Errorf("schedule name is required")
+	}
+	statuses, err := s.List(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	for _, st := range statuses {
+		if st.Name == name {
+			return st, nil
+		}
+	}
+	return Status{}, fmt.Errorf("schedule %q not found", name)
+}
+
+// Update patches an existing schedule file in place. It reads the current file,
+// applies the supplied fields, and re-renders the whole thing — so every key the
+// caller did not mention (including the creator attribution) survives untouched,
+// and the file format can never drift between the create and update paths.
+//
+// Validation happens before the write, exactly as Create does, so a bad patch
+// leaves the file on disk unchanged rather than replacing a working schedule
+// with a broken one.
+func (s *Scheduler) Update(ctx context.Context, name string, p UpdateParams) (Status, error) {
+	started := time.Now()
+	name = Slug(name)
+	if name == "" {
+		return Status{}, fmt.Errorf("schedule name is required")
+	}
+	path := s.pathFor(name)
+	current, err := Parse(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Status{}, fmt.Errorf("schedule %q not found", name)
+		}
+		return Status{}, err
+	}
+
+	next := CreateParams{
+		Name:          name,
+		Agent:         current.Agent,
+		Provider:      current.Provider,
+		Profile:       current.Profile,
+		Model:         current.Model,
+		Effort:        current.Effort,
+		Cron:          current.Cron,
+		Every:         current.Every,
+		RunPermission: current.RunPermission,
+		AllowedTools:  current.AllowedTools,
+		Enabled:       current.Enabled,
+		GoalID:        current.GoalID,
+
+		CreatedBySession: current.CreatedBySession,
+		CreatedByAgent:   current.CreatedByAgent,
+		Body:             current.Body,
+	}
+
+	var changed []string
+	if p.Agent != nil {
+		next.Agent = strings.TrimSpace(*p.Agent)
+		changed = append(changed, "agent")
+	}
+	if p.Provider != nil {
+		next.Provider = *p.Provider
+		changed = append(changed, "provider")
+	}
+	if p.Profile != nil {
+		next.Profile = strings.TrimSpace(*p.Profile)
+		changed = append(changed, "profile")
+	}
+	if p.Model != nil {
+		next.Model = strings.TrimSpace(*p.Model)
+		changed = append(changed, "model")
+	}
+	if p.Effort != nil {
+		next.Effort = strings.TrimSpace(*p.Effort)
+		changed = append(changed, "effort")
+	}
+	// Cadence is exclusive: setting one clears the other, so a caller switching
+	// from cron to every does not have to know to blank the old field.
+	if p.Cron != nil {
+		next.Cron = strings.TrimSpace(*p.Cron)
+		if next.Cron != "" {
+			next.Every = ""
+		}
+		changed = append(changed, "cron")
+	}
+	if p.Every != nil {
+		next.Every = strings.TrimSpace(*p.Every)
+		if next.Every != "" {
+			next.Cron = ""
+		}
+		changed = append(changed, "every")
+	}
+	if p.RunPermission != nil {
+		next.RunPermission = *p.RunPermission
+		changed = append(changed, "run_permission")
+	}
+	if p.AllowedTools != nil {
+		next.AllowedTools = *p.AllowedTools
+		changed = append(changed, "allowed_tools")
+	}
+	if p.Enabled != nil {
+		next.Enabled = *p.Enabled
+		changed = append(changed, "enabled")
+	}
+	if p.Body != nil {
+		next.Body = strings.TrimSpace(*p.Body)
+		changed = append(changed, "body")
+	}
+	if len(changed) == 0 {
+		return s.Status(ctx, name)
+	}
+
+	if s.core != nil {
+		if err := s.core.ValidateRunTargetForAgent(ctx, next.Agent, core.RunTarget{
+			Provider: next.Provider,
+			Profile:  next.Profile,
+			Model:    next.Model,
+			Effort:   next.Effort,
+		}); err != nil {
+			return Status{}, err
+		}
+	}
+
+	content := Render(next)
+	if _, err := parseBytes(path, []byte(content)); err != nil {
+		s.log.Warn("schedule update failed", "event", "schedule", "schedule", name, "stage", "parse", podiomlog.ErrorAttr(err))
+		return Status{}, err
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		s.log.Warn("schedule update failed", "event", "schedule", "schedule", name, "stage", "write", podiomlog.ErrorAttr(err))
+		return Status{}, fmt.Errorf("write schedule %q: %w", name, err)
+	}
+	s.Sync()
+
+	// Field names only: a schedule body can be long, and the values are on disk.
+	s.log.Info("schedule updated", "event", "schedule", "schedule", name, "fields", strings.Join(changed, ","), "enabled", next.Enabled, podiomlog.DurationMS("duration_ms", time.Since(started)))
+	return s.Status(ctx, name)
 }
 
 func enabledScheduleCount(schedules []Schedule) int {

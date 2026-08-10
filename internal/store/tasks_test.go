@@ -91,3 +91,59 @@ func TestListDueTasksRespectsPickupAndStatus(t *testing.T) {
 		t.Fatalf("expected only the due assigned task, got %+v", due)
 	}
 }
+
+// TestTaskCreatorProvenance pins the two decisions behind created_by_*: an agent
+// session's authorship round-trips on create, and an update can never rewrite it
+// (otherwise a later agent could claim a task the user made).
+func TestTaskCreatorProvenance(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	agentMade, err := db.CreateTask(ctx, Task{
+		Title:            "Benchmark the candidates",
+		CreatedBySession: "sess-1",
+		CreatedByAgent:   "jared",
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if agentMade.CreatedBySession != "sess-1" || agentMade.CreatedByAgent != "jared" {
+		t.Fatalf("provenance did not round-trip on create: %+v", agentMade)
+	}
+
+	// A task the user made in the UI carries no attribution rather than a wrong one.
+	userMade, err := db.CreateTask(ctx, Task{Title: "Ship the release"})
+	if err != nil {
+		t.Fatalf("create user task: %v", err)
+	}
+	if userMade.CreatedBySession != "" || userMade.CreatedByAgent != "" {
+		t.Fatalf("user-created task should carry no attribution: %+v", userMade)
+	}
+
+	// Authorship is immutable: zeroing the fields on update must not clear them.
+	agentMade.CreatedBySession = ""
+	agentMade.CreatedByAgent = ""
+	agentMade.Title = "Benchmark the three candidates"
+	updated, err := db.UpdateTask(ctx, agentMade)
+	if err != nil {
+		t.Fatalf("update task: %v", err)
+	}
+	if updated.CreatedBySession != "sess-1" || updated.CreatedByAgent != "jared" {
+		t.Fatalf("update rewrote authorship: %+v", updated)
+	}
+
+	created, err := db.ListTasksCreatedBySession(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("list by session: %v", err)
+	}
+	if len(created) != 1 || created[0].ID != updated.ID {
+		t.Fatalf("expected only the agent-created task, got %+v", created)
+	}
+	if none, err := db.ListTasksCreatedBySession(ctx, "sess-unknown"); err != nil || len(none) != 0 {
+		t.Fatalf("unknown session should list nothing, got %+v (err %v)", none, err)
+	}
+}

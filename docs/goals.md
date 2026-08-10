@@ -233,7 +233,8 @@ list sorts those goals first under **Needs you**.
 Agents drive goals through `podiom_*` tools on the built-in `podiom_manage`
 MCP server (`podiom_get_goal`, `podiom_record_goal_progress`,
 `podiom_request_access`, `podiom_request_user_action`,
-`podiom_propose_goal_completion`, …). Tool calls are
+`podiom_propose_goal_completion`, …) — see
+[agent-tools.md](agent-tools.md) for the whole surface. Tool calls are
 stamped with the calling session's identity server-side, so timeline
 provenance never depends on the model identifying itself. `podiom_create_task`
 takes a `goal_id` (also on `POST /api/tasks`) — the lead agent passes it when a

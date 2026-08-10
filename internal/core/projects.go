@@ -311,6 +311,11 @@ func (c *Core) GetTask(ctx context.Context, id string) (store.Task, error) {
 	return c.store.GetTask(ctx, id)
 }
 
+// ListTasksCreatedBySession returns the tasks an agent session authored.
+func (c *Core) ListTasksCreatedBySession(ctx context.Context, sessionID string) ([]store.Task, error) {
+	return c.store.ListTasksCreatedBySession(ctx, sessionID)
+}
+
 // validateTaskProvider rejects unknown provider overrides on a task. Assigned
 // tasks are also covered by ValidateRunTargetForAgent; this guard keeps
 // unassigned tasks from persisting a bogus provider (the store no longer

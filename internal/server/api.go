@@ -620,6 +620,13 @@ type sessionDetail struct {
 	ProjectID   string               `json:"project_id,omitempty"`
 	ProjectName string               `json:"project_name,omitempty"`
 	Usage       *tokenmeter.Estimate `json:"usage,omitempty"`
+	// CreatedTasks/CreatedSchedules are the upward half of provenance: what this
+	// session made, as opposed to Task above, which is what made this session.
+	// Both are derived from the artifacts themselves, so a deleted task or
+	// schedule simply stops being listed instead of the record advertising
+	// something that no longer exists.
+	CreatedTasks     []store.Task `json:"created_tasks,omitempty"`
+	CreatedSchedules []string     `json:"created_schedules,omitempty"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -692,6 +699,17 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 					detail.ProjectName = project.Name
 				}
 			}
+		}
+	}
+	// What this session created. Errors are swallowed like the project lookups
+	// above: provenance is context, and failing to gather it must never stop a
+	// conversation from loading.
+	if tasks, err := s.core.ListTasksCreatedBySession(r.Context(), id); err == nil {
+		detail.CreatedTasks = tasks
+	}
+	if s.scheduler != nil {
+		if names, err := s.scheduler.CreatedBySession(id); err == nil {
+			detail.CreatedSchedules = names
 		}
 	}
 	writeJSON(w, detail, nil)

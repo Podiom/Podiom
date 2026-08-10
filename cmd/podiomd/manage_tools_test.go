@@ -69,9 +69,9 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// tasks 6 + projects 5 + schedules 4 + skills 4 + mcp 5 + goals 11 + platform 5.
-	if len(tools) != 40 {
-		t.Fatalf("expected 40 tools, got %d", len(tools))
+	// session 1 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + platform 4.
+	if len(tools) != 48 {
+		t.Fatalf("expected 48 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{
@@ -298,5 +298,117 @@ func TestNon2xxSurfacesErrorBody(t *testing.T) {
 	_, err := callTool(t, c, "podiom_get_task", map[string]any{"id": "x"})
 	if err == nil || !strings.Contains(err.Error(), "task id is required") {
 		t.Fatalf("expected surfaced error body, got %v", err)
+	}
+}
+
+// TestCreateToolsStampCreator pins that the tools which create durable work
+// attribute it to the calling session, using this process's own --session/--agent
+// flags rather than anything the model passed. Update tools must not stamp:
+// authorship is fixed at creation.
+func TestCreateToolsStampCreator(t *testing.T) {
+	rec, c := newRecordingServer(t)
+
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"podiom_create_task", map[string]any{"title": "Benchmark the candidates"}},
+		{"podiom_create_schedule", map[string]any{"name": "nightly", "agent": "jared", "body": "Run the audit.", "cron": "0 1 * * *"}},
+	} {
+		if _, err := callTool(t, c, tc.tool, tc.args); err != nil {
+			t.Fatalf("%s: %v", tc.tool, err)
+		}
+		if got := string(rec.body["created_by_session"]); got != `"sess-1"` {
+			t.Errorf("%s created_by_session = %s, want \"sess-1\"", tc.tool, got)
+		}
+		if got := string(rec.body["created_by_agent"]); got != `"atlas"` {
+			t.Errorf("%s created_by_agent = %s, want \"atlas\"", tc.tool, got)
+		}
+	}
+
+	if _, err := callTool(t, c, "podiom_update_task", map[string]any{"id": "t1", "title": "Renamed"}); err != nil {
+		t.Fatalf("podiom_update_task: %v", err)
+	}
+	if _, ok := rec.body["created_by_session"]; ok {
+		t.Error("podiom_update_task stamped authorship; updates must leave it alone")
+	}
+}
+
+// TestStampCreatorIgnoresEmptyIdentity keeps the coverage tests (which build the
+// tool set with no session) from sending empty attribution to the API.
+func TestStampCreatorIgnoresEmptyIdentity(t *testing.T) {
+	body := stampCreator(map[string]json.RawMessage{}, "", "")
+	if len(body) != 0 {
+		t.Fatalf("empty identity should stamp nothing, got %v", body)
+	}
+}
+
+// TestGenerateAgentSoulRefusesExistingIdentity pins the rule that a tool may
+// finish a birth but never overwrite an identity — and that it refuses before
+// writing anything.
+func TestGenerateAgentSoulRefusesExistingIdentity(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	rec.respond = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// store.Agent has no JSON tags, so the soul arrives PascalCase.
+		_, _ = w.Write([]byte(`{"Name":"atlas","Soul":"I am Atlas."}`))
+	}
+
+	_, err := callTool(t, c, "podiom_generate_agent_soul", map[string]any{"name": "atlas"})
+	if err == nil {
+		t.Fatal("expected generation to be refused for an agent that already has a soul")
+	}
+	if !strings.Contains(err.Error(), "already has an identity") {
+		t.Errorf("unhelpful refusal: %v", err)
+	}
+	if rec.method != http.MethodGet {
+		t.Errorf("refusal should stop after the pre-flight read, saw %s %s", rec.method, rec.path)
+	}
+}
+
+// TestGenerateAgentSoulSavesForNewAgent uses the real scaffolded skeleton, not
+// an empty string: creating an agent always writes that skeleton, so treating
+// "non-empty" as "already has an identity" would refuse every legitimate call.
+func TestGenerateAgentSoulSavesForNewAgent(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	skeleton := strings.ReplaceAll(string(config.AgentSoulTemplate()), "{{agent_name}}", "atlas")
+	rec.respond = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			body, _ := json.Marshal(map[string]string{"Name": "atlas", "Soul": skeleton})
+			_, _ = w.Write(body)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}
+
+	if _, err := callTool(t, c, "podiom_generate_agent_soul", map[string]any{"name": "atlas", "role": "researcher"}); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/api/agents/atlas/generate" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	// A draft the caller cannot persist would be useless, so the tool always saves.
+	if string(rec.body["save"]) != "true" {
+		t.Errorf("expected save=true, got %s", rec.body["save"])
+	}
+}
+
+// TestUpdateAgentOmitsPrivilegeFields keeps permission_mode, soul, and
+// mcp_servers off the tool's write path even when a model passes them.
+func TestUpdateAgentOmitsPrivilegeFields(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	if _, err := callTool(t, c, "podiom_update_agent", map[string]any{
+		"name": "atlas", "model": "opus", "permission_mode": "yolo", "soul": "I am someone else.", "mcp_servers": []string{},
+	}); err != nil {
+		t.Fatalf("update agent: %v", err)
+	}
+	for _, banned := range []string{"permission_mode", "soul", "mcp_servers"} {
+		if _, ok := rec.body[banned]; ok {
+			t.Errorf("podiom_update_agent forwarded %q; it must not be settable here", banned)
+		}
+	}
+	if string(rec.body["model"]) != `"opus"` {
+		t.Errorf("model did not reach the server: %v", rec.body)
 	}
 }

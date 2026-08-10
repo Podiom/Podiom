@@ -19,10 +19,10 @@ func (s *Store) CreateTask(ctx context.Context, task Task) (Task, error) {
 		task.Status = TaskBacklog
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO tasks
-		(id, project_id, title, body, assigned_agent, provider, profile, model, effort, status, plan_required, pickup_at, goal_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+		(id, project_id, title, body, assigned_agent, provider, profile, model, effort, status, plan_required, pickup_at, goal_id, created_by_session, created_by_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?)`,
 		task.ID, task.ProjectID, task.Title, task.Body, task.AssignedAgent, task.Provider, task.Profile, task.Model, task.Effort,
-		task.Status, boolInt(task.PlanRequired), task.PickupAt, task.GoalID,
+		task.Status, boolInt(task.PlanRequired), task.PickupAt, task.GoalID, task.CreatedBySession, task.CreatedByAgent,
 	)
 	if err != nil {
 		return Task{}, fmt.Errorf("create task %q: %w", task.ID, err)
@@ -54,7 +54,9 @@ func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 }
 
 // UpdateTask stores the mutable fields of a task (assignment, status, body,
-// title, pickup time).
+// title, pickup time). created_by_session/created_by_agent are deliberately
+// absent from the SET clause: authorship is a creation fact, and letting an
+// update rewrite it would let a later agent claim a task the user made.
 func (s *Store) UpdateTask(ctx context.Context, task Task) (Task, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE tasks
 		SET project_id = ?, title = ?, body = ?, assigned_agent = ?,
@@ -124,10 +126,31 @@ func (s *Store) ListDueTasks(ctx context.Context, cutoffRFC3339 string) ([]Task,
 	return scanTasks(rows)
 }
 
+// ListTasksCreatedBySession returns the tasks an agent session authored, newest
+// first. This is the upward half of session provenance: a session row already
+// records what spawned it, this answers what it spawned. Deriving it from the
+// tasks themselves (rather than keeping a separate log) means a deleted task
+// simply stops being listed, instead of the record advertising something that no
+// longer exists.
+func (s *Store) ListTasksCreatedBySession(ctx context.Context, sessionID string) ([]Task, error) {
+	if sessionID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, taskSelect+`
+		WHERE created_by_session = ? ORDER BY created_at DESC, id DESC`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks created by session %q: %w", sessionID, err)
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 const taskSelect = `SELECT id, project_id, title, body, assigned_agent,
 	COALESCE(provider, ''), COALESCE(profile, ''), COALESCE(model, ''), COALESCE(effort, ''),
 	status, plan_required,
-	COALESCE(pickup_at, ''), COALESCE(goal_id, ''), created_at, updated_at FROM tasks`
+	COALESCE(pickup_at, ''), COALESCE(goal_id, ''),
+	COALESCE(created_by_session, ''), COALESCE(created_by_agent, ''),
+	created_at, updated_at FROM tasks`
 
 func scanTasks(rows *sql.Rows) ([]Task, error) {
 	var tasks []Task
@@ -157,6 +180,8 @@ func scanTask(row scanner) (Task, error) {
 		&task.PlanRequired,
 		&task.PickupAt,
 		&task.GoalID,
+		&task.CreatedBySession,
+		&task.CreatedByAgent,
 		&task.CreatedAt,
 		&task.UpdatedAt,
 	); err != nil {

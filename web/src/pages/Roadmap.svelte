@@ -567,6 +567,14 @@
             <div class="mono cm-agent-sub">assignee · {openCard.Status.replace("_", " ")}</div>
           </div>
         </div>
+        {#if openCard.CreatedByAgent}
+          <div class="cm-origin mono">
+            <span>created by {openCard.CreatedByAgent}</span>
+            {#if openCard.CreatedBySession}
+              <button onclick={() => onOpenChat({ sessionId: openCard!.CreatedBySession })}>open that conversation →</button>
+            {/if}
+          </div>
+        {/if}
         <div class="cm-actions">
           {#if hasSession(openCard)}
             <button class="cm-primary" onclick={() => openInChat(openCard!)}>
@@ -1126,6 +1134,33 @@
     background: var(--surface-3);
     border: 1px solid var(--line-3);
     border-radius: 13px;
+  }
+
+  /* Who made this task, and a way back to the conversation they made it in.
+     Only shown for agent-created tasks; a task the user made has no origin to
+     link to. */
+  .cm-origin {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+    margin-top: 9px;
+    padding: 0 3px;
+    font: 400 11px "JetBrains Mono", monospace;
+    color: #9a8e80;
+  }
+
+  .cm-origin button {
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: var(--accent, #4f9e78);
+    cursor: pointer;
+  }
+
+  .cm-origin button:hover {
+    text-decoration: underline;
   }
 
   .cm-agent-name {

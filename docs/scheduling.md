@@ -20,6 +20,8 @@ run_permission: preapproved   # preapproved (default) | yolo
 allowed_tools: []         # preapproved allow-list (empty = deny all side effects)
 enabled: true             # off switch — a disabled file stays but does not fire
 goal_id: ""               # optional — set when a goal's plan created this schedule
+created_by_session: ""    # optional — the agent session that created this file
+created_by_agent: ""      # optional — the agent that created it
 ---
 
 Summarise today's calendar and add a short note to the "daily-briefs" project.
@@ -35,6 +37,13 @@ Keep it to three lines.
   agent sets it when creating a schedule as part of a goal's plan, and the
   Schedules page highlights and links any schedule that carries one. Leave it
   unset for schedules you create yourself.
+- `created_by_session` / `created_by_agent` record which agent decided this
+  schedule should exist and the conversation it came out of. Podiom writes them
+  from the agent's own session identity — the agent never supplies them — and the
+  Schedules page shows a **created by** chip that opens that conversation. Both
+  are absent on a schedule you wrote yourself, which is how a human-authored file
+  is told apart from an agent's. An edit never rewrites them. See
+  [agent-tools.md](agent-tools.md).
 
 ## Each run is a normal session
 
@@ -74,8 +83,15 @@ podiom schedules run <name>       # trigger now; prints the run + session id
 
 Over HTTP (also used by the web UI):
 
-- `GET  /api/schedules` — every schedule's state, next-run time, and recent runs.
-- `POST /api/schedules/<name>/run` — trigger a manual run; returns the run record.
+- `GET   /api/schedules` — every schedule's state, next-run time, and recent runs.
+- `GET   /api/schedules/<name>` — one schedule in full, including its body.
+- `PATCH /api/schedules/<name>` — change fields in place. Only what you send is
+  changed; everything else in the file survives, including its attribution. Set
+  `enabled: false` to park a schedule without losing its history. Setting `cron`
+  clears `every` and vice versa. The name and `goal_id` are not patchable — the
+  name is the filename, and the goal link forces `yolo`.
+- `POST  /api/schedules/<name>/run` — trigger a manual run; returns the run record.
+- `DELETE /api/schedules/<name>` — remove the file and its run history.
 
 ## Limitations (v1)
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,22 +44,30 @@ type Schedule struct {
 	AllowedTools  []string        // preapproved allow-list
 	Enabled       bool            // off switch: a disabled file stays but does not fire
 	GoalID        string          // optional id of the goal whose plan created this schedule
-	Body          string          // the task prompt
+	// CreatedBySession and CreatedByAgent record the agent session that authored
+	// this file, so a recurring job an agent decided to create is traceable back
+	// to the conversation it came out of. Both empty means a human wrote it (the
+	// UI, the CLI, or by dropping a file in the directory).
+	CreatedBySession string
+	CreatedByAgent   string
+	Body             string // the task prompt
 }
 
 // frontmatter mirrors the YAML block at the top of a schedule file.
 type frontmatter struct {
-	Agent         string   `yaml:"agent"`
-	Provider      string   `yaml:"provider"`
-	Profile       string   `yaml:"profile"`
-	Model         string   `yaml:"model"`
-	Effort        string   `yaml:"effort"`
-	Cron          string   `yaml:"cron"`
-	Every         string   `yaml:"every"`
-	RunPermission string   `yaml:"run_permission"`
-	AllowedTools  []string `yaml:"allowed_tools"`
-	Enabled       bool     `yaml:"enabled"`
-	GoalID        string   `yaml:"goal_id"`
+	Agent            string   `yaml:"agent"`
+	Provider         string   `yaml:"provider"`
+	Profile          string   `yaml:"profile"`
+	Model            string   `yaml:"model"`
+	Effort           string   `yaml:"effort"`
+	Cron             string   `yaml:"cron"`
+	Every            string   `yaml:"every"`
+	RunPermission    string   `yaml:"run_permission"`
+	AllowedTools     []string `yaml:"allowed_tools"`
+	Enabled          bool     `yaml:"enabled"`
+	GoalID           string   `yaml:"goal_id"`
+	CreatedBySession string   `yaml:"created_by_session"`
+	CreatedByAgent   string   `yaml:"created_by_agent"`
 }
 
 // CronSpec returns the robfig/cron spec for this schedule. `every: 6h` maps to
@@ -107,7 +116,10 @@ func parseBytes(path string, raw []byte) (Schedule, error) {
 		AllowedTools:  meta.AllowedTools,
 		Enabled:       meta.Enabled,
 		GoalID:        strings.TrimSpace(meta.GoalID),
-		Body:          strings.TrimSpace(string(body)),
+
+		CreatedBySession: strings.TrimSpace(meta.CreatedBySession),
+		CreatedByAgent:   strings.TrimSpace(meta.CreatedByAgent),
+		Body:             strings.TrimSpace(string(body)),
 	}
 	if sched.RunPermission == "" {
 		sched.RunPermission = PermissionPreapproved
@@ -164,6 +176,12 @@ func Render(p CreateParams) string {
 	if p.GoalID != "" {
 		b.WriteString("goal_id: " + p.GoalID + "\n")
 	}
+	if p.CreatedBySession != "" {
+		b.WriteString("created_by_session: " + p.CreatedBySession + "\n")
+	}
+	if p.CreatedByAgent != "" {
+		b.WriteString("created_by_agent: " + p.CreatedByAgent + "\n")
+	}
 	if p.Provider != "" {
 		b.WriteString("provider: " + string(p.Provider) + "\n")
 	}
@@ -192,7 +210,7 @@ func Render(p CreateParams) string {
 			b.WriteString("  - " + t + "\n")
 		}
 	}
-	b.WriteString("enabled: true\n")
+	b.WriteString("enabled: " + strconv.FormatBool(p.Enabled) + "\n")
 	b.WriteString("---\n\n")
 	b.WriteString(strings.TrimSpace(p.Body))
 	b.WriteString("\n")

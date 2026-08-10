@@ -410,8 +410,15 @@ type taskCreateRequest struct {
 	PlanRequired  bool            `json:"plan_required"`
 	PickupAt      string          `json:"pickup_at"`
 	GoalID        string          `json:"goal_id"`
+	// CreatedBySession/CreatedByAgent are set by podiom_create_task from the
+	// calling session's own identity, not by the model. The web UI and CLI leave
+	// them empty, which is what marks a task as user-authored.
+	CreatedBySession string `json:"created_by_session,omitempty"`
+	CreatedByAgent   string `json:"created_by_agent,omitempty"`
 }
 
+// taskUpdateRequest deliberately has no created_by_* fields: authorship is fixed
+// at creation (see store.UpdateTask).
 type taskUpdateRequest struct {
 	ProjectID     *string          `json:"project_id,omitempty"`
 	Title         *string          `json:"title,omitempty"`
@@ -480,6 +487,9 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 			PlanRequired:  req.PlanRequired,
 			PickupAt:      req.PickupAt,
 			GoalID:        strings.TrimSpace(req.GoalID),
+
+			CreatedBySession: strings.TrimSpace(req.CreatedBySession),
+			CreatedByAgent:   strings.TrimSpace(req.CreatedByAgent),
 		})
 		writeJSON(w, task, err)
 	default:

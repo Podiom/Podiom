@@ -12,21 +12,24 @@ import (
 // manageTools returns the full Podiom self-management tool set. Every handler
 // forwards to an existing daemon REST endpoint via the manageClient, so the tools
 // inherit the API's validation, persistence, and live-apply behavior. Tools are
-// grouped by domain: roadmap tasks, projects, schedules, skills, MCP servers,
-// goals, then config / logs / agents.
+// grouped by domain: the calling session itself, roadmap tasks, projects,
+// schedules, skills, MCP servers, goals, agents, then config / logs / usage.
 //
 // sessionID/agentName are the calling session's identity (the --session/--agent
-// flags Podiom injects per session). Goal tools stamp them into request bodies
-// server-side of the model, so provenance never depends on the model
-// remembering to pass its own identity.
+// flags Podiom injects per session). Goal tools stamp them into request bodies,
+// and the tools that create durable work stamp them as authorship — both
+// server-side of the model, so provenance never depends on the model remembering
+// to pass its own identity.
 func manageTools(c *manageClient, sessionID, agentName string) []mcpTool {
 	var tools []mcpTool
-	tools = append(tools, taskTools(c)...)
+	tools = append(tools, sessionTools(c, sessionID)...)
+	tools = append(tools, taskTools(c, sessionID, agentName)...)
 	tools = append(tools, projectTools(c)...)
-	tools = append(tools, scheduleTools(c)...)
+	tools = append(tools, scheduleTools(c, sessionID, agentName)...)
 	tools = append(tools, skillTools(c)...)
 	tools = append(tools, mcpServerTools(c)...)
 	tools = append(tools, goalTools(c, sessionID, agentName)...)
+	tools = append(tools, agentTools(c, agentName)...)
 	tools = append(tools, platformTools(c)...)
 	return tools
 }
@@ -143,9 +146,38 @@ func bodyFrom(m map[string]json.RawMessage, keys ...string) map[string]json.RawM
 	return body
 }
 
+// stampCreator records the calling session and agent as the author of a new
+// durable artifact, so a schedule or task an agent decided to create is
+// traceable back to the conversation it came out of. The identity comes from
+// this process's own --session/--agent flags, never from the model, so it can be
+// neither forged nor forgotten.
+//
+// Only creation is stamped. Updates deliberately leave the fields alone:
+// authorship is a creation fact, and rewriting it on every edit would let a
+// later agent claim a task the user made. The known gap is that
+// podiom_update_task can set pickup_at on a user-created task and make it
+// self-firing without becoming its author; closing that needs a per-field
+// mutation log, which is out of proportion to the problem.
+//
+// The keys are deliberately distinct from the goal tools' session_id/agent_name:
+// a task body already has assigned_agent and a schedule body already has agent,
+// both meaning something else.
+func stampCreator(body map[string]json.RawMessage, sessionID, agentName string) map[string]json.RawMessage {
+	if body == nil {
+		body = map[string]json.RawMessage{}
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		body["created_by_session"], _ = json.Marshal(sessionID)
+	}
+	if strings.TrimSpace(agentName) != "" {
+		body["created_by_agent"], _ = json.Marshal(agentName)
+	}
+	return body
+}
+
 // --- roadmap tasks ----------------------------------------------------------
 
-func taskTools(c *manageClient) []mcpTool {
+func taskTools(c *manageClient, sessionID, agentName string) []mcpTool {
 	return []mcpTool{
 		{
 			Name:        "podiom_list_tasks",
@@ -187,7 +219,7 @@ func taskTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_create_task",
 			APIRoutes:   []string{"/api/tasks"},
-			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup.",
+			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup. The task records your session and agent name, and the user sees it as created by you with a link back to this conversation.",
 			InputSchema: objectSchema([]string{"title"}, map[string]any{
 				"project_id":     strProp("Project id this task belongs to."),
 				"title":          strProp("Short task title."),
@@ -211,7 +243,7 @@ func taskTools(c *manageClient) []mcpTool {
 					return "", err
 				}
 				body := bodyFrom(m, "project_id", "title", "body", "assigned_agent", "provider", "profile", "model", "effort", "status", "plan_required", "pickup_at", "goal_id")
-				return c.post(ctx, "/api/tasks", body)
+				return c.post(ctx, "/api/tasks", stampCreator(body, sessionID, agentName))
 			},
 		},
 		{
@@ -425,7 +457,7 @@ func projectTools(c *manageClient) []mcpTool {
 
 // --- schedules --------------------------------------------------------------
 
-func scheduleTools(c *manageClient) []mcpTool {
+func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 	return []mcpTool{
 		{
 			Name:        "podiom_list_schedules",
@@ -439,7 +471,7 @@ func scheduleTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_create_schedule",
 			APIRoutes:   []string{"/api/schedules"},
-			Description: "Create a schedule. Provide exactly one of cron (5-field) or every (interval like 6h). There is no update tool; to change a schedule, delete and recreate it.",
+			Description: "Create a schedule: a recurring job that starts unattended sessions on its own from then on. Provide exactly one of cron (5-field) or every (interval like 6h); use podiom_update_schedule to change it later, including enabled=false to park it without losing its history. Create one when the user asked for work that repeats, and tell them the name you used so they can find it. The schedule records your session and agent name, and the user sees it as created by you with a link back to this conversation.",
 			InputSchema: objectSchema([]string{"name", "agent", "body"}, map[string]any{
 				"name":           strProp("Schedule name (also the filename)."),
 				"agent":          strProp("Agent that runs the schedule."),
@@ -465,7 +497,58 @@ func scheduleTools(c *manageClient) []mcpTool {
 					}
 				}
 				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "goal_id")
-				return c.post(ctx, "/api/schedules", body)
+				return c.post(ctx, "/api/schedules", stampCreator(body, sessionID, agentName))
+			},
+		},
+		{
+			Name:        "podiom_get_schedule",
+			APIRoutes:   []string{"/api/schedules/"},
+			Description: "Get one schedule in full: the agent that runs it, its cadence, run permission and allowed tools, whether it is enabled, the task body it runs each time, its next run time, who created it, and its recent runs with any errors. Read this before podiom_update_schedule so you patch real current values rather than assumptions.",
+			InputSchema: objectSchema([]string{"name"}, map[string]any{"name": strProp("Schedule name.")}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				if err := requireField(m, "name"); err != nil {
+					return "", err
+				}
+				return c.get(ctx, "/api/schedules/"+url.PathEscape(argString(m, "name")))
+			},
+		},
+		{
+			Name:      "podiom_update_schedule",
+			APIRoutes: []string{"/api/schedules/"},
+			Description: "Update an existing schedule in place. Only the fields you pass are changed; everything else in the file is preserved, including its run history and who created it. " +
+				"Set enabled=false to park a schedule — it stays on disk with its history but stops firing automatically (you can still trigger it with podiom_run_schedule); enabled=true re-arms it. " +
+				"Setting cron clears every, and setting every clears cron. The name cannot be changed — delete and recreate to rename. A schedule's goal link cannot be changed here, because a goal-linked schedule runs with full autonomy.",
+			InputSchema: objectSchema([]string{"name"}, map[string]any{
+				"name":           strProp("Schedule name."),
+				"agent":          strProp("New agent to run the schedule."),
+				"body":           strProp("New task prompt."),
+				"cron":           strProp("New 5-field cron spec (clears every)."),
+				"every":          strProp("New interval like 6h or 30m (clears cron)."),
+				"provider":       strProp("Provider override: claude or codex."),
+				"profile":        strProp("Profile override."),
+				"model":          strProp("Model override."),
+				"effort":         strProp("Effort override."),
+				"run_permission": strProp("preapproved or yolo."),
+				"allowed_tools":  strArrProp("Tools permitted under preapproved runs (replaces the current list)."),
+				"enabled":        boolProp("false parks the schedule without deleting it; true re-arms it."),
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				if err := requireField(m, "name"); err != nil {
+					return "", err
+				}
+				body := bodyFrom(m, "agent", "body", "cron", "every", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "enabled")
+				if len(body) == 0 {
+					return "", fmt.Errorf("provide at least one field to change")
+				}
+				return c.patch(ctx, "/api/schedules/"+url.PathEscape(argString(m, "name")), body)
 			},
 		},
 		{
@@ -705,7 +788,7 @@ func mcpServerTools(c *manageClient) []mcpTool {
 	}
 }
 
-// --- config / logs / agents -------------------------------------------------
+// --- config / logs / usage ---------------------------------------------------
 
 func platformTools(c *manageClient) []mcpTool {
 	return []mcpTool{
@@ -744,6 +827,20 @@ func platformTools(c *manageClient) []mcpTool {
 			},
 		},
 		{
+			Name:      "podiom_get_usage",
+			APIRoutes: []string{"/api/usage"},
+			Description: "Read how much of each provider plan's rate-limit windows is already spent, per auth profile: the windows with their used percentage and reset time, the plan name, and any extra-credit balance. " +
+				"Check it before fanning work out — starting several tasks or a tight schedule when the weekly window is nearly spent just moves the failure later. " +
+				"The figures are the provider's own and refresh in the background, so a profile may report a credentials or rate-limit error instead of windows. For this session's own token use, call podiom_session_context.",
+			InputSchema: objectSchema(nil, nil),
+			Handler: func(ctx context.Context, _ json.RawMessage) (string, error) {
+				// No refresh option on purpose: the tracker already refreshes on an
+				// interval, and ?refresh=1 forces live provider calls that a model
+				// would happily trigger in a loop.
+				return c.get(ctx, "/api/usage")
+			},
+		},
+		{
 			Name:        "podiom_read_logs",
 			APIRoutes:   []string{"/api/logs"},
 			Description: "Read the tail of the Podiom daemon log. Pass lines to control how many (default 200, max 5000). Call again for newer lines.",
@@ -763,31 +860,6 @@ func platformTools(c *manageClient) []mcpTool {
 					}
 				}
 				return c.get(ctx, path)
-			},
-		},
-		{
-			Name:        "podiom_list_agents",
-			APIRoutes:   []string{"/api/agents"},
-			Description: "List all agents and their properties.",
-			InputSchema: objectSchema(nil, nil),
-			Handler: func(ctx context.Context, _ json.RawMessage) (string, error) {
-				return c.get(ctx, "/api/agents")
-			},
-		},
-		{
-			Name:        "podiom_get_agent",
-			APIRoutes:   []string{"/api/agents/"},
-			Description: "Get one agent's full detail, including its assigned MCP servers and its soul (identity prompt).",
-			InputSchema: objectSchema([]string{"name"}, map[string]any{"name": strProp("Agent name.")}),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
-				m, err := argMap(args)
-				if err != nil {
-					return "", err
-				}
-				if err := requireField(m, "name"); err != nil {
-					return "", err
-				}
-				return c.get(ctx, "/api/agents/"+url.PathEscape(argString(m, "name")))
 			},
 		},
 	}

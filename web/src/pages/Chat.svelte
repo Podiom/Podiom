@@ -57,6 +57,7 @@
     ServerMessage,
     Session,
     SessionOrigin,
+    Task,
     TurnState,
     UserInputQuestion,
     UserInputRequest,
@@ -105,6 +106,10 @@
   const activeTurns = $derived(live.activeTurns);
   let activeSession = $state<Session | null>(null);
   let projectName = $state<string>("");
+  // What this session created — the reverse of the task/schedule links that
+  // brought a session into being. Populated from the session detail response.
+  let createdTasks = $state<Task[]>([]);
+  let createdSchedules = $state<string[]>([]);
   let historyLoadToken = 0;
   let explicitTargetSeen = false;
 
@@ -1119,6 +1124,8 @@
 	  activeSession = null;
 	  messages = [];
 	  projectName = "";
+	  createdTasks = [];
+	  createdSchedules = [];
 	}
     try {
       const detail = await getSession(session.ID);
@@ -1129,6 +1136,8 @@
       rememberSession(detail.session.ID);
       messages = detail.history ?? [];
       projectName = detail.project_name ?? (detail.session.ProjectID ? projectLabel(detail.session.ProjectID) : "");
+      createdTasks = detail.created_tasks ?? [];
+      createdSchedules = detail.created_schedules ?? [];
       clearPendingStream();
       nativeAgentActivities = [];
       nativeAgentMessageID = 0;
@@ -2662,6 +2671,24 @@
             <span class="proj-dot-sm" style="background:#3F8F7E"></span>
             <span class="ctx-proj-name">{linkedProjectName}</span>
           </div>
+        </div>
+      {/if}
+
+      {#if createdTasks.length || createdSchedules.length}
+        <div class="label-mono" style="margin:24px 0 10px">created here</div>
+        <div class="ctx-created">
+          {#each createdTasks as t (t.ID)}
+            <div class="ctx-created-row">
+              <span class="ctx-created-kind mono">task</span>
+              <span class="ctx-created-name">{t.Title}</span>
+            </div>
+          {/each}
+          {#each createdSchedules as name (name)}
+            <div class="ctx-created-row">
+              <span class="ctx-created-kind mono">schedule</span>
+              <span class="ctx-created-name mono">{name}</span>
+            </div>
+          {/each}
         </div>
       {/if}
 
@@ -4851,6 +4878,38 @@
   .ctx-proj-name {
     font: 600 14px "Hanken Grotesk";
     color: var(--ink);
+  }
+
+  /* Durable work the agent created in this conversation. Read-only: there is no
+     deep link to a single task or schedule, so this names them and leaves
+     navigation to the Roadmap and Schedules pages. */
+  .ctx-created {
+    background: #fff;
+    border: 1px solid var(--line-3);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .ctx-created-row {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+
+  .ctx-created-kind {
+    flex: none;
+    font: 500 10px "JetBrains Mono", monospace;
+    color: var(--faint);
+    text-transform: uppercase;
+  }
+
+  .ctx-created-name {
+    font: 500 13px "Hanken Grotesk";
+    color: var(--ink);
+    overflow-wrap: anywhere;
   }
 
   .ctx-specs {

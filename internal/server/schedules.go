@@ -30,7 +30,12 @@ type scheduleCreateRequest struct {
 	RunPermission string          `json:"run_permission"`
 	AllowedTools  []string        `json:"allowed_tools"`
 	GoalID        string          `json:"goal_id"`
-	Body          string          `json:"body"`
+	// CreatedBySession/CreatedByAgent are set by podiom_create_schedule from the
+	// calling session's own identity, not by the model. The web UI and CLI leave
+	// them empty, which is what marks a schedule as human-authored.
+	CreatedBySession string `json:"created_by_session,omitempty"`
+	CreatedByAgent   string `json:"created_by_agent,omitempty"`
+	Body             string `json:"body"`
 }
 
 // handleSchedules lists all schedules (GET) and creates a new schedule file
@@ -76,7 +81,10 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			RunPermission: schedule.RunPermission(strings.TrimSpace(req.RunPermission)),
 			AllowedTools:  req.AllowedTools,
 			GoalID:        strings.TrimSpace(req.GoalID),
-			Body:          req.Body,
+
+			CreatedBySession: strings.TrimSpace(req.CreatedBySession),
+			CreatedByAgent:   strings.TrimSpace(req.CreatedByAgent),
+			Body:             req.Body,
 		})
 		writeJSON(w, status, err)
 	default:
@@ -84,8 +92,25 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSchedule handles per-schedule actions under /api/schedules/<name>/...
-// Currently: POST /api/schedules/<name>/run triggers a manual run.
+// scheduleUpdateRequest patches one schedule. Pointer fields mean "leave this
+// alone" when absent, so a caller never has to restate the whole file. Name and
+// goal_id are absent on purpose — see schedule.UpdateParams.
+type scheduleUpdateRequest struct {
+	Agent         *string          `json:"agent,omitempty"`
+	Provider      *config.Provider `json:"provider,omitempty"`
+	Profile       *string          `json:"profile,omitempty"`
+	Model         *string          `json:"model,omitempty"`
+	Effort        *string          `json:"effort,omitempty"`
+	Cron          *string          `json:"cron,omitempty"`
+	Every         *string          `json:"every,omitempty"`
+	RunPermission *string          `json:"run_permission,omitempty"`
+	AllowedTools  *[]string        `json:"allowed_tools,omitempty"`
+	Enabled       *bool            `json:"enabled,omitempty"`
+	Body          *string          `json:"body,omitempty"`
+}
+
+// handleSchedule handles /api/schedules/<name> (GET read, PATCH update, DELETE
+// remove) and /api/schedules/<name>/run.
 func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.scheduler == nil {
 		http.Error(w, "scheduler unavailable", http.StatusServiceUnavailable)
@@ -99,7 +124,39 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case "":
-		if r.Method != http.MethodDelete {
+		switch r.Method {
+		case http.MethodGet:
+			status, err := s.scheduler.Status(r.Context(), name)
+			writeJSON(w, status, err)
+			return
+		case http.MethodPatch, http.MethodPut:
+			var req scheduleUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			params := schedule.UpdateParams{
+				Agent:        req.Agent,
+				Provider:     req.Provider,
+				Profile:      req.Profile,
+				Model:        req.Model,
+				Effort:       req.Effort,
+				Cron:         req.Cron,
+				Every:        req.Every,
+				AllowedTools: req.AllowedTools,
+				Enabled:      req.Enabled,
+				Body:         req.Body,
+			}
+			if req.RunPermission != nil {
+				perm := schedule.RunPermission(strings.TrimSpace(*req.RunPermission))
+				params.RunPermission = &perm
+			}
+			status, err := s.scheduler.Update(r.Context(), name, params)
+			writeJSON(w, status, err)
+			return
+		case http.MethodDelete:
+			// handled below
+		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
