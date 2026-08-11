@@ -204,8 +204,10 @@
   let planFeedbackOpen = $state(false);
   let planFeedbackText = $state("");
   let planYoloAck = $state(false);
+  let mobilePlanPanelOpen = $state(false);
   let planPanelWidth = $state(PLAN_PANEL_DEFAULT_WIDTH);
   let planPanelResizing = $state(false);
+  let lastMobilePlanReviewKey = "";
   let planResizeStartX = 0;
   let planResizeStartWidth = PLAN_PANEL_DEFAULT_WIDTH;
 
@@ -412,6 +414,22 @@
     void sessOpen;
     void planAwaiting;
     if (!isPhone) void tick().then(clampCurrentPlanPanelWidth);
+  });
+
+  // A newly submitted or revised plan opens once on mobile. Closing the panel
+  // does not retrigger this effect because its visibility is deliberately not a
+  // dependency; the next plan revision (or review cycle) gets a fresh key.
+  $effect(() => {
+    const reviewKey = planAwaiting && activeSession
+      ? `${activeSession.ID}:${planInfo?.updated_at ?? ""}`
+      : "";
+    if (!reviewKey) {
+      mobilePlanPanelOpen = false;
+      lastMobilePlanReviewKey = "";
+    } else if (isPhone && reviewKey !== lastMobilePlanReviewKey) {
+      lastMobilePlanReviewKey = reviewKey;
+      mobilePlanPanelOpen = true;
+    }
   });
 
   $effect(() => {
@@ -1734,6 +1752,7 @@
     if (!isPhone) return;
     sessOpen = false;
     ctxOpen = false;
+    mobilePlanPanelOpen = false;
     openDropdown = null;
   }
 
@@ -1848,7 +1867,7 @@
 </script>
 
 <div class="chat" bind:this={chatEl} style="flex:1;display:flex;min-height:0">
-  {#if isPhone && (sessOpen || ctxOpen)}
+  {#if isPhone && (sessOpen || ctxOpen || (planAwaiting && mobilePlanPanelOpen))}
     <button class="mobile-panel-backdrop" aria-label="Close panel" onclick={closeMobilePanels}></button>
   {/if}
 
@@ -2035,7 +2054,10 @@
     {:else if planAwaiting}
       <div class="plan-banner awaiting">
         <span class="plan-banner-dot"></span>
-        <span>Plan ready for review - approve it, send feedback, or reject it.</span>
+        <span class="plan-banner-copy">Plan ready for review - approve it, send feedback, or reject it.</span>
+        {#if isPhone && !mobilePlanPanelOpen}
+          <button type="button" class="plan-banner-action" onclick={() => (mobilePlanPanelOpen = true)}>Review plan</button>
+        {/if}
       </div>
     {/if}
 
@@ -2591,7 +2613,7 @@
   </div>
 
   <!-- ===== plan review panel ===== -->
-  {#if planAwaiting && activeSession}
+  {#if planAwaiting && activeSession && (!isPhone || mobilePlanPanelOpen)}
     <div class="plan-panel" style={`--plan-panel-width:${planPanelWidth}px`}>
       <button
         type="button"
@@ -2608,6 +2630,15 @@
         </div>
         <button class="sq-btn" onclick={resetPlanReview} title="Reset review form">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v6h6" /></svg>
+        </button>
+        <button
+          type="button"
+          class="sq-btn plan-panel-collapse"
+          aria-label="Collapse plan review"
+          title="Collapse plan review"
+          onclick={() => (mobilePlanPanelOpen = false)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
         </button>
       </div>
       <div class="plan-panel-meta">
@@ -3306,6 +3337,23 @@
     border-radius: 99px;
     background: currentColor;
     box-shadow: 0 0 0 4px rgba(63, 143, 126, 0.12);
+  }
+
+  .plan-banner-copy {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .plan-banner-action {
+    flex: none;
+    margin-left: auto;
+    border: 1px solid #d8bd79;
+    border-radius: 8px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.6);
+    color: inherit;
+    cursor: pointer;
+    font: 750 11.5px "Hanken Grotesk";
   }
 
   .msgs {
@@ -4630,6 +4678,10 @@
     touch-action: none;
   }
 
+  .plan-panel-collapse {
+    display: none;
+  }
+
   .plan-panel-resize::after {
     content: "";
     position: absolute;
@@ -5083,6 +5135,10 @@
 
     .plan-panel-resize {
       display: none;
+    }
+
+    .plan-panel-collapse {
+      display: flex;
     }
 
     .conv {
