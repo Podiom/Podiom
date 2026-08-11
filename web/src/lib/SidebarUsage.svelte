@@ -83,15 +83,9 @@
     );
   }
 
-  function usageNeedsSignIn(snapshot: UsageSnapshot): boolean {
-    return snapshot.status === "no_credentials"
-      || snapshot.status === "stale_credentials"
-      || snapshot.status === "unauthorized";
-  }
-
   function rowNeedsSignIn(row: UsageRow): boolean {
     const auth = authFor(row);
-    return usageNeedsSignIn(row.snapshot) || Boolean(auth?.found && auth.login_checked && !auth.logged_in);
+    return Boolean(auth?.found && auth.login_checked && !auth.logged_in);
   }
 
   const hasSignInWarning = $derived(rows.some(rowNeedsSignIn));
@@ -130,14 +124,15 @@
     return date.toLocaleString();
   }
 
-  function statusMessage(snapshot: UsageSnapshot): string {
-    switch (snapshot.status) {
+  function statusMessage(row: UsageRow): string {
+    if (rowNeedsSignIn(row)) return "Not signed in";
+
+    switch (row.snapshot.status) {
       case "no_credentials":
-        return "Not signed in";
+        return "Usage unavailable";
       case "stale_credentials":
-        return "Credentials need refresh";
       case "unauthorized":
-        return "Sign-in expired";
+        return "Usage temporarily unavailable";
       case "rate_limited":
         return "Temporarily rate limited";
       case "unsupported":
@@ -265,12 +260,12 @@
             {:else}
               <div class="status-row">
                 <span class="account-head">{@render accountName(row)}</span>
-                {#if usageNeedsSignIn(row.snapshot)}
+                {#if rowNeedsSignIn(row)}
                   <button class="signin-link status-text" type="button" onclick={() => openSignIn(row)}>
-                    {statusMessage(row.snapshot)}
+                    {statusMessage(row)}
                   </button>
                 {:else}
-                  <span class="status-text">{statusMessage(row.snapshot)}</span>
+                  <span class="status-text">{statusMessage(row)}</span>
                 {/if}
               </div>
             {/if}
