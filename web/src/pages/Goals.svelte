@@ -1984,18 +1984,6 @@
   .page.form-page {
     max-width: 660px;
   }
-  @media (max-width: 768px) {
-    .run-drawer {
-      top: 12vh;
-      /* Stop above the fixed bottom nav instead of running underneath it. */
-      bottom: calc(72px + env(safe-area-inset-bottom));
-      width: 100%;
-      padding: 18px;
-      border-top: 1px solid #ddd4ef;
-      border-left: 0;
-      border-radius: 18px 18px 0 0;
-    }
-  }
   .mono {
     font-family: "JetBrains Mono", monospace;
   }
@@ -2972,6 +2960,7 @@
     font-size: 14px;
     line-height: 1.65;
     color: var(--ink-soft);
+    overflow-wrap: anywhere;
   }
   .md :global(p) {
     margin: 0 0 10px;
@@ -2979,6 +2968,12 @@
   .md :global(ul) {
     margin: 0 0 10px;
     padding-left: 20px;
+  }
+  .md :global(pre) {
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .completion-actions {
     display: flex;
@@ -3587,6 +3582,381 @@
     display: flex;
     gap: 10px;
     margin-top: 18px;
+  }
+
+  /* The app shell switches to bottom navigation at this width. Keep the whole
+     goals workflow within that same phone layout instead of retaining desktop
+     gutters and minimum widths inside the narrower content area. */
+  @media (max-width: 768px) {
+    .goals-scroll {
+      overflow-x: hidden;
+    }
+    .page {
+      width: 100%;
+      padding: 18px 16px 28px;
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
+    }
+    .page-error {
+      margin: 12px 16px 0;
+      margin-left: max(16px, env(safe-area-inset-left));
+      margin-right: max(16px, env(safe-area-inset-right));
+    }
+    .page-head {
+      align-items: stretch;
+      flex-direction: column;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .page-title-wrap,
+    .detail-head-main,
+    .detail-rail,
+    .two-col > div {
+      min-width: 0;
+    }
+    .page-head > .btn-primary {
+      width: 100%;
+    }
+    .page-title {
+      font-size: 24px;
+    }
+    .page-sub,
+    .card-title,
+    .detail-title,
+    .proj,
+    .agent-chip,
+    .banner-title,
+    .banner-sub,
+    .ns-label,
+    .run-drawer-title,
+    .run-message,
+    .run-selected {
+      overflow-wrap: anywhere;
+    }
+    .agent-chip,
+    .proj,
+    .chip,
+    .agent-pick {
+      min-width: 0;
+      max-width: 100%;
+      white-space: normal;
+    }
+
+    .empty {
+      padding: 36px 20px;
+      border-radius: 18px;
+    }
+    .empty-icon {
+      margin-bottom: 16px;
+    }
+    .empty-steps {
+      align-items: center;
+      flex-direction: column;
+      gap: 12px;
+      margin: 22px 0 24px;
+    }
+    .card {
+      padding: 17px 18px;
+      border-radius: 16px;
+    }
+    .card-attn {
+      align-items: flex-start;
+      padding: 9px 11px;
+    }
+    .card-foot {
+      gap: 8px 12px;
+    }
+    .foot-next {
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .foot-updated {
+      width: 100%;
+      margin-left: 0;
+    }
+
+    .detail-title {
+      font-size: 24px;
+    }
+    .detail-actions {
+      width: 100%;
+    }
+    .detail-actions > .btn:not(.icon) {
+      flex: 1 1 120px;
+    }
+    .detail-actions .btn.icon {
+      width: 44px;
+      height: 44px;
+    }
+    .detail-cols {
+      margin-top: 16px;
+    }
+    .detail-rail {
+      position: static;
+      width: 100%;
+      max-width: none;
+    }
+    .panel,
+    .rail-panel {
+      padding: 16px;
+      border-radius: 16px;
+    }
+    .banner {
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+    }
+    .banner-icon {
+      width: 34px;
+      height: 34px;
+    }
+    .banner-title {
+      flex-wrap: wrap;
+    }
+    .recovery-picker {
+      align-items: stretch;
+    }
+    .recovery-picker > .btn-primary {
+      width: 100%;
+    }
+    .ns-head {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+    }
+    .ns-label {
+      flex: 1;
+      min-width: 0;
+    }
+    .ns-age {
+      width: 100%;
+      margin-left: 22px;
+      white-space: normal;
+    }
+    .ns-body {
+      padding: 16px;
+    }
+    .ns-action {
+      font-size: 16px;
+    }
+
+    .completion-head,
+    .requests-head {
+      padding: 14px 16px;
+    }
+    .completion-head > div,
+    .requests-title {
+      min-width: 0;
+    }
+    .completion-title,
+    .completion-sub,
+    .requests-title,
+    .req-reason,
+    .desc,
+    .criteria-text,
+    .ns-action,
+    .ns-why,
+    .runs-agent-name {
+      overflow-wrap: anywhere;
+    }
+    .completion-body {
+      padding: 16px;
+    }
+    .completion-actions,
+    .feedback-actions,
+    .req-actions,
+    .modal-actions {
+      flex-wrap: wrap;
+    }
+    .completion-actions > *,
+    .feedback-actions > *,
+    .req-actions > *,
+    .modal-actions > * {
+      flex: 1 1 120px;
+    }
+    .requests-body {
+      padding: 12px;
+    }
+    .req-card {
+      gap: 10px;
+      padding: 14px;
+    }
+    .kv {
+      min-width: 0;
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .kv .v {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .timeline-head {
+      flex-wrap: wrap;
+    }
+    .event {
+      gap: 10px;
+    }
+    .event-time,
+    .tool-row .event-time {
+      width: 100%;
+      margin-left: 0;
+    }
+    .tool-row {
+      flex-wrap: wrap;
+    }
+    .tool-name,
+    .tool-summary {
+      overflow-wrap: anywhere;
+    }
+
+    .form {
+      padding: 18px;
+      border-radius: 18px;
+    }
+    .field,
+    .field.grow {
+      min-width: 0;
+    }
+    .metric-input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    }
+    .metric-input-row .field.grow {
+      grid-column: 1 / -1;
+    }
+    .field.w90,
+    .field.w70 {
+      width: 100%;
+    }
+    .row-remove {
+      width: 44px;
+      height: 44px;
+    }
+    .two-col {
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .btn-primary,
+    .btn,
+    .btn-approve,
+    .btn-deny,
+    .add-metric {
+      min-height: 44px;
+    }
+    .chip,
+    .agent-pick {
+      min-height: 40px;
+    }
+
+    .overlay {
+      align-items: center;
+      padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+      padding-left: max(12px, env(safe-area-inset-left));
+      padding-right: max(12px, env(safe-area-inset-right));
+    }
+    .modal {
+      max-height: 100%;
+      border-radius: 18px;
+    }
+    .modal-head {
+      padding: 20px 18px 0;
+    }
+    .modal-body {
+      padding: 14px 18px 20px;
+    }
+
+    .run-drawer {
+      top: 12vh;
+      /* Stop above the fixed bottom nav instead of running underneath it. */
+      bottom: calc(72px + env(safe-area-inset-bottom));
+      width: 100%;
+      padding: 18px 16px;
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
+      border-top: 1px solid #ddd4ef;
+      border-left: 0;
+      border-radius: 18px 18px 0 0;
+    }
+    .run-drawer-title {
+      font-size: 21px;
+    }
+    .run-selected-top,
+    .run-event-top {
+      flex-wrap: wrap;
+    }
+    .run-meta span {
+      min-width: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .page {
+      padding: 16px 12px 24px;
+      padding-left: max(12px, env(safe-area-inset-left));
+      padding-right: max(12px, env(safe-area-inset-right));
+    }
+    .page-error {
+      margin-right: max(12px, env(safe-area-inset-right));
+      margin-left: max(12px, env(safe-area-inset-left));
+    }
+    .empty {
+      padding: 30px 16px;
+    }
+    .card {
+      padding: 15px 14px;
+    }
+    .detail-title {
+      font-size: 22px;
+    }
+    .panel,
+    .rail-panel {
+      padding: 14px;
+    }
+    .banner,
+    .completion-body {
+      padding: 14px;
+    }
+    .req-card {
+      flex-direction: column;
+    }
+    .completion-actions,
+    .feedback-actions,
+    .modal-actions {
+      flex-direction: column;
+    }
+    .completion-actions > *,
+    .feedback-actions > *,
+    .modal-actions > * {
+      width: 100%;
+      flex-basis: auto;
+    }
+    .timeline-head .feedback-toggle {
+      width: 100%;
+    }
+    .event {
+      gap: 8px;
+    }
+    .event-dot {
+      width: 28px;
+      height: 28px;
+    }
+    .timeline-rule {
+      left: 13px;
+    }
+    .form {
+      padding: 16px 14px;
+    }
+    .yolo-warn {
+      padding: 11px 12px;
+    }
+    .run-drawer {
+      top: 8vh;
+    }
   }
 
   @keyframes goalPulse {

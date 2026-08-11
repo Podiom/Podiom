@@ -375,12 +375,6 @@
     min-width: 0;
   }
 
-  @media (max-width: 480px) {
-    .rt-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
   .rt-label {
     font: 700 10.5px "JetBrains Mono", monospace;
     letter-spacing: 0.1em;
@@ -688,5 +682,62 @@
   .rt-set:disabled {
     opacity: 0.45;
     cursor: default;
+  }
+
+  @media (max-width: 480px) {
+    .rt-grid {
+      grid-template-columns: 1fr;
+    }
+    .rt-pop,
+    .rt-pop.wide,
+    .rt-pop.right {
+      right: auto;
+      left: 0;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      max-height: min(300px, 50vh);
+    }
+    .run-target {
+      width: 100%;
+      align-items: stretch;
+    }
+    .run-target > .rt-chip,
+    .rt-dd {
+      width: 100%;
+      min-width: 0;
+    }
+    .rt-chip {
+      width: 100%;
+      max-width: 100%;
+      justify-content: flex-start;
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .rt-chip .chev {
+      margin-left: auto;
+    }
+    .rt-menu {
+      right: auto;
+      left: 0;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .rt-custom,
+    .custom {
+      min-width: 0;
+    }
+    .rt-row-head {
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .rt-row-name,
+    .rt-row-sub,
+    .rt-row-desc {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
   }
 </style>

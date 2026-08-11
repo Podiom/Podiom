@@ -438,6 +438,45 @@
   }
 
   @media (max-width: 768px) {
+    .actions {
+      padding-top: 16px;
+    }
+    .actions-head,
+    .actions-sub {
+      padding-right: 14px;
+      padding-left: 14px;
+    }
+    .actions-track {
+      padding-right: 14px;
+      padding-left: 14px;
+      scroll-padding-inline: 14px;
+    }
+    .action-card {
+      width: calc(100% - 12px);
+      padding: 13px 14px 14px;
+    }
+    .action-top {
+      flex-wrap: wrap;
+    }
+    .action-status {
+      margin-left: 0;
+    }
+    .action-agent,
+    .action-filed,
+    .action-title,
+    .action-why,
+    .action-answer {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .action-verdicts .verdict {
+      min-height: 44px;
+      flex-basis: 100px;
+    }
+    .actions-pager {
+      padding-right: 14px;
+      padding-left: 14px;
+    }
     .actions-nav {
       display: none;
     }
