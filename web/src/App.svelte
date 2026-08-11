@@ -47,7 +47,13 @@
     profile: string;
   }
 
-  const NAV: { key: Route; label: string; icon: string }[] = [
+  interface NavItem {
+    key: Route;
+    label: string;
+    icon: string;
+  }
+
+  const NAV: NavItem[] = [
     {
       key: "chat",
       label: "Chat",
@@ -80,7 +86,7 @@
     },
   ];
 
-  const TERMINAL_NAV: { key: Route; label: string; icon: string } = {
+  const TERMINAL_NAV: NavItem = {
     key: "terminal",
     label: "Terminal",
     icon: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
@@ -90,7 +96,12 @@
   const SETTINGS_ICON =
     '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
 
+  const SETTINGS_NAV: NavItem = { key: "settings", label: "Settings", icon: SETTINGS_ICON };
+  const MORE_ICON = '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>';
+  const MOBILE_PRIMARY_ROUTES = new Set<Route>(["chat", "roadmap", "goals", "schedules"]);
+
   let route = $state<Route>("chat");
+  let moreOpen = $state(false);
   const mode = deployment();
   let showHAOnboarding = $state(false);
   let haBootstrapState = $state<"idle" | "checking" | "onboarding" | "failed">(
@@ -362,6 +373,7 @@
   }
 
   function openSettings(tab: SettingsTab = "providers", account: SettingsAccountTarget | null = null) {
+    moreOpen = false;
     settingsFocusTab = tab;
     settingsFocusAccount = account;
     settingsFocusToken += 1;
@@ -371,6 +383,19 @@
   function openReleaseNotes() {
     releaseNotesFocusToken += 1;
     openSettings("updates");
+  }
+
+  function openRoute(next: Route) {
+    moreOpen = false;
+    if (next === "settings") {
+      openSettings();
+      return;
+    }
+    route = next;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (moreOpen && event.key === "Escape") moreOpen = false;
   }
 
   function pushReminderLabel(): string {
@@ -444,6 +469,12 @@
 
   const hireProfileOptions = $derived(profiles.filter((p) => p.Provider === hireProvider));
   const visibleNav = $derived(mode === "ha" ? [...NAV, TERMINAL_NAV] : NAV);
+  const mobileMoreNav = $derived([
+    ...NAV.filter((item) => item.key === "projects" || item.key === "skills"),
+    SETTINGS_NAV,
+    ...(mode === "ha" ? [TERMINAL_NAV] : []),
+  ]);
+  const mobileMoreActive = $derived(moreOpen || mobileMoreNav.some((item) => item.key === route));
 
   const daemonLabel = $derived(daemonStatus === "live" ? "podiomd live" : `podiomd ${daemonStatus}`);
   const daemonAddr = $derived(health ? `${health.version} · ${health.commit}` : "127.0.0.1:8787");
@@ -473,6 +504,8 @@
     );
   }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 {#if mode === "ha" && !auth.token && !showHAOnboarding}
   <main class="ha-bootstrap">
@@ -519,9 +552,13 @@
       </div>
     </div>
 
-    <nav class="nav-links">
+    <nav class="nav-links" aria-label="Primary navigation">
       {#each visibleNav as item}
-        <button class="nav-link" class:active={route === item.key} onclick={() => (route = item.key)}>
+        <button
+          class="nav-link"
+          class:mobile-overflow={!MOBILE_PRIMARY_ROUTES.has(item.key)}
+          class:active={route === item.key}
+          onclick={() => openRoute(item.key)}>
           <svg
             width="18"
             height="18"
@@ -541,6 +578,16 @@
           {/if}
         </button>
       {/each}
+      <button
+        class="nav-link mobile-more-toggle"
+        class:active={mobileMoreActive}
+        aria-haspopup="dialog"
+        aria-expanded={moreOpen}
+        aria-controls="mobile-more-navigation"
+        onclick={() => (moreOpen = !moreOpen)}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">{@html MORE_ICON}</svg>
+        More
+      </button>
     </nav>
 
     <div class="nav-foot">
@@ -607,6 +654,35 @@
       <button class="hire-btn" onclick={openHire}><span class="hire-plus">+</span> Hire agent</button>
     </div>
   </aside>
+
+  {#if moreOpen}
+    <div class="mobile-more-layer">
+      <button class="mobile-more-backdrop" aria-label="Close more navigation" onclick={() => (moreOpen = false)}></button>
+      <dialog id="mobile-more-navigation" class="mobile-more-sheet" open aria-modal="true" aria-label="More navigation">
+        <div class="mobile-more-head">
+          <span>More</span>
+          <button class="mobile-more-close" aria-label="Close more navigation" onclick={() => (moreOpen = false)}>×</button>
+        </div>
+        <nav class="mobile-more-links" aria-label="More navigation">
+          {#each mobileMoreNav as item}
+            <button class="mobile-more-link" class:active={route === item.key} onclick={() => openRoute(item.key)}>
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round">{@html item.icon}</svg
+              >
+              {item.label}
+            </button>
+          {/each}
+        </nav>
+      </dialog>
+    </div>
+  {/if}
 
   <!-- ============ MAIN ============ -->
   <div class="main">
@@ -849,6 +925,11 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
+  }
+
+  .mobile-more-toggle,
+  .mobile-more-layer {
+    display: none;
   }
 
   .nav-link {
@@ -1263,6 +1344,14 @@
       min-width: 0;
     }
 
+    .nav-link.mobile-overflow {
+      display: none;
+    }
+
+    .mobile-more-toggle {
+      display: flex;
+    }
+
     .nav-link {
       flex: 1;
       min-width: 0;
@@ -1279,6 +1368,106 @@
     .nav-link svg {
       width: 18px;
       height: 18px;
+    }
+
+    .nav-links .nav-link {
+      position: relative;
+    }
+
+    .nav-badge {
+      position: absolute;
+      top: 2px;
+      left: calc(50% + 5px);
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      font-size: 9px;
+    }
+
+    .mobile-more-layer {
+      display: block;
+      position: fixed;
+      inset: 0 0 calc(72px + env(safe-area-inset-bottom)) 0;
+      z-index: 49;
+    }
+
+    .mobile-more-backdrop {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      border: none;
+      padding: 0;
+      background: rgba(43, 37, 32, 0.24);
+      backdrop-filter: blur(1px);
+    }
+
+    .mobile-more-sheet {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      left: 12px;
+      z-index: 1;
+      width: min(420px, calc(100% - 24px));
+      margin: 0 auto;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+      box-shadow: 0 24px 60px -22px rgba(43, 37, 32, 0.58);
+      animation: popIn 0.18s ease;
+    }
+
+    .mobile-more-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 2px 10px 6px;
+      color: var(--ink);
+      font: 700 16px "Hanken Grotesk";
+    }
+
+    .mobile-more-close {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border: none;
+      border-radius: 10px;
+      background: var(--surface-3);
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .mobile-more-links {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .mobile-more-link {
+      display: flex;
+      min-width: 0;
+      min-height: 54px;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line-3);
+      border-radius: 13px;
+      padding: 10px 12px;
+      background: var(--surface-3);
+      color: var(--muted);
+      text-align: left;
+      font: 600 13px "Hanken Grotesk";
+    }
+
+    .mobile-more-link svg {
+      flex: none;
+    }
+
+    .mobile-more-link.active {
+      border-color: #bfe0d6;
+      background: #e3f1ec;
+      color: var(--teal-deep);
     }
 
     .main {
