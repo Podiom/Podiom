@@ -1,158 +1,227 @@
-<p align="center">
-  <img src="docs/assets/hero.svg" alt="Podiom — Your AI agents, in concert." width="100%">
-</p>
+<div align="center">
 
-<p align="center">
-  <img src="https://img.shields.io/badge/build-passing-1F8A5B?style=flat-square&labelColor=3A3430" alt="build passing">
-  <img src="https://img.shields.io/badge/version-0.4.0-2F6E60?style=flat-square&labelColor=3A3430" alt="version 0.4.0">
-  <img src="https://img.shields.io/badge/license-MIT-5A6470?style=flat-square&labelColor=3A3430" alt="license MIT">
-  <img src="https://img.shields.io/badge/local--first-✓-C9A24E?style=flat-square&labelColor=3A3430" alt="local-first">
-</p>
+<img src="web/public/podium-mark-teal.svg" alt="Podiom mark" width="64">
 
 # Podiom
 
-A thin orchestration layer for local LLM agents (Claude Code and OpenAI Codex).
-Podiom shells out to the native `claude` and `codex` CLIs and leans on *their*
-MCP, tools, and skills, while owning its own durable truth: named agents, durable
-chat sessions, a canonical history that replays onto a fresh backing CLI session
-on any profile/provider switch, an embedded scheduler, and a shared project
-ledger. It ships as a single Go binary with an embedded Svelte web UI.
+**Your AI agents, in concert.**
 
-## Why Podiom?
+Podiom is an open-source, local-first workspace for Claude Code and OpenAI Codex.
+Give each agent a name and durable context, then chat, schedule work, or hand it
+a goal to pursue over time. Podiom keeps the sessions, projects, tasks, progress,
+and decisions together while the native CLIs do the work.
 
-Managing multiple local agents is easy to start and hard to keep coherent. Podiom
-stays thin on purpose:
+[![CI](https://github.com/Podiom/Podiom/actions/workflows/ci.yml/badge.svg)](https://github.com/Podiom/Podiom/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Podiom/Podiom?style=flat-square)](https://github.com/Podiom/Podiom/releases/latest)
+[![License](https://img.shields.io/github/license/Podiom/Podiom?style=flat-square)](LICENSE)
+[![Local-first](https://img.shields.io/badge/local--first-%E2%9C%93-C9A24E?style=flat-square&labelColor=3A3430)](docs/security.md)
 
-- Durable sessions that survive provider and profile changes.
-- A shared project ledger so work does not get lost between runs.
-- Built-in scheduling for recurring work and follow-ups.
-- Native integration with the tools you already use instead of replacing them.
+[Goals](docs/goals.md) · [Get started](#get-started) · [Documentation](#documentation) · [Releases](https://github.com/Podiom/Podiom/releases/latest)
 
-## See it in action
+</div>
 
-![Podiom demo: create a session, send a message, and receive a response](docs/assets/screenshots/podiom-demo.gif)
+<p align="center">
+  <img src="docs/assets/screenshots/goal-timeline.png" alt="A Podiom goal with success criteria, a progress metric, and an auditable activity timeline" width="100%">
+</p>
 
-## Screenshots
+<p align="center"><sub>A goal keeps the outcome, progress, and evidence in one place.</sub></p>
 
-| Agent roster | Chat session | Goal timeline |
-| --- | --- | --- |
-| ![Podiom agent roster showing named Claude and Codex agents](docs/assets/screenshots/agents-dashboard.png) | ![Podiom chat session with durable history and session usage](docs/assets/screenshots/agent-chat-session.png) | ![Podiom goal timeline showing metrics and recorded activity](docs/assets/screenshots/goal-timeline.png) |
+## What is Podiom?
+
+Claude Code and Codex are easy to start in a terminal. They are harder to
+manage once you have several sessions, projects, and unattended jobs running at
+the same time. Context ends up spread across terminal tabs, and you spend time
+reconstructing what happened and what an agent should do next.
+
+Podiom puts those agents in one local workspace. Sessions stay available after
+the backing CLI session changes. Projects carry shared context. Roadmap tasks
+and schedules keep work moving. You can see which agent did the work, open the
+session that produced it, and continue from there.
+
+Podiom does not replace the provider runtime. It shells out to the native
+`claude` and `codex` CLIs and uses their models, MCP servers, tools, skills, and
+authentication.
+
+## Hand over an outcome
+
+A task tells an agent what to do once. A [goal](docs/goals.md) gives one lead
+agent an outcome to own over days or weeks. Describe what you want, define what
+"done" means, add optional metrics, and choose how often the agent should review
+its progress.
+
+- The lead agent turns the outcome into roadmap tasks and schedules, delegates
+  work when useful, and changes the plan as it learns.
+- Each review records progress, evidence, metric changes, and the next step the
+  agent intends to take.
+- Missing capabilities become structured access requests. Work that only you
+  can do becomes an action item instead of disappearing into a chat transcript.
+- Every run and tool call stays attached to the goal. The agent can propose
+  completion, but only you can mark the goal done.
+
+> [!IMPORTANT]
+> Goals are deliberately autonomous. The lead agent and every linked task or
+> schedule run with full access and without per-action approval prompts. Podiom
+> records the resulting tool activity on the goal timeline. Read the
+> [Goals guide](docs/goals.md#goals-run-in-yolo-mode) before assigning a goal.
+
+## Run the whole team from one place
+
+### Give agents a durable identity
+
+Each agent has a name, workspace, identity, provider, model, profile, permission
+mode, and fallback defaults. Claude and Codex agents can work side by side
+without flattening their provider-specific behavior.
+
+<p align="center">
+  <img src="docs/assets/screenshots/agents-dashboard.png" alt="Podiom's roster of named Claude Code and Codex agents" width="100%">
+</p>
+
+<p align="center"><sub>Named agents keep their own identity, workspace, and runtime defaults.</sub></p>
+
+### Keep the conversation
+
+Podiom stores a canonical history for every session. If you switch provider or
+profile, it can replay that history onto a fresh backing CLI session. Scheduled
+runs and roadmap tasks create normal sessions too, so unattended work is not a
+dead-end log.
+
+<p align="center">
+  <img src="docs/assets/screenshots/agent-chat-session.png" alt="A project-linked Podiom chat with durable history, provider controls, and usage indicators" width="100%">
+</p>
+
+<p align="center"><sub>Open the exact session behind a task, schedule, or goal run and continue the conversation.</sub></p>
+
+### Share work across agents
+
+Projects give every agent the same source context and standing instructions.
+The Roadmap holds assignable tasks, while the embedded scheduler handles
+recurring routines and timed pickups. Agent-created work keeps its provenance,
+so you can trace it back to the decision that created it.
+
+### Keep the control plane local
+
+Podiom stores its state under one configurable local root and ships the web UI
+inside `podiomd`. It runs on macOS, Linux, and Windows, and the same core can run
+as a Home Assistant add-on or in a container. Provider CLIs keep their native
+authentication and policy controls.
 
 ## Who is this for?
 
 - Developers already using Claude Code or OpenAI Codex locally.
-- Open-source builders who want persistent, reviewable agent work.
-- Operators and tinkerers who prefer local-first workflows over cloud lock-in.
-- Maintainers who need a lightweight control plane around existing agent tools.
+- Builders who want persistent, reviewable agent work instead of disposable
+  terminal sessions.
+- Maintainers who need recurring jobs, project context, and an audit trail in
+  one lightweight workspace.
+- People who prefer local state and native tools over moving their workflow
+  into another hosted agent runtime.
 
-## Quick start (dev)
+## Get started
 
-### Install
-
-macOS/Linux:
+Install the latest release on macOS or Linux:
 
 ```sh
 curl -fsSL https://github.com/Podiom/Podiom/releases/latest/download/install.sh | bash
 ```
 
-Windows PowerShell:
+On Windows PowerShell:
 
 ```powershell
 irm https://github.com/Podiom/Podiom/releases/latest/download/install.ps1 | iex
 ```
 
-The installer downloads the matching release binary, verifies checksums, can set
-up user-level autostart, and launches `podiom onboard` to check Claude/Codex and
-create your first agent.
+The installer downloads the matching release binary, verifies its checksum,
+can set up user-level autostart, and launches `podiom onboard` to check Claude
+and Codex and create your first agent. Linux releases are distro-neutral static
+binaries.
 
-Every commit to `master` publishes a GitHub Release using the automatic
-`v0.1.<run-number>` series. That series is intentionally monotonic rather than
-calendar-based, so bursts of work can produce many releases without implying a
-monthly cadence.
-
-After install, updates can be checked and applied from the CLI or web UI:
+Open http://127.0.0.1:8787 after onboarding. Updates are available from the CLI
+or web UI:
 
 ```sh
 podiom update check
 podiom update apply --yes
 ```
 
-Linux releases are distro-neutral static binaries.
+## Development
 
-### Development
-
-Prerequisites: Go 1.26+, Node 20+ (for building the web UI).
+Prerequisites: Go 1.26+ and Node 20+.
 
 ```sh
-# Build the web UI (vite) and both binaries into bin/ with a version stamp.
+# Build the Vite web UI and both binaries into bin/ with a version stamp.
 make build
 
-# Run the daemon (foreground). It scaffolds ~/.podiom on first run.
+# Run the daemon in the foreground. It scaffolds ~/.podiom on first run.
 ./bin/podiomd
 
-# In another shell, check it's live.
+# In another shell, check that it is live.
 ./bin/podiom status
 ```
 
 Open http://127.0.0.1:8787 for the web UI.
 
-To develop the frontend with hot reload, run `npm run dev` in `web/` (it proxies
-API/WebSocket traffic to a running `podiomd`).
+For frontend development with hot reload, run `npm run dev` in `web/`. Vite
+proxies API and WebSocket traffic to a running `podiomd`.
 
-### Cross-platform builds & packaging
+Every commit to `master` publishes a GitHub Release using the monotonic
+`v0.1.<run-number>` series. The number identifies the release workflow run; it
+does not imply a calendar cadence.
 
-`podiomd` is a single static binary with the SPA embedded — no external assets,
-no cgo (pure-Go SQLite via `modernc.org/sqlite`), so it cross-compiles cleanly:
+### Cross-platform builds and packaging
 
-```sh
-make cross    # linux/darwin/windows × amd64/arm64 → bin/<os>-<arch>/
-make package  # archives release artifacts into dist/ and writes SHA256SUMS
-```
-
-All runtime state lives under one overridable root, so running Podiom as a Home
-Assistant add-on or in a container is a packaging step, not a rewrite:
+`podiomd` embeds the SPA and uses pure-Go SQLite, so it needs no external web
+assets or cgo at runtime:
 
 ```sh
-PODIOM_HOME=/data/podiom ./bin/podiomd   # relative values are anchored absolute
+make cross    # linux/darwin/windows x amd64/arm64 -> bin/<os>-<arch>/
+make package  # release archives in dist/ plus SHA256SUMS
 ```
 
-The web bind is configurable in `config.yaml` (`server.bind` / `server.port`,
-default `127.0.0.1:8787`); see [Configuration](docs/configuration.md).
+All runtime state lives under one overridable root. Running Podiom as a Home
+Assistant add-on or in a container is a packaging concern rather than a core
+rewrite:
+
+```sh
+PODIOM_HOME=/data/podiom ./bin/podiomd
+```
+
+The web bind is configurable in `config.yaml` through `server.bind` and
+`server.port`. It defaults to `127.0.0.1:8787`; see
+[Configuration](docs/configuration.md).
 
 ## Layout
 
-```
+```text
 cmd/podiom/     thin CLI client
-cmd/podiomd/    daemon: web server + scheduler + core
-internal/       core, adapter, exec, schedule, config, store, server, client
-web/            Svelte + Vite + TS + Tailwind SPA (built → embedded)
-docs/           requirements, CLI reference, configuration, integration contracts
+cmd/podiomd/    daemon: web server, scheduler, and core
+internal/       core, adapters, execution, scheduling, config, store, server, client
+web/            Svelte, Vite, TypeScript, and Tailwind SPA, built into podiomd
+docs/           requirements, references, and integration contracts
 ```
 
-All runtime state lives under `$PODIOM_HOME` (default `~/.podiom/`).
+Runtime state lives under `$PODIOM_HOME`, which defaults to `~/.podiom/`.
 
 ## Documentation
 
-- [Requirements](docs/requirements.md) — the authoritative spec (v1.6).
+- [Requirements](docs/requirements/foundation.md), the authoritative foundation spec (v1.6)
 - [CLI reference](docs/cli.md)
 - [Configuration](docs/configuration.md)
-- [Agents](docs/agents.md) — durable, named colleagues and their stored defaults
-- [Git](docs/git.md) — how projects carry source control
-- [Sessions](docs/sessions.md) — the durable conversation unit
-- [SOUL.md generation](docs/soul-generation.md) — how agent identity files are generated
-- [Scheduling](docs/scheduling.md)
-- [Projects & Roadmap](docs/projects.md)
-- [Goals](docs/goals.md) — hand an outcome to an agent; it plans, reviews, and reports back
-- [Agent tools](docs/agent-tools.md) — what agents can do with Podiom itself, and what stays yours
-- [Workspace tools](docs/workspace-tools.md) — approved per-agent CLI installs
-- [Voice input](docs/voice-input.md) — speak prompts in chat, tasks, and goals (OpenAI Whisper)
-- [Photo attachments](docs/photo-attachments.md) — attach retained photos for Claude or Codex to inspect
-- [Security & logging](docs/security.md) — permission modes, gateway token, redaction, run logs
-- [Home Assistant app](docs/home-assistant.md) — deploy Podiom as an HA add-on
+- [Agents](docs/agents.md), durable named colleagues and their stored defaults
+- [Git](docs/git.md), source control for projects
+- [Sessions](docs/sessions.md), the durable conversation unit
+- [SOUL.md generation](docs/soul-generation.md), agent identity files
+- [Scheduling](docs/scheduling.md), recurring routines and timed work
+- [Projects and Roadmap](docs/projects.md)
+- [Goals](docs/goals.md), outcomes an agent plans, reviews, and reports back on
+- [Agent tools](docs/agent-tools.md), what agents can do with Podiom itself
+- [Workspace tools](docs/workspace-tools.md), approved per-agent CLI installs
+- [Voice input](docs/voice-input.md), prompts spoken through OpenAI Whisper
+- [Photo attachments](docs/photo-attachments.md), retained photos for agents to inspect
+- [Security and logging](docs/security.md), permission modes, tokens, redaction, and run logs
+- [Home Assistant app](docs/home-assistant.md), Podiom as a Home Assistant add-on
 - [Integration contracts](docs/integrations/README.md)
 
 ## Contributing
 
 Podiom is open source under the [MIT License](LICENSE). Contributions are
-welcome; please read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation,
-and pull request guidelines.
+welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, and pull
+request guidelines.
