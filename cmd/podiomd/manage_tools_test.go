@@ -69,9 +69,9 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// session 1 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + platform 4.
-	if len(tools) != 48 {
-		t.Fatalf("expected 48 tools, got %d", len(tools))
+	// session 2 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + platform 4.
+	if len(tools) != 49 {
+		t.Fatalf("expected 49 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{
@@ -106,6 +106,58 @@ func TestManageToolRegistryInvariants(t *testing.T) {
 	for name := range destructive {
 		if !seen[name] {
 			t.Errorf("expected destructive tool %q to exist", name)
+		}
+	}
+}
+
+func TestAttachWorkspaceFileStampsSessionAndForwardsSchema(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	tool, ok := toolByName(c, "podiom_attach_workspace_file")
+	if !ok {
+		t.Fatal("attach workspace file tool not found")
+	}
+	required, _ := tool.InputSchema["required"].([]string)
+	if !contains(required, "path") {
+		t.Fatalf("required fields = %v, want path", required)
+	}
+	properties, _ := tool.InputSchema["properties"].(map[string]any)
+	if _, ok := properties["session_id"]; ok {
+		t.Fatal("session_id must not be model-controlled")
+	}
+
+	if _, err := callTool(t, c, "podiom_attach_workspace_file", map[string]any{
+		"path": "copy/reddit.md", "label": "Reddit post", "session_id": "spoofed",
+	}); err != nil {
+		t.Fatalf("call attach tool: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/api/workspace-files" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	var sessionID string
+	if err := json.Unmarshal(rec.body["session_id"], &sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "sess-1" {
+		t.Fatalf("forwarded session_id = %q, want stamped sess-1", sessionID)
+	}
+	if _, ok := rec.body["path"]; !ok {
+		t.Fatalf("body missing path: %v", rec.body)
+	}
+}
+
+func TestUserVisibleProseToolsPointToWorkspaceFileAttachments(t *testing.T) {
+	c := newManageClient("127.0.0.1:8787")
+	for _, name := range []string{
+		"podiom_create_task", "podiom_update_task", "podiom_create_project", "podiom_update_project",
+		"podiom_create_schedule", "podiom_update_schedule", "podiom_update_goal", "podiom_record_goal_progress",
+		"podiom_propose_goal_completion", "podiom_request_access", "podiom_ask_user", "podiom_request_user_action",
+	} {
+		tool, ok := toolByName(c, name)
+		if !ok {
+			t.Fatalf("tool %q not found", name)
+		}
+		if !strings.Contains(tool.Description, "podiom_attach_workspace_file") || !strings.Contains(tool.Description, "never refer the user to a local path") {
+			t.Errorf("tool %q is missing workspace file guidance: %s", name, tool.Description)
 		}
 	}
 }

@@ -11,9 +11,9 @@
   // card width leaves the next card peeking, which is the affordance that says
   // "there is more this way".
   import AgentAvatar from "./AgentAvatar.svelte";
+  import AgentMarkdown from "./AgentMarkdown.svelte";
   import VoiceButton from "./VoiceButton.svelte";
   import { appendTranscript } from "./voice";
-  import { renderMarkdown } from "./markdown";
   import type { GoalActionItem, GoalActionItemStatus } from "./types";
 
   let {
@@ -125,12 +125,12 @@
 
         <div class="action-title">{item.Title}</div>
         {#if item.Why}
-          <div class="action-why">{item.Why}</div>
+          <div class="action-why"><AgentMarkdown content={item.Why} /></div>
         {/if}
 
         {#if item.Instructions}
           <div class="action-label mono">Instructions</div>
-          <div class="action-instructions">{@html renderMarkdown(item.Instructions)}</div>
+          <div class="action-instructions"><AgentMarkdown content={item.Instructions} /></div>
         {/if}
 
         {#if item.Status === "open"}

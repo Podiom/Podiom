@@ -815,6 +815,19 @@ export interface Attachment {
   CreatedAt?: string;
 }
 
+export interface WorkspaceFileSnapshot {
+  ID: string;
+  CreatorSessionID: string;
+  CreatorAgent: string;
+  ProjectID: string;
+  SourcePath: string;
+  Filename: string;
+  Label: string;
+  Content: string;
+  SizeBytes: number;
+  CreatedAt: string;
+}
+
 export interface PermissionRequest {
   id: string;
   turn_id: string;

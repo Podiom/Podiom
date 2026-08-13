@@ -37,6 +37,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/sessions", s.handleSessions},
 		{"/api/sessions/", s.handleSession},
 		{"/api/attachments/", s.handleAttachment},
+		{"/api/workspace-files", s.handleWorkspaceFiles},
+		{"/api/workspace-files/", s.handleWorkspaceFile},
 		{"/api/plans/", s.handlePlan},
 		{"/api/chat", s.handleChat},
 		{"/api/ws", s.handleWebSocket},

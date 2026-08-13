@@ -148,9 +148,19 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	wantClaude := "# Podiom generated Claude context for builder\n\n" +
 		"@" + c.paths.BaseAgents + "\n" +
 		"@" + paths.Agents + "\n" +
-		"@" + paths.Soul + "\n"
+		"@" + paths.Soul + "\n" +
+		"@" + filepath.Join(paths.Workspace, ".podiom-workspace-file-sharing.md") + "\n"
 	if string(claudePayload.Bytes) != wantClaude {
 		t.Fatalf("unexpected claude payload:\n%s", claudePayload.Bytes)
+	}
+	sharing, err := os.ReadFile(filepath.Join(paths.Workspace, ".podiom-workspace-file-sharing.md"))
+	if err != nil {
+		t.Fatalf("read workspace sharing instructions: %v", err)
+	}
+	for _, want := range []string{"Never ask the user to locate or open a file", "podiom_attach_workspace_file", "user-visible response or Podiom prose field"} {
+		if !strings.Contains(string(sharing), want) {
+			t.Fatalf("workspace sharing instructions missing %q:\n%s", want, sharing)
+		}
 	}
 	if claudePayload.Path != filepath.Join(paths.Workspace, "CLAUDE.md") {
 		t.Fatalf("unexpected claude payload path %q", claudePayload.Path)
@@ -170,6 +180,9 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	}
 	if !(baseIdx < agentIdx && agentIdx < soulIdx) {
 		t.Fatalf("codex payload order is wrong:\n%s", got)
+	}
+	if !strings.Contains(got, "podiom_attach_workspace_file") {
+		t.Fatalf("codex payload is missing workspace sharing instructions:\n%s", got)
 	}
 	if codexPayload.Path != filepath.Join(paths.Workspace, "AGENTS.md") {
 		t.Fatalf("unexpected codex payload path %q", codexPayload.Path)
@@ -210,7 +223,7 @@ func TestNativeAgentProjectionUsesCanonicalLayers(t *testing.T) {
 	if !strings.HasPrefix(native.Name, "podiom_builder_one_") {
 		t.Fatalf("unexpected codex native name %q", native.Name)
 	}
-	for _, want := range []string{"base layer", "agent layer", "soul layer", "memory layer", "Podiom remains the source of truth"} {
+	for _, want := range []string{"base layer", "agent layer", "soul layer", "memory layer", "Podiom remains the source of truth", "podiom_attach_workspace_file"} {
 		if !strings.Contains(native.Instructions, want) {
 			t.Fatalf("native instructions missing %q:\n%s", want, native.Instructions)
 		}

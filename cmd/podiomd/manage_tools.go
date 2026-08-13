@@ -219,7 +219,7 @@ func taskTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_create_task",
 			APIRoutes:   []string{"/api/tasks"},
-			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup. The task records your session and agent name, and the user sees it as created by you with a link back to this conversation.",
+			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup. The task records your session and agent name, and the user sees it as created by you with a link back to this conversation." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"title"}, map[string]any{
 				"project_id":     strProp("Project id this task belongs to."),
 				"title":          strProp("Short task title."),
@@ -249,7 +249,7 @@ func taskTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_update_task",
 			APIRoutes:   []string{"/api/tasks/"},
-			Description: "Update fields of an existing roadmap item (task). Only the fields you pass are changed.",
+			Description: "Update fields of an existing roadmap item (task). Only the fields you pass are changed." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":             strProp("Task id."),
 				"project_id":     strProp("New project id."),
@@ -384,7 +384,7 @@ func projectTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_create_project",
 			APIRoutes:   []string{"/api/projects"},
-			Description: "Create a project. id is optional (derived from name when omitted).",
+			Description: "Create a project. id is optional (derived from name when omitted)." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"name"}, map[string]any{
 				"id":          strProp("Explicit project id (optional)."),
 				"name":        strProp("Project name."),
@@ -407,7 +407,7 @@ func projectTools(c *manageClient) []mcpTool {
 		{
 			Name:        "podiom_update_project",
 			APIRoutes:   []string{"/api/projects/"},
-			Description: "Update fields of a project. Only the fields you pass are changed. To remove a project use podiom_delete_project; to keep it but hide it, set status=archived.",
+			Description: "Update fields of a project. Only the fields you pass are changed. To remove a project use podiom_delete_project; to keep it but hide it, set status=archived." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":          strProp("Project id."),
 				"name":        strProp("New name."),
@@ -471,7 +471,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_create_schedule",
 			APIRoutes:   []string{"/api/schedules"},
-			Description: "Create a schedule: a recurring job that starts unattended sessions on its own from then on. Provide exactly one of cron (5-field) or every (interval like 6h); use podiom_update_schedule to change it later, including enabled=false to park it without losing its history. Create one when the user asked for work that repeats, and tell them the name you used so they can find it. The schedule records your session and agent name, and the user sees it as created by you with a link back to this conversation.",
+			Description: "Create a schedule: a recurring job that starts unattended sessions on its own from then on. Provide exactly one of cron (5-field) or every (interval like 6h); use podiom_update_schedule to change it later, including enabled=false to park it without losing its history. Create one when the user asked for work that repeats, and tell them the name you used so they can find it. The schedule records your session and agent name, and the user sees it as created by you with a link back to this conversation." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"name", "agent", "body"}, map[string]any{
 				"name":           strProp("Schedule name (also the filename)."),
 				"agent":          strProp("Agent that runs the schedule."),
@@ -521,7 +521,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			APIRoutes: []string{"/api/schedules/"},
 			Description: "Update an existing schedule in place. Only the fields you pass are changed; everything else in the file is preserved, including its run history and who created it. " +
 				"Set enabled=false to park a schedule — it stays on disk with its history but stops firing automatically (you can still trigger it with podiom_run_schedule); enabled=true re-arms it. " +
-				"Setting cron clears every, and setting every clears cron. The name cannot be changed — delete and recreate to rename. A schedule's goal link cannot be changed here, because a goal-linked schedule runs with full autonomy.",
+				"Setting cron clears every, and setting every clears cron. The name cannot be changed — delete and recreate to rename. A schedule's goal link cannot be changed here, because a goal-linked schedule runs with full autonomy." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"name"}, map[string]any{
 				"name":           strProp("Schedule name."),
 				"agent":          strProp("New agent to run the schedule."),

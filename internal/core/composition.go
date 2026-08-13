@@ -63,6 +63,14 @@ type FileComposer struct {
 	paths config.Paths
 }
 
+const workspaceFileSharingInstructions = `# Sharing workspace files with the user
+
+Never ask the user to locate or open a file on the local filesystem. When a
+workspace text file contains material they need to read, copy, review, or act
+on, call podiom_attach_workspace_file and include its returned markdown_link in
+your user-visible response or Podiom prose field. Explain the link with enough
+context that the user does not need to understand your workspace or plan.`
+
 // NewFileComposer returns a filesystem-backed instruction composer.
 func NewFileComposer(paths config.Paths) *FileComposer {
 	return &FileComposer{paths: paths}
@@ -111,6 +119,11 @@ func (c *FileComposer) sources(paths AgentPaths, projectInstructions string) ([]
 			Optional: true,
 		})
 	}
+	sources = append(sources, InstructionSource{
+		Label:   "workspace file sharing",
+		Path:    filepath.Join(paths.Workspace, ".podiom-workspace-file-sharing.md"),
+		Content: []byte(workspaceFileSharingInstructions),
+	})
 	// MEMORY.md stays last so the agent's learned context sits closest to the
 	// live turn. It is optional and budget-capped.
 	memory := InstructionSource{Label: "MEMORY.md", Path: paths.Memory, MaxLines: memoryBudgetLines, Optional: true}

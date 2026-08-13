@@ -71,7 +71,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_update_goal",
 			APIRoutes:   []string{"/api/goals/"},
-			Description: "Update a goal's description, success criteria, metric definitions, or review cadence. Agents cannot change a goal's title, status, lead agent, or project.",
+			Description: "Update a goal's description, success criteria, metric definitions, or review cadence. Agents cannot change a goal's title, status, lead agent, or project." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":               strProp("Goal id."),
 				"description":      strProp("New description."),
@@ -94,7 +94,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_record_goal_progress",
 			APIRoutes:   []string{"/api/goals/"},
-			Description: "Record a goal timeline entry: what moved and the evidence (kind \"progress\"), or how the plan changed (kind \"plan_change\"). Pass metric_updates to move metric values — each update is audited old → new. Pass next_step to restate what you will do next; this is the one line the user reads to see where the goal is heading.",
+			Description: "Record a goal timeline entry: what moved and the evidence (kind \"progress\"), or how the plan changed (kind \"plan_change\"). Pass metric_updates to move metric values — each update is audited old → new. Pass next_step to restate what you will do next; this is the one line the user reads to see where the goal is heading." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":   strProp("Goal id."),
 				"kind": strProp("Entry kind: progress (default) or plan_change."),
@@ -153,7 +153,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_propose_goal_completion",
 			APIRoutes:   []string{"/api/goals/"},
-			Description: "Propose that a goal's success criteria are met. The goal enters review with your closing report and the user is notified — only the user can mark it done. The closing report should walk through each success criterion.",
+			Description: "Propose that a goal's success criteria are met. The goal enters review with your closing report and the user is notified — only the user can mark it done. The closing report should walk through each success criterion." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"id", "closing_report"}, map[string]any{
 				"id":             strProp("Goal id."),
 				"closing_report": strProp("Markdown closing report addressing every success criterion."),
@@ -183,7 +183,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				"Omit installer only for host-wide tools (e.g. brew) the user must install manually; install_hint is display-only context. " +
 				"env_var requests a credential/API token by NAME (e.g. GITHUB_TOKEN for gh/GitHub API access when you are blocked on missing auth). " +
 				"NEVER put the secret value in the request — name the variable and its purpose only; on approval the user enters the value privately in the Podiom UI and it is injected into your process environment for future runs. " +
-				"A request shown as executed means the variable is already set: use it directly, and never print or echo its value.",
+				"A request shown as executed means the variable is already set: use it directly, and never print or echo its value." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"goal_id", "kind", "reason"}, map[string]any{
 				"goal_id": strProp("Goal id this request unblocks."),
 				"kind":    strProp("Request kind: mcp_server, skill, cli_tool, env_var, or permission_mode."),
@@ -205,9 +205,9 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			},
 		},
 		{
-			Name:      "podiom_ask_user",
-			APIRoutes: []string{"/api/agent-questions"},
-			Description: "Ask the user a question when you are genuinely blocked on a decision that is theirs to make and cannot resolve it from the goal, the code, or sensible defaults. Only for unattended runs (goal planning/reviews and scheduled runs): the run does not wait — your question is recorded and, for a goal, pauses its reviews and shows on the goal page; the user's answer reaches your next session. Provide one or more questions, each with a short header, the question text, and (recommended) a few selectable options; the user can also type a free-text answer. In an interactive chat session, do NOT use this — ask the user directly instead.",
+			Name:        "podiom_ask_user",
+			APIRoutes:   []string{"/api/agent-questions"},
+			Description: "Ask the user a question when you are genuinely blocked on a decision that is theirs to make and cannot resolve it from the goal, the code, or sensible defaults. Only for unattended runs (goal planning/reviews and scheduled runs): the run does not wait — your question is recorded and, for a goal, pauses its reviews and shows on the goal page; the user's answer reaches your next session. Provide one or more questions, each with a short header, the question text, and (recommended) a few selectable options; the user can also type a free-text answer. In an interactive chat session, do NOT use this — ask the user directly instead." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"questions"}, map[string]any{
 				"questions": map[string]any{
 					"type":        "array",
@@ -250,7 +250,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			Description: "Hand a step back to the user because only a human can do it — post from their personal account, sign or pay for something, make a call, do anything physical or off-machine. The item appears on the goal page with your instructions and a box for their verdict. " +
 				"Your reviews are NOT paused: do not wait on it, carry on with the rest of the goal, and plan around it. Their verdict (Done / Couldn't do / Not doing) and note reach you at your next review. " +
 				"Choose this over the alternatives deliberately: podiom_ask_user is for a DECISION that is theirs to make and it does pause your reviews; podiom_request_access is for a capability Podiom can wire for you (an MCP server, a skill, a credential); next_step is a move YOU will make. Writing the ask into a progress entry instead is wrong — nobody can respond to that. " +
-				"Do not file an item you already have open (podiom_get_goal shows them) — chase it in your progress entry instead. Write instructions the user can follow without knowing anything about your plan: exact text to post, the URL, the timing, whatever they need.",
+				"Do not file an item you already have open (podiom_get_goal shows them) — chase it in your progress entry instead. Write instructions the user can follow without knowing anything about your plan: exact text to post, the URL, the timing, whatever they need." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"goal_id", "title", "instructions"}, map[string]any{
 				"goal_id":      strProp("Goal id this action belongs to."),
 				"title":        strProp("The one-line ask, imperative (e.g. \"Post the launch thread on r/selfhosted\")."),

@@ -23,6 +23,7 @@ import type {
   GoalActionItemStatus,
   CredentialInfo,
   WorkspaceTool,
+  WorkspaceFileSnapshot,
   DreamResult,
   GitHubDevicePoll,
   GitHubDeviceStart,
@@ -125,6 +126,21 @@ export async function fetchPhotoAttachment(id: string, thumbnail = false): Promi
 
 export async function deleteDraftPhotoAttachment(id: string): Promise<void> {
   await asJSON(await request(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }));
+}
+
+export class WorkspaceFileRequestError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export async function getWorkspaceFileSnapshot(id: string): Promise<WorkspaceFileSnapshot> {
+  const res = await request(`/api/workspace-files/${encodeURIComponent(id)}`);
+  if (!res.ok) {
+    const body = (await res.text()).trim();
+    throw new WorkspaceFileRequestError(res.status, body || `${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as WorkspaceFileSnapshot;
 }
 
 export async function getOnboardingState(): Promise<OnboardingState> {

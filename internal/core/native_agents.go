@@ -96,12 +96,16 @@ func (c *Core) nativeAgentInstructions(agent store.Agent) (string, error) {
 	fmt.Fprintf(&buf, "# Podiom native agent projection: %s\n\n", agent.Name)
 	buf.WriteString("This provider-native agent is a best-effort projection of a Podiom agent. Podiom remains the source of truth for identity, memory, workspace, permissions, tools, and run settings.\n")
 	for _, src := range sources {
-		raw, err := os.ReadFile(src.Path)
-		if err != nil {
-			if src.Optional && os.IsNotExist(err) {
-				continue
+		raw := src.Content
+		if len(raw) == 0 {
+			var err error
+			raw, err = os.ReadFile(src.Path)
+			if err != nil {
+				if src.Optional && os.IsNotExist(err) {
+					continue
+				}
+				return "", fmt.Errorf("read native agent source %s: %w", src.Path, err)
 			}
-			return "", fmt.Errorf("read native agent source %s: %w", src.Path, err)
 		}
 		raw = bytes.TrimSpace(raw)
 		if len(raw) == 0 {

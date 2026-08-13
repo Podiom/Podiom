@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { deleteSession, getSession, getUserProfile, listProfiles, saveUserProfile } from "../lib/api";
+  import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import { live } from "../lib/live.svelte";
-  import { renderMarkdown } from "../lib/markdown";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import type {
     Agent,
@@ -424,7 +425,7 @@
       {#each pendingInput.questions as q}
         <div class="question">
           {#if q.header}<div class="q-header">{q.header}</div>{/if}
-          <div class="q-text">{q.question}</div>
+          <div class="q-text"><AgentMarkdown content={q.question} /></div>
           {#if q.options && q.options.length > 0}
             <div class="q-options">
               {#each q.options as option}
@@ -432,7 +433,7 @@
                   <span class="q-mark">{answerSelected(q, option.label) ? "✓" : ""}</span>
                   <span class="q-option-text">
                     <span>{option.label}</span>
-                    {#if option.description}<small>{option.description}</small>{/if}
+                    {#if option.description}<small><AgentMarkdown content={option.description} /></small>{/if}
                   </span>
                 </button>
               {/each}
@@ -485,9 +486,10 @@
       <button class:on={showPreview} onclick={() => (showPreview = true)}>Preview</button>
     </div>
     {#if showPreview}
-      <div class="preview md">{@html renderMarkdown(draft)}</div>
+      <div class="preview md"><AgentMarkdown content={draft} /></div>
     {:else}
       <textarea class="editor mono" rows="18" bind:value={draft}></textarea>
+      <WorkspaceFileLinks content={draft} />
     {/if}
     <div class="actions">
       <button class="primary" disabled={saving || !draft.trim()} onclick={saveDraft}>
@@ -499,6 +501,7 @@
   {:else if phase === "view"}
     {#if editing}
       <textarea class="editor mono" rows="18" bind:value={editDraft}></textarea>
+      <WorkspaceFileLinks content={editDraft} />
       <div class="actions">
         <button class="primary" disabled={saving || !editDraft.trim()} onclick={saveEdit}>
           {saving ? "Saving…" : "Save"}
@@ -506,7 +509,7 @@
         <button class="ghost" onclick={() => (editing = false)}>Cancel</button>
       </div>
     {:else}
-      <div class="preview md">{@html renderMarkdown(profile)}</div>
+      <div class="preview md"><AgentMarkdown content={profile} /></div>
       <div class="actions">
         <button class="primary" onclick={startEdit}>Edit</button>
         <button class="ghost" onclick={() => (phase = "intro")}>Redo interview</button>

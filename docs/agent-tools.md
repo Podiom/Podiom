@@ -59,6 +59,20 @@ whether the run is **unattended**, what the session is linked to (project, task,
 goal, schedule), what it has created, and how much context is left. It never
 returns message history.
 
+### Workspace file snapshots
+
+`podiom_attach_workspace_file` takes one UTF-8 text file path relative to the
+session's project root (or the agent workspace for an unbound session) and an
+optional label. It stores an immutable database snapshot and returns a Markdown
+link the agent can put in any reply, task, schedule, goal entry, request, or
+other user-visible prose. The dashboard renders those links as file pills and
+opens their content in an authenticated in-app viewer, so the user never has to
+browse the local filesystem.
+
+Snapshots are limited to 256 KiB, preserve the exact validated bytes, and stay
+available after the source file, session, task, schedule, goal, project, or
+agent is changed or removed. There is no deletion or expiration workflow yet.
+
 ### Roadmap tasks
 `podiom_list_tasks`, `podiom_get_task`, `podiom_create_task`,
 `podiom_update_task`, `podiom_delete_task`, `podiom_start_task`.
@@ -138,9 +152,14 @@ companion tests keep the exclusions honest in the other direction.
 Agents read the tool descriptions themselves — those are the primary
 documentation and they ship with the binary. Two shorter layers set the reflexes:
 
-- `~/.podiom/AGENTS.md` carries the standing rules (act on the user's request,
-  look before you change, destructive tools need consent, what you create is
-  attributed). Note that Podiom writes this file **only if it is absent**, so an
+- A runtime-composed instruction layer tells every existing and new agent never
+  to send the user to a local workspace path and to use
+  `podiom_attach_workspace_file` whenever the user needs to read, copy, review,
+  or act on file content. Because it is composed per run, existing installations
+  receive it without rewriting their `~/.podiom/AGENTS.md`.
+- `~/.podiom/AGENTS.md` carries the other standing rules (act on the user's
+  request, look before you change, destructive tools need consent, what you
+  create is attributed). Podiom writes this file **only if it is absent**, so an
   existing installation keeps the copy it has.
 - Goal planning and review sessions get a much fuller contract, because they run
   with nobody watching. See [goals.md](goals.md).

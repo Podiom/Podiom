@@ -2,10 +2,11 @@
   import { onMount } from "svelte";
   import { answerAgentQuestion, createSchedule, deleteSchedule, listGoals, listProfiles, listSchedules, runSchedule } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
-  import { renderMarkdown } from "../lib/markdown";
   import { modeChip } from "../lib/theme";
   import type { AgentQuestion, Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
@@ -322,7 +323,7 @@
         {#each pq.Questions as item}
           <div class="sq-block">
             {#if item.header}<div class="sq-header">{item.header}</div>{/if}
-            <div class="sq-text">{item.question}</div>
+            <div class="sq-text"><AgentMarkdown content={item.question} /></div>
             {#if item.options && item.options.length > 0}
               <div class="sq-options">
                 {#each item.options as option}
@@ -330,7 +331,7 @@
                     <span class="sq-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
                     <span class="sq-option-text">
                       <span>{option.label}</span>
-                      {#if option.description}<small>{option.description}</small>{/if}
+                      {#if option.description}<small><AgentMarkdown content={option.description} /></small>{/if}
                     </span>
                   </button>
                 {/each}
@@ -490,6 +491,7 @@
 
         <div class="label-mono" style="margin:18px 0 8px">prompt</div>
         <textarea class="field-area" rows="4" bind:value={nsBody} placeholder="What should the agent do on every run? This becomes the body of the markdown file." style="min-height:96px"></textarea>
+        <WorkspaceFileLinks content={nsBody} />
 
         <div style="display:flex;align-items:center;gap:8px;margin:18px 0 7px">
           <span class="label-mono" style="flex:1">file preview</span>
@@ -513,7 +515,7 @@
         </div>
       </div>
       <div class="modal-body">
-        <div class="instruction-content">{@html renderMarkdown(inspectingSchedule.body || "")}</div>
+        <div class="instruction-content"><AgentMarkdown content={inspectingSchedule.body || ""} /></div>
         <button class="modal-cta instruction-close" onclick={() => (inspectingSchedule = null)}>Close</button>
       </div>
     </div>

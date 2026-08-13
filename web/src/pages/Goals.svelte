@@ -21,7 +21,7 @@
     updateGoalFeedback,
   } from "../lib/api";
   import { live } from "../lib/live.svelte";
-  import { renderMarkdown } from "../lib/markdown";
+  import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import VoiceButton from "../lib/VoiceButton.svelte";
@@ -1168,7 +1168,7 @@
                 {#each detailPendingQuestion.Questions as item}
                   <div class="goal-q-block">
                     {#if item.header}<div class="goal-q-header">{item.header}</div>{/if}
-                    <div class="goal-q-text">{item.question}</div>
+                    <div class="goal-q-text"><AgentMarkdown content={item.question} /></div>
                     {#if item.options && item.options.length > 0}
                       <div class="goal-q-options">
                         {#each item.options as option}
@@ -1180,7 +1180,7 @@
                             <span class="goal-q-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
                             <span class="goal-q-option-text">
                               <span>{option.label}</span>
-                              {#if option.description}<small>{option.description}</small>{/if}
+                              {#if option.description}<small><AgentMarkdown content={option.description} /></small>{/if}
                             </span>
                           </button>
                         {/each}
@@ -1251,7 +1251,7 @@
             </div>
             <div class="completion-body">
               <div class="section-label mono">Closing report</div>
-              <div class="md">{@html renderMarkdown(g.ClosingReport)}</div>
+              <div class="md"><AgentMarkdown content={g.ClosingReport} /></div>
               <div class="completion-actions">
                 <button class="btn-primary grow" disabled={busy === g.ID} onclick={() => transition(g, "done", "Marked done by you.")}>Mark done</button>
                 <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, "active", "Reopened by you.")}>Reopen</button>
@@ -1282,7 +1282,7 @@
                       <span class="req-kind">{rk.label}</span>
                       <span class="pill mono sm" style="background:{sbg};border-color:{sbd};color:{stc}">{slbl}</span>
                     </div>
-                    <div class="req-reason">{r.Reason}</div>
+                    <div class="req-reason"><AgentMarkdown content={r.Reason} /></div>
                     <div class="req-payload">
                       {#each payloadEntries(r) as [k, v]}
                         <span class="kv mono"><span class="k">{k}</span><span class="v">{v}</span></span>
@@ -1330,9 +1330,9 @@
             </div>
             <div class="ns-body">
               {#if g.NextStep}
-                <div class="ns-action">{g.NextStep}</div>
+                <div class="ns-action"><AgentMarkdown content={g.NextStep} /></div>
                 {#if g.NextStepWhy}
-                  <div class="ns-why">{g.NextStepWhy}</div>
+                  <div class="ns-why"><AgentMarkdown content={g.NextStepWhy} /></div>
                 {/if}
                 <div class="ns-foot mono">
                   <AgentAvatar name={g.LeadAgent} size={17} radius={5} fontSize={8} />
@@ -1465,7 +1465,7 @@
                           <div class="event-delta mono">{metricDelta(ev)}</div>
                         {/if}
                         {#if eventBody(ev)}
-                          <div class="event-body md">{@html renderMarkdown(eventBody(ev))}</div>
+                          <div class="event-body md"><AgentMarkdown content={eventBody(ev)} /></div>
                         {/if}
                       {/if}
 					  {#if canViewRun(ev)}
@@ -1499,12 +1499,12 @@
               The outcome
             </div>
             {#if g.Description}
-              <div class="desc">{g.Description}</div>
+              <div class="desc"><AgentMarkdown content={g.Description} /></div>
             {/if}
             {#if g.SuccessCriteria}
               <div class="criteria" class:mt={!!g.Description}>
                 <div class="criteria-label mono">Success criteria — what “done” means</div>
-                <div class="criteria-text">{g.SuccessCriteria}</div>
+                <div class="criteria-text"><AgentMarkdown content={g.SuccessCriteria} /></div>
               </div>
             {/if}
             {#if !g.Description && !g.SuccessCriteria}
@@ -1701,7 +1701,7 @@
       </div>
       <strong>{eventTitle(selectedRunEvent)}</strong>
       {#if eventBody(selectedRunEvent)}
-        <div class="md">{@html renderMarkdown(eventBody(selectedRunEvent))}</div>
+        <div class="md"><AgentMarkdown content={eventBody(selectedRunEvent)} /></div>
       {/if}
     </div>
 
@@ -1744,7 +1744,7 @@
             {#each runDetail.messages as message (message.ID)}
               <article class="run-message" class:agent={message.Role === "assistant"} class:error={message.Kind === "error"}>
                 <div class="run-message-label mono">{messageLabel(message)}</div>
-                <div class="md">{@html renderMarkdown(message.Content)}</div>
+                <div class="md"><AgentMarkdown content={message.Content} /></div>
               </article>
             {/each}
           </div>

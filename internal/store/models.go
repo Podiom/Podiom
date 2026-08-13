@@ -193,6 +193,23 @@ type Attachment struct {
 	VisualPath string `json:"-"`
 }
 
+// WorkspaceFileSnapshot is an immutable, user-readable copy of a text file an
+// agent chose to share. CreatorSessionID is provenance rather than ownership:
+// it deliberately has no foreign key so links embedded in durable goals,
+// tasks, and schedules survive deletion of the creating session.
+type WorkspaceFileSnapshot struct {
+	ID               string
+	CreatorSessionID string
+	CreatorAgent     string
+	ProjectID        string
+	SourcePath       string
+	Filename         string
+	Label            string
+	Content          string
+	SizeBytes        int64
+	CreatedAt        string
+}
+
 // DreamTrigger records what caused a memory-consolidation dream.
 type DreamTrigger string
 

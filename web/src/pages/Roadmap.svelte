@@ -15,6 +15,7 @@
     updateTask,
   } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
+  import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import VoiceButton from "../lib/VoiceButton.svelte";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
@@ -23,6 +24,7 @@
   import { projectColor } from "../lib/theme";
   import type { Agent, Goal, ProfileInfo, Project, Session, Task, TaskStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
 
   interface ChatTarget {
     sessionId?: string;
@@ -558,7 +560,7 @@
       <div class="modal-body cm-body">
         {#if openCard.Body}
           <div class="label-mono" style="margin-bottom:7px">prompt</div>
-          <div class="cm-prompt">{openCard.Body}</div>
+          <div class="cm-prompt"><AgentMarkdown content={openCard.Body} /></div>
         {/if}
         <div class="cm-assignee">
           <AgentAvatar name={openCard.AssignedAgent || "?"} size={34} radius={11} fontSize={14} />
@@ -653,6 +655,7 @@
           </div>
         </div>
         <textarea class="field-area" rows="6" bind:value={ntBody} placeholder="Describe the task in detail. This is sent to the agent verbatim when the task starts — paste a spec, acceptance criteria, file paths, anything." style="min-height:120px"></textarea>
+        <WorkspaceFileLinks content={ntBody} />
 
         <div class="label-mono" style="margin:18px 0 8px">project</div>
         <div class="chip-wrap">
@@ -738,6 +741,7 @@
           </div>
         </div>
         <textarea class="field-area" rows="6" bind:value={etBody} placeholder="Describe the task in detail. This is sent to the agent verbatim when the task starts." style="min-height:120px"></textarea>
+        <WorkspaceFileLinks content={etBody} />
 
         <div class="label-mono" style="margin:18px 0 8px">project</div>
         <div class="chip-wrap">

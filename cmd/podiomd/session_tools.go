@@ -7,6 +7,8 @@ import (
 	"net/url"
 )
 
+const workspaceFileProseGuidance = " If that prose needs to share material from a workspace text file, first call podiom_attach_workspace_file and include its returned markdown_link; never refer the user to a local path."
+
 // sessionTools is the agent's view of its own session. The session id comes from
 // this process's own --session flag, so an agent can only ever describe the
 // session it is running in.
@@ -36,6 +38,33 @@ func sessionTools(c *manageClient, sessionID string) []mcpTool {
 					return "", fmt.Errorf("no session id: this tool is only available inside a Podiom session")
 				}
 				return c.get(ctx, "/api/session-context/"+url.PathEscape(sessionID))
+			},
+		},
+		{
+			Name:      "podiom_attach_workspace_file",
+			APIRoutes: []string{"/api/workspace-files"},
+			Description: "Snapshot a UTF-8 text file from your current workspace and get a durable Markdown link to show the user. " +
+				"Use this whenever the user needs to read, copy, review, or act on file content: never tell them to browse the local filesystem. " +
+				"The path must be relative to your current project work root (or your agent workspace when this session has no project). " +
+				"The returned snapshot does not change if the source file is edited or deleted. Put the returned markdown_link in your reply or in any Podiom prose field, with enough surrounding context to explain it.",
+			InputSchema: objectSchema([]string{"path"}, map[string]any{
+				"path":  strProp("Path relative to the current work root."),
+				"label": strProp("Optional user-facing link label; defaults to the filename."),
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				if sessionID == "" {
+					return "", fmt.Errorf("no session id: this tool is only available inside a Podiom session")
+				}
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				if err := requireField(m, "path"); err != nil {
+					return "", err
+				}
+				body := bodyFrom(m, "path", "label")
+				body["session_id"], _ = json.Marshal(sessionID)
+				return c.post(ctx, "/api/workspace-files", body)
 			},
 		},
 	}

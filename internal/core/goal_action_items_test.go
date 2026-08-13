@@ -208,6 +208,11 @@ func TestGoalPromptsRouteUserWorkAwayFromNextStep(t *testing.T) {
 		if !strings.Contains(prompt, "something YOU will do") {
 			t.Fatalf("%s prompt does not constrain next_step to the agent's own move:\n%s", name, prompt)
 		}
+		for _, want := range []string{"podiom_attach_workspace_file", "Never send the user to a local filesystem path"} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("%s prompt is missing workspace-file guidance %q:\n%s", name, want, prompt)
+			}
+		}
 	}
 }
 

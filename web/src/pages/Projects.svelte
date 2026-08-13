@@ -20,6 +20,7 @@
     updateProjectInstructions,
   } from "../lib/api";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
   import { PROJECT_COLORS, projectColor } from "../lib/theme";
   import type { Agent, GitHubDeviceStart, GitHubRepo, GitHubStatus, Project, ProjectGit, Task } from "../lib/types";
 
@@ -739,6 +740,7 @@
           placeholder="What is this project? One or two sentences."
           style="min-height:74px"
         ></textarea>
+        <WorkspaceFileLinks content={drafts[p.id] ?? ""} />
         {#if dirty(p)}
           <div class="pc-save-row">
             <button class="pc-cancel" onclick={() => (drafts = { ...drafts, [p.id]: p.description })}>Reset</button>
@@ -758,6 +760,7 @@
           placeholder="Standing project-specific instructions for agents."
           style="min-height:110px"
         ></textarea>
+        <WorkspaceFileLinks content={instructionDrafts[p.id] ?? ""} />
         {#if instructionsDirty(p)}
           <div class="pc-save-row">
             <button class="pc-cancel" onclick={() => (instructionDrafts = { ...instructionDrafts, [p.id]: instructionDraftsSaved[p.id] ?? "" })}>Reset</button>

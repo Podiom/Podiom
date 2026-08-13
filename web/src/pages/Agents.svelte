@@ -21,7 +21,8 @@
   } from "../lib/capabilities";
   import DreamJournal from "../lib/DreamJournal.svelte";
   import DreamOverlay from "../lib/DreamOverlay.svelte";
-  import { renderMarkdown } from "../lib/markdown";
+  import AgentMarkdown from "../lib/AgentMarkdown.svelte";
+  import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
   import MemoryPanel from "../lib/MemoryPanel.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
@@ -560,7 +561,7 @@
           </div>
           <div class="ad-soul-note">Who {a.Name} is. You author this; it never drifts.</div>
           {#if detailSoul.trim()}
-            <div class="ad-soul-body">{@html renderMarkdown(detailSoul)}</div>
+            <div class="ad-soul-body"><AgentMarkdown content={detailSoul} /></div>
           {:else}
             <div class="ad-soul-empty">No soul written yet.</div>
           {/if}
@@ -740,6 +741,7 @@
 
         <div class="label-mono" style="margin:20px 0 8px">SOUL.md</div>
         <textarea class="field-area mono" rows="8" bind:value={edSoul} placeholder="# Name&#10;&#10;## Who you are…" style="font:400 12.5px/1.7 'JetBrains Mono',monospace;min-height:160px;white-space:pre"></textarea>
+        <WorkspaceFileLinks content={edSoul} />
 
         <div style="display:flex;gap:9px;margin-top:22px">
           <button class="ed-cancel" onclick={() => (editOpen = false)}>Cancel</button>

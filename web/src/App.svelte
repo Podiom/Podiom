@@ -32,6 +32,7 @@
   import Settings from "./pages/Settings.svelte";
   import Terminal from "./pages/Terminal.svelte";
   import type { PushState } from "./lib/live.svelte";
+  import WorkspaceFileViewer from "./lib/WorkspaceFileViewer.svelte";
 
   type Route = "chat" | "roadmap" | "goals" | "projects" | "schedules" | "skills" | "terminal" | "settings";
   type SettingsTab = "providers" | "general" | "agents" | "about-you" | "updates" | "notifications" | "logs";
@@ -824,6 +825,7 @@
       </button>
     {/each}
   </div>
+  <WorkspaceFileViewer />
 </div>
 {/if}
 

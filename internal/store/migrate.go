@@ -1333,6 +1333,28 @@ var migrations = []migration{
 		sql: `ALTER TABLE tasks ADD COLUMN created_by_session TEXT NOT NULL DEFAULT '';
 		ALTER TABLE tasks ADD COLUMN created_by_agent TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 34,
+		name:    "workspace_file_snapshots",
+		// These rows intentionally do not reference sessions. A snapshot link can
+		// be embedded in a task, schedule, goal, or other artifact that outlives
+		// the session which created it.
+		sql: `CREATE TABLE workspace_file_snapshots (
+			id                 TEXT PRIMARY KEY,
+			creator_session_id TEXT NOT NULL DEFAULT '',
+			creator_agent      TEXT NOT NULL DEFAULT '',
+			project_id         TEXT NOT NULL DEFAULT '',
+			source_path        TEXT NOT NULL,
+			filename           TEXT NOT NULL,
+			label              TEXT NOT NULL,
+			content            TEXT NOT NULL,
+			size_bytes         INTEGER NOT NULL,
+			created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		CREATE INDEX idx_workspace_file_snapshots_creator
+			ON workspace_file_snapshots(creator_session_id, created_at);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

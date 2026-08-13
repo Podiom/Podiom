@@ -17,6 +17,7 @@
   import { DEFAULT_PROVIDER, providerMeta, questionEndsTurn } from "../lib/providers";
   import { renderMarkdown } from "../lib/markdown";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
+  import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import ContextRing from "../lib/ContextRing.svelte";
   import VoiceButton from "../lib/VoiceButton.svelte";
   import { appendTranscript } from "../lib/voice";
@@ -304,7 +305,6 @@
   // when there is one and the draft otherwise.
   const planActive = $derived(activeSession ? planPending || planAwaiting : draftPlanFirst);
   const planInfo = $derived(activeSession?.PlanInfo);
-  const planHtml = $derived(renderMarkdown(planInfo?.markdown ?? ""));
 
   // Account / usage context follows the active session (or, pre-session, the
   // selected agent). The usage snapshot key is the profile name, falling back to
@@ -2109,7 +2109,7 @@
                     <button class="thinking-fold" onclick={() => toggleThinking(m.ID)}>hide</button>
                   {/if}
                 </div>
-                {@html renderMarkdown(m.Content)}
+                <AgentMarkdown content={m.Content} />
               {/if}
             </div>
           </div>
@@ -2151,7 +2151,7 @@
                   {/each}
                 </div>
               {/if}
-              {@html renderMarkdown(m.Content)}
+              <AgentMarkdown content={m.Content} />
             </div>
           </div>
         {/if}
@@ -2164,7 +2164,7 @@
             <div class="thinking-head">
               <span class="thinking-label mono">thinking</span>
             </div>
-            {@html renderMarkdown(pendingReasoning)}<span class="cursor"></span>
+            <AgentMarkdown content={pendingReasoning} /><span class="cursor"></span>
           </div>
         </div>
       {/if}
@@ -2187,7 +2187,7 @@
                 {/each}
               </div>
             {/if}
-            {@html renderMarkdown(pendingAssistant)}<span class="cursor"></span>
+            <AgentMarkdown content={pendingAssistant} /><span class="cursor"></span>
           </div>
         </div>
       {/if}
@@ -2426,7 +2426,7 @@
             {#each pendingUserInput.questions as q}
               <div class="question-block">
                 {#if q.header}<div class="question-header">{q.header}</div>{/if}
-                <div class="question-text">{q.question}</div>
+                <div class="question-text"><AgentMarkdown content={q.question} /></div>
                 {#if q.options && q.options.length > 0}
                   <div class="question-options">
                     {#each q.options as option}
@@ -2438,7 +2438,7 @@
                         <span class="question-dot">{q.multi_select ? (userInputSelected(q, option.label) ? "✓" : "") : ""}</span>
                         <span class="question-option-text">
                           <span>{option.label}</span>
-                          {#if option.description}<small>{option.description}</small>{/if}
+                          {#if option.description}<small><AgentMarkdown content={option.description} /></small>{/if}
                         </span>
                       </button>
                     {/each}
@@ -2647,7 +2647,7 @@
           <div class="mono">submitted {new Date(planInfo.updated_at).toLocaleString()}</div>
         {/if}
       </div>
-      <div class="plan-panel-body">{@html planHtml}</div>
+      <div class="plan-panel-body"><AgentMarkdown content={planInfo?.markdown ?? ""} /></div>
       <div class="plan-panel-actions">
         {#if curMode === "yolo"}
           <label class="plan-warning">
