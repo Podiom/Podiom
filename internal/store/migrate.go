@@ -1355,6 +1355,32 @@ var migrations = []migration{
 		CREATE INDEX idx_workspace_file_snapshots_creator
 			ON workspace_file_snapshots(creator_session_id, created_at);`,
 	},
+	{
+		version: 35,
+		name:    "schedule_runs_webhook_trigger",
+		// A schedule can now also be fired by an external POST to its webhook
+		// endpoint. Migration 4's CHECK only permits 'cron' and 'manual', and
+		// SQLite cannot alter a CHECK, so the table is rebuilt with the widened
+		// constraint. Existing rows carry over untouched.
+		sql: `CREATE TABLE schedule_runs_new (
+			id            TEXT PRIMARY KEY,
+			schedule_name TEXT NOT NULL,
+			session_id    TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+			trigger       TEXT NOT NULL CHECK (trigger IN ('cron', 'manual', 'webhook')),
+			status        TEXT NOT NULL CHECK (status IN ('running', 'success', 'error')),
+			error         TEXT NOT NULL DEFAULT '',
+			started_at    TEXT NOT NULL DEFAULT (datetime('now')),
+			finished_at   TEXT
+		);
+
+		INSERT INTO schedule_runs_new (id, schedule_name, session_id, trigger, status, error, started_at, finished_at)
+			SELECT id, schedule_name, session_id, trigger, status, error, started_at, finished_at FROM schedule_runs;
+
+		DROP TABLE schedule_runs;
+		ALTER TABLE schedule_runs_new RENAME TO schedule_runs;
+
+		CREATE INDEX idx_schedule_runs_name ON schedule_runs(schedule_name, started_at DESC);`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

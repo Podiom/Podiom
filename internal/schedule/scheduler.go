@@ -2,6 +2,8 @@ package schedule
 
 import (
 	"context"
+	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -206,6 +208,11 @@ func (s *Scheduler) Sync() {
 			continue
 		}
 		spec := sc.CronSpec()
+		// A webhook-only schedule has no cadence to register. It is not an error:
+		// it fires when its endpoint is called, not on a clock.
+		if spec == "" {
+			continue
+		}
 		jobName := name
 		entryID, err := s.cron.AddFunc(spec, func() { s.fire(jobName) })
 		if err != nil {
@@ -245,6 +252,8 @@ type Status struct {
 	Effort           string              `json:"effort"`
 	Cron             string              `json:"cron"`
 	Every            string              `json:"every"`
+	Webhook          bool                `json:"webhook"`
+	WebhookSecret    string              `json:"webhook_secret,omitempty"`
 	RunPermission    RunPermission       `json:"run_permission"`
 	AllowedTools     []string            `json:"allowed_tools"`
 	Enabled          bool                `json:"enabled"`
@@ -278,6 +287,8 @@ func (s *Scheduler) List(ctx context.Context) ([]Status, error) {
 			Effort:        sc.Effort,
 			Cron:          sc.Cron,
 			Every:         sc.Every,
+			Webhook:       sc.Webhook,
+			WebhookSecret: sc.WebhookSecret,
 			RunPermission: sc.RunPermission,
 			AllowedTools:  sc.AllowedTools,
 			Enabled:       sc.Enabled,
@@ -352,6 +363,65 @@ func (s *Scheduler) RunNow(ctx context.Context, name string) (store.ScheduleRun,
 	return s.run(ctx, name, store.TriggerManual)
 }
 
+// ErrWebhookUnauthorized means the caller did not present the schedule's
+// webhook secret — or the schedule does not exist, or has no webhook trigger.
+// The three are one error on purpose: the endpoint is reachable without the
+// gateway token, so it must not reveal which schedules exist.
+var ErrWebhookUnauthorized = errors.New("webhook unauthorized")
+
+// ErrWebhookDisabled means the secret was valid but the schedule is parked
+// (enabled: false), so it must not fire.
+var ErrWebhookDisabled = errors.New("schedule disabled")
+
+// PrepareWebhookRun authorizes an inbound webhook call and records the run it
+// will produce. It deliberately stops short of starting the session: the caller
+// gets the run record to answer the HTTP request with, then hands the work to
+// ExecuteWebhookRun so a slow agent run never holds the sender's connection
+// open.
+func (s *Scheduler) PrepareWebhookRun(ctx context.Context, name, secret string) (Schedule, store.ScheduleRun, error) {
+	sched, err := Parse(s.pathFor(name))
+	if err != nil {
+		s.log.Warn("schedule webhook rejected", "event", "schedule", "schedule", name, "reason", "parse", podiomlog.ErrorAttr(err))
+		return Schedule{}, store.ScheduleRun{}, ErrWebhookUnauthorized
+	}
+	if !sched.Webhook {
+		s.log.Warn("schedule webhook rejected", "event", "schedule", "schedule", name, "reason", "not_a_webhook")
+		return Schedule{}, store.ScheduleRun{}, ErrWebhookUnauthorized
+	}
+	if subtle.ConstantTimeCompare([]byte(secret), []byte(sched.WebhookSecret)) != 1 {
+		s.log.Warn("schedule webhook rejected", "event", "schedule", "schedule", name, "reason", "bad_secret")
+		return Schedule{}, store.ScheduleRun{}, ErrWebhookUnauthorized
+	}
+	// Checked after the secret: a parked schedule is a state its owner is
+	// entitled to see, and they have just proven they own it.
+	if !sched.Enabled {
+		s.log.Info("schedule webhook skipped disabled", "event", "schedule", "schedule", name, "trigger", store.TriggerWebhook)
+		return Schedule{}, store.ScheduleRun{}, ErrWebhookDisabled
+	}
+
+	run, err := s.store.CreateScheduleRun(ctx, store.ScheduleRun{
+		ScheduleName: name,
+		Trigger:      store.TriggerWebhook,
+		Status:       store.RunRunning,
+	})
+	if err != nil {
+		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", store.TriggerWebhook, "stage", "create_run", podiomlog.ErrorAttr(err))
+		return Schedule{}, store.ScheduleRun{}, err
+	}
+	s.log.Info("schedule webhook triggered", "event", "schedule", "schedule", name, "run", run.ID, "trigger", store.TriggerWebhook)
+	return sched, run, nil
+}
+
+// ExecuteWebhookRun runs a webhook-triggered run that PrepareWebhookRun already
+// authorized and recorded. It runs on the scheduler's lifetime context, not the
+// request's — the HTTP response is long gone by the time the session finishes,
+// and a daemon shutdown is the only thing that should cancel it.
+func (s *Scheduler) ExecuteWebhookRun(sched Schedule, run store.ScheduleRun, payload string) {
+	if _, err := s.execute(s.ctx, sched.Name, sched, run, payload); err != nil {
+		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", sched.Name, "run", run.ID, "trigger", store.TriggerWebhook, podiomlog.ErrorAttr(err))
+	}
+}
+
 // fire is the cron callback. It runs the job in the scheduler's lifetime context
 // so a daemon shutdown cancels it.
 func (s *Scheduler) fire(name string) {
@@ -387,6 +457,17 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		s.log.Warn("scheduled run failed", "event", "schedule", "schedule", name, "trigger", trigger, "stage", "create_run", podiomlog.ErrorAttr(err), podiomlog.DurationMS("duration_ms", time.Since(started)))
 		return store.ScheduleRun{}, err
 	}
+	return s.execute(ctx, name, sched, run, "")
+}
+
+// execute runs an already-recorded scheduled run to completion: start the
+// session, drain it, and persist the terminal status. It is shared by every
+// trigger — cron, manual, and webhook — so the permission policy and the
+// session's provenance cannot drift between them. payload is the webhook
+// request body, empty for the other triggers.
+func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, run store.ScheduleRun, payload string) (store.ScheduleRun, error) {
+	started := time.Now()
+	trigger := run.Trigger
 	// A goal-linked schedule always runs yolo as part of the goal's autonomous
 	// chain, regardless of the stored run_permission.
 	yolo := sched.RunPermission == PermissionYolo || sched.GoalID != ""
@@ -415,7 +496,7 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 		Effort:       sched.Effort,
 		Yolo:         yolo,
 		AllowedTools: sched.AllowedTools,
-		Task:         s.scheduleTaskPrompt(ctx, name, sched.Body),
+		Task:         s.scheduleTaskPrompt(ctx, name, sched.Body, payload),
 		GoalID:       sched.GoalID,
 	})
 
@@ -438,17 +519,23 @@ func (s *Scheduler) run(ctx context.Context, name string, trigger store.RunTrigg
 // scheduleAnswerLimit caps how many prior answered questions a run replays.
 const scheduleAnswerLimit = 20
 
+// webhookPayloadLimit caps how much of a webhook request body reaches the
+// prompt. A sender is free to POST more; the run sees the first 8KB.
+const webhookPayloadLimit = 8 << 10
+
 // scheduleTaskPrompt prepends the answers the user gave to questions earlier
 // runs of this schedule asked (via podiom_ask_user), so a recurring schedule
 // carries those decisions forward and does not re-ask what was already settled.
-func (s *Scheduler) scheduleTaskPrompt(ctx context.Context, name, body string) string {
+// A webhook run also gets the request body that triggered it, so the task can
+// react to what fired it rather than only that it fired.
+func (s *Scheduler) scheduleTaskPrompt(ctx context.Context, name, body, payload string) string {
 	answered, err := s.store.ListAnsweredAgentQuestions(ctx, store.AgentQuestionSchedule, name, scheduleAnswerLimit)
 	if err != nil {
 		s.log.Warn("scheduled run failed to load prior answers", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(err))
-		return body
+		return withWebhookPayload(body, payload)
 	}
 	if len(answered) == 0 {
-		return body
+		return withWebhookPayload(body, payload)
 	}
 	var b strings.Builder
 	b.WriteString("## Previously answered questions\n\n")
@@ -470,7 +557,31 @@ func (s *Scheduler) scheduleTaskPrompt(ctx context.Context, name, body string) s
 		}
 	}
 	b.WriteString("\n---\n\n")
+	b.WriteString(withWebhookPayload(body, payload))
+	return b.String()
+}
+
+// withWebhookPayload appends the request body that triggered a webhook run to
+// the task, fenced so the agent can tell the payload apart from its
+// instructions. Returns body unchanged when there is no payload.
+func withWebhookPayload(body, payload string) string {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return body
+	}
+	truncated := ""
+	if len(payload) > webhookPayloadLimit {
+		payload = payload[:webhookPayloadLimit]
+		truncated = "\n…(truncated)"
+	}
+	var b strings.Builder
 	b.WriteString(body)
+	b.WriteString("\n\n## Webhook payload\n\n")
+	b.WriteString("This run was triggered by a webhook. The request body was:\n\n")
+	b.WriteString("```\n")
+	b.WriteString(payload)
+	b.WriteString(truncated)
+	b.WriteString("\n```\n")
 	return b.String()
 }
 
@@ -516,6 +627,8 @@ type CreateParams struct {
 	Effort        string
 	Cron          string
 	Every         string
+	Webhook       bool
+	WebhookSecret string
 	RunPermission RunPermission
 	AllowedTools  []string
 	Enabled       bool
@@ -535,13 +648,17 @@ type CreateParams struct {
 // to a goal silently forces yolo (see Create), and an ordinary edit is the wrong
 // place for a permission escalation.
 type UpdateParams struct {
-	Agent         *string
-	Provider      *config.Provider
-	Profile       *string
-	Model         *string
-	Effort        *string
-	Cron          *string
-	Every         *string
+	Agent    *string
+	Provider *config.Provider
+	Profile  *string
+	Model    *string
+	Effort   *string
+	Cron     *string
+	Every    *string
+	// Webhook toggles the webhook trigger. Turning it on mints a secret if the
+	// schedule has none; turning it off clears the secret, so toggling off and
+	// back on is how a secret is rotated.
+	Webhook       *bool
 	RunPermission *RunPermission
 	AllowedTools  *[]string
 	Enabled       *bool
@@ -586,6 +703,16 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 	}
 	if p.RunPermission == "" {
 		p.RunPermission = PermissionPreapproved
+	}
+	// A webhook trigger is only ever created with a secret, so the endpoint it
+	// opens is never callable without one.
+	if p.Webhook && p.WebhookSecret == "" {
+		secret, serr := newWebhookSecret()
+		if serr != nil {
+			s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "webhook_secret", podiomlog.ErrorAttr(serr))
+			return Status{}, serr
+		}
+		p.WebhookSecret = secret
 	}
 	// A schedule someone deliberately created is armed; the off switch is an
 	// explicit later edit (Update) rather than a step you have to remember here.
@@ -667,6 +794,8 @@ func (s *Scheduler) Update(ctx context.Context, name string, p UpdateParams) (St
 		Effort:        current.Effort,
 		Cron:          current.Cron,
 		Every:         current.Every,
+		Webhook:       current.Webhook,
+		WebhookSecret: current.WebhookSecret,
 		RunPermission: current.RunPermission,
 		AllowedTools:  current.AllowedTools,
 		Enabled:       current.Enabled,
@@ -713,6 +842,23 @@ func (s *Scheduler) Update(ctx context.Context, name string, p UpdateParams) (St
 			next.Cron = ""
 		}
 		changed = append(changed, "every")
+	}
+	if p.Webhook != nil {
+		next.Webhook = *p.Webhook
+		switch {
+		case next.Webhook && next.WebhookSecret == "":
+			secret, serr := newWebhookSecret()
+			if serr != nil {
+				s.log.Warn("schedule update failed", "event", "schedule", "schedule", name, "stage", "webhook_secret", podiomlog.ErrorAttr(serr))
+				return Status{}, serr
+			}
+			next.WebhookSecret = secret
+		case !next.Webhook:
+			// Turning the trigger off retires its secret with it, so a URL that
+			// leaked while it was on cannot be revived by turning it back on.
+			next.WebhookSecret = ""
+		}
+		changed = append(changed, "webhook")
 	}
 	if p.RunPermission != nil {
 		next.RunPermission = *p.RunPermission

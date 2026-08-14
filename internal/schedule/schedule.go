@@ -6,6 +6,8 @@
 package schedule
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +42,8 @@ type Schedule struct {
 	Effort        string          // optional effort override
 	Cron          string          // 5-field cron expression (mutually exclusive with Every)
 	Every         string          // interval like "6h" (mutually exclusive with Cron)
+	Webhook       bool            // additional trigger: an external POST can fire this schedule
+	WebhookSecret string          // per-schedule secret the webhook caller must present
 	RunPermission RunPermission   // preapproved (default) | yolo
 	AllowedTools  []string        // preapproved allow-list
 	Enabled       bool            // off switch: a disabled file stays but does not fire
@@ -62,6 +66,8 @@ type frontmatter struct {
 	Effort           string   `yaml:"effort"`
 	Cron             string   `yaml:"cron"`
 	Every            string   `yaml:"every"`
+	Webhook          bool     `yaml:"webhook"`
+	WebhookSecret    string   `yaml:"webhook_secret"`
 	RunPermission    string   `yaml:"run_permission"`
 	AllowedTools     []string `yaml:"allowed_tools"`
 	Enabled          bool     `yaml:"enabled"`
@@ -71,12 +77,26 @@ type frontmatter struct {
 }
 
 // CronSpec returns the robfig/cron spec for this schedule. `every: 6h` maps to
-// the "@every 6h" descriptor; a cron expression is used verbatim.
+// the "@every 6h" descriptor; a cron expression is used verbatim. A
+// webhook-only schedule has no cadence and returns "", which is what tells the
+// scheduler not to register a cron entry for it.
 func (s Schedule) CronSpec() string {
 	if s.Every != "" {
 		return "@every " + s.Every
 	}
 	return s.Cron
+}
+
+// newWebhookSecret mints the per-schedule secret a webhook caller must present.
+// 32 bytes of entropy, base64url without padding — the same shape as the
+// gateway token, but deliberately its own value: a leaked webhook secret must
+// only be able to start the one job that owns it.
+func newWebhookSecret() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate webhook secret: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // Parse reads and validates a single schedule file.
@@ -112,6 +132,8 @@ func parseBytes(path string, raw []byte) (Schedule, error) {
 		Effort:        strings.TrimSpace(meta.Effort),
 		Cron:          strings.TrimSpace(meta.Cron),
 		Every:         strings.TrimSpace(meta.Every),
+		Webhook:       meta.Webhook,
+		WebhookSecret: strings.TrimSpace(meta.WebhookSecret),
 		RunPermission: RunPermission(strings.TrimSpace(meta.RunPermission)),
 		AllowedTools:  meta.AllowedTools,
 		Enabled:       meta.Enabled,
@@ -137,8 +159,8 @@ func (s Schedule) validate() error {
 	if s.Provider != "" && !config.KnownProvider(s.Provider) {
 		return fmt.Errorf("invalid provider %q (want %s)", s.Provider, config.ProviderIDsLabel())
 	}
-	if s.Cron == "" && s.Every == "" {
-		return fmt.Errorf("a cron or every value is required")
+	if s.Cron == "" && s.Every == "" && !s.Webhook {
+		return fmt.Errorf("a cron, every, or webhook trigger is required")
 	}
 	if s.Cron != "" && s.Every != "" {
 		return fmt.Errorf("set only one of cron or every, not both")
@@ -147,6 +169,11 @@ func (s Schedule) validate() error {
 		if _, err := time.ParseDuration(s.Every); err != nil {
 			return fmt.Errorf("invalid every %q: %w", s.Every, err)
 		}
+	}
+	// A webhook without a secret would be an open trigger. Parsing must never
+	// yield one, so the endpoint can rely on the secret always being present.
+	if s.Webhook && s.WebhookSecret == "" {
+		return fmt.Errorf("webhook_secret is required when webhook is true")
 	}
 	switch s.RunPermission {
 	case PermissionPreapproved, PermissionYolo:
@@ -196,8 +223,12 @@ func Render(p CreateParams) string {
 	}
 	if p.Every != "" {
 		b.WriteString("every: " + p.Every + "\n")
-	} else {
+	} else if p.Cron != "" {
 		b.WriteString("cron: " + p.Cron + "\n")
+	}
+	if p.Webhook {
+		b.WriteString("webhook: true\n")
+		b.WriteString("webhook_secret: " + p.WebhookSecret + "\n")
 	}
 	perm := p.RunPermission
 	if perm == "" {

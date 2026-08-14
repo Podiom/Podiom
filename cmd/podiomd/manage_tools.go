@@ -471,13 +471,14 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_create_schedule",
 			APIRoutes:   []string{"/api/schedules"},
-			Description: "Create a schedule: a recurring job that starts unattended sessions on its own from then on. Provide exactly one of cron (5-field) or every (interval like 6h); use podiom_update_schedule to change it later, including enabled=false to park it without losing its history. Create one when the user asked for work that repeats, and tell them the name you used so they can find it. The schedule records your session and agent name, and the user sees it as created by you with a link back to this conversation." + workspaceFileProseGuidance,
+			Description: "Create a schedule: a job that starts unattended sessions on its own from then on. Provide at least one trigger — cron (5-field) or every (interval like 6h) for a clock-driven job, and/or webhook=true for one an outside service fires by calling a URL. Use podiom_update_schedule to change it later, including enabled=false to park it without losing its history. Create one when the user asked for work that repeats or should react to an outside event, and tell them the name you used so they can find it. For a webhook schedule, read it back with podiom_get_schedule and give the user the URL and secret so they can wire up the sender. The schedule records your session and agent name, and the user sees it as created by you with a link back to this conversation." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"name", "agent", "body"}, map[string]any{
 				"name":           strProp("Schedule name (also the filename)."),
 				"agent":          strProp("Agent that runs the schedule."),
 				"body":           strProp("The task prompt the agent runs each time."),
 				"cron":           strProp("5-field cron spec (mutually exclusive with every)."),
 				"every":          strProp("Interval like 6h or 30m (mutually exclusive with cron)."),
+				"webhook":        boolProp("true also lets an external POST fire this schedule. Podiom generates the secret; the request body is handed to the run."),
 				"provider":       strProp("Provider override: claude or codex. Omit for agent default."),
 				"profile":        strProp("Profile override. Omit for agent default."),
 				"model":          strProp("Model override (optional)."),
@@ -496,14 +497,14 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 						return "", err
 					}
 				}
-				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "goal_id")
+				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "webhook", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "goal_id")
 				return c.post(ctx, "/api/schedules", stampCreator(body, sessionID, agentName))
 			},
 		},
 		{
 			Name:        "podiom_get_schedule",
 			APIRoutes:   []string{"/api/schedules/"},
-			Description: "Get one schedule in full: the agent that runs it, its cadence, run permission and allowed tools, whether it is enabled, the task body it runs each time, its next run time, who created it, and its recent runs with any errors. Read this before podiom_update_schedule so you patch real current values rather than assumptions.",
+			Description: "Get one schedule in full: the agent that runs it, its cadence, whether it has a webhook trigger (and that trigger's secret, so you can tell the user the URL to POST to), run permission and allowed tools, whether it is enabled, the task body it runs each time, its next run time, who created it, and its recent runs with any errors. Read this before podiom_update_schedule so you patch real current values rather than assumptions.",
 			InputSchema: objectSchema([]string{"name"}, map[string]any{"name": strProp("Schedule name.")}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -521,13 +522,14 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			APIRoutes: []string{"/api/schedules/"},
 			Description: "Update an existing schedule in place. Only the fields you pass are changed; everything else in the file is preserved, including its run history and who created it. " +
 				"Set enabled=false to park a schedule — it stays on disk with its history but stops firing automatically (you can still trigger it with podiom_run_schedule); enabled=true re-arms it. " +
-				"Setting cron clears every, and setting every clears cron. The name cannot be changed — delete and recreate to rename. A schedule's goal link cannot be changed here, because a goal-linked schedule runs with full autonomy." + workspaceFileProseGuidance,
+				"Setting cron clears every, and setting every clears cron; webhook is independent of both, so a schedule can have a cadence, a webhook, or both. The name cannot be changed — delete and recreate to rename. A schedule's goal link cannot be changed here, because a goal-linked schedule runs with full autonomy." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"name"}, map[string]any{
 				"name":           strProp("Schedule name."),
 				"agent":          strProp("New agent to run the schedule."),
 				"body":           strProp("New task prompt."),
 				"cron":           strProp("New 5-field cron spec (clears every)."),
 				"every":          strProp("New interval like 6h or 30m (clears cron)."),
+				"webhook":        boolProp("true opens a webhook trigger and generates its secret; false closes it and retires the secret. Turning it off and back on is how a leaked secret is rotated."),
 				"provider":       strProp("Provider override: claude or codex."),
 				"profile":        strProp("Profile override."),
 				"model":          strProp("Model override."),
@@ -544,7 +546,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				if err := requireField(m, "name"); err != nil {
 					return "", err
 				}
-				body := bodyFrom(m, "agent", "body", "cron", "every", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "enabled")
+				body := bodyFrom(m, "agent", "body", "cron", "every", "webhook", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "enabled")
 				if len(body) == 0 {
 					return "", fmt.Errorf("provide at least one field to change")
 				}

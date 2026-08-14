@@ -601,6 +601,7 @@ export interface NewScheduleRequest {
   effort?: string;
   cron?: string;
   every?: string;
+  webhook?: boolean;
   run_permission: string;
   allowed_tools?: string[];
   body: string;

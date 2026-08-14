@@ -449,9 +449,10 @@ There are three layers, composed in this fixed order:
   job means dropping a file in the folder. The config file has **no `schedules:`
   block** (the files are the source of truth).
 - **R7.2a** Frontmatter fields include at least: `agent`, `model`, `effort`,
-  timing (`cron: "0 7 * * *"` **or** `every: 6h`), `run_permission`
-  (`preapproved`|`yolo`, §7.7), and `enabled: true|false` (the on/off switch — a
-  disabled file stays in place but does not fire). Example:
+  timing (`cron: "0 7 * * *"` **or** `every: 6h`), `webhook: true|false` (§7.10),
+  `run_permission` (`preapproved`|`yolo`, §7.7), and `enabled: true|false` (the
+  on/off switch — a disabled file stays in place but does not fire). A schedule
+  MUST declare at least one trigger: a cadence, a webhook, or both. Example:
 
   ```markdown
   ---
@@ -503,6 +504,27 @@ There are three layers, composed in this fixed order:
   routine explicitly opts into `yolo`. This avoids a routine silently hanging on
   an un-answerable prompt or doing something unintended unattended — especially
   important given `yolo` is unconfined (§5.5 R5.21).
+
+### 7.10 Webhook triggers
+- **R7.10** A routine MAY additionally declare `webhook: true`, which lets an
+  external service fire it by POSTing to
+  `/api/schedules/<name>/webhook`. A webhook is a trigger, not a cadence: it is
+  independent of `cron`/`every`, so a routine may have either, both, or (in the
+  webhook case) no cadence at all.
+- **R7.10a** A webhook trigger MUST carry a `webhook_secret` that Podiom
+  generates; a file declaring `webhook: true` without one is **invalid** and does
+  not register. The endpoint verifies that secret in constant time. It is the one
+  API route exempt from the gateway token (§8 HA7/HA10), because the external
+  senders it exists for cannot hold that token — holding a webhook secret can
+  start exactly that one routine and grants no read access.
+- **R7.10b** Failed authorization — wrong secret, unknown schedule, or a schedule
+  with no webhook trigger — MUST be **indistinguishable** to the caller, so the
+  endpoint cannot be used to enumerate schedules. A schedule that is
+  `enabled: false` does not fire from its webhook.
+- **R7.10c** The request body is delivered to the run as part of its task prompt
+  (bounded), so a routine can act on the event that fired it. A webhook run is
+  recorded with trigger `webhook` (§7.9) and is an unattended run subject to
+  §7.7's permission policy like any other.
 
 ---
 

@@ -34,22 +34,32 @@ func TestAuthMiddlewareMatrix(t *testing.T) {
 
 	cases := []struct {
 		name   string
+		method string
 		path   string
 		token  string
 		reject bool
 	}{
-		{"api without token", "/api/agents", "", true},
-		{"api with token", "/api/agents", token, false},
-		{"api with wrong token", "/api/agents", "wrong", true},
-		{"healthz exempt", "/healthz", "", false},
-		{"spa root exempt", "/", "", false},
-		{"spa asset path exempt", "/assets/whatever.js", "", false},
-		{"auth check without token", "/api/auth/check", "", true},
-		{"auth check with token", "/api/auth/check", token, false},
+		{"api without token", http.MethodGet, "/api/agents", "", true},
+		{"api with token", http.MethodGet, "/api/agents", token, false},
+		{"api with wrong token", http.MethodGet, "/api/agents", "wrong", true},
+		{"healthz exempt", http.MethodGet, "/healthz", "", false},
+		{"spa root exempt", http.MethodGet, "/", "", false},
+		{"spa asset path exempt", http.MethodGet, "/assets/whatever.js", "", false},
+		{"auth check without token", http.MethodGet, "/api/auth/check", "", true},
+		{"auth check with token", http.MethodGet, "/api/auth/check", token, false},
+		// A schedule's webhook is the one write endpoint the gateway token does
+		// not guard — an outside sender cannot hold that token. The handler
+		// requires the schedule's own secret instead. Everything else about the
+		// schedule surface, including the manual /run trigger, stays protected.
+		{"schedule webhook exempt from the gateway token", http.MethodPost, "/api/schedules/nightly/webhook", "", false},
+		{"schedule webhook only for POST", http.MethodGet, "/api/schedules/nightly/webhook", "", true},
+		{"schedule manual run still protected", http.MethodPost, "/api/schedules/nightly/run", "", true},
+		{"schedule read still protected", http.MethodGet, "/api/schedules/nightly", "", true},
+		{"webhook exemption does not extend to deeper paths", http.MethodPost, "/api/schedules/a/b/webhook", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req := httptest.NewRequest(tc.method, tc.path, nil)
 			if tc.token != "" {
 				req.Header.Set(gateway.Header, tc.token)
 			}

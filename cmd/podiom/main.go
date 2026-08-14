@@ -1357,6 +1357,15 @@ func newSchedulesListCmd(addr *string) *cobra.Command {
 				if s.Every != "" {
 					timing = "every " + s.Every
 				}
+				// A webhook is a trigger, not a cadence, so it is shown alongside
+				// one when a schedule has both and on its own when it has none.
+				if s.Webhook {
+					if timing == "" {
+						timing = "webhook"
+					} else {
+						timing += "+webhook"
+					}
+				}
 				state := "enabled"
 				if !s.Enabled {
 					state = "disabled"

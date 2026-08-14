@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -27,6 +29,7 @@ type scheduleCreateRequest struct {
 	Effort        string          `json:"effort"`
 	Cron          string          `json:"cron"`
 	Every         string          `json:"every"`
+	Webhook       bool            `json:"webhook"`
 	RunPermission string          `json:"run_permission"`
 	AllowedTools  []string        `json:"allowed_tools"`
 	GoalID        string          `json:"goal_id"`
@@ -70,14 +73,17 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status, err := s.scheduler.Create(r.Context(), schedule.CreateParams{
-			Name:          req.Name,
-			Agent:         strings.TrimSpace(req.Agent),
-			Provider:      req.Provider,
-			Profile:       strings.TrimSpace(req.Profile),
-			Model:         strings.TrimSpace(req.Model),
-			Effort:        strings.TrimSpace(req.Effort),
-			Cron:          strings.TrimSpace(req.Cron),
-			Every:         strings.TrimSpace(req.Every),
+			Name:     req.Name,
+			Agent:    strings.TrimSpace(req.Agent),
+			Provider: req.Provider,
+			Profile:  strings.TrimSpace(req.Profile),
+			Model:    strings.TrimSpace(req.Model),
+			Effort:   strings.TrimSpace(req.Effort),
+			Cron:     strings.TrimSpace(req.Cron),
+			Every:    strings.TrimSpace(req.Every),
+			Webhook:  req.Webhook,
+			// WebhookSecret is deliberately not taken from the request: the
+			// scheduler mints it, so a caller cannot install a weak one.
 			RunPermission: schedule.RunPermission(strings.TrimSpace(req.RunPermission)),
 			AllowedTools:  req.AllowedTools,
 			GoalID:        strings.TrimSpace(req.GoalID),
@@ -103,6 +109,7 @@ type scheduleUpdateRequest struct {
 	Effort        *string          `json:"effort,omitempty"`
 	Cron          *string          `json:"cron,omitempty"`
 	Every         *string          `json:"every,omitempty"`
+	Webhook       *bool            `json:"webhook,omitempty"`
 	RunPermission *string          `json:"run_permission,omitempty"`
 	AllowedTools  *[]string        `json:"allowed_tools,omitempty"`
 	Enabled       *bool            `json:"enabled,omitempty"`
@@ -110,7 +117,7 @@ type scheduleUpdateRequest struct {
 }
 
 // handleSchedule handles /api/schedules/<name> (GET read, PATCH update, DELETE
-// remove) and /api/schedules/<name>/run.
+// remove), /api/schedules/<name>/run, and /api/schedules/<name>/webhook.
 func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	if s.scheduler == nil {
 		http.Error(w, "scheduler unavailable", http.StatusServiceUnavailable)
@@ -143,6 +150,7 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 				Effort:       req.Effort,
 				Cron:         req.Cron,
 				Every:        req.Every,
+				Webhook:      req.Webhook,
 				AllowedTools: req.AllowedTools,
 				Enabled:      req.Enabled,
 				Body:         req.Body,
@@ -179,9 +187,76 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		}
 		run, err := s.scheduler.RunNow(r.Context(), name)
 		writeJSON(w, run, err)
+	case "webhook":
+		s.handleScheduleWebhook(w, r, name)
 	default:
 		http.Error(w, "unknown schedule action", http.StatusNotFound)
 	}
+}
+
+// webhookBodyLimit caps how much of an inbound webhook request is read. This
+// endpoint is reachable without the gateway token, and the server sets no
+// global body limit, so the cap is enforced here.
+const webhookBodyLimit = 64 << 10
+
+// handleScheduleWebhook fires a schedule from an external POST. It is the one
+// write endpoint that does not require the gateway token (see
+// scheduleWebhookRoute); authorization is the schedule's own secret, presented
+// as the X-Podiom-Webhook-Secret header, a bearer token, or a ?secret= query
+// parameter — the last because plenty of senders can only be given a URL.
+//
+// The request body reaches the agent as part of its task, so the run can react
+// to what fired it.
+func (s *Server) handleScheduleWebhook(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	secret := webhookSecretFrom(r)
+	sched, run, err := s.scheduler.PrepareWebhookRun(r.Context(), name, secret)
+	switch {
+	case errors.Is(err, schedule.ErrWebhookUnauthorized):
+		// Deliberately identical for a bad secret, an unknown schedule, and a
+		// schedule with no webhook trigger: this endpoint must not tell an
+		// unauthenticated caller which schedules exist. The scheduler logs which
+		// it actually was.
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	case errors.Is(err, schedule.ErrWebhookDisabled):
+		http.Error(w, "schedule disabled", http.StatusConflict)
+		return
+	case err != nil:
+		writeJSON(w, nil, err)
+		return
+	}
+
+	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, webhookBodyLimit))
+	if err != nil {
+		http.Error(w, "webhook payload too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	// The run outlives this request: an agent session takes minutes and the
+	// sender will not wait. Answer with the run id so the caller can follow it.
+	go s.scheduler.ExecuteWebhookRun(sched, run, string(payload))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(run)
+}
+
+// webhookSecretFrom pulls the schedule secret out of a webhook request, in
+// order of preference: a dedicated header, a bearer token, then the query
+// string for senders that can only be handed a URL.
+func webhookSecretFrom(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get("X-Podiom-Webhook-Secret")); v != "" {
+		return v
+	}
+	if v, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		if v = strings.TrimSpace(v); v != "" {
+			return v
+		}
+	}
+	return strings.TrimSpace(r.URL.Query().Get("secret"))
 }
 
 // deleteGoalSchedules removes every schedule file linked to a goal. Goal-linked

@@ -269,6 +269,9 @@ const (
 	TriggerCron RunTrigger = "cron"
 	// TriggerManual marks a run started by an explicit "Run now".
 	TriggerManual RunTrigger = "manual"
+	// TriggerWebhook marks a run fired by an external POST to the schedule's
+	// webhook endpoint.
+	TriggerWebhook RunTrigger = "webhook"
 )
 
 // RunStatus is the lifecycle state of a scheduled run.

@@ -349,6 +349,10 @@ podiom schedules list
 Invalid files are shown with an `[invalid]` marker and the parse error rather
 than being silently skipped.
 
+The timing column shows the cadence, `webhook` for a schedule that only fires
+when an outside service calls it, or `<cadence>+webhook` for one that does both.
+A webhook-only schedule has no next-run time.
+
 ### `podiom schedules run`
 
 Trigger a schedule immediately ("Run now"). The run executes a full agent turn

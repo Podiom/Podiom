@@ -3,6 +3,7 @@ package schedule
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -161,6 +162,200 @@ do not
 		t.Fatalf("disabled schedule must not be registered to fire: %+v", off)
 	}
 }
+
+// webhookSchedule is the file a webhook test drives: no cadence, so the only
+// way it can ever run is through its endpoint.
+const webhookSchedule = `---
+agent: jared
+webhook: true
+webhook_secret: s3cr3t
+enabled: true
+---
+React to the push.
+`
+
+// TestSyncSkipsWebhookOnlySchedule pins that a schedule with no cadence is
+// neither registered to fire on a clock nor reported as broken. Registering it
+// would mean handing robfig/cron an empty spec, which errors and would surface
+// as a parse error on a perfectly valid file.
+func TestSyncSkipsWebhookOnlySchedule(t *testing.T) {
+	ctx := context.Background()
+	s, _, paths, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	writeSchedule(t, paths.SchedulesDir, "on-push.md", webhookSchedule)
+	s.cron.Start()
+
+	statuses, err := s.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected one schedule, got %d: %+v", len(statuses), statuses)
+	}
+	st := statuses[0]
+	if st.ParseError != "" {
+		t.Fatalf("webhook-only schedule should be valid, got parse error %q", st.ParseError)
+	}
+	if st.NextRun != nil {
+		t.Fatalf("webhook-only schedule has no cadence, so no next run: %+v", st.NextRun)
+	}
+	if !st.Webhook || st.WebhookSecret != "s3cr3t" {
+		t.Fatalf("status should carry the webhook trigger: %+v", st)
+	}
+}
+
+// TestWebhookRunRecordsTriggerAndPayload covers the happy path end to end: the
+// secret authorizes, the run is recorded as webhook-triggered, and the request
+// body reaches the agent's prompt so the run can react to what fired it.
+func TestWebhookRunRecordsTriggerAndPayload(t *testing.T) {
+	ctx := context.Background()
+	s, c, paths, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	writeSchedule(t, paths.SchedulesDir, "on-push.md", webhookSchedule)
+
+	sched, run, err := s.PrepareWebhookRun(ctx, "on-push", "s3cr3t")
+	if err != nil {
+		t.Fatalf("prepare webhook run: %v", err)
+	}
+	if run.Trigger != store.TriggerWebhook || run.Status != store.RunRunning {
+		t.Fatalf("unexpected prepared run: %+v", run)
+	}
+	s.ExecuteWebhookRun(sched, run, `{"event":"push","ref":"main"}`)
+
+	runs, err := c.Store().ListScheduleRuns(ctx, "on-push", 10)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one recorded run, got %d", len(runs))
+	}
+	finished := runs[0]
+	if finished.Status != store.RunSuccess {
+		t.Fatalf("run status = %q, want success (%q)", finished.Status, finished.Error)
+	}
+	if finished.Trigger != store.TriggerWebhook || finished.SessionID == "" {
+		t.Fatalf("unexpected finished run: %+v", finished)
+	}
+
+	messages, err := c.Store().ListMessages(ctx, finished.SessionID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) == 0 {
+		t.Fatal("expected the run to have prompted the agent")
+	}
+	prompt := messages[0].Content
+	for _, want := range []string{"React to the push.", "## Webhook payload", `{"event":"push","ref":"main"}`} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// TestPrepareWebhookRunRejections pins that every way of failing authorization
+// looks the same to the caller and leaves no run behind. The endpoint is
+// reachable without the gateway token, so a rejection must not double as a
+// probe for which schedules exist.
+func TestPrepareWebhookRunRejections(t *testing.T) {
+	ctx := context.Background()
+	s, c, paths, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	writeSchedule(t, paths.SchedulesDir, "on-push.md", webhookSchedule)
+	writeSchedule(t, paths.SchedulesDir, "clock-only.md", `---
+agent: jared
+cron: "0 7 * * *"
+enabled: true
+---
+Tick.
+`)
+
+	cases := []struct {
+		name     string
+		schedule string
+		secret   string
+	}{
+		{"wrong secret", "on-push", "guess"},
+		{"empty secret", "on-push", ""},
+		{"unknown schedule", "ghost", "s3cr3t"},
+		{"schedule has no webhook trigger", "clock-only", "s3cr3t"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := s.PrepareWebhookRun(ctx, tc.schedule, tc.secret); !errors.Is(err, ErrWebhookUnauthorized) {
+				t.Fatalf("err = %v, want ErrWebhookUnauthorized", err)
+			}
+			runs, err := c.Store().ListScheduleRuns(ctx, tc.schedule, 10)
+			if err != nil {
+				t.Fatalf("list runs: %v", err)
+			}
+			if len(runs) != 0 {
+				t.Fatalf("a rejected webhook must not record a run, got %+v", runs)
+			}
+		})
+	}
+}
+
+// TestPrepareWebhookRunRejectsDisabled pins that parking a schedule stops its
+// webhook too — otherwise enabled: false would only be half an off switch.
+func TestPrepareWebhookRunRejectsDisabled(t *testing.T) {
+	ctx := context.Background()
+	s, _, paths, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	writeSchedule(t, paths.SchedulesDir, "on-push.md", `---
+agent: jared
+webhook: true
+webhook_secret: s3cr3t
+enabled: false
+---
+React to the push.
+`)
+
+	if _, _, err := s.PrepareWebhookRun(ctx, "on-push", "s3cr3t"); !errors.Is(err, ErrWebhookDisabled) {
+		t.Fatalf("err = %v, want ErrWebhookDisabled", err)
+	}
+}
+
+// TestUpdateWebhookMintsAndRetiresSecret pins the rotation story: there is no
+// separate rotate call, so toggling the trigger off and back on must produce a
+// different secret rather than restoring the old one.
+func TestUpdateWebhookMintsAndRetiresSecret(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	created, err := s.Create(ctx, CreateParams{Name: "on-push", Agent: "jared", Webhook: true, Body: "React."})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !created.Webhook || created.WebhookSecret == "" {
+		t.Fatalf("create should mint a secret: %+v", created)
+	}
+	first := created.WebhookSecret
+
+	off := false
+	parked, err := s.Update(ctx, "on-push", UpdateParams{Webhook: &off, Cron: strPtr("0 7 * * *")})
+	if err != nil {
+		t.Fatalf("update off: %v", err)
+	}
+	if parked.Webhook || parked.WebhookSecret != "" {
+		t.Fatalf("turning the trigger off should retire its secret: %+v", parked)
+	}
+
+	on := true
+	back, err := s.Update(ctx, "on-push", UpdateParams{Webhook: &on})
+	if err != nil {
+		t.Fatalf("update on: %v", err)
+	}
+	if back.WebhookSecret == "" || back.WebhookSecret == first {
+		t.Fatalf("re-enabling should mint a fresh secret, got %q (was %q)", back.WebhookSecret, first)
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestListIncludesScheduleBody(t *testing.T) {
 	ctx := context.Background()

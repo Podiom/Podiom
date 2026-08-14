@@ -8,17 +8,23 @@ import (
 )
 
 // withAuth enforces the gateway token on the API surface (HA7). Everything
-// under /api/ requires the token; everything else — static SPA assets, the
-// token-entry view they contain, /healthz, and the /terminal/ onboarding
-// sub-paths (whose auth is HA Ingress itself, HA24) — is exempt, keeping the
-// unauthenticated surface minimal (HA10). A nil Keeper (tests constructing a
-// bare server) disables enforcement.
+// under /api/ requires the token except two carve-outs; everything else —
+// static SPA assets, the token-entry view they contain, /healthz, and the
+// /terminal/ onboarding sub-paths (whose auth is HA Ingress itself, HA24) — is
+// exempt, keeping the unauthenticated surface minimal (HA10). A nil Keeper
+// (tests constructing a bare server) disables enforcement.
+//
+// The carve-outs are the HA onboarding bootstrap (below) and a schedule's
+// webhook endpoint. The latter is exempt from the *gateway* token because an
+// external sender cannot hold it, but it is not unauthenticated: the handler
+// requires that schedule's own secret, and holding it can only start that one
+// schedule. See scheduleWebhookRoute.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	if s.tokens == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") && !s.haOnboardingBootstrapRoute(r) && !s.tokens.Authorize(r) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.haOnboardingBootstrapRoute(r) && !scheduleWebhookRoute(r) && !s.tokens.Authorize(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"gateway token required (podiom token show)"}`))
@@ -26,6 +32,26 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// scheduleWebhookRoute reports whether this request is a POST to a schedule's
+// webhook endpoint (/api/schedules/<name>/webhook). Those calls come from
+// third-party services — a git host, an automation step, a home controller —
+// which can never present the gateway token, so the token requirement is
+// replaced by the per-schedule secret the handler checks. Nothing else about
+// the schedule surface is exempt: reading, editing, and the manual /run path
+// all still require the token.
+func scheduleWebhookRoute(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/api/schedules/")
+	if !ok {
+		return false
+	}
+	name, ok := strings.CutSuffix(rest, "/webhook")
+	// A name containing a slash would be a different, deeper path.
+	return ok && name != "" && !strings.Contains(name, "/")
 }
 
 func (s *Server) haOnboardingBootstrapRoute(r *http.Request) bool {

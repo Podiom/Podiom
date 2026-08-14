@@ -750,7 +750,7 @@ export interface SessionDetail {
 }
 
 export type RunPermission = "preapproved" | "yolo";
-export type RunTrigger = "cron" | "manual";
+export type RunTrigger = "cron" | "manual" | "webhook";
 export type RunStatus = "running" | "success" | "error";
 
 // ScheduleRun mirrors store.ScheduleRun (Go-exported field names, no json tags).
@@ -776,6 +776,10 @@ export interface ScheduleStatus {
   effort: string;
   cron: string;
   every: string;
+  // An extra trigger, independent of cron/every: an external POST carrying
+  // webhook_secret fires the schedule.
+  webhook: boolean;
+  webhook_secret?: string;
   run_permission: RunPermission;
   allowed_tools: string[];
   enabled: boolean;

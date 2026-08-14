@@ -83,8 +83,10 @@
   let nsModel = $state("");
   let nsEffort = $state("");
   let nsMode = $state("preapproved");
+  let nsWebhook = $state(false);
   let nsBody = $state("");
   let nsBusy = $state(false);
+  let copiedWebhook = $state("");
 
   const CRON_PRESETS = [
     { label: "Daily 07:00", v: "0 7 * * *" },
@@ -104,7 +106,9 @@
       (nsProfile ? `profile: ${nsProfile}\n` : "") +
       (nsModel ? `model: ${nsModel}\n` : "") +
       (nsEffort ? `effort: ${nsEffort}\n` : "") +
-      `cron: ${nsCron.trim() || "0 9 * * *"}\nrun_permission: ${nsMode}\nenabled: true\n---\n\n` +
+      (nsCron.trim() ? `cron: ${nsCron.trim()}\n` : "") +
+      (nsWebhook ? "webhook: true\nwebhook_secret: <generated>\n" : "") +
+      `run_permission: ${nsMode}\nenabled: true\n---\n\n` +
       (nsBody.trim() || "<your prompt here>"),
   );
 
@@ -118,6 +122,7 @@
     nsProfile = "";
     nsModel = nsEffort = "";
     nsMode = "preapproved";
+    nsWebhook = false;
     nsBody = "";
     error = null;
     creating = true;
@@ -135,6 +140,7 @@
         model: nsModel,
         effort: nsEffort,
         cron: nsCron.trim(),
+        webhook: nsWebhook,
         run_permission: nsMode,
         body: nsBody.trim(),
       });
@@ -213,7 +219,26 @@
   }
 
   function timing(s: ScheduleStatus) {
-    return s.every ? `every ${s.every}` : s.cron;
+    const cadence = s.every ? `every ${s.every}` : s.cron;
+    if (cadence) return cadence;
+    // A webhook-only schedule has no cadence: it fires when its URL is called.
+    return s.webhook ? "on webhook" : "—";
+  }
+
+  // The daemon does not know the URL it is reached on, so the address the user
+  // must give the sender is composed from the one the browser is already using.
+  function webhookURL(s: ScheduleStatus) {
+    return `${location.origin}/api/schedules/${encodeURIComponent(s.name)}/webhook?secret=${s.webhook_secret ?? ""}`;
+  }
+
+  async function copyWebhookURL(s: ScheduleStatus) {
+    try {
+      await navigator.clipboard.writeText(webhookURL(s));
+      copiedWebhook = s.name;
+      setTimeout(() => copiedWebhook === s.name && (copiedWebhook = ""), 1600);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
 
   function nextLabel(s: ScheduleStatus) {
@@ -234,10 +259,13 @@
   }
 
   function frontmatter(s: ScheduleStatus): { k: string; v: string }[] {
+    const cadenceKey = s.every ? "every" : s.cron ? "cron" : "trigger";
     const fm = [
-      { k: s.every ? "every" : "cron", v: timing(s) },
+      { k: cadenceKey, v: timing(s) },
       { k: "agent", v: s.agent },
     ];
+    // Only worth its own chip when the cadence chip did not already say it.
+    if (s.webhook && cadenceKey !== "trigger") fm.push({ k: "webhook", v: "true" });
     if (s.model) fm.push({ k: "model", v: s.model });
     if (s.effort) fm.push({ k: "effort", v: s.effort });
     if (s.provider) fm.push({ k: "provider", v: s.provider });
@@ -312,6 +340,14 @@
         {/if}
       </div>
     </div>
+
+    {#if s.webhook && s.webhook_secret}
+      <div class="sched-webhook">
+        <span class="label-mono" style="font-size:10px">webhook url</span>
+        <code class="sched-webhook-url mono">{webhookURL(s)}</code>
+        <button class="sched-webhook-copy" onclick={() => copyWebhookURL(s)}>{copiedWebhook === s.name ? "Copied" : "Copy"}</button>
+      </div>
+    {/if}
 
     {#if s.pending_question}
       {@const pq = s.pending_question}
@@ -455,8 +491,25 @@
           {#each CRON_PRESETS as c}
             <button style={chip(c.v === nsCron)} onclick={() => (nsCron = c.v)}>{c.label}</button>
           {/each}
+          {#if nsWebhook}
+            <button style={chip(nsCron === "")} onclick={() => (nsCron = "")}>No cron</button>
+          {/if}
         </div>
         <input class="field-input mono" bind:value={nsCron} placeholder="0 7 * * *" style="font:500 13px 'JetBrains Mono',monospace" />
+
+        <div class="ns-row">
+          <span class="ns-key">webhook</span>
+          <div class="ns-chips">
+            <button style={chip(nsWebhook)} onclick={() => (nsWebhook = !nsWebhook)}>{nsWebhook ? "on" : "off"}</button>
+            <span class="ns-hint">
+              {#if nsWebhook}
+                Also fires when an outside service POSTs to this schedule's URL. Podiom generates the secret; copy the URL from the card after creating. Leave the cron blank for a webhook-only job.
+              {:else}
+                Let an outside service fire this schedule by calling a URL.
+              {/if}
+            </span>
+          </div>
+        </div>
 
         <div class="label-mono" style="margin:18px 0 8px">agent</div>
         <div class="ns-chips">
@@ -499,7 +552,7 @@
         </div>
         <pre class="ns-preview mono">{nsPreview}</pre>
 
-        <button class="modal-cta" disabled={nsBusy || !nsName.trim() || !nsAgent || !nsBody.trim()} onclick={submitSchedule}>{nsBusy ? "Creating…" : "Create schedule file"}</button>
+        <button class="modal-cta" disabled={nsBusy || !nsName.trim() || !nsAgent || !nsBody.trim() || (!nsCron.trim() && !nsWebhook)} onclick={submitSchedule}>{nsBusy ? "Creating…" : "Create schedule file"}</button>
       </div>
     </div>
   </div>
@@ -562,6 +615,13 @@
     color: #9a8e80;
     width: 46px;
     flex: none;
+  }
+
+  .ns-hint {
+    font: 400 11.5px/1.5 "Hanken Grotesk";
+    color: #9a8e80;
+    flex: 1;
+    min-width: 180px;
   }
 
   .ns-preview {
@@ -796,6 +856,45 @@
 
   .fm-chip-link:disabled {
     cursor: default;
+  }
+
+  /* The address an outside service POSTs to. It carries the schedule's secret,
+     so it is shown to copy rather than to read: the URL is allowed to overflow
+     into its own scroll instead of wrapping the card. */
+  .sched-webhook {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 11px;
+    padding: 10px 13px;
+    background: var(--surface-3);
+    border: 1px solid var(--line-3);
+    border-radius: 11px;
+  }
+
+  .sched-webhook-url {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    font: 500 11.5px "JetBrains Mono", monospace;
+    color: #6f6459;
+  }
+
+  .sched-webhook-copy {
+    flex: none;
+    padding: 5px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--field-line);
+    background: #fff;
+    cursor: pointer;
+    font: 600 11.5px "JetBrains Mono", monospace;
+    color: #6f6459;
+    transition: border-color 0.15s ease;
+  }
+
+  .sched-webhook-copy:hover {
+    border-color: #e4d9cb;
   }
 
   .fm-k {

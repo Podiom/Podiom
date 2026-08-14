@@ -90,11 +90,14 @@ that time. See [projects.md](projects.md).
 `podiom_update_schedule`, `podiom_delete_schedule`, `podiom_run_schedule`.
 
 A schedule fires unattended sessions from then on, so agents are told to create
-one only when you asked for recurring work. `podiom_update_schedule` edits one in
-place — including `enabled: false` to park it without losing its history. Its
-name and its goal link are not editable: the name is the filename, and the goal
-link forces yolo, which is not something an edit should do quietly. See
-[scheduling.md](scheduling.md).
+one only when you asked for recurring work — or, with `webhook: true`, for work
+that should react to an outside event. Podiom generates the webhook secret; an
+agent that creates one is told to read the schedule back and give you the URL so
+you can wire up the sender. `podiom_update_schedule` edits one in place —
+including `enabled: false` to park it without losing its history, and toggling
+`webhook` off and on to rotate a leaked secret. Its name and its goal link are
+not editable: the name is the filename, and the goal link forces yolo, which is
+not something an edit should do quietly. See [scheduling.md](scheduling.md).
 
 ### Goals
 `podiom_list_goals`, `podiom_get_goal`, `podiom_update_goal`,

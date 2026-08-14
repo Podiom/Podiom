@@ -137,6 +137,82 @@ Do a thing.
 	}
 }
 
+// TestParseWebhookOnlySchedule pins that a webhook is a trigger in its own
+// right: a schedule with no cadence at all is valid, and it registers no cron
+// entry because it has no spec to register.
+func TestParseWebhookOnlySchedule(t *testing.T) {
+	path := writeSchedule(t, t.TempDir(), "on-push.md", `---
+agent: jared
+webhook: true
+webhook_secret: s3cr3t
+enabled: true
+---
+React to the push.
+`)
+	sched, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !sched.Webhook || sched.WebhookSecret != "s3cr3t" {
+		t.Fatalf("webhook fields wrong: %+v", sched)
+	}
+	if sched.CronSpec() != "" {
+		t.Fatalf("webhook-only schedule should have no cron spec, got %q", sched.CronSpec())
+	}
+}
+
+// TestParseWebhookAlongsideCron pins that the two triggers are additive rather
+// than exclusive: a schedule can fire on a clock and on an external call.
+func TestParseWebhookAlongsideCron(t *testing.T) {
+	path := writeSchedule(t, t.TempDir(), "both.md", `---
+agent: jared
+cron: "0 7 * * *"
+webhook: true
+webhook_secret: s3cr3t
+enabled: true
+---
+Do the thing.
+`)
+	sched, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !sched.Webhook || sched.CronSpec() != "0 7 * * *" {
+		t.Fatalf("expected both triggers, got %+v", sched)
+	}
+}
+
+// TestRenderWebhookRoundTrip pins the file format for a webhook-only schedule:
+// both keys are written, and no empty cron line is emitted for a schedule that
+// has no cadence — that line would fail to parse back as a valid trigger.
+func TestRenderWebhookRoundTrip(t *testing.T) {
+	text := Render(CreateParams{
+		Name:          "on-push",
+		Agent:         "jared",
+		Webhook:       true,
+		WebhookSecret: "s3cr3t",
+		Enabled:       true,
+		Body:          "React to the push.",
+	})
+	for _, want := range []string{"webhook: true", "webhook_secret: s3cr3t"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rendered schedule missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "cron:") {
+		t.Fatalf("webhook-only schedule should not render a cron line:\n%s", text)
+	}
+
+	path := writeSchedule(t, t.TempDir(), "on-push.md", text)
+	sched, err := Parse(path)
+	if err != nil {
+		t.Fatalf("parse rendered webhook schedule: %v", err)
+	}
+	if !sched.Webhook || sched.WebhookSecret != "s3cr3t" {
+		t.Fatalf("webhook did not survive the round trip: %+v", sched)
+	}
+}
+
 func TestParseRejectsInvalidSchedules(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]string{
@@ -146,6 +222,8 @@ func TestParseRejectsInvalidSchedules(t *testing.T) {
 		"both-timing.md": "---\nagent: jared\ncron: \"0 7 * * *\"\nevery: 6h\nenabled: true\n---\nbody\n",
 		"bad-perm.md":    "---\nagent: jared\ncron: \"0 7 * * *\"\nrun_permission: sometimes\nenabled: true\n---\nbody\n",
 		"empty-body.md":  "---\nagent: jared\ncron: \"0 7 * * *\"\nenabled: true\n---\n",
+		// A webhook with no secret would be an open trigger, so it must never parse.
+		"hook-no-secret.md": "---\nagent: jared\nwebhook: true\nenabled: true\n---\nbody\n",
 	}
 	for name, content := range cases {
 		path := writeSchedule(t, dir, name, content)
