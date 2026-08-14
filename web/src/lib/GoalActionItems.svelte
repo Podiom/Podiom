@@ -10,6 +10,8 @@
   // on desktop, with no touch handlers to fight the page's own scrolling. The
   // card width leaves the next card peeking, which is the affordance that says
   // "there is more this way".
+  import { untrack } from "svelte";
+  import { slide } from "svelte/transition";
   import AgentAvatar from "./AgentAvatar.svelte";
   import AgentMarkdown from "./AgentMarkdown.svelte";
   import VoiceButton from "./VoiceButton.svelte";
@@ -32,6 +34,19 @@
   let track = $state<HTMLDivElement | null>(null);
 
   const openCount = $derived(items.filter((i) => i.Status === "open").length);
+  const complete = $derived(openCount === 0);
+  let collapsed = $state(untrack(() => !items.some((i) => i.Status === "open")));
+  let previousOpenCount = $state(untrack(() => openCount));
+
+  // A completed panel starts collapsed and closes as soon as its final open
+  // item is answered. If more work arrives later, make it visible immediately.
+  $effect(() => {
+    const currentOpenCount = openCount;
+    const previous = untrack(() => previousOpenCount);
+    if (currentOpenCount > 0) collapsed = false;
+    else if (previous > 0) collapsed = true;
+    previousOpenCount = currentOpenCount;
+  });
 
   // The verdicts, in the order they escalate: did it / tried and couldn't /
   // chose not to. The agent branches on these, so the labels here and the
@@ -95,92 +110,113 @@
   }
 </script>
 
-<div class="actions">
+<div class="actions" class:complete>
   <div class="actions-head">
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#b14e2a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
-    <div class="actions-title">Action items for you</div>
-    {#if openCount > 0}
-      <span class="action-count mono">{openCount}</span>
+    {#if complete}
+      <button
+        class="actions-summary toggle"
+        type="button"
+        aria-expanded={!collapsed}
+        aria-controls="goal-action-items-content"
+        onclick={() => (collapsed = !collapsed)}
+      >
+        <svg class="actions-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+        <span class="actions-title">Action items handled</span>
+        <span class="actions-chevron" class:collapsed aria-hidden="true">⌄</span>
+      </button>
+    {:else}
+      <div class="actions-summary">
+        <svg class="actions-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+        <span class="actions-title">Action items for you</span>
+        <span class="action-count mono">{openCount}</span>
+      </div>
     {/if}
-    {#if items.length > 1}
+    {#if !collapsed && items.length > 1}
       <span class="actions-nav">
         <button class="arrow" disabled={active === 0} onclick={() => step(-1)} aria-label="Previous action item">‹</button>
         <button class="arrow" disabled={active === items.length - 1} onclick={() => step(1)} aria-label="Next action item">›</button>
       </span>
     {/if}
   </div>
-  <div class="actions-sub">
-    Work the agent can't do itself. It keeps working while these wait — your answer reaches it at the next review.
-  </div>
 
-  <div class="actions-track" bind:this={track} onscroll={onScroll}>
-    {#each items as item (item.ID)}
-      <div class="action-card" class:answered={item.Status !== "open"}>
-        <div class="action-top">
-          <AgentAvatar name={item.AgentName} size={19} radius={6} fontSize={9} />
-          <span class="action-agent">{item.AgentName}</span>
-          <span class="action-filed mono">{filedLabel(item)}</span>
-          <span class="action-status mono" class:open={item.Status === "open"}>{VERDICT_LABEL[item.Status]}</span>
-        </div>
+  {#if !collapsed}
+    <div id="goal-action-items-content" class="actions-body" transition:slide={{ duration: 200 }}>
+      <div class="actions-sub">
+        {complete
+          ? "Work the agent couldn't do itself. These items are handled and kept here for reference."
+          : "Work the agent can't do itself. It keeps working while these wait — your answer reaches it at the next review."}
+      </div>
 
-        <div class="action-title">{item.Title}</div>
-        {#if item.Why}
-          <div class="action-why"><AgentMarkdown content={item.Why} /></div>
-        {/if}
+      <div class="actions-track" bind:this={track} onscroll={onScroll}>
+        {#each items as item (item.ID)}
+          <div class="action-card" class:answered={item.Status !== "open"}>
+            <div class="action-top">
+              <AgentAvatar name={item.AgentName} size={19} radius={6} fontSize={9} />
+              <span class="action-agent">{item.AgentName}</span>
+              <span class="action-filed mono">{filedLabel(item)}</span>
+              <span class="action-status mono" class:open={item.Status === "open"}>{VERDICT_LABEL[item.Status]}</span>
+            </div>
 
-        {#if item.Instructions}
-          <div class="action-label mono">Instructions</div>
-          <div class="action-instructions"><AgentMarkdown content={item.Instructions} /></div>
-        {/if}
+            <div class="action-title">{item.Title}</div>
+            {#if item.Why}
+              <div class="action-why"><AgentMarkdown content={item.Why} /></div>
+            {/if}
 
-        {#if item.Status === "open"}
-          <div class="action-label-row">
-            <div class="action-label mono">Your response</div>
-            <VoiceButton
-              size="sm"
-              onText={(t) => (drafts[item.ID] = appendTranscript(drafts[item.ID] ?? "", t))} />
-          </div>
-          <textarea
-            class="field-area action-field"
-            rows="3"
-            bind:value={drafts[item.ID]}
-            placeholder="What happened — links, outcome, or why you couldn't."></textarea>
-          <div class="action-verdicts">
-            {#each VERDICTS as v}
-              <button
-                class="verdict"
-                class:primary={v.status === "done"}
-                title={v.hint}
-                disabled={busy === item.ID}
-                onclick={() => respond(item, v.status)}>{v.label}</button>
-            {/each}
-          </div>
-        {:else}
-          <div class="action-label mono">Your response</div>
-          <div class="action-answer">
-            {#if item.Response}
-              {item.Response}
+            {#if item.Instructions}
+              <div class="action-label mono">Instructions</div>
+              <div class="action-instructions"><AgentMarkdown content={item.Instructions} /></div>
+            {/if}
+
+            {#if item.Status === "open"}
+              <div class="action-label-row">
+                <div class="action-label mono">Your response</div>
+                <VoiceButton
+                  size="sm"
+                  onText={(t) => (drafts[item.ID] = appendTranscript(drafts[item.ID] ?? "", t))} />
+              </div>
+              <textarea
+                class="field-area action-field"
+                rows="3"
+                bind:value={drafts[item.ID]}
+                placeholder="What happened — links, outcome, or why you couldn't."></textarea>
+              <div class="action-verdicts">
+                {#each VERDICTS as v}
+                  <button
+                    class="verdict"
+                    class:primary={v.status === "done"}
+                    title={v.hint}
+                    disabled={busy === item.ID}
+                    onclick={() => respond(item, v.status)}>{v.label}</button>
+                {/each}
+              </div>
             {:else}
-              <span class="muted">No note — you answered “{VERDICT_LABEL[item.Status]}”.</span>
+              <div class="action-label mono">Your response</div>
+              <div class="action-answer">
+                {#if item.Response}
+                  {item.Response}
+                {:else}
+                  <span class="muted">No note — you answered “{VERDICT_LABEL[item.Status]}”.</span>
+                {/if}
+              </div>
             {/if}
           </div>
-        {/if}
-      </div>
-    {/each}
-  </div>
-
-  {#if items.length > 1}
-    <div class="actions-pager">
-      <span class="dots">
-        {#each items as item, i (item.ID)}
-          <button
-            class="dot"
-            class:on={i === active}
-            aria-label={`Go to action item ${i + 1}`}
-            onclick={() => goTo(i)}></button>
         {/each}
-      </span>
-      <span class="pager-count mono">{active + 1} of {items.length}</span>
+      </div>
+
+      {#if items.length > 1}
+        <div class="actions-pager">
+          <span class="dots">
+            {#each items as item, i (item.ID)}
+              <button
+                class="dot"
+                class:on={i === active}
+                aria-label={`Go to action item ${i + 1}`}
+                onclick={() => goTo(i)}></button>
+            {/each}
+          </span>
+          <span class="pager-count mono">{active + 1} of {items.length}</span>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -193,6 +229,11 @@
     border: 1px solid #f0d5c7;
     border-radius: 18px;
     padding: 18px 0 16px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .actions.complete {
+    background: #eaf1ed;
+    border-color: #cfe3d8;
   }
   .actions-head {
     display: flex;
@@ -200,10 +241,36 @@
     gap: 9px;
     padding: 0 20px;
   }
+  .actions-summary {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .actions-summary.toggle {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .actions-icon {
+    flex: none;
+    color: #b14e2a;
+    transition: color 0.2s ease;
+  }
   .actions-title {
     font-size: 14px;
     font-weight: 600;
     color: #8f3f1e;
+    transition: color 0.2s ease;
+  }
+  .complete .actions-icon,
+  .complete .actions-title {
+    color: #3f7a5f;
   }
   .action-count {
     font-size: 11px;
@@ -215,9 +282,18 @@
     padding: 1px 8px;
   }
   .actions-nav {
-    margin-left: auto;
     display: flex;
     gap: 5px;
+  }
+  .actions-chevron {
+    margin-left: auto;
+    color: #3f7a5f;
+    font-size: 16px;
+    line-height: 1;
+    transition: transform 0.18s ease;
+  }
+  .actions-chevron.collapsed {
+    transform: rotate(-90deg);
   }
   .arrow {
     width: 26px;
@@ -234,10 +310,18 @@
     opacity: 0.35;
     cursor: default;
   }
+  .complete .arrow {
+    border-color: #cfe3d8;
+    color: #3f7a5f;
+  }
   .actions-sub {
     padding: 5px 20px 0;
     font-size: 12.5px;
     color: #a8674a;
+  }
+  .complete .actions-sub,
+  .complete .pager-count {
+    color: #5f846f;
   }
 
   .actions-track {
@@ -430,6 +514,12 @@
   }
   .dot.on {
     background: #b14e2a;
+  }
+  .complete .dot {
+    background: #c5ddd2;
+  }
+  .complete .dot.on {
+    background: #3f7a5f;
   }
   .pager-count {
     margin-left: auto;

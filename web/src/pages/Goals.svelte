@@ -1315,7 +1315,9 @@
              running while these wait, and above Next step because that is what
              the agent will do around them. -->
         {#if detailActionItems.length > 0}
-          <GoalActionItems items={detailActionItems} onRespond={submitActionResponse} />
+          {#key g.ID}
+            <GoalActionItems items={detailActionItems} onRespond={submitActionResponse} />
+          {/key}
         {/if}
 
         <!-- NEXT STEP -->
@@ -1971,12 +1973,12 @@
     overflow-y: auto;
   }
   .page {
-    max-width: 960px;
+    width: 100%;
+    max-width: none;
     margin: 0 auto;
     padding: 26px 30px 70px;
   }
   .page.detail-page {
-    max-width: 1150px;
     /* The two-column body flattens on its own width, not the viewport's — the
        sidebar eats 236px of the window and disappears entirely on mobile. */
     container-type: inline-size;
