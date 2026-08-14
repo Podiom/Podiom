@@ -382,6 +382,93 @@ podiom tasks list
 Tasks are created, assigned, moved, and started from the **Roadmap** page in the
 web UI.
 
+### podiom mcp
+
+Manage MCP servers and per-agent assignments.
+
+```
+podiom mcp list
+podiom mcp show filesystem
+podiom mcp add myserver --transport stdio --command npx --arg @modelcontextprotocol/server-filesystem --arg /tmp
+podiom mcp add myapi --transport http --url http://localhost:3000/mcp
+podiom mcp remove myserver
+podiom mcp assign filesystem jared
+podiom mcp unassign filesystem jared
+podiom mcp check jared
+```
+
+| Command | Description |
+| --- | --- |
+| `list` | List the MCP catalogue (name, transport, sources, env status). |
+| `show <name>` | Show an MCP server's config and which agents have it assigned. |
+| `add <name>` | Add or replace a Podiom-owned MCP server. |
+| `remove <name>` | Remove a Podiom-owned MCP server. |
+| `assign <server> <agent>` | Assign an MCP server to an agent. |
+| `unassign <server> <agent>` | Unassign an MCP server from an agent. |
+| `check <agent>` | Dry-run projection showing, per assigned server, whether Claude/Codex will pick it up and why not if not. |
+
+Flags for `add`:
+
+| Flag | Description |
+| --- | --- |
+| `--transport` | Transport type: `stdio` or `http` (default `stdio`). |
+| `--url` | HTTP MCP URL (for `http` transport). |
+| `--command` | Stdio command to run. |
+| `--arg` | Stdio command argument (repeatable). |
+| `--env` | Environment variable, `NAME` or `NAME=VALUE` (repeatable); bare `NAME` passes through the daemon's own environment. |
+
+### podiom profiles
+
+Manage Claude and Codex auth profiles. Profiles are named authentication
+configurations that agents can reference via their `profile` field.
+
+```
+podiom profiles list
+podiom profiles create work --provider claude
+podiom profiles create codex-main --provider codex --home-dir ~/.podiom/profiles/codex-main
+podiom profiles update work --config-dir ~/.podiom/profiles/claude-work
+podiom profiles delete work --yes
+```
+
+| Command | Description |
+| --- | --- |
+| `list` | List profiles with their provider and resolved directory. |
+| `create <name>` | Create a profile. |
+| `update <name>` | Update an existing profile. |
+| `delete <name>` | Delete a profile (prompts for confirmation unless `--yes`). |
+
+Flags for `create` and `update`:
+
+| Flag | Description |
+| --- | --- |
+| `--provider` | Provider: `claude` or `codex` (default `claude`). |
+| `--config-dir` | Claude config directory (sets `CLAUDE_CONFIG_DIR`; default `~/.podiom/profiles/claude-<name>`). |
+| `--home-dir` | Codex home directory (sets `CODEX_HOME`; default `~/.podiom/profiles/codex-<name>`). |
+
+### podiom plan
+
+Review and decide implementation plans submitted by agents in plan mode. See
+[plan-mode.md](requirements/plan-mode.md) for background on when plan mode
+triggers and what each state means.
+
+```
+podiom plan show
+podiom plan show abc123
+podiom plan status
+podiom plan status abc123
+podiom plan approve abc123
+podiom plan feedback abc123 "Please also handle the error case"
+podiom plan reject abc123
+```
+
+| Command | Description |
+| --- | --- |
+| `show [session]` | Print the current plan Markdown. Omitting `session` auto-resolves to the one session awaiting approval (errors if zero or more than one). |
+| `status [session]` | Print session id, plan state, whether it's an explicit plan-mode request, and (if present) the plan file path and last-updated time. |
+| `approve <session>` | Approve the plan and continue the build, streaming the agent's next turn. |
+| `feedback <session> <text>` | Send revision feedback and continue the conversation. |
+| `reject <session>` | Reject the plan and leave plan mode. |
+
 ---
 
 *More commands and flags are added as later phases land; each gets an entry here
