@@ -15,7 +15,15 @@
   async function markWorkspaceFileLinks() {
     await tick();
     for (const anchor of root?.querySelectorAll("a") ?? []) {
-      anchor.classList.toggle("workspace-file-link", !!workspaceFileIDFromHref(anchor.getAttribute("href") ?? ""));
+      const workspaceFile = !!workspaceFileIDFromHref(anchor.getAttribute("href") ?? "");
+      anchor.classList.toggle("workspace-file-link", workspaceFile);
+      if (workspaceFile) {
+        anchor.removeAttribute("target");
+        anchor.removeAttribute("rel");
+      } else {
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+      }
     }
   }
 
