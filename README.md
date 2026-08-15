@@ -119,6 +119,8 @@ authentication and policy controls.
 
 Install the latest release on macOS or Linux:
 
+Homebrew users can install Podiom with `brew install Podiom/podiom/podiom`.
+
 ```sh
 curl -fsSL https://github.com/Podiom/Podiom/releases/latest/download/install.sh | bash
 ```
