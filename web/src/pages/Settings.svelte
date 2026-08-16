@@ -12,6 +12,8 @@
   } from "../lib/api";
   import ProviderSignIn from "../lib/ProviderSignIn.svelte";
   import ProviderLogo from "../lib/ProviderLogo.svelte";
+  import * as connection from "../lib/connection";
+  import { isNative } from "../lib/native";
   import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import type { PushState } from "../lib/live.svelte";
   import type {
@@ -204,9 +206,18 @@
   let focusedAccount = $state<string | null>(null);
   let handledSettingsFocusToken = 0;
 
+  // Native only: which instance this app is connected to, and the way back to
+  // the connection screen when the user wants a different one (R7).
+  let connectedAddress = $state("");
+
+  async function disconnect() {
+    await connection.clear();
+  }
+
   onMount(() => {
     void load();
     void refreshGit();
+    if (isNative) void connection.storedAddress().then((a) => (connectedAddress = a));
   });
 
   $effect(() => {
@@ -833,6 +844,32 @@
         </div>
       </div>
     </section>
+
+    {#if isNative}
+      <!-- ===== CONNECTION (native only) ===== -->
+      <section class="card">
+        <div class="card-head">
+          <div class="card-icon violet">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16.11a6 6 0 0 1 7 0"/><line x1="12" y1="20" x2="12" y2="20"/></svg>
+          </div>
+          <div class="grow">
+            <div class="card-title">Podiom instance</div>
+            <div class="card-sub">The daemon this app talks to. Disconnecting forgets the address and the gateway token, and returns you to the connection screen.</div>
+          </div>
+        </div>
+
+        <div class="rows">
+          <div class="row">
+            <span class="row-key">address</span>
+            <span class="mono">{connectedAddress || "not configured"}</span>
+          </div>
+          <div class="row">
+            <span class="row-key">&nbsp;</span>
+            <button class="chip" onclick={disconnect}>Disconnect</button>
+          </div>
+        </div>
+      </section>
+    {/if}
 
     {:else if tab === "agents"}
     <!-- ===== AGENTS ===== -->

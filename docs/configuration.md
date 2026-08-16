@@ -115,13 +115,18 @@ configured.
 | `bind` | `127.0.0.1` | Web UI / API bind address (keep on loopback unless intentionally exposing). |
 | `port` | `8787` | Web UI / API port. |
 | `allow_from` | *(empty)* | Optional list of source IPs/CIDRs allowed to connect at all (e.g. `["192.168.1.0/24"]`). Loopback is always allowed; empty means no restriction. Useful when `bind` is not loopback. |
+| `advertise` | `true` | Announce this daemon on the local network over mDNS/DNS-SD as `_podiom._tcp`, so the [mobile apps](mobile.md) can find it instead of being told an address. Skipped automatically when `bind` is loopback (nothing else could reach the advertised address) and in the Home Assistant app. |
 
 Every API and WebSocket client must present the **gateway token**, generated
 automatically on first daemon start and stored at `$PODIOM_HOME/gateway.token`.
 Retrieve it with `podiom token show`, rotate it with `podiom token rotate` —
 see [Security](security.md#gateway-token) for the full model. In the
-[Home Assistant app](home-assistant.md), the Ingress proxy address is
-additionally enforced automatically, independent of `allow_from`.
+[Home Assistant app](home-assistant.md), `server.port` remains the internal
+Ingress port (`8099`). The optional external mobile port is a Supervisor Network
+mapping for the separate `8100/tcp` API listener, not a `config.yaml` setting.
+That listener accepts private LAN ranges by default; a non-empty `allow_from`
+replaces those defaults and can restrict it to the actual local subnet. The
+Ingress proxy remains accepted on the Ingress listener independently.
 
 ## `logging`
 

@@ -22,6 +22,12 @@
     "vite": "^6.0.11"
   },
   "dependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.0",
+    "@capacitor/app": "8.1.1",
+    "@capacitor/browser": "8.0.4",
+    "@capacitor/core": "8.5.0",
+    "@capacitor/keyboard": "8.0.5",
+    "@capacitor/status-bar": "8.0.3",
     "dompurify": "3.4.12",
     "marked": "18.0.5"
   }

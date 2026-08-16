@@ -83,6 +83,58 @@ func TestSourceGuardAllowFromList(t *testing.T) {
 	}
 }
 
+func TestLANSourceGuardPrivateNetworksAndExplicitAllowFrom(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	h, err := buildLANSourceGuard(next, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		remote string
+		allow  bool
+	}{
+		{"127.0.0.1:1", true},
+		{"10.0.0.8:1", true},
+		{"172.30.32.1:1", true}, // Docker/Supervisor bridge source.
+		{"192.168.1.20:1", true},
+		{"[fd12:3456::8]:1", true},
+		{"100.64.1.2:1", false},
+		{"203.0.113.10:1", false},
+		{"[2001:db8::10]:1", false},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req.RemoteAddr = tc.remote
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if tc.allow && rr.Code != http.StatusTeapot {
+			t.Errorf("%s: status = %d, want pass", tc.remote, rr.Code)
+		}
+		if !tc.allow && rr.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403", tc.remote, rr.Code)
+		}
+	}
+
+	explicit, err := buildLANSourceGuard(next, []string{"192.168.1.0/24", "100.64.0.0/10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for remote, want := range map[string]int{
+		"192.168.1.20:1": http.StatusTeapot,
+		"100.64.1.2:1":   http.StatusTeapot,
+		"192.168.2.20:1": http.StatusForbidden,
+		"10.0.0.8:1":     http.StatusForbidden,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req.RemoteAddr = remote
+		rr := httptest.NewRecorder()
+		explicit.ServeHTTP(rr, req)
+		if rr.Code != want {
+			t.Errorf("explicit %s: status = %d, want %d", remote, rr.Code, want)
+		}
+	}
+}
+
 func TestSourceGuardRejectsMalformedEntry(t *testing.T) {
 	next := http.NotFoundHandler()
 	if _, err := buildSourceGuard(next, []string{"not-an-ip"}, false); err == nil {

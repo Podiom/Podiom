@@ -14,6 +14,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # 22 is the floor for @capacitor/cli, which a root `npm install` pulls in.
+  NODE_VERSION: "22"
+  GO_VERSION: "1.26.x"
+
 jobs:
   test:
     name: Build and test
@@ -26,19 +31,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install web dependencies
+      - name: Install dependencies
         run: npm ci
-        working-directory: web
 
       - name: Run Go tests
         run: go test ./...
@@ -47,7 +51,100 @@ jobs:
         run: go vet ./...
 
       - name: Run Svelte check
-        run: npm run check --prefix web
+        run: npm run check -w web
+
+  # The two mobile jobs are what R12 asks for: prove that a change to the shared
+  # Svelte app still produces valid native projects. Neither needs signing
+  # credentials, so both run on ordinary pull requests.
+  android:
+    name: Android build
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build:web
+
+      - name: Validate Capacitor configuration
+        run: npx cap doctor
+
+      - name: Sync Android project
+        run: npx cap sync android
+
+      - name: Check the committed project is in sync
+        run: .github/scripts/check-native-sync.sh android
+
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon assembleDebug
+        working-directory: android
+
+  ios:
+    name: iOS build
+    runs-on: macos-15
+    needs: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build:web
+
+      - name: Validate Capacitor configuration
+        run: npx cap doctor
+
+      - name: Sync iOS project
+        run: npx cap sync ios
+
+      - name: Check the committed project is in sync
+        run: .github/scripts/check-native-sync.sh ios
+
+      # Capacitor 8 resolves iOS plugins through Swift Package Manager, so there
+      # is no CocoaPods step and no .xcworkspace — the project builds directly.
+      # CODE_SIGNING_ALLOWED=NO keeps signing secrets out of pull-request CI.
+      - name: Build for simulator
+        run: |
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+        working-directory: ios/App
 
   ha-smoke:
     name: Home Assistant add-on smoke
@@ -61,15 +158,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -77,9 +174,8 @@ jobs:
       - name: Build web and Linux binaries
         run: |
           make web
-          mkdir -p bin/linux-amd64
-          GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS:-}" -o bin/linux-amd64/podiomd ./cmd/podiomd
-          GOOS=linux GOARCH=amd64 go build -ldflags "${LDFLAGS:-}" -o bin/linux-amd64/podiom ./cmd/podiom
+          make cross CROSS_OS=linux CROSS_ARCH=amd64 \
+            VERSION="ci-${GITHUB_SHA::7}" COMMIT="${GITHUB_SHA::7}"
 
       - name: Build amd64 add-on image
         run: |

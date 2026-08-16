@@ -31,7 +31,7 @@
     value?: RunTargetValue;
     onChange?: (value: RunTargetValue) => void;
     readonlyAccount?: boolean;
-    variant?: "inline" | "stacked";
+    variant?: "inline" | "stacked" | "toolbar";
   } = $props();
 
   let open = $state<string | null>(null);
@@ -310,7 +310,7 @@
     </div>
   </div>
 {:else}
-  <div class="run-target">
+  <div class="run-target" class:toolbar={variant === "toolbar"}>
     {#if !readonlyAccount && showAccount}
       <div class="rt-dd">
         <button class="rt-chip account" type="button" onclick={() => toggle("account")}>
@@ -738,6 +738,45 @@
     .rt-row-desc {
       min-width: 0;
       overflow-wrap: anywhere;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .run-target.toolbar {
+      width: max-content;
+      flex: none;
+      flex-wrap: nowrap;
+      align-items: center;
+    }
+    .run-target.toolbar > .rt-chip,
+    .run-target.toolbar .rt-dd {
+      width: auto;
+      min-width: 0;
+      flex: none;
+    }
+    .run-target.toolbar .rt-dd {
+      /* .composer becomes the containing block, allowing menus to escape the
+         toolbar's horizontal overflow in both mobile WebViews. */
+      position: static;
+    }
+    .run-target.toolbar .rt-chip {
+      width: auto;
+      max-width: none;
+      justify-content: center;
+      text-align: initial;
+      white-space: nowrap;
+      overflow-wrap: normal;
+    }
+    .run-target.toolbar .rt-chip .chev {
+      margin-left: 0;
+    }
+    .run-target.toolbar .rt-menu {
+      right: calc(12px + env(safe-area-inset-right));
+      bottom: 47px;
+      left: calc(12px + env(safe-area-inset-left));
+      width: auto;
+      min-width: 0;
+      max-width: none;
     }
   }
 </style>

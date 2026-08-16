@@ -11,10 +11,15 @@
 # Web build artifacts (embedded at build time). The placeholder
 # web/dist/index.html is tracked so `go build` works pre-frontend-build; the
 # vite-generated hashed assets are not committed.
+/node_modules/
 /web/node_modules/
 /web/dist/assets/
 /web/dist/vite.svg
 /web/.vite/
+
+# Capacitor native projects (ios/, android/) are committed. Their build output,
+# synced web assets and generated config files are not — each platform ships its
+# own .gitignore covering those, so nothing is repeated here.
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

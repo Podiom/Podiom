@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/discovery"
 	"github.com/Podiom/Podiom/internal/gateway"
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
 	"github.com/Podiom/Podiom/internal/marketplace"
@@ -36,6 +38,8 @@ type BuildInfo struct {
 type Server struct {
 	httpSrv     *http.Server
 	addr        string
+	lanSrv      *http.Server
+	lanAddr     string
 	build       BuildInfo
 	started     time.Time
 	core        *core.Core
@@ -67,6 +71,12 @@ type Server struct {
 	// haMode is true when running as a Home Assistant app: self-update is
 	// refused (HA26) and the SPA gets the "ha" deployment hint (HA10).
 	haMode bool
+	// advertise/bind/port drive the mDNS announcement started in Start (R8).
+	advertise bool
+	bind      string
+	port      int
+	// mdns is the live announcement, nil when advertising is off or failed.
+	mdns *discovery.Responder
 	// transcribeBaseURL overrides the OpenAI Whisper endpoint in tests. Empty
 	// means the real API (transcribe.DefaultBaseURL).
 	transcribeBaseURL string
@@ -79,8 +89,12 @@ type Server struct {
 
 // Options configures the server.
 type Options struct {
-	Bind      string // e.g. "127.0.0.1"
-	Port      int    // e.g. 8787
+	Bind string // e.g. "127.0.0.1"
+	Port int    // e.g. 8787
+	// LANPort enables a second API-only listener for native apps. It is used by
+	// the Home Assistant image, whose Supervisor port mapping is disabled by
+	// default. Zero disables the listener.
+	LANPort   int
 	Build     BuildInfo
 	Core      *core.Core
 	Scheduler *schedule.Scheduler
@@ -111,6 +125,10 @@ type Options struct {
 	// /terminal/{claude,codex} onboarding sub-paths are reverse-proxied to
 	// (HA15/HA22). Empty leaves the sub-paths unrouted as today.
 	TerminalProxy string
+	// Advertise announces the daemon on the local network over mDNS/DNS-SD so
+	// the mobile apps can find it (R8). Ignored when Bind is loopback or in HA
+	// mode, where the container cannot advertise Supervisor's selected host port.
+	Advertise bool
 }
 
 // New constructs a Server bound to the given address. It does not start
@@ -142,6 +160,11 @@ func New(opts Options) *Server {
 		vapidPublic: opts.VAPIDPublicKey,
 		tokens:      opts.Tokens,
 		haMode:      opts.HAMode,
+		// HA's opt-in LAN endpoint uses a Supervisor-selected host port that the
+		// container cannot advertise correctly.
+		advertise: opts.Advertise && !opts.HAMode,
+		bind:      opts.Bind,
+		port:      opts.Port,
 	}
 	// Skill marketplace (Spec 07). Construction can fail only if the skills root
 	// can't be resolved; degrade to a nil service (handlers return 503) rather
@@ -194,9 +217,9 @@ func New(opts Options) *Server {
 	mux.Handle("/", s.spaHandler())
 
 	// Middleware order (outermost first): source-IP guard covers everything
-	// including static assets (HA6); token auth then gates the /api/ surface
-	// (HA7/HA10).
-	handler := s.withAuth(mux)
+	// including static assets (HA6); CORS then answers native preflights before
+	// token auth gates the /api/ surface (HA7/HA10).
+	handler := withCORS(s.withAuth(mux))
 	guarded, err := buildSourceGuard(handler, opts.AllowFrom, opts.HAMode)
 	if err != nil {
 		// A malformed allow_from entry must fail closed, not open: refuse all
@@ -208,6 +231,34 @@ func New(opts Options) *Server {
 		Addr:              addr,
 		Handler:           guarded,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if opts.LANPort > 0 {
+		// Native apps package the SPA themselves, so the LAN listener needs only
+		// health plus the existing API/WS contract. Keeping terminal, static
+		// assets, and the HA bootstrap off this mux prevents Ingress-authenticated
+		// surfaces from becoming reachable merely by enabling a host port.
+		lanMux := http.NewServeMux()
+		lanMux.HandleFunc("GET /healthz", s.handleHealth)
+		for _, rt := range s.apiRoutes() {
+			lanMux.HandleFunc(rt.pattern, rt.handler)
+		}
+		lanHandler := withCORS(s.withStrictAuth(lanMux))
+		lanGuarded, err := buildLANSourceGuard(lanHandler, opts.AllowFrom)
+		if err != nil {
+			// Config validation normally catches this before New. Stay closed if a
+			// caller constructs Options directly with a malformed entry.
+			log.Error("invalid allow_from config; disabling LAN API", "error", err)
+			lanGuarded = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "forbidden source", http.StatusForbidden)
+			})
+		}
+		s.lanAddr = net.JoinHostPort(opts.Bind, fmt.Sprintf("%d", opts.LANPort))
+		s.lanSrv = &http.Server{
+			Addr:              s.lanAddr,
+			Handler:           lanGuarded,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
 	}
 	return s
 }
@@ -228,10 +279,52 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
-	if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
-		return err
+	listeners := []struct {
+		name string
+		srv  *http.Server
+		ln   net.Listener
+	}{{name: "web", srv: s.httpSrv, ln: ln}}
+	if s.lanSrv != nil {
+		lanLn, err := net.Listen("tcp", s.lanAddr)
+		if err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("listen on LAN API %s: %w", s.lanAddr, err)
+		}
+		listeners = append(listeners, struct {
+			name string
+			srv  *http.Server
+			ln   net.Listener
+		}{name: "LAN API", srv: s.lanSrv, ln: lanLn})
+		s.log.Info("home assistant LAN API listening", "addr", s.lanAddr)
 	}
-	return nil
+	// Announce only once the listener exists, so nothing is ever advertised
+	// that is not actually accepting connections.
+	if s.advertise {
+		s.mdns = discovery.Advertise(s.bind, s.port, s.build.Version, s.log)
+	}
+	errCh := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		go func() {
+			err := listener.srv.Serve(listener.ln)
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			if err != nil {
+				err = fmt.Errorf("serve %s: %w", listener.name, err)
+			}
+			errCh <- err
+		}()
+	}
+
+	// The two listeners are one daemon. If either fails, stop its peer so the
+	// process can be restarted rather than remaining only partly available.
+	err = <-errCh
+	if err != nil {
+		for _, listener := range listeners {
+			_ = listener.srv.Close()
+		}
+	}
+	return err
 }
 
 // Shutdown gracefully stops the server.
@@ -240,7 +333,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.logins != nil {
 		s.logins.Shutdown()
 	}
-	return s.httpSrv.Shutdown(ctx)
+	// Withdraw the announcement first so clients stop being offered an instance
+	// that is on its way down.
+	s.mdns.Shutdown()
+	servers := []*http.Server{s.httpSrv}
+	if s.lanSrv != nil {
+		servers = append(servers, s.lanSrv)
+	}
+	errCh := make(chan error, len(servers))
+	for _, httpSrv := range servers {
+		go func() { errCh <- httpSrv.Shutdown(ctx) }()
+	}
+	var errs []error
+	for range servers {
+		if err := <-errCh; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Health is the /healthz response shape. The CLI's `podiom status` parses this.

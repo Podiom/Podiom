@@ -1,3 +1,62 @@
+/* Fonts are bundled, not fetched from the Google Fonts CDN. The native apps
+   must render correctly with no internet route at all — they typically talk to
+   a daemon on the LAN — and a CDN <link> in index.html blocks first paint on a
+   cross-origin request that simply fails offline. These are the upstream
+   variable fonts (one file per family covers every weight the UI uses), latin
+   and latin-ext subsets, under the SIL Open Font License; see the OFL-*.txt
+   files alongside them. Imported from src/ rather than public/ so Vite hashes
+   them and rewrites these URLs relative to the app's base — an absolute
+   /fonts/… path would break under HA Ingress's rewritten sub-path (HA14). */
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./fonts/hanken-grotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./fonts/hanken-grotesk-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Tailwind is imported for its preflight reset only — no utility class is used
+   anywhere in the app. It is not dead weight: preflight supplies the heading
+   margin/size/weight reset, list and <p> margins, `font: inherit` on form
+   controls, and the media-element defaults that this file does not restate and
+   that rendered agent markdown (AgentMarkdown.svelte) leans on. It is ~8 KB of
+   the built stylesheet; the other ~226 KB is the hand-written CSS below. */
 @import "tailwindcss";
 
 /* ============================================================================
@@ -37,6 +96,8 @@ html,
 body {
   margin: 0;
   height: 100%;
+  width: 100%;
+  overflow: hidden;
   /* The shell is a fixed 100dvh app; the document must never scroll or rubber-band.
      Without this, a drag that a modal doesn't consume moves the whole viewport on
      iOS — taking the fixed bottom nav with it. */
@@ -366,7 +427,9 @@ button:disabled {
   }
 
   .modal-backdrop {
-    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    /* Fixed, so it sits outside .main's inset and needs its own. A tall modal
+       would otherwise run its header under the status bar. */
+    padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
     align-items: center;
   }
 
@@ -390,6 +453,9 @@ button:disabled {
   }
 
   .page {
+    /* No top safe-area inset here: .main already applies it for every route
+       (App.svelte), and adding it again would double the gap on the pages that
+       use this wrapper. */
     padding: 16px 16px 92px;
     min-height: 0;
   }

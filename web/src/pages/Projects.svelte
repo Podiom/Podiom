@@ -21,6 +21,7 @@
   } from "../lib/api";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
+  import { closeExternal, openExternal } from "../lib/native";
   import { PROJECT_COLORS, projectColor } from "../lib/theme";
   import type { Agent, GitHubDeviceStart, GitHubRepo, GitHubStatus, Project, ProjectGit, Task } from "../lib/types";
 
@@ -481,7 +482,7 @@
     error = null;
     try {
       ghDevice = await githubDeviceStart();
-      ghAuthWindow = window.open(ghDevice.verification_uri, "podiom-github-auth", "popup,width=760,height=860");
+      ghAuthWindow = openExternal(ghDevice.verification_uri, "podiom-github-auth", "popup,width=760,height=860");
       scheduleGitHubPoll(1200);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -510,6 +511,7 @@
       if (res.status === "authorized") {
         clearGitHubPolling();
         ghDevice = null;
+        closeExternal();
         try {
           ghAuthWindow?.close();
           window.focus();
@@ -545,7 +547,7 @@
   function openGitHubInstall() {
     if (!ghStatus?.install_url) return;
     ghInstallOpened = true;
-    window.open(ghStatus.install_url, "_blank", "noopener,noreferrer");
+    openExternal(ghStatus.install_url, "_blank", "noopener,noreferrer");
   }
 
   async function connectSelectedRepo(force = false) {

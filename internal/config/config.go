@@ -184,6 +184,19 @@ type Server struct {
 	// empty means no restriction. In HA-app mode the Ingress proxy address is
 	// enforced automatically regardless of this list (HA6).
 	AllowFrom []string `yaml:"allow_from,omitempty"`
+	// Advertise announces this daemon on the local network over mDNS/DNS-SD so
+	// the mobile apps can find it without being told an address (R8). Defaults
+	// to true, and is ignored when Bind is loopback (nothing else could reach
+	// the advertised address) or in HA-app mode (the container cannot advertise
+	// the host port selected in Supervisor).
+	Advertise *bool `yaml:"advertise,omitempty"`
+}
+
+// AdvertiseEnabled reports Advertise with its default applied. A pointer is
+// used in the struct so an explicit `advertise: false` is distinguishable from
+// the field being absent.
+func (s Server) AdvertiseEnabled() bool {
+	return s.Advertise == nil || *s.Advertise
 }
 
 // Logging configures daemon-owned structured log files under Paths.LogsDir.

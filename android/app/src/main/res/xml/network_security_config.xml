@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  podiomd serves plain HTTP with no TLS, and the instance this app talks to is an
+  address the user types or picks from local discovery — so it cannot be known
+  ahead of time and enumerated here.
+
+  Android's <domain> matches literal hostnames only: it has no CIDR support and
+  no equivalent of iOS's NSAllowsLocalNetworking, which grants cleartext to
+  private address ranges without opening it everywhere. With an arbitrary
+  user-supplied destination there is no narrower rule to write, so cleartext is
+  permitted app-wide.
+
+  What limits the exposure: the gateway token is the only credential the app
+  holds, it is scoped to one instance, and it rides an explicit header rather
+  than an ambient cookie. Users reaching Podiom across anything less trusted
+  than their own LAN should terminate TLS in front of podiomd — see
+  docs/mobile.md.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

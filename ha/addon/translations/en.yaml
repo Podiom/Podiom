@@ -27,3 +27,6 @@ configuration:
       Codex CLIs run on it. "swift" is the open-source toolchain (swift build,
       swift test, SwiftPM); building iOS .app bundles, running simulators and
       code signing all need Xcode on a Mac and are not possible here.
+network:
+  8100/TCP: >-
+    Podiom mobile API (disabled by default; map to 8787 for trusted LAN access)

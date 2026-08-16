@@ -10,6 +10,12 @@ LDFLAGS := -X github.com/Podiom/Podiom/internal/buildinfo.Version=$(VERSION) \
 GO      ?= go
 BINDIR  ?= bin
 
+# Which platform pairs `cross` builds. Overridable so callers that only need one
+# target (CI's add-on smoke job) reuse this file's LDFLAGS instead of restating
+# them and drifting out of sync.
+CROSS_OS   ?= linux darwin windows
+CROSS_ARCH ?= amd64 arm64
+
 HA_IMAGE ?= ghcr.io/podiom/podiom-ha
 HA_TAG   ?= dev
 
@@ -19,8 +25,11 @@ all: build ## Build the web UI and both binaries (default)
 
 build: web go-build ## Build web UI + binaries
 
+# Installs from the repo root: web/ is an npm workspace of the root package
+# (which also owns the Capacitor shell), so there is one lockfile for both.
 web: ## Build the embedded SPA (npm install + vite build)
-	cd web && npm install && npm run build
+	npm install
+	npm run build -w web
 
 go-build: podiomd podiom ## Build both Go binaries (assumes web already built)
 
@@ -32,7 +41,7 @@ podiom: ## Build the CLI client
 
 check: ## go vet + svelte-check
 	$(GO) vet ./...
-	cd web && npm run check
+	npm run check -w web
 
 test: ## Run Go tests
 	$(GO) test ./...
@@ -43,8 +52,8 @@ tidy: ## Tidy go modules
 # Cross-compile both binaries for the three supported OSes. Requires the web UI
 # to be built first (run `make web`); the embed is OS-independent.
 cross: ## Cross-compile podiomd/podiom for linux, darwin, windows (amd64+arm64)
-	@set -e; for os in linux darwin windows; do \
-	  for arch in amd64 arm64; do \
+	@set -e; for os in $(CROSS_OS); do \
+	  for arch in $(CROSS_ARCH); do \
 	    ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	    echo "building $$os/$$arch"; \
 	    GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$$os-$$arch/podiomd$$ext ./cmd/podiomd; \

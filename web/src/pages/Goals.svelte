@@ -3855,7 +3855,7 @@
 
     .overlay {
       align-items: center;
-      padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+      padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
       padding-left: max(12px, env(safe-area-inset-left));
       padding-right: max(12px, env(safe-area-inset-right));
     }

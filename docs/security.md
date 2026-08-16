@@ -109,9 +109,10 @@ below.
 Every API call and WebSocket connection to `podiomd` must present the
 **gateway token** — a cryptographically random secret generated automatically
 on the daemon's first start and stored (mode `0600`) at
-`$PODIOM_HOME/gateway.token`. Only static web assets, the token-entry screen,
-`/healthz`, and schedule webhooks (below) are reachable without it; nothing
-about sessions, agents, plans, or memory is exposed pre-token.
+`$PODIOM_HOME/gateway.token`. On the normal web listener, only static assets,
+the token-entry screen, `/healthz`, and schedule webhooks (below) are reachable
+without it; nothing about sessions, agents, plans, or memory is exposed
+pre-token.
 
 How each client gets it:
 
@@ -130,6 +131,29 @@ its next call.
 Two rules keep the value contained: the daemon logs token *events* (generated,
 rotated) but never the value, and the only unauthenticated browser token return
 is the HA-only bootstrap endpoint after onboarding has completed.
+
+### Home Assistant LAN listener
+
+The Home Assistant image keeps two separate trust boundaries:
+
+- Port `8099` is the complete web/Ingress surface. The source guard accepts the
+  HA Ingress proxy and loopback only. The SPA, onboarding bootstrap, and web
+  terminal exist only here and rely on the authenticated HA session in front.
+- Port `8100` is an API-only listener for the native apps. Supervisor leaves its
+  host mapping disabled by default. When the user opts in, it exposes only
+  `/healthz`, `/api/*`, and `/api/ws` to private LAN sources (or the explicit
+  `server.allow_from` list). It does not serve the SPA or terminal.
+
+The LAN listener deliberately applies a stricter token policy than Ingress:
+every API and WebSocket request requires the gateway token. The HA onboarding
+bootstrap and schedule-webhook exemptions do not apply there. CORS preflight
+may be answered without the token, but the request it authorizes may not.
+
+The listener speaks plain HTTP. A gateway token grants control of the whole
+Podiom daemon and therefore crosses the LAN in cleartext when this option is
+used. Enable it only on a trusted local network; use TLS termination for any
+broader network. Nabu Casa continues to protect the HA browser/Ingress path and
+does not turn this listener into a remote native-app endpoint.
 
 ### Schedule webhooks
 
@@ -163,9 +187,38 @@ token, and it is guarded instead by a **per-schedule secret**:
   outside sender is refused before it reaches the handler.
 
 Why a token even when the UI sits behind authenticated proxies (HA Ingress):
-defense in depth for the client→daemon hop, safe LAN exposure of standalone
-installs (`server.bind` beyond loopback plus `server.allow_from`), and the
-auth primitive for the future remote mode.
+defense in depth for the client→daemon hop, authenticated LAN exposure of
+standalone and opt-in Home Assistant installs, and the auth primitive for the
+[mobile apps](mobile.md) and the future remote mode.
+
+### Cross-origin requests
+
+The web UI is same-origin — `podiomd` serves it — so no CORS is offered to
+browsers. The [mobile apps](mobile.md) are the exception: they load the same UI
+from the app bundle and reach the daemon across the network, which makes every
+request cross-origin.
+
+`podiomd` therefore answers CORS preflights for exactly three origins, the fixed
+set a Capacitor WebView can present: `capacitor://localhost` (iOS),
+`https://localhost` and `http://localhost` (Android). No other origin gets CORS
+headers.
+
+This does not widen the browser-facing surface. None of those origins is
+reachable as a page origin in an ordinary browser, credentialed mode is off (the
+gateway token is an explicit header, never an ambient cookie), and CORS governs
+only who may *read* a response — every `/api/` request still needs a valid token
+and still passes the source-IP guard.
+
+### Local network advertising
+
+With `server.advertise` on (the default, and skipped on a loopback bind),
+`podiomd` announces itself as `_podiom._tcp` over mDNS so the mobile apps can
+find it. The announcement carries a hostname-derived label, the port and the
+build version — deliberately nothing sensitive, since anything on the LAN can
+read it. It grants no access: connecting still requires the gateway token. Set
+`server.advertise: false` to stop announcing. Advertising remains disabled in
+Home Assistant mode because the container cannot reliably advertise the host
+port selected by the user; those instances are entered manually.
 
 ## Sensitive data handling
 

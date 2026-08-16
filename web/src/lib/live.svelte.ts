@@ -13,6 +13,7 @@ import { auth, WS_PROTOCOL, wsTokenProtocol } from "./auth.svelte";
 import { appBase, wsUrl } from "./base";
 import { request } from "./http";
 import { randomID } from "./id";
+import { isNative } from "./native";
 import type {
   ActiveTurnSummary,
   ClientMessage,
@@ -508,13 +509,18 @@ class LiveStore {
   }
 
   private pushSupported(): boolean {
+    // Web push is a service-worker feature and the native apps have no service
+    // worker: iOS does not run one under a custom scheme at all. Native push
+    // (APNs/FCM) is deliberately out of scope for now, so report unsupported
+    // rather than letting the UI offer a switch that cannot work.
+    if (isNative) return false;
     return "Notification" in window && "serviceWorker" in navigator && "PushManager" in window;
   }
 
   private async ensurePushSubscription(publicKey: string): Promise<void> {
     // Register relative to the app's base so the worker's scope matches the
     // Ingress sub-path (HA14).
-    const reg = await navigator.serviceWorker.register(new URL("sw.js", appBase));
+    const reg = await navigator.serviceWorker.register(new URL("sw.js", appBase()));
     const ready = await navigator.serviceWorker.ready.catch(() => reg);
 
     const existing = await ready.pushManager.getSubscription();

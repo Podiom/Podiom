@@ -25,13 +25,32 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") && !s.haOnboardingBootstrapRoute(r) && !scheduleWebhookRoute(r) && !s.tokens.Authorize(r) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"gateway token required (podiom token show)"}`))
+			writeGatewayUnauthorized(w)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// withStrictAuth is the dedicated Home Assistant LAN listener's policy. That
+// surface has no trusted HA session in front of it, so every /api/ request must
+// carry the gateway token: no onboarding bootstrap and no schedule-webhook
+// carve-out. A missing Keeper fails closed because this listener must never
+// become an unauthenticated control plane through partial configuration.
+func (s *Server) withStrictAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && (s.tokens == nil || !s.tokens.Authorize(r)) {
+			writeGatewayUnauthorized(w)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeGatewayUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(`{"error":"gateway token required (podiom token show)"}`))
 }
 
 // scheduleWebhookRoute reports whether this request is a POST to a schedule's

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CAPACITOR_DEBUG</key>
+	<string>$(CAPACITOR_DEBUG)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+        <string>Podiom</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- podiomd serves plain HTTP with no TLS, and the instances this app talks
+	     to are typically on the same LAN (192.168.x.x, 10.x.x.x, *.local).
+	     NSAllowsLocalNetworking permits cleartext to those destinations only;
+	     ATS still applies in full to everything on the public internet. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Required from iOS 14 to browse the LAN. NSBonjourServices must list
+	     every service type the app browses or the browse returns nothing. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Podiom searches your local network to find Podiom instances you can connect to.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_podiom._tcp</string>
+	</array>
+	<!-- Voice input (VoiceButton.svelte uses getUserMedia + MediaRecorder). -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Podiom records your voice so you can dictate messages to your agents.</string>
+	<!-- Photo attachments (<input type="file" accept="image/*">). -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Podiom lets you attach photos from your library to messages.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Podiom lets you attach photos you take with the camera to messages.</string>
+	<!-- No storyboard entry point: SceneDelegate builds the window and the root
+	     CAPBridgeViewController itself, so naming one here only had UIKit load a
+	     storyboard whose window was replaced before it was ever shown. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+    <key>UISceneConfigurations</key>
+    <dict>
+      <key>UIWindowSceneSessionRoleApplication</key>
+      <array>
+        <dict>
+            <key>UISceneConfigurationName</key>
+            <string>Default Configuration</string>
+            <key>UISceneDelegateClassName</key>
+            <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+        </dict>
+      </array>
+    </dict>
+	</dict>
+	<!-- The launch screen is declarative rather than a storyboard. UIImageName
+	     centres the image at its natural size instead of filling the screen: the
+	     2732px artwork lands at ~911pt on a 3x device, which is shorter than a
+	     956pt Pro Max, so ~45pt of margin is left uncovered. UIColorName must
+	     therefore match the Splash artwork (parchment #f4ece2) or that margin
+	     reads as a band above and below the image.
+	     Regenerate the artwork with `npm run assets`; sources live in assets/. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>Splash</string>
+	</dict>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+</dict>
+</plist>

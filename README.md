@@ -103,7 +103,9 @@ so you can trace it back to the decision that created it.
 Podiom stores its state under one configurable local root and ships the web UI
 inside `podiomd`. It runs on macOS, Linux, and Windows, and the same core can run
 as a Home Assistant add-on or in a container. Provider CLIs keep their native
-authentication and policy controls.
+authentication and policy controls. The native iOS and Android apps can connect
+to standalone daemons or an opt-in, API-only Home Assistant LAN endpoint; see
+the [mobile](docs/mobile.md) and [Home Assistant](docs/home-assistant.md) guides.
 
 ## Who is this for?
 
@@ -217,6 +219,7 @@ Runtime state lives under `$PODIOM_HOME`, which defaults to `~/.podiom/`.
 - [Voice input](docs/voice-input.md), prompts spoken through OpenAI Whisper
 - [Photo attachments](docs/photo-attachments.md), retained photos for agents to inspect
 - [Security and logging](docs/security.md), permission modes, tokens, redaction, and run logs
+- [Mobile apps](docs/mobile.md), the Capacitor iOS and Android clients
 - [Home Assistant app](docs/home-assistant.md), Podiom as a Home Assistant add-on
 - [Integration contracts](docs/integrations/README.md)
 

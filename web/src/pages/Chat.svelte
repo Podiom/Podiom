@@ -2586,6 +2586,7 @@
         <RunTargetPicker
           agent={activeAgent ?? null}
           {profiles}
+          variant="toolbar"
           readonlyAccount={!!activeSession}
           value={{
             provider: activeSession ? activeSession.Provider : draftProvider,
@@ -5085,7 +5086,7 @@
     .mobile-panel-backdrop {
       display: block;
       position: fixed;
-      inset: 0 0 calc(72px + env(safe-area-inset-bottom)) 0;
+      inset: env(safe-area-inset-top) 0 calc(72px + env(safe-area-inset-bottom)) 0;
       z-index: 30;
       border: none;
       background: rgba(43, 37, 32, 0.22);
@@ -5109,7 +5110,9 @@
     .ctx,
     .plan-panel {
       position: fixed;
-      top: 0;
+      /* Fixed, so these sit outside .main's inset (App.svelte) and carry their
+         own — otherwise each drawer's header starts under the status bar. */
+      top: env(safe-area-inset-top);
       bottom: calc(72px + env(safe-area-inset-bottom));
       z-index: 35;
       width: min(88vw, 340px);
@@ -5147,7 +5150,12 @@
     }
 
     .conv-head {
-      padding: 12px 14px;
+      /* .main gives the Chat route flush-top (App.svelte), so this row owns the
+         status-bar inset: its background then reaches the very top of the
+         screen instead of leaving a strip of page background above it, and the
+         agent name reads as part of the app header rather than a floating bar.
+         A negative margin cannot do this — .chat clips it with overflow. */
+      padding: calc(12px + env(safe-area-inset-top)) 14px 12px;
       gap: 9px;
     }
 
@@ -5266,7 +5274,7 @@
     }
 
     .composer {
-      padding: 10px 12px 12px;
+      padding: 10px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left));
     }
 
     .composer-box {
@@ -5284,8 +5292,39 @@
       height: 34px;
     }
 
+    .composer-meta {
+      max-width: 100%;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .composer-meta::-webkit-scrollbar {
+      display: none;
+    }
+
+    .composer-meta .dd-wrap {
+      /* Keep the menu positioned against .composer instead of inside the
+         horizontal scroller, whose overflow would otherwise clip it. */
+      position: static;
+    }
+
+    .composer-meta .dd-menu.up {
+      right: calc(12px + env(safe-area-inset-right));
+      bottom: 47px;
+      left: calc(12px + env(safe-area-inset-left));
+      width: auto;
+      min-width: 0;
+      max-height: min(280px, calc(100vh - 90px));
+      overflow-y: auto;
+    }
+
     .composer-meta .dd-wrap,
-    .chip-btn {
+    .composer-meta .chip-btn,
+    .composer-meta .chip-divider {
       flex: none;
     }
 

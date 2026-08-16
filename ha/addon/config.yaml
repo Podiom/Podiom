@@ -19,6 +19,10 @@ boot: auto
 watchdog: tcp://[HOST]:[PORT:8099]
 ingress: true
 ingress_port: 8099
+# API-only listener for the native apps. Disabled until the user assigns a host
+# port under Network; Ingress remains the default and the only browser surface.
+ports:
+  8100/tcp: null
 panel_icon: mdi:account-group
 panel_title: Podiom
 # Needed by the token-sync service to write gateway_token into these options

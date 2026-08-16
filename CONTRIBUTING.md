@@ -40,12 +40,14 @@ Run the daemon locally:
 
 Then open http://127.0.0.1:8787.
 
-For frontend development with hot reload, keep `podiomd` running and start Vite:
+For frontend development with hot reload, keep `podiomd` running and start Vite.
+Install from the repo root: `web/` is an npm workspace of the root package,
+which also holds the Capacitor shell for the [mobile apps](docs/mobile.md), so
+there is one install and one lockfile for both.
 
 ```sh
-cd web
 npm install
-npm run dev
+npm run dev -w web
 ```
 
 ## Validation
@@ -55,7 +57,15 @@ Before opening a pull request, run the checks that match your change:
 ```sh
 go test ./...
 go vet ./...
-npm run check --prefix web
+npm run check -w web
+```
+
+If you changed `capacitor.config.ts` or added a Capacitor plugin, re-sync the
+committed native projects and include the result in your commit — CI fails
+otherwise:
+
+```sh
+npm run sync
 ```
 
 Useful shortcuts:

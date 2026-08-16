@@ -69,6 +69,51 @@ func TestWebSocketHandshakeRequiresToken(t *testing.T) {
 	}
 }
 
+func TestHALANWebSocketUsesSameTokenContract(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	coreSvc, err := core.New(core.Options{Paths: paths, Store: db, Adapter: adapter.NewFake()})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	keeper, _, err := gateway.LoadOrCreate(paths.GatewayToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(Options{Bind: "127.0.0.1", Port: 0, LANPort: 8100, Core: coreSvc, Paths: paths, Tokens: keeper, HAMode: true})
+	ts := httptest.NewServer(srv.lanSrv.Handler)
+	t.Cleanup(ts.Close)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws"
+
+	if _, resp, err := websocket.Dial(ctx, wsURL, nil); err == nil {
+		t.Fatal("LAN dial without token succeeded, want rejection")
+	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("LAN handshake response = %v, want 401", resp)
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		Subprotocols: []string{gateway.WSProtocol, gateway.WSProtocolEntry(keeper.Current())},
+	})
+	if err != nil {
+		t.Fatalf("LAN dial with token: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	if got := conn.Subprotocol(); got != gateway.WSProtocol {
+		t.Fatalf("negotiated subprotocol = %q, want %q", got, gateway.WSProtocol)
+	}
+}
+
 func TestTokenRotationClosesLiveSocketsWith4401(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

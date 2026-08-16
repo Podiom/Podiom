@@ -30,7 +30,8 @@ bash-script path remains unchanged and fully supported.
 already-solved fashion. If the user's HA is internet-exposed (e.g. via Nabu Casa
 cloud), the Podiom web UI becomes reachable from their phone outside the LAN —
 with HA handling TLS, remote routing, and user authentication. Podiom itself
-opens no ports to the internet.
+opens no ports to the internet by default. A separate API-only port may be
+enabled explicitly for the native apps on a trusted LAN.
 
 Guiding principles:
 
@@ -91,8 +92,15 @@ layers:
   sidebar (panel icon + title).
 - **HA6** Per HA's Ingress security requirements, the app's web server accepts
   connections **only from the Ingress proxy address (`172.30.32.2`)** and denies
-  all other sources. No direct port is exposed by default in v1 (no `ports`
-  mapping enabled).
+  all other sources. This remains true even when mobile access is enabled: the
+  Ingress listener and LAN listener are separate.
+- **HA6a — Opt-in mobile LAN listener.** A second, API-only listener runs on
+  container port `8100`. The manifest declares `8100/tcp: null`, so Supervisor
+  publishes nothing until the user assigns a host port. The listener serves
+  only `/healthz`, `/api/*`, and `/api/ws`, accepts private LAN sources (or an
+  explicit `server.allow_from` list), and applies the gateway token to every
+  API/WS request without HA-bootstrap or schedule-webhook exemptions. It never
+  serves the SPA or `/terminal/*`.
 
 ### 3.2 Layer 2 — Podiom gateway token (client → podiomd)
 - **HA7** `podiomd` gains a **gateway token**: a cryptographically random secret
@@ -291,9 +299,9 @@ layers:
   repository with the standard HA repository manifest) that users add to their
   HA app store, plus pre-built multi-arch images in a container registry. The
   app manifest (`config.yaml`) declares at minimum: `ingress: true`,
-  `ingress_port`, panel icon/title, `startup`/watchdog settings, the `/data`
-  mapping, and a `rotate_token` boolean toggle (HA8), which `podiomd` reads via
-  the Supervisor API for token rotation.
+  `ingress_port`, the disabled `8100/tcp` mobile mapping, panel icon/title,
+  `startup`/watchdog settings, the `/data` mapping, and a `rotate_token` boolean
+  toggle (HA8), which `podiomd` reads via the Supervisor API for token rotation.
 - **HA28** First-run experience: on first start the app generates the gateway
   token (HA8) and opens a HA-only onboarding page before the dashboard. The
   page embeds the terminal, lets the user run Claude/Codex login flows (default
@@ -309,8 +317,9 @@ layers:
 
 - **Remote mode** (app pointing at a `podiomd` on another LAN host) — designed
   for (HA3/HA4), not built.
-- **Direct port exposure** of `podiomd` from the app (LAN access bypassing HA) —
-  Ingress-only in v1; the gateway token makes adding an opt-in port later safe.
+- **HA-authenticated native remote access.** The opt-in mobile listener is for a
+  trusted LAN only; native login to HA, Nabu Casa routing, and TLS termination
+  remain future work.
 - **Multi-user semantics** — Ingress can pass HA user identity headers to the
   app; Podiom ignores them in v1 (single-user model). A future multi-user Podiom
   could consume them.
@@ -329,11 +338,14 @@ A correct implementation satisfies all of:
 1. Installing the app from the repository on both amd64 and aarch64 yields a
    running `podiomd` with the UI reachable via the HA sidebar through Ingress
    (HA5, HA16, HA27).
-2. The app's web server rejects connections not originating from the Ingress
-   proxy; no direct port is exposed (HA6).
-3. All API/WS calls without the gateway token are rejected, except the HA-only
-   onboarding bootstrap endpoints; static assets and the first-run HA
-   onboarding page load without it; sessions, agents, plans, and memory do not
+2. The Ingress web server rejects connections not originating from the Ingress
+   proxy. The separate `8100/tcp` mobile mapping is disabled by default; when
+   mapped, its root and terminal paths return 404 while `/healthz` works from a
+   private LAN source (HA6, HA6a).
+3. All API/WS calls without the gateway token are rejected on the mobile
+   listener. On Ingress, only the HA onboarding bootstrap and schedule webhook
+   exceptions remain; static assets and the first-run HA onboarding page load
+   without the gateway token, while sessions, agents, plans, and memory do not
    (HA7, HA10).
 4. The token is auto-generated on first start. In the HA app the token-copy
    surface is available only after onboarding completes; toggling

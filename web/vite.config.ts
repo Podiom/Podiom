@@ -22,8 +22,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/healthz": { target: `http://${DAEMON}`, changeOrigin: true },
-      "/api": { target: `http://${DAEMON}`, changeOrigin: true },
-      "/ws": { target: `ws://${DAEMON}`, ws: true, changeOrigin: true },
+      // ws: the app's socket is /api/ws, so it matches this rule — without an
+      // upgrade handler here the handshake silently fails in dev.
+      "/api": { target: `http://${DAEMON}`, ws: true, changeOrigin: true },
     },
   },
 });

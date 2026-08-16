@@ -223,7 +223,8 @@
   }
   .dream-top {
     position: absolute;
-    top: 34px;
+    /* Full-screen overlay, so it sits outside .main's inset (App.svelte). */
+    top: calc(34px + env(safe-area-inset-top));
     left: 50%;
     transform: translateX(-50%);
     display: flex;

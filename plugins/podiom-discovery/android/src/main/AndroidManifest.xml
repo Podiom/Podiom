@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The multicast lock is what makes mDNS responses reach this app: without
+         it many devices filter multicast to save power and the browse finds
+         nothing. Declared here so the plugin carries its own requirement rather
+         than relying on the host app to remember. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+</manifest>

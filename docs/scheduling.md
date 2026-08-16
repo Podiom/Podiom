@@ -102,7 +102,11 @@ mints a fresh one.
 **Reachability.** The endpoint is exempt from the gateway token but not from
 everything else. If you set `allow_from` in `config.yaml`, or run the Home
 Assistant add-on, the source-IP guard still applies and an outside sender is
-refused until its address is allow-listed. See [security.md](security.md).
+refused until its address is allow-listed. The Home Assistant mobile port does
+not expose this exemption: its API-only listener requires the gateway token for
+every `/api/` request, including schedule webhook paths. Use a separately
+secured reverse proxy if a third-party sender must reach a webhook on an HA
+install. See [security.md](security.md).
 
 ## Each run is a normal session
 

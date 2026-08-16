@@ -8,6 +8,7 @@
   // turn dies signed out) so both behave identically.
   import { onDestroy } from "svelte";
   import { cancelProviderLogin, pollProviderLogin, startProviderLogin, submitProviderLoginCode } from "./api";
+  import { closeExternal, openExternal } from "./native";
   import type { Provider, ProviderLoginSession } from "./types";
 
   let {
@@ -47,6 +48,7 @@
   }
 
   function closeAuthWindow() {
+    closeExternal();
     try {
       authWindow?.close();
       window.focus();
@@ -77,7 +79,7 @@
       const firstURL = !login.url && !!next.url;
       login = next;
       if (firstURL && next.url) {
-        authWindow = window.open(next.url, "podiom-provider-auth", "popup,width=760,height=860");
+        authWindow = openExternal(next.url, "podiom-provider-auth", "popup,width=760,height=860");
       }
       if (next.phase === "succeeded") {
         clearPolling();

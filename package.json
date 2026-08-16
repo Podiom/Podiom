@@ -1,0 +1,34 @@
+{
+  "name": "podiom",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Podiom repo root — the Capacitor shell that packages the web/ SPA as the iOS and Android apps. No UI lives here; web/ remains the single frontend implementation.",
+  "type": "module",
+  "workspaces": [
+    "web",
+    "plugins/*"
+  ],
+  "scripts": {
+    "assets": "capacitor-assets generate --ios --android",
+    "build:web": "npm run build -w web",
+    "sync": "npm run build:web && cap sync",
+    "sync:ios": "npm run build:web && cap sync ios",
+    "sync:android": "npm run build:web && cap sync android"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.0",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.0",
+    "@capacitor/android": "8.5.0",
+    "@capacitor/app": "8.1.1",
+    "@capacitor/browser": "8.0.4",
+    "@capacitor/core": "8.5.0",
+    "@capacitor/ios": "8.5.0",
+    "@capacitor/keyboard": "8.0.5",
+    "@capacitor/status-bar": "8.0.3",
+    "podiom-discovery": "*"
+  }
+}

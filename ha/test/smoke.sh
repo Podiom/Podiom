@@ -4,8 +4,10 @@
 #
 #   ha/test/smoke.sh [image]        default image: podiom-ha:dev
 #
-# Runs the image standalone (no Supervisor, no s6 base startup), then asserts:
+# Runs the image without a real Supervisor or s6 base startup (a stub token
+# enables HA-mode listeners), then asserts:
 #   - podiomd serves /healthz on 8099
+#   - the HA-only mobile listener on 8100 is API-only and token-protected
 #   - legacy root-owned /data is safely migrated to the non-root podiom account
 #   - claude / codex / mcp-proxy / uvx / ttyd are present at their pinned versions
 #   - yq is absent (profile login dispatch no longer needs it)
@@ -51,6 +53,7 @@ cid="$(
         --entrypoint /bin/bash \
         -e PODIOM_HOME=/data/podiom \
         -e HOME=/data/home \
+        -e SUPERVISOR_TOKEN=smoke-supervisor-token \
         -e DISABLE_AUTOUPDATER=1 \
         -e PODIOM_TERMINAL_PROXY=http://127.0.0.1:7681 \
         "${IMAGE}" \
@@ -116,6 +119,25 @@ until docker exec "${cid}" curl -fsS -o /dev/null http://127.0.0.1:8099/healthz 
     sleep 2
 done
 pass "/healthz responds on 8099"
+
+echo "== HA mobile API listener"
+docker exec "${cid}" curl -fsS -o /dev/null http://127.0.0.1:8100/healthz \
+    || fail "mobile listener /healthz not reachable on 8100"
+[ "$(docker exec "${cid}" curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8100/)" = "404" ] \
+    || fail "mobile listener exposed the SPA root"
+[ "$(docker exec "${cid}" curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8100/terminal/shell)" = "404" ] \
+    || fail "mobile listener exposed the terminal"
+[ "$(docker exec "${cid}" curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8100/api/auth/check)" = "401" ] \
+    || fail "mobile listener accepted an API request without the gateway token"
+mobile_token="$(docker exec --user podiom "${cid}" cat /data/podiom/gateway.token)"
+docker exec "${cid}" curl -fsS -o /dev/null \
+    -H "X-Podiom-Token: ${mobile_token}" \
+    http://127.0.0.1:8100/api/auth/check \
+    || fail "mobile listener rejected the gateway token"
+[ "$(docker exec "${cid}" curl -sS -o /dev/null -w '%{http_code}' \
+    -X POST http://127.0.0.1:8100/api/schedules/nightly/webhook)" = "401" ] \
+    || fail "mobile listener exposed the token-exempt schedule webhook"
+pass "mobile listener is health/API-only and strictly token-protected"
 
 echo "== runtime identity and legacy ownership migration"
 docker exec "${cid}" getent passwd podiom \

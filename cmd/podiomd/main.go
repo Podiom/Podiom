@@ -35,6 +35,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// homeAssistantLANPort is the container-side, API-only listener optionally
+// published by the HA Supervisor. The add-on manifest declares the matching
+// port disabled by default; standalone installs do not start this listener.
+const homeAssistantLANPort = 8100
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		os.Exit(1)
@@ -142,8 +147,10 @@ func run() error {
 	}
 
 	haMode := hamode.Detect()
+	lanPort := 0
 	if haMode {
 		log.Info("home assistant mode detected")
+		lanPort = homeAssistantLANPort
 	}
 
 	callbackAddr := internalCallbackAddr(cfg.Server.Bind, cfg.Server.Port)
@@ -243,8 +250,9 @@ func run() error {
 	}
 
 	srv := server.New(server.Options{
-		Bind: cfg.Server.Bind,
-		Port: cfg.Server.Port,
+		Bind:    cfg.Server.Bind,
+		Port:    cfg.Server.Port,
+		LANPort: lanPort,
 		Build: server.BuildInfo{
 			Version: buildinfo.Version,
 			Commit:  buildinfo.Commit,
@@ -262,6 +270,7 @@ func run() error {
 		Tokens:         tokens,
 		HAMode:         haMode,
 		AllowFrom:      cfg.Server.AllowFrom,
+		Advertise:      cfg.Server.AdvertiseEnabled(),
 		TerminalProxy:  os.Getenv("PODIOM_TERMINAL_PROXY"),
 	})
 

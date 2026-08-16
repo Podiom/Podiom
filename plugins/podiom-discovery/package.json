@@ -1,0 +1,25 @@
+{
+  "name": "podiom-discovery",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Finds Podiom instances on the local network over mDNS/DNS-SD. First-party because the browse is ~150 lines per platform and this app stores gateway tokens — not worth a third-party dependency.",
+  "main": "dist/esm/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  },
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "dist/",
+    "ios/Sources",
+    "Package.swift",
+    "PodiomDiscovery.podspec"
+  ]
+}

@@ -17,6 +17,7 @@
   import { avatars } from "./lib/avatars.svelte";
   import { deployment } from "./lib/base";
   import { live } from "./lib/live.svelte";
+  import { initChrome, isNative, onBackButton } from "./lib/native";
   import TokenGate from "./pages/TokenGate.svelte";
   import HAOnboarding from "./pages/HAOnboarding.svelte";
   import ProviderLogo from "./lib/ProviderLogo.svelte";
@@ -280,6 +281,25 @@
   // chat socket: health is the source of truth for "live", and we poll for new
   // releases every 5 minutes.
   onMount(() => {
+    initChrome();
+    // Android's back gesture has no history stack to pop — this app navigates
+    // by state, not URL — so it is mapped onto that state by hand: dismiss
+    // whatever is on top, else step back to Chat, else let the app exit.
+    const offBack = onBackButton(() => {
+      if (hireOpen) {
+        hireOpen = false;
+        return true;
+      }
+      if (moreOpen) {
+        moreOpen = false;
+        return true;
+      }
+      if (route !== "chat") {
+        route = "chat";
+        return true;
+      }
+      return false;
+    });
     const healthTimer = window.setInterval(() => {
       if (auth.token) void refreshHealth();
     }, 10_000);
@@ -287,6 +307,7 @@
       if (auth.token) void refreshUpdate(true);
     }, 5 * 60 * 1000);
     return () => {
+      offBack();
       window.clearInterval(healthTimer);
       window.clearInterval(updateTimer);
     };
@@ -640,7 +661,7 @@
           </div>
         </div>
       {/if}
-      {#if pushState !== "enabled"}
+      {#if pushState !== "enabled" && !isNative}
         <button
           class="push-reminder"
           class:warn={pushState === "denied" || pushState === "unsupported"}
@@ -686,7 +707,10 @@
   {/if}
 
   <!-- ============ MAIN ============ -->
-  <div class="main">
+  <!-- flush-top hands the status-bar inset to the route instead of applying it
+       here, for routes whose own top element paints a different background and
+       should reach the top of the screen (Chat's agent header). -->
+  <div class="main" class:flush-top={route === "chat"}>
     {#if route === "chat"}
       <Chat {agents} target={chatTarget} onConsumeTarget={() => (chatTarget = null)} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
     {:else if route === "roadmap"}
@@ -996,10 +1020,11 @@
     color: #9a6e1e;
   }
 
-  /* Global toast stack, top-right, above modals (z 40). */
+  /* Global toast stack, top-right, above modals (z 40). The inset clears the
+     status bar / notch in the native apps and is 0 in a browser. */
   .toasts {
     position: fixed;
-    top: 18px;
+    top: calc(18px + env(safe-area-inset-top));
     right: 18px;
     z-index: 60;
     display: flex;
@@ -1475,7 +1500,21 @@
     .main {
       width: 100%;
       min-height: 0;
+      /* Clear the status bar / notch here rather than per page: the WebView is
+         drawn edge to edge in the native apps, and only five of the routes use
+         the shared .page wrapper — Chat, Roadmap and Settings lay themselves
+         out and would otherwise start under the clock. Zero in a browser. */
+      padding-top: env(safe-area-inset-top);
       padding-bottom: calc(72px + env(safe-area-inset-bottom));
+    }
+
+    /* The route paints the strip itself — see the class comment in the markup. */
+    .main.flush-top {
+      padding-top: 0;
+      /* The fixed mobile nav is already 72px tall including its safe-area
+         padding (global border-box sizing). Reserving the inset again leaves
+         an empty strip between Chat's composer and the nav. */
+      padding-bottom: 72px;
     }
   }
 </style>

@@ -6,6 +6,11 @@
 
 ## Unreleased
 
+- **Opt-in mobile access for Home Assistant installs.** The new API-only
+  `8100/tcp` port is disabled by default; map it to a host port such as `8787`
+  under Network to connect the iOS or Android app on a trusted LAN. The port
+  requires the existing gateway token and never exposes the dashboard,
+  onboarding bootstrap, terminal, or token-exempt schedule webhooks.
 - **New option: Language toolchains.** Pick which compilers and runtimes the
   container provides (`go`, `node`, `python`, `rust`, `swift`). They install
   into `/data/podiom/toolchains/` in the background on start and appear on

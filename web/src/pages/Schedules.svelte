@@ -6,6 +6,7 @@
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
+  import { apiUrl } from "../lib/base";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { modeChip } from "../lib/theme";
   import type { AgentQuestion, Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
@@ -226,9 +227,13 @@
   }
 
   // The daemon does not know the URL it is reached on, so the address the user
-  // must give the sender is composed from the one the browser is already using.
+  // must give the sender is composed from the one this client is already using.
+  // Via apiUrl, not location.origin: in the native apps the page origin is the
+  // WebView itself, which would hand the user an unreachable capacitor:// URL.
   function webhookURL(s: ScheduleStatus) {
-    return `${location.origin}/api/schedules/${encodeURIComponent(s.name)}/webhook?secret=${s.webhook_secret ?? ""}`;
+    const url = apiUrl(`api/schedules/${encodeURIComponent(s.name)}/webhook`);
+    url.searchParams.set("secret", s.webhook_secret ?? "");
+    return url.toString();
   }
 
   async function copyWebhookURL(s: ScheduleStatus) {

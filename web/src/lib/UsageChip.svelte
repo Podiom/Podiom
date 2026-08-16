@@ -394,4 +394,20 @@
       transform: rotate(360deg);
     }
   }
+
+  @media (max-width: 768px) {
+    .usage-wrap {
+      position: static;
+      flex: none;
+      margin-left: 0;
+    }
+    .usage-pop {
+      right: calc(12px + env(safe-area-inset-right));
+      bottom: 47px;
+      left: calc(12px + env(safe-area-inset-left));
+      width: auto;
+      max-height: calc(100vh - 90px);
+      overflow-y: auto;
+    }
+  }
 </style>

@@ -12,6 +12,19 @@ import (
 // its own loopback callers) in HA mode (HA6).
 const ingressProxyAddr = "172.30.32.2/32"
 
+// lanPrivateNetworks are the source ranges accepted by the dedicated Home
+// Assistant mobile listener. The Supervisor's opt-in port mapping controls
+// whether that listener is reachable from the host at all; this second fence
+// keeps an accidentally forwarded port local-network-only. An explicit
+// server.allow_from list replaces these defaults so an installation can narrow
+// the accepted subnet or name a non-standard local range.
+var lanPrivateNetworks = []string{
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"fc00::/7",
+}
+
 // sourceGuard rejects requests whose RemoteAddr is outside the allowlist. It
 // wraps the entire handler chain (static assets included). Loopback is always
 // allowed: the daemon's spawned MCP helpers and the same-machine CLI connect
@@ -33,6 +46,24 @@ func buildSourceGuard(next http.Handler, allowFrom []string, haMode bool) (http.
 		entries = append(entries, ingressProxyAddr)
 	}
 	entries = append(entries, allowFrom...)
+	allowed, err := parsePrefixes(entries)
+	if err != nil {
+		return nil, err
+	}
+	return &sourceGuard{allowed: allowed, next: next}, nil
+}
+
+// buildLANSourceGuard restricts the Home Assistant mobile API listener to
+// loopback plus either private LAN ranges or an explicit server.allow_from
+// replacement. Unlike buildSourceGuard it is never unrestricted: the listener
+// is intended for a trusted local network, not direct internet exposure.
+func buildLANSourceGuard(next http.Handler, allowFrom []string) (http.Handler, error) {
+	entries := []string{"127.0.0.0/8", "::1/128"}
+	if len(allowFrom) > 0 {
+		entries = append(entries, allowFrom...)
+	} else {
+		entries = append(entries, lanPrivateNetworks...)
+	}
 	allowed, err := parsePrefixes(entries)
 	if err != nil {
 		return nil, err

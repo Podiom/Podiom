@@ -1,0 +1,17 @@
+<!-- Launch screen artwork: the app's parchment surface (the bg custom property
+     in web/src/app.css) with the teal mark from web/public/podium-mark-teal.svg.
+
+     The mark is deliberately small. iOS centres this image at its natural size
+     rather than filling the screen, so at the 3x slot the 2732px canvas maps to
+     ~911pt and the mark lands at roughly 110pt across — a logo, not a billboard.
+     Ink spans x 6.3-42.7 and y 11.4-32.7 in the 48-unit drawing; the transform
+     centres that ink, not the box. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="2732" height="2732" viewBox="0 0 2732 2732">
+  <rect width="2732" height="2732" fill="#f4ece2" />
+  <g transform="translate(1145.3, 1167.3) scale(9.01)">
+    <path d="M8 31 Q18 6 30 16" fill="none" stroke="#2F6E60" stroke-width="3.4" stroke-linecap="round" />
+    <circle cx="30" cy="16" r="4.6" fill="#2F6E60" />
+    <circle cx="36" cy="23" r="2.9" fill="#2F6E60" opacity="0.72" />
+    <circle cx="41" cy="29" r="1.7" fill="#2F6E60" opacity="0.45" />
+  </g>
+</svg>

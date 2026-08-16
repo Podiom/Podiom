@@ -153,10 +153,22 @@ RAM. On small boards, keep the number of simultaneously active agents modest.
 
 ## Networking details
 
-- The app is **Ingress-only**: no ports are exposed, and `podiomd` accepts
-  connections only from HA's Ingress proxy (and container-local callers).
-- The web UI, WebSocket streaming, permission prompts, and plan mode all work
-  through Ingress, including remotely via Nabu Casa.
+- **Ingress remains the default browser surface.** It listens inside the
+  container on `8099` and accepts only HA's Ingress proxy (plus loopback). The
+  web UI, terminal, onboarding bootstrap, WebSocket streaming, permission
+  prompts, and plan mode work there, including remotely through Nabu Casa.
+- A second listener on container port `8100` is **API-only** for the native
+  [mobile apps](mobile.md). It serves `/healthz`, `/api/*`, and `/api/ws`; it
+  does not serve the SPA or terminal, and every API/WebSocket request requires
+  the Podiom gateway token.
+- Supervisor declares `8100/tcp` disabled by default. To opt in, open the Podiom
+  add-on's **Configuration → Network**, choose **Show disabled ports**, map the
+  Podiom mobile API to a host port (`8787` recommended), save, and restart.
+  Connect the app to `http://<HA-LAN-IP>:<mapped-port>` with no sidebar path.
+- The LAN listener accepts private IPv4 networks and IPv6 ULA by default.
+  `server.allow_from` can replace those defaults with a narrower subnet. It is
+  plain HTTP, so use it only on a trusted LAN; it is not a Nabu Casa or remote
+  mobile endpoint.
 - Developers: `scripts/ingress-sim` simulates the Ingress sub-path + headers
   against a local daemon for testing without an HA install.
 

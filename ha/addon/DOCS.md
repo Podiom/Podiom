@@ -3,8 +3,9 @@
 Podiom runs a team of agentic AI colleagues — powered by the `claude` and
 `codex` CLIs — with a web UI for chatting, permission prompts, plans,
 schedules, and memory. This add-on packages the full Podiom stack for Home
-Assistant, so you get safe internet access to it (e.g. from your phone via
-Nabu Casa) without opening a single port yourself.
+Assistant, so by default you get safe internet access to it (e.g. from your
+phone via Nabu Casa) without opening a port. Native-app LAN access is a separate
+opt-in described below.
 
 ## What's inside the container
 
@@ -74,6 +75,32 @@ start and copied into the browser at the end of setup.
   value; the `podiom` CLI inside the container picks it up automatically.
 - The *Gateway token* field looks editable but is managed by Podiom — edits
   are overwritten with the real value on the next start.
+
+## Connecting the Podiom iOS or Android app
+
+The Home Assistant sidebar address is an Ingress page and cannot be used as the
+server address in the standalone Podiom mobile app. Enable the add-on's separate
+API-only LAN port instead:
+
+1. Open this add-on's **Configuration** tab.
+2. Expand **Network** / **Show disabled ports**.
+3. Enter a free host port beside **Podiom mobile API** (`8100/tcp`). We
+   recommend `8787`.
+4. Save and restart the add-on.
+5. Copy the **Gateway token** from this page.
+6. In the mobile app enter `http://<HOME-ASSISTANT-LAN-IP>:<HOST-PORT>` and the
+   token — for example `http://192.168.1.7:8787`.
+
+Do not include the HA port `8123` or a sidebar path such as
+`/6142004a_podiom`. The mobile listener exposes only Podiom's health, API, and
+WebSocket endpoints; the dashboard, setup flow, and terminal stay behind HA
+Ingress. The add-on does not advertise this endpoint over mDNS, so enter it
+manually.
+
+This connection is plain HTTP and sends the gateway token over your network.
+Enable it only on a trusted LAN. For access away from home, continue using the
+HA web UI through HTTPS/Nabu Casa; the native app does not currently log in to
+Home Assistant.
 
 ## Language toolchains
 
@@ -149,8 +176,9 @@ the gateway token**, we strongly recommend **password-protected backups**
   authentication on your Home Assistant users.
 - Podiom is single-user and fully trusted by design; the add-on does not
   change that model, it just fences it behind HA.
-- The add-on's web server only accepts connections from the Ingress proxy;
-  no port is published on your network.
+- The full web server and terminal accept connections only from the Ingress
+  proxy. The separate API-only mobile port is disabled by default, restricted
+  to local/private source ranges, and requires the gateway token when enabled.
 
 ## Resource honesty (Raspberry Pi & friends)
 
