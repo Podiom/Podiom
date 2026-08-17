@@ -36,16 +36,18 @@ jobs:
           go-version: "1.26.x"
           cache: true
 
+      # 22 is the floor for @capacitor/cli, which a root `npm install` pulls in.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
+      # web/ is an npm workspace of the root package, so there is one lockfile
+      # at the root and the install runs from there.
       - name: Install web dependencies
         run: npm ci
-        working-directory: web
 
       - name: Compute release version
         id: version

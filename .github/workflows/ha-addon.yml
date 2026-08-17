@@ -47,12 +47,14 @@ jobs:
           go-version: "1.26.x"
           cache: true
 
+      # 22 is the floor for @capacitor/cli, which the root `npm install` in
+      # `make web` pulls in. One lockfile at the root covers the web workspace.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
