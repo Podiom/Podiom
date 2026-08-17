@@ -66,8 +66,12 @@ type ScheduledRunRequest struct {
 	Task         string
 	// GoalID links this run to a goal. A goal-linked run is always forced yolo
 	// (part of the goal's autonomous chain) and its tool calls are recorded on
-	// the goal timeline.
+	// the goal timeline. It also supplies the project when ProjectID is empty.
 	GoalID string
+	// ProjectID binds the run's session to a project, so the run works in the
+	// project directory and receives the project's standing instructions. It comes
+	// from the schedule file's `project:` field.
+	ProjectID string
 }
 
 // RunScheduled creates a durable schedule-origin session (R7.9), runs the task
@@ -79,6 +83,17 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 	// defense in depth for older files created before goals normalized to yolo.
 	if req.GoalID != "" {
 		req.Yolo = true
+		// A goal-linked schedule file written before `project:` existed carries no
+		// project of its own, so fall back to the goal's: the whole goal chain
+		// should share one workspace. Create stamps the project into new files, so
+		// this only covers older ones — no migration needed. The lookup error is
+		// swallowed deliberately: schedule files have no foreign key to goals and
+		// DeleteGoal leaves them on disk, so a dangling goal_id must keep running.
+		if strings.TrimSpace(req.ProjectID) == "" {
+			if goal, err := c.store.GetGoal(ctx, req.GoalID); err == nil {
+				req.ProjectID = c.goalProjectID(goal)
+			}
+		}
 	}
 	permission := config.PermissionApprove
 	var relay adapter.PermissionRelay
@@ -101,6 +116,7 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 		ScheduleID:     req.ScheduleName,
 		RunID:          req.RunID,
 		GoalID:         req.GoalID,
+		ProjectID:      req.ProjectID,
 	})
 	if err != nil {
 		return store.Session{}, err

@@ -311,6 +311,72 @@ func TestCreateTaskRejectsIncompleteRunTarget(t *testing.T) {
 	}
 }
 
+// An unknown project is rejected at create time rather than at start time: the
+// roadmap ledger sync ignores unknown ids, so without this the task is created
+// happily and can then never be started, because CreateSession refuses it.
+func TestCreateTaskRejectsUnknownProject(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateTask(ctx, store.Task{
+		Title:         "Somewhere else",
+		AssignedAgent: "jared",
+		ProjectID:     "nope",
+	}); err == nil {
+		t.Fatal("expected unknown project to fail")
+	}
+}
+
+// A task a goal's plan created belongs to the goal's project unless the agent
+// deliberately named another one, and the session it spawns has to carry that
+// project all the way through — the task card and the run must agree.
+func TestCreateTaskInheritsGoalProject(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	for _, id := range []string{"mission-control", "beta"} {
+		if _, err := c.CreateProject(ctx, projects.Project{ID: id, Name: id}); err != nil {
+			t.Fatalf("create project %q: %v", id, err)
+		}
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "jared", ProjectID: "mission-control"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+
+	inherited, err := c.CreateTask(ctx, store.Task{Title: "Do the thing", AssignedAgent: "jared", GoalID: goal.ID})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if inherited.ProjectID != "mission-control" {
+		t.Fatalf("goal task project = %q, want mission-control", inherited.ProjectID)
+	}
+	sess, err := c.StartTask(ctx, StartTaskRequest{TaskID: inherited.ID})
+	if err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	if sess.ProjectID != "mission-control" {
+		t.Fatalf("goal task session project = %q, want mission-control", sess.ProjectID)
+	}
+
+	// Explicit wins: inheritance is a default, not a force.
+	explicit, err := c.CreateTask(ctx, store.Task{Title: "Elsewhere", AssignedAgent: "jared", GoalID: goal.ID, ProjectID: "beta"})
+	if err != nil {
+		t.Fatalf("create task with explicit project: %v", err)
+	}
+	if explicit.ProjectID != "beta" {
+		t.Fatalf("explicit task project = %q, want beta", explicit.ProjectID)
+	}
+}
+
 func TestCreateSessionStoresProjectAndRejectsUnknownProject(t *testing.T) {
 	ctx := context.Background()
 	c, _, cleanup := newScheduledTestCore(t)

@@ -102,7 +102,9 @@ drafting roadmap prompts.
 Each project may also have user-authored standing instructions in its
 `instructions` ledger field. Those instructions apply to sessions bound to the
 project, including manual project chats, roadmap task sessions, scheduled task
-pickups, and goal planning/review sessions for goals with that project id. For
+pickups, goal planning/review sessions for goals with that project id, and runs
+of any schedule carrying that project — including the schedules a goal's plan
+creates, which inherit the goal's project. For
 connected GitHub projects this remains Podiom ledger metadata, not part of the
 replaceable source snapshot under `repo/`.
 

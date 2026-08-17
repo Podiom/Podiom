@@ -334,8 +334,24 @@ func (c *Core) CreateTask(ctx context.Context, task store.Task) (store.Task, err
 		return store.Task{}, fmt.Errorf("task title is required")
 	}
 	if task.GoalID != "" {
-		if _, err := c.store.GetGoal(ctx, task.GoalID); err != nil {
+		goal, err := c.store.GetGoal(ctx, task.GoalID)
+		if err != nil {
 			return store.Task{}, fmt.Errorf("goal %q: %w", task.GoalID, err)
+		}
+		// A goal task with no project of its own belongs to the goal's project, so
+		// its run gets the same workspace and standing instructions as the goal's
+		// own sessions. An explicit project wins: a goal may span projects.
+		if strings.TrimSpace(task.ProjectID) == "" {
+			task.ProjectID = c.goalProjectID(goal)
+		}
+	}
+	// Checked after the inherit above, whose value the ledger already vouched for,
+	// so only a caller-supplied id can fail here. Without this a task with an
+	// unknown project is created happily and can then never be started, because
+	// StartTask -> CreateSession rejects it.
+	if task.ProjectID != "" {
+		if _, err := c.ledger.Get(task.ProjectID); err != nil {
+			return store.Task{}, err
 		}
 	}
 	if err := validateTaskProvider(task); err != nil {

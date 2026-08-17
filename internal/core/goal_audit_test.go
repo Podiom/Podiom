@@ -3,11 +3,13 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
+	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -243,5 +245,126 @@ func TestGoalLinkedScheduleForcesYolo(t *testing.T) {
 	}
 	if sess.GoalID != goal.ID {
 		t.Fatalf("goal-linked schedule session GoalID = %q, want %q", sess.GoalID, goal.ID)
+	}
+}
+
+// A schedule the goal's plan created is part of the goal's chain, so its runs
+// belong in the goal's project: same workspace, same standing instructions. This
+// covers the legacy shape (a file with goal_id but no project:) — Scheduler.Create
+// stamps the project into new files, so the fallback is what older files rely on.
+func TestGoalLinkedScheduleInheritsGoalProject(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ran"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "runner", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if _, err := c.WriteProjectInstructions("mission-control", "goal project layer\n"); err != nil {
+		t.Fatalf("write project instructions: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "runner", ProjectID: "mission-control"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "goal-sched",
+		RunID:        "run-1",
+		AgentName:    "runner",
+		Task:         "do it",
+		GoalID:       goal.ID,
+	})
+	if err != nil {
+		t.Fatalf("run scheduled: %v", err)
+	}
+	if sess.ProjectID != "mission-control" {
+		t.Fatalf("goal-linked schedule session ProjectID = %q, want mission-control", sess.ProjectID)
+	}
+	// The stored column alone is not the point: the run has to actually happen in
+	// the project and receive its standing instructions.
+	req := startRequestFor(t, fake, sess.ID)
+	projectRoot := filepath.Join(c.paths.ProjectsDir, "mission-control")
+	if req.WorkspaceDir != projectRoot {
+		t.Fatalf("workspace dir = %q, want %q", req.WorkspaceDir, projectRoot)
+	}
+	if !strings.Contains(string(req.Instructions), ".podiom-project-instructions.md") {
+		t.Fatalf("goal-linked schedule session missing project instruction path:\n%s", req.Instructions)
+	}
+}
+
+// A schedule file's own project wins over the goal's: a goal's plan may put one
+// piece of work in another project.
+func TestGoalLinkedScheduleKeepsExplicitProject(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ran"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "runner", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	for _, id := range []string{"mission-control", "beta"} {
+		if _, err := c.CreateProject(ctx, projects.Project{ID: id, Name: id}); err != nil {
+			t.Fatalf("create project %q: %v", id, err)
+		}
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "runner", ProjectID: "mission-control"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "goal-sched",
+		RunID:        "run-1",
+		AgentName:    "runner",
+		Task:         "do it",
+		GoalID:       goal.ID,
+		ProjectID:    "beta",
+	})
+	if err != nil {
+		t.Fatalf("run scheduled: %v", err)
+	}
+	if sess.ProjectID != "beta" {
+		t.Fatalf("explicit schedule project = %q, want beta", sess.ProjectID)
+	}
+}
+
+// Deleting a project deliberately orphans rather than cascades, so a goal can be
+// left pointing at a project that no longer exists. The goal's schedules must
+// keep running project-less instead of failing at session creation.
+func TestGoalLinkedScheduleSurvivesMissingGoalProject(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ran"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "runner", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "runner", ProjectID: "mission-control"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := c.DeleteProject(ctx, "mission-control"); err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "goal-sched",
+		RunID:        "run-1",
+		AgentName:    "runner",
+		Task:         "do it",
+		GoalID:       goal.ID,
+	})
+	if err != nil {
+		t.Fatalf("run scheduled after project deletion: %v", err)
+	}
+	if sess.ProjectID != "" {
+		t.Fatalf("deleted project should leave the session unbound, got %q", sess.ProjectID)
 	}
 }

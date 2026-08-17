@@ -12,6 +12,7 @@ import (
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -516,20 +517,92 @@ func TestPickupDueGoalReviews(t *testing.T) {
 	}
 }
 
+// A schedule created for a goal records the goal's project in the file, for the
+// same reason it records run_permission: yolo — the workspace its runs will use
+// should be visible on disk, not only derived at fire time.
+func TestCreateStampsGoalProject(t *testing.T) {
+	ctx := context.Background()
+	s, coreSvc, _, cleanup := newTestScheduler(t)
+	defer cleanup()
+
+	for _, id := range []string{"mission-control", "beta"} {
+		if _, err := coreSvc.CreateProject(ctx, projects.Project{ID: id, Name: id}); err != nil {
+			t.Fatalf("create project %q: %v", id, err)
+		}
+	}
+	goal, err := coreSvc.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "jared", ProjectID: "mission-control"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+
+	inherited, err := s.Create(ctx, CreateParams{
+		Name:   "goal-sched",
+		Agent:  "jared",
+		Cron:   "0 7 * * *",
+		GoalID: goal.ID,
+		Body:   "Do the recurring thing.",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if inherited.Project != "mission-control" {
+		t.Fatalf("goal schedule project = %q, want mission-control", inherited.Project)
+	}
+	onDisk, err := os.ReadFile(inherited.Path)
+	if err != nil {
+		t.Fatalf("read schedule file: %v", err)
+	}
+	if !strings.Contains(string(onDisk), "project: mission-control") {
+		t.Fatalf("goal's project is not visible on disk:\n%s", onDisk)
+	}
+
+	// Explicit wins: a goal's plan may put one schedule in another project.
+	explicit, err := s.Create(ctx, CreateParams{
+		Name:    "goal-sched-elsewhere",
+		Agent:   "jared",
+		Cron:    "0 8 * * *",
+		GoalID:  goal.ID,
+		Project: "beta",
+		Body:    "Do the other thing.",
+	})
+	if err != nil {
+		t.Fatalf("create with explicit project: %v", err)
+	}
+	if explicit.Project != "beta" {
+		t.Fatalf("explicit schedule project = %q, want beta", explicit.Project)
+	}
+
+	// An unknown project fails at create time rather than producing a schedule
+	// whose runs would silently land in no project at all.
+	if _, err := s.Create(ctx, CreateParams{
+		Name:    "bad-project",
+		Agent:   "jared",
+		Cron:    "0 9 * * *",
+		Project: "nope",
+		Body:    "Should not exist.",
+	}); err == nil {
+		t.Fatal("expected an unknown project to be rejected")
+	}
+}
+
 // TestUpdatePreservesUnpatchedFields pins the contract that makes Update safe to
 // hand an agent: a partial patch keeps everything it did not mention — including
 // the creator attribution and the body — and parking a schedule stops it firing
 // without destroying it.
 func TestUpdatePreservesUnpatchedFields(t *testing.T) {
 	ctx := context.Background()
-	s, _, _, cleanup := newTestScheduler(t)
+	s, coreSvc, _, cleanup := newTestScheduler(t)
 	defer cleanup()
 
+	if _, err := coreSvc.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
 	created, err := s.Create(ctx, CreateParams{
 		Name:             "morning",
 		Agent:            "jared",
 		Cron:             "0 7 * * *",
 		GoalID:           "goal-1",
+		Project:          "mission-control",
 		CreatedBySession: "sess-1",
 		CreatedByAgent:   "jared",
 		Body:             "Summarise the calendar.",
@@ -557,6 +630,9 @@ func TestUpdatePreservesUnpatchedFields(t *testing.T) {
 	}
 	if updated.GoalID != "goal-1" {
 		t.Errorf("update dropped the goal link: %q", updated.GoalID)
+	}
+	if updated.Project != "mission-control" {
+		t.Errorf("update dropped the project binding: %q", updated.Project)
 	}
 	// Parking unregisters the cron job; the file itself stays on disk.
 	if updated.NextRun != nil {

@@ -258,6 +258,10 @@ its next review. An `env_var` approved **with** a value continues to
   `goal_id` run yolo too (a goal-linked task's plan gate is bypassed, and a
   goal-linked schedule run is forced yolo even when its file still says
   `run_permission: preapproved`).
+- The chain inherits the goal's `project_id` the same way, so the delegated work
+  happens in the same workspace with the same standing instructions. Unlike yolo
+  this is a **default, not a force**: a task or schedule that names its own
+  project keeps it, because a goal may legitimately span projects.
 - The counterweight is the audit trail, not a permission gate: every tool call
   the chain makes is recorded on the goal timeline (§8), and the UI must disclose
   full access — a warning on the goal-creation form and a persistent badge on the

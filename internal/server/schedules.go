@@ -33,6 +33,7 @@ type scheduleCreateRequest struct {
 	RunPermission string          `json:"run_permission"`
 	AllowedTools  []string        `json:"allowed_tools"`
 	GoalID        string          `json:"goal_id"`
+	Project       string          `json:"project"`
 	// CreatedBySession/CreatedByAgent are set by podiom_create_schedule from the
 	// calling session's own identity, not by the model. The web UI and CLI leave
 	// them empty, which is what marks a schedule as human-authored.
@@ -87,6 +88,7 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			RunPermission: schedule.RunPermission(strings.TrimSpace(req.RunPermission)),
 			AllowedTools:  req.AllowedTools,
 			GoalID:        strings.TrimSpace(req.GoalID),
+			Project:       strings.TrimSpace(req.Project),
 
 			CreatedBySession: strings.TrimSpace(req.CreatedBySession),
 			CreatedByAgent:   strings.TrimSpace(req.CreatedByAgent),
@@ -113,6 +115,7 @@ type scheduleUpdateRequest struct {
 	RunPermission *string          `json:"run_permission,omitempty"`
 	AllowedTools  *[]string        `json:"allowed_tools,omitempty"`
 	Enabled       *bool            `json:"enabled,omitempty"`
+	Project       *string          `json:"project,omitempty"`
 	Body          *string          `json:"body,omitempty"`
 }
 
@@ -153,6 +156,7 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 				Webhook:      req.Webhook,
 				AllowedTools: req.AllowedTools,
 				Enabled:      req.Enabled,
+				Project:      req.Project,
 				Body:         req.Body,
 			}
 			if req.RunPermission != nil {

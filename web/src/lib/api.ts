@@ -604,6 +604,7 @@ export interface NewScheduleRequest {
   webhook?: boolean;
   run_permission: string;
   allowed_tools?: string[];
+  project?: string;
   body: string;
 }
 

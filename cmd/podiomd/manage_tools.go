@@ -221,7 +221,7 @@ func taskTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			APIRoutes:   []string{"/api/tasks"},
 			Description: "Create a roadmap item (task). plan_required=true puts the agent in plan mode for this task. Leave pickup_at empty for an on-demand task, or set an RFC3339 timestamp to schedule automatic pickup. The task records your session and agent name, and the user sees it as created by you with a link back to this conversation." + workspaceFileProseGuidance,
 			InputSchema: objectSchema([]string{"title"}, map[string]any{
-				"project_id":     strProp("Project id this task belongs to."),
+				"project_id":     strProp("Project id this task belongs to. Omit it on a goal task to inherit the goal's project; pass one only when the work belongs in a different project."),
 				"title":          strProp("Short task title."),
 				"body":           strProp("Task description / prompt."),
 				"assigned_agent": strProp("Agent that will work the task."),
@@ -486,6 +486,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				"run_permission": strProp("preapproved (default) or yolo."),
 				"allowed_tools":  strArrProp("Tools permitted under preapproved runs."),
 				"goal_id":        strProp("Goal id, if this schedule is part of a goal's plan (optional). Pass the id from your goal brief so this schedule shows up as linked to the goal."),
+				"project":        strProp("Project id the runs work in, so they get the project directory and its standing instructions. Omit it on a goal schedule to inherit the goal's project; pass one only when the work belongs in a different project."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -497,7 +498,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 						return "", err
 					}
 				}
-				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "webhook", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "goal_id")
+				body := bodyFrom(m, "name", "agent", "body", "cron", "every", "webhook", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "goal_id", "project")
 				return c.post(ctx, "/api/schedules", stampCreator(body, sessionID, agentName))
 			},
 		},
@@ -537,6 +538,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				"run_permission": strProp("preapproved or yolo."),
 				"allowed_tools":  strArrProp("Tools permitted under preapproved runs (replaces the current list)."),
 				"enabled":        boolProp("false parks the schedule without deleting it; true re-arms it."),
+				"project":        strProp("Project id the runs work in; empty string unbinds it from any project."),
 			}),
 			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 				m, err := argMap(args)
@@ -546,7 +548,7 @@ func scheduleTools(c *manageClient, sessionID, agentName string) []mcpTool {
 				if err := requireField(m, "name"); err != nil {
 					return "", err
 				}
-				body := bodyFrom(m, "agent", "body", "cron", "every", "webhook", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "enabled")
+				body := bodyFrom(m, "agent", "body", "cron", "every", "webhook", "provider", "profile", "model", "effort", "run_permission", "allowed_tools", "enabled", "project")
 				if len(body) == 0 {
 					return "", fmt.Errorf("provide at least one field to change")
 				}

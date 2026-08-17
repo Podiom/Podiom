@@ -71,6 +71,42 @@ func TestRenderIncludesRunTarget(t *testing.T) {
 	}
 }
 
+// A schedule's project decides which workspace its runs get, so it has to
+// survive the Render -> Parse round trip every write goes through, and stay
+// absent (rather than becoming "") on a file that names no project.
+func TestProjectRoundTrip(t *testing.T) {
+	text := Render(CreateParams{
+		Name:    "nightly",
+		Agent:   "jared",
+		Cron:    "0 1 * * *",
+		Project: "mission-control",
+		Body:    "Run the audit.",
+	})
+	if !strings.Contains(text, "project: mission-control") {
+		t.Fatalf("rendered schedule missing the project:\n%s", text)
+	}
+	sched, err := Parse(writeSchedule(t, t.TempDir(), "nightly.md", text))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if sched.Project != "mission-control" {
+		t.Fatalf("project did not survive the round trip: %+v", sched)
+	}
+
+	unbound, err := Parse(writeSchedule(t, t.TempDir(), "plain.md", Render(CreateParams{
+		Name:  "plain",
+		Agent: "jared",
+		Cron:  "0 1 * * *",
+		Body:  "Run the audit.",
+	})))
+	if err != nil {
+		t.Fatalf("parse unbound: %v", err)
+	}
+	if unbound.Project != "" {
+		t.Fatalf("schedule with no project should stay unbound, got %q", unbound.Project)
+	}
+}
+
 // TestCreatorProvenanceRoundTrip pins that a schedule an agent authored records
 // which session it came from, and survives the Render -> Parse round trip that
 // every write goes through.

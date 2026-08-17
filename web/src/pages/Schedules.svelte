@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { answerAgentQuestion, createSchedule, deleteSchedule, listGoals, listProfiles, listSchedules, runSchedule } from "../lib/api";
+  import { answerAgentQuestion, createSchedule, deleteSchedule, listGoals, listProfiles, listProjects, listSchedules, runSchedule } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
@@ -9,7 +9,7 @@
   import { apiUrl } from "../lib/base";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
   import { modeChip } from "../lib/theme";
-  import type { AgentQuestion, Agent, Goal, ProfileInfo, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
+  import type { AgentQuestion, Agent, Goal, ProfileInfo, Project, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
 
   interface ChatTarget {
@@ -27,6 +27,7 @@
   let schedules = $state<ScheduleStatus[]>([]);
   let goals = $state<Goal[]>([]);
   let profiles = $state<ProfileInfo[]>([]);
+  let projects = $state<Project[]>([]);
   let error = $state<string | null>(null);
   let busy = $state<string>("");
   let hoverRun = $state<string>("");
@@ -85,6 +86,7 @@
   let nsEffort = $state("");
   let nsMode = $state("preapproved");
   let nsWebhook = $state(false);
+  let nsProject = $state("");
   let nsBody = $state("");
   let nsBusy = $state(false);
   let copiedWebhook = $state("");
@@ -107,6 +109,7 @@
       (nsProfile ? `profile: ${nsProfile}\n` : "") +
       (nsModel ? `model: ${nsModel}\n` : "") +
       (nsEffort ? `effort: ${nsEffort}\n` : "") +
+      (nsProject ? `project: ${nsProject}\n` : "") +
       (nsCron.trim() ? `cron: ${nsCron.trim()}\n` : "") +
       (nsWebhook ? "webhook: true\nwebhook_secret: <generated>\n" : "") +
       `run_permission: ${nsMode}\nenabled: true\n---\n\n` +
@@ -124,6 +127,7 @@
     nsModel = nsEffort = "";
     nsMode = "preapproved";
     nsWebhook = false;
+    nsProject = "";
     nsBody = "";
     error = null;
     creating = true;
@@ -143,6 +147,7 @@
         cron: nsCron.trim(),
         webhook: nsWebhook,
         run_permission: nsMode,
+        project: nsProject,
         body: nsBody.trim(),
       });
       creating = false;
@@ -174,10 +179,11 @@
 
   async function load() {
     try {
-      const [scheduleList, goalList, profileList] = await Promise.all([listSchedules(), listGoals(), listProfiles()]);
+      const [scheduleList, goalList, profileList, projectList] = await Promise.all([listSchedules(), listGoals(), listProfiles(), listProjects()]);
       schedules = scheduleList;
       goals = goalList;
       profiles = profileList;
+      projects = projectList;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -276,6 +282,7 @@
     if (s.provider) fm.push({ k: "provider", v: s.provider });
     if (s.profile) fm.push({ k: "profile", v: s.profile });
     fm.push({ k: "mode", v: s.run_permission });
+    if (s.project) fm.push({ k: "project", v: s.project });
     if (s.goal_id) fm.push({ k: "origin", v: "goal plan" });
     return fm;
   }
@@ -546,6 +553,17 @@
             {#each ["preapproved", "yolo"] as m}<button style={chip(m === nsMode)} onclick={() => (nsMode = m)}>{m}</button>{/each}
           </div>
         </div>
+        {#if projects.length}
+          <div class="ns-row">
+            <span class="ns-key">project</span>
+            <div class="ns-chips">
+              <button style={chip(nsProject === "")} onclick={() => (nsProject = "")}>none</button>
+              {#each projects as p}
+                <button style={chip(nsProject === p.id)} onclick={() => (nsProject = p.id)}>{p.name || p.id}</button>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         <div class="label-mono" style="margin:18px 0 8px">prompt</div>
         <textarea class="field-area" rows="4" bind:value={nsBody} placeholder="What should the agent do on every run? This becomes the body of the markdown file." style="min-height:96px"></textarea>

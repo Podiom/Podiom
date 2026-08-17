@@ -117,7 +117,7 @@ func writeGoalBrief(b *strings.Builder, goal store.Goal) {
 		fmt.Fprintf(b, "- Success criteria (what \"done\" means): %s\n", strings.TrimSpace(goal.SuccessCriteria))
 	}
 	if goal.ProjectID != "" {
-		fmt.Fprintf(b, "- Project: %s\n", goal.ProjectID)
+		fmt.Fprintf(b, "- Project: %s — the tasks and schedules you create inherit this project and run in its workspace with its standing instructions. Leave project_id/project unset so they inherit it; name a different one only when that piece of work genuinely belongs elsewhere.\n", goal.ProjectID)
 	}
 	if goal.ReviewEvery != "" {
 		fmt.Fprintf(b, "- Review cadence: every %s\n", goal.ReviewEvery)

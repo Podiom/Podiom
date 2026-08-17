@@ -118,6 +118,38 @@ func goalRunTarget(goal store.Goal) RunTarget {
 	}
 }
 
+// goalProjectID returns the project a goal's delegated work inherits. It yields
+// "" when the goal has no project or its project has since been deleted from the
+// ledger: DeleteProject deliberately orphans rather than cascades, and
+// CreateSession rejects an unknown project id, so a dangling reference has to
+// degrade to "no project" instead of failing every run in the goal's chain.
+func (c *Core) goalProjectID(goal store.Goal) string {
+	projectID := strings.TrimSpace(goal.ProjectID)
+	if projectID == "" {
+		return ""
+	}
+	if _, err := c.ledger.Get(projectID); err != nil {
+		return ""
+	}
+	return projectID
+}
+
+// GoalProjectID resolves a goal id to the project its delegated work inherits.
+// Exported for the scheduler, which stamps it into a new schedule file. A goal
+// that no longer exists yields "": schedule files and sessions.goal_id are
+// deliberately free of foreign keys, and DeleteGoal leaves schedule files on
+// disk, so an unresolvable goal must not be an error here.
+func (c *Core) GoalProjectID(ctx context.Context, goalID string) string {
+	if strings.TrimSpace(goalID) == "" {
+		return ""
+	}
+	goal, err := c.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return ""
+	}
+	return c.goalProjectID(goal)
+}
+
 // GoalPatch carries partial goal updates. Nil fields are left untouched.
 type GoalPatch struct {
 	Title           *string

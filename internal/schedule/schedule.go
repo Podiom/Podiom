@@ -48,6 +48,10 @@ type Schedule struct {
 	AllowedTools  []string        // preapproved allow-list
 	Enabled       bool            // off switch: a disabled file stays but does not fire
 	GoalID        string          // optional id of the goal whose plan created this schedule
+	// Project binds the runs to a project: they work in its directory and receive
+	// its standing instructions. Optional. A schedule created for a goal inherits
+	// the goal's project unless it names its own.
+	Project string
 	// CreatedBySession and CreatedByAgent record the agent session that authored
 	// this file, so a recurring job an agent decided to create is traceable back
 	// to the conversation it came out of. Both empty means a human wrote it (the
@@ -72,6 +76,7 @@ type frontmatter struct {
 	AllowedTools     []string `yaml:"allowed_tools"`
 	Enabled          bool     `yaml:"enabled"`
 	GoalID           string   `yaml:"goal_id"`
+	Project          string   `yaml:"project"`
 	CreatedBySession string   `yaml:"created_by_session"`
 	CreatedByAgent   string   `yaml:"created_by_agent"`
 }
@@ -138,6 +143,7 @@ func parseBytes(path string, raw []byte) (Schedule, error) {
 		AllowedTools:  meta.AllowedTools,
 		Enabled:       meta.Enabled,
 		GoalID:        strings.TrimSpace(meta.GoalID),
+		Project:       strings.TrimSpace(meta.Project),
 
 		CreatedBySession: strings.TrimSpace(meta.CreatedBySession),
 		CreatedByAgent:   strings.TrimSpace(meta.CreatedByAgent),
@@ -202,6 +208,9 @@ func Render(p CreateParams) string {
 	b.WriteString("agent: " + p.Agent + "\n")
 	if p.GoalID != "" {
 		b.WriteString("goal_id: " + p.GoalID + "\n")
+	}
+	if p.Project != "" {
+		b.WriteString("project: " + p.Project + "\n")
 	}
 	if p.CreatedBySession != "" {
 		b.WriteString("created_by_session: " + p.CreatedBySession + "\n")

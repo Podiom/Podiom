@@ -23,6 +23,7 @@ run_permission: preapproved   # preapproved (default) | yolo
 allowed_tools: []         # preapproved allow-list (empty = deny all side effects)
 enabled: true             # off switch — a disabled file stays but does not fire
 goal_id: ""               # optional — set when a goal's plan created this schedule
+project: ""               # optional — project id the runs work in
 created_by_session: ""    # optional — the agent session that created this file
 created_by_agent: ""      # optional — the agent that created it
 ---
@@ -43,6 +44,13 @@ Keep it to three lines.
   agent sets it when creating a schedule as part of a goal's plan, and the
   Schedules page highlights and links any schedule that carries one. Leave it
   unset for schedules you create yourself.
+- `project` binds the runs to a project: each run works in the project's
+  directory and receives its standing instructions, exactly like a roadmap task
+  session. A schedule created for a goal inherits the goal's project — Podiom
+  writes it into the file, so the workspace the runs will use is visible on disk
+  rather than only derived when the schedule fires — unless the creator named a
+  different one. A goal-linked file written before this field existed falls back
+  to the goal's project at run time, so nothing needs migrating.
 - `created_by_session` / `created_by_agent` record which agent decided this
   schedule should exist and the conversation it came out of. Podiom writes them
   from the agent's own session identity — the agent never supplies them — and the

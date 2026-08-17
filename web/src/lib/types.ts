@@ -784,6 +784,9 @@ export interface ScheduleStatus {
   allowed_tools: string[];
   enabled: boolean;
   goal_id?: string;
+  // The project the runs work in. Inherited from goal_id when the file does not
+  // name one itself.
+  project?: string;
   // Set when an agent created this schedule; absent when a human did.
   created_by_session?: string;
   created_by_agent?: string;

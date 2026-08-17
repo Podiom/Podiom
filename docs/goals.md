@@ -20,7 +20,11 @@ From the **Goals** page in the web UI, a goal has:
   the current values over time; every change is audited old → new.
 - **Lead agent** — exactly one agent owns the goal. It may delegate by creating
   tasks assigned to other agents, but it stays accountable.
-- **Project** (optional) — links the goal's sessions to a project.
+- **Project** (optional) — binds the goal's whole chain to a project: the
+  planning/review conversation, the roadmap tasks the agent creates, and the
+  schedules it creates all work in the project's directory and receive its
+  standing instructions. The agent may still put an individual task or schedule
+  in a different project when that piece of work belongs elsewhere.
 - **Review cadence** — how often the agent reviews the goal unattended
   (e.g. every 24h; floor 15m). Empty disables automatic reviews.
 

@@ -258,6 +258,7 @@ type Status struct {
 	AllowedTools     []string            `json:"allowed_tools"`
 	Enabled          bool                `json:"enabled"`
 	GoalID           string              `json:"goal_id,omitempty"`
+	Project          string              `json:"project,omitempty"`
 	CreatedBySession string              `json:"created_by_session,omitempty"`
 	CreatedByAgent   string              `json:"created_by_agent,omitempty"`
 	Body             string              `json:"body"`
@@ -293,6 +294,7 @@ func (s *Scheduler) List(ctx context.Context) ([]Status, error) {
 			AllowedTools:  sc.AllowedTools,
 			Enabled:       sc.Enabled,
 			GoalID:        sc.GoalID,
+			Project:       sc.Project,
 
 			CreatedBySession: sc.CreatedBySession,
 			CreatedByAgent:   sc.CreatedByAgent,
@@ -482,6 +484,7 @@ func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, ru
 		"trigger", trigger,
 		"agent", sched.Agent,
 		"goal", sched.GoalID,
+		"project", sched.Project,
 		"permission", permission,
 		"allowed_tools", len(sched.AllowedTools),
 	)
@@ -498,6 +501,7 @@ func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, ru
 		AllowedTools: sched.AllowedTools,
 		Task:         s.scheduleTaskPrompt(ctx, name, sched.Body, payload),
 		GoalID:       sched.GoalID,
+		ProjectID:    sched.Project,
 	})
 
 	status := store.RunSuccess
@@ -633,6 +637,9 @@ type CreateParams struct {
 	AllowedTools  []string
 	Enabled       bool
 	GoalID        string
+	// Project binds the runs to a project. Left empty on a goal-linked schedule,
+	// Create fills it in from the goal.
+	Project string
 	// CreatedBySession/CreatedByAgent attribute the file to the agent session
 	// that authored it. Left empty for schedules a human creates.
 	CreatedBySession string
@@ -662,7 +669,11 @@ type UpdateParams struct {
 	RunPermission *RunPermission
 	AllowedTools  *[]string
 	Enabled       *bool
-	Body          *string
+	// Project rebinds the runs to another project (or "" to unbind). Patchable
+	// unlike GoalID: moving a schedule between projects changes where it works,
+	// not how much it is trusted.
+	Project *string
+	Body    *string
 }
 
 // Create authors a new schedule markdown file under the schedules directory,
@@ -700,6 +711,18 @@ func (s *Scheduler) Create(ctx context.Context, p CreateParams) (Status, error) 
 		// records run_permission: yolo so the goal's autonomous posture is visible
 		// on disk, not just enforced at fire time.
 		p.RunPermission = PermissionYolo
+		// Same reasoning for the project: record it in the file so the workspace
+		// the runs will use is visible on disk. An explicit project wins, because
+		// a goal's plan may legitimately put a schedule in another project.
+		if strings.TrimSpace(p.Project) == "" && s.core != nil {
+			p.Project = s.core.GoalProjectID(ctx, p.GoalID)
+		}
+	}
+	if p.Project != "" && s.core != nil {
+		if _, err := s.core.GetProject(ctx, p.Project); err != nil {
+			s.log.Warn("schedule create failed", "event", "schedule", "schedule", name, "stage", "project", podiomlog.ErrorAttr(err))
+			return Status{}, err
+		}
 	}
 	if p.RunPermission == "" {
 		p.RunPermission = PermissionPreapproved
@@ -800,6 +823,7 @@ func (s *Scheduler) Update(ctx context.Context, name string, p UpdateParams) (St
 		AllowedTools:  current.AllowedTools,
 		Enabled:       current.Enabled,
 		GoalID:        current.GoalID,
+		Project:       current.Project,
 
 		CreatedBySession: current.CreatedBySession,
 		CreatedByAgent:   current.CreatedByAgent,
@@ -871,6 +895,16 @@ func (s *Scheduler) Update(ctx context.Context, name string, p UpdateParams) (St
 	if p.Enabled != nil {
 		next.Enabled = *p.Enabled
 		changed = append(changed, "enabled")
+	}
+	if p.Project != nil {
+		next.Project = strings.TrimSpace(*p.Project)
+		if next.Project != "" && s.core != nil {
+			if _, err := s.core.GetProject(ctx, next.Project); err != nil {
+				s.log.Warn("schedule update failed", "event", "schedule", "schedule", name, "stage", "project", podiomlog.ErrorAttr(err))
+				return Status{}, err
+			}
+		}
+		changed = append(changed, "project")
 	}
 	if p.Body != nil {
 		next.Body = strings.TrimSpace(*p.Body)
