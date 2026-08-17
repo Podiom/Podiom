@@ -167,8 +167,14 @@ func TestWebSocketStartInterview(t *testing.T) {
 	if err := wsjson.Write(ctx, conn, ClientMessage{Type: "stop_turn", SessionID: sessionID}); err != nil {
 		t.Fatalf("stop interview recovery: %v", err)
 	}
-	for i := 0; i < 10; i++ {
-		const requestID = "wait-interview-idle"
+	// attach_session only re-runs interview recovery once the hub has stopped
+	// reporting the turn as active; while it is still attached it just echoes the
+	// current "recovering" state. So poll until the stop has actually landed
+	// rather than for a fixed number of round-trips — on a loaded machine the
+	// teardown easily outlasts however fast this loop can spin.
+	const requestID = "wait-interview-idle"
+	lastStatus := "<none>"
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
 		if err := wsjson.Write(ctx, conn, ClientMessage{Type: "attach_session", RequestID: requestID, SessionID: sessionID}); err != nil {
 			t.Fatalf("check interview recovery stopped: %v", err)
 		}
@@ -178,8 +184,10 @@ func TestWebSocketStartInterview(t *testing.T) {
 		if settled.Interview.Status == "failed" {
 			return
 		}
+		lastStatus = settled.Interview.Status
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("interview recovery turn did not stop")
+	t.Fatalf("interview recovery turn did not stop: last status = %q", lastStatus)
 }
 
 func TestWebSocketInterviewBridgeProducesStructuredDraft(t *testing.T) {
