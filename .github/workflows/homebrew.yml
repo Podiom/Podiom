@@ -1,0 +1,136 @@
+name: homebrew
+
+on:
+  workflow_run:
+    workflows:
+      - release
+    branches:
+      - master
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to sync, for example v0.1.188"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  bump-formula:
+    name: Update Homebrew tap formula
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Compute release version
+        id: version
+        run: |
+          version="${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release download "$VERSION" --repo "${{ github.repository }}" -p SHA256SUMS --clobber
+
+      - name: Clone Podiom/homebrew-podiom
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Podiom/homebrew-podiom.git" \
+            "${RUNNER_TEMP}/homebrew-podiom"
+
+      - name: Render formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          plain_version="${VERSION#v}"
+
+          sha() { awk -v f="$1" '$2 == f { print $1 }' SHA256SUMS; }
+
+          darwin_arm64_sha="$(sha "podiom_${VERSION}_darwin_arm64.tar.gz")"
+          darwin_amd64_sha="$(sha "podiom_${VERSION}_darwin_amd64.tar.gz")"
+          linux_arm64_sha="$(sha "podiom_${VERSION}_linux_arm64.tar.gz")"
+          linux_amd64_sha="$(sha "podiom_${VERSION}_linux_amd64.tar.gz")"
+
+          for name in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64; do
+            var="${name}_sha"
+            if [ -z "${!var}" ]; then
+              echo "missing checksum for ${name} in SHA256SUMS (${VERSION})" >&2
+              exit 1
+            fi
+          done
+
+          formula_path="${RUNNER_TEMP}/homebrew-podiom/Formula/podiom.rb"
+          cat > "$formula_path" <<EOF
+class Podiom < Formula
+  desc "Thin orchestration layer for local LLM agents"
+  homepage "https://github.com/${REPO}"
+  version "${plain_version}"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_darwin_arm64.tar.gz"
+      sha256 "${darwin_arm64_sha}"
+    end
+
+    on_intel do
+      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_darwin_amd64.tar.gz"
+      sha256 "${darwin_amd64_sha}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_linux_arm64.tar.gz"
+      sha256 "${linux_arm64_sha}"
+    end
+
+    on_intel do
+      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_linux_amd64.tar.gz"
+      sha256 "${linux_amd64_sha}"
+    end
+  end
+
+  def install
+    bin.install "podiom"
+    bin.install "podiomd"
+  end
+
+  test do
+    assert_match "v#{version}", shell_output("#{bin}/podiom --version")
+    assert_match "v#{version}", shell_output("#{bin}/podiomd --version")
+  end
+end
+EOF
+
+      - name: Validate formula syntax
+        run: ruby -c "${RUNNER_TEMP}/homebrew-podiom/Formula/podiom.rb"
+
+      - name: Publish formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/homebrew-podiom"
+          if git diff --quiet; then
+            echo "Formula already up to date for ${VERSION}"
+            exit 0
+          fi
+          git config user.name "podiom-release[bot]"
+          git config user.email "podiom-release[bot]@users.noreply.github.com"
+          git add Formula/podiom.rb
+          git commit -m "podiom ${VERSION}"
+          git push
