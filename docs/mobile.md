@@ -183,7 +183,7 @@ sources are the SVGs in `assets/`, and everything under
 is regenerated from them:
 
 ```bash
-npm run assets       # capacitor-assets generate --ios --android
+npm run assets       # npx @capacitor/assets@3.0.5 generate --ios --android
 ```
 
 | Source | Feeds |

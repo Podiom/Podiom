@@ -9,14 +9,13 @@
     "plugins/*"
   ],
   "scripts": {
-    "assets": "capacitor-assets generate --ios --android",
+    "assets": "npx --yes @capacitor/assets@3.0.5 generate --ios --android",
     "build:web": "npm run build -w web",
     "sync": "npm run build:web && cap sync",
     "sync:ios": "npm run build:web && cap sync ios",
     "sync:android": "npm run build:web && cap sync android"
   },
   "devDependencies": {
-    "@capacitor/assets": "3.0.5",
     "@capacitor/cli": "8.5.0",
     "typescript": "^5.7.3"
   },
