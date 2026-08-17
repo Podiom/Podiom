@@ -87,11 +87,16 @@ jobs:
       - name: Build web assets
         run: npm run build:web
 
-      - name: Validate Capacitor configuration
-        run: npx cap doctor
-
       - name: Sync Android project
         run: npx cap sync android
+
+      # The doctor is scoped to this job's platform and runs after the sync, for
+      # two reasons. An unqualified `cap doctor` audits every committed platform,
+      # so the Linux runner fails on the iOS check with "Xcode is not installed".
+      # And the Android check asserts app/src/main/assets exists, which is
+      # gitignored — the sync above is what creates it.
+      - name: Validate Capacitor configuration
+        run: npx cap doctor android
 
       - name: Check the committed project is in sync
         run: .github/scripts/check-native-sync.sh android
@@ -122,11 +127,13 @@ jobs:
       - name: Build web assets
         run: npm run build:web
 
-      - name: Validate Capacitor configuration
-        run: npx cap doctor
-
       - name: Sync iOS project
         run: npx cap sync ios
+
+      # Scoped and ordered to match the Android job above: an unqualified
+      # `cap doctor` would fail here on the Android check instead.
+      - name: Validate Capacitor configuration
+        run: npx cap doctor ios
 
       - name: Check the committed project is in sync
         run: .github/scripts/check-native-sync.sh ios
