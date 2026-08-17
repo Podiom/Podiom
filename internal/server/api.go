@@ -636,11 +636,14 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
 	if id, sub, ok := strings.Cut(rest, "/"); ok {
-		if sub == "attachments" {
+		switch sub {
+		case "attachments":
 			s.handleSessionAttachments(w, r, id)
-			return
+		case "archive":
+			s.handleSessionArchive(w, r, id)
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 		return
 	}
 	id := rest
@@ -713,6 +716,41 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, detail, nil)
+}
+
+// sessionArchiveRequest toggles a session's archive marker. It is a pointer so a
+// malformed body cannot silently read as "unarchive".
+type sessionArchiveRequest struct {
+	Archived *bool `json:"archived"`
+}
+
+// handleSessionArchive serves POST /api/sessions/<id>/archive: the user filing a
+// conversation away by hand, or bringing one back. The daemon archives finished
+// unattended runs on its own; this is the same marker, set deliberately.
+func (s *Server) handleSessionArchive(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req sessionArchiveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Archived == nil {
+		http.Error(w, "archived is required", http.StatusBadRequest)
+		return
+	}
+	session, err := s.core.SetSessionArchived(r.Context(), id, *req.Archived)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	s.log.Info("session archive requested", "event", "run", "session", id, "archived", *req.Archived)
+	// Every connected client keeps its own session list, so the row has to move
+	// on all of them, not just the one that pressed the button.
+	s.broadcastWS(ServerMessage{Type: "session", SessionID: session.ID, Session: &session})
+	writeJSON(w, session, nil)
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -1079,6 +1117,13 @@ func (s *Server) handlePermissionRequest(w http.ResponseWriter, r *http.Request)
 
 func writeJSON(w http.ResponseWriter, value any, err error) {
 	if err != nil {
+		// Asking for a row that does not exist is not a malformed request. The
+		// store wraps ErrNotFound on every miss, so this is the one place that
+		// has to tell the two apart; everything else stays a 400.
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

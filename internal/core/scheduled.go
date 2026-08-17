@@ -143,6 +143,9 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 			turnErr = event.Content
 		}
 	}
+	// The run is over either way: a schedule session is one-shot, and a run that
+	// failed is as finished as one that succeeded.
+	sess = c.archiveFinishedRun(ctx, sess)
 	if turnErr != "" {
 		return sess, &ScheduledRunError{Message: turnErr}
 	}

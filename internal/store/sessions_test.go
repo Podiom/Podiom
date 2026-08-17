@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -209,5 +210,60 @@ func TestAppendMessagesStoresMessageKind(t *testing.T) {
 		if history[i].Kind != want {
 			t.Fatalf("history[%d] kind = %q, want %q", i, history[i].Kind, want)
 		}
+	}
+}
+
+func TestSetSessionArchivedRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.CreateAgent(ctx, Agent{Name: "jared", Provider: "claude", PermissionMode: "approve"}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	created, err := db.CreateSession(ctx, Session{
+		AgentName:      "jared",
+		Provider:       "claude",
+		PermissionMode: "approve",
+		Origin:         OriginWeb,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	// A new session is live: nothing archives it until a run finishes or the
+	// user says so.
+	if created.ArchivedAt != "" {
+		t.Fatalf("new session archived at %q, want empty", created.ArchivedAt)
+	}
+
+	archived, err := db.SetSessionArchived(ctx, created.ID, "2026-08-17T10:00:00Z")
+	if err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if archived.ArchivedAt != "2026-08-17T10:00:00Z" {
+		t.Fatalf("archived at = %q, want 2026-08-17T10:00:00Z", archived.ArchivedAt)
+	}
+	// The marker has to survive the list query too — that is what the sidebar reads.
+	listed, err := db.ListSessions(ctx)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ArchivedAt != "2026-08-17T10:00:00Z" {
+		t.Fatalf("listed sessions = %+v, want one archived", listed)
+	}
+
+	revived, err := db.SetSessionArchived(ctx, created.ID, "")
+	if err != nil {
+		t.Fatalf("unarchive: %v", err)
+	}
+	if revived.ArchivedAt != "" {
+		t.Fatalf("unarchived at = %q, want empty", revived.ArchivedAt)
+	}
+
+	if _, err := db.SetSessionArchived(ctx, "missing", "2026-08-17T10:00:00Z"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("archive missing session err = %v, want ErrNotFound", err)
 	}
 }

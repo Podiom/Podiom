@@ -770,6 +770,10 @@ func (c *Core) RunTaskTurn(ctx context.Context, sess store.Session) error {
 	}
 	for range events { // drain
 	}
+	// Only unattended pickups reach RunTaskTurn, so the turn ending here means
+	// nobody is waiting to carry the session on. A task the user picked up
+	// interactively never gets archived out from under them.
+	_ = c.archiveFinishedRun(ctx, sess)
 	return nil
 }
 

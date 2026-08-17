@@ -131,7 +131,7 @@ func (s *Store) ListUndreamedSessions(ctx context.Context, agentName string) ([]
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
 		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
 		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
-		COALESCE(dreamed_at, ''), COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
+		COALESCE(dreamed_at, ''), archived_at, COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
 		created_at, updated_at
 		FROM sessions WHERE agent_name = ? AND `+undreamedPredicate+` ORDER BY created_at, id`, agentName)

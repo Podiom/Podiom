@@ -37,6 +37,39 @@ Agents read their own side of this with `podiom_session_context`, which reports
 the session's origin, whether the run is unattended, its links in both
 directions, and its context usage — without replaying the transcript.
 
+## Archive
+
+A session carries an `archived_at` marker saying it is done with. It is the only
+thing that decides whether a session belongs in the sidebar's main list or in its
+collapsible Archive section — nothing is inferred at read time, so the split
+survives a daemon restart.
+
+The daemon stamps it on its own when unattended work ends:
+
+| When | What is archived |
+| --- | --- |
+| A scheduled run's turn finishes | That run's session. A run that errored is as finished as one that succeeded. |
+| An unattended roadmap task's turn finishes | That task's session. A task the user picked up interactively is left alone — they are still working in it. |
+| A goal reaches `done` or `abandoned`, or is deleted | The goal's lead conversation. |
+| A goal is reopened to `active` | Its lead conversation is unarchived. Pausing leaves the marker alone. |
+
+The user can also archive or unarchive any session by hand from the conversation
+header (`POST /api/sessions/<id>/archive`), including their own `web` and `cli`
+conversations, which the daemon never archives on its own.
+
+A turn the user sends into an archived session clears the marker: writing in a
+conversation is saying it is live again. Unattended turns deliberately do not,
+since that traffic is what the archive exists to keep out of the way.
+
+The web sidebar groups the archive by goal exactly as it groups the main list,
+but its goal groups start collapsed. Sessions started by an agent rather than by
+the user — origin `schedule`, `roadmap`, or `goal` — also carry an `agent` chip
+under their origin chip in the list.
+
+Archiving is presentation, not deletion: history, attachments and provenance are
+untouched, and no agent tool can set the marker. It is unrelated to the
+`archive-done` roadmap operation, which writes tasks to disk and removes them.
+
 ## History
 
 Message history is stored as strictly ordered `user` and `assistant` messages.

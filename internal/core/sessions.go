@@ -272,6 +272,31 @@ func (c *Core) enrichLegacyProjectIDs(ctx context.Context, sessions []store.Sess
 	}
 }
 
+// SetSessionArchived archives or unarchives a session. Archiving stamps the
+// current time; unarchiving clears the marker so the session returns to the
+// main list.
+func (c *Core) SetSessionArchived(ctx context.Context, id string, archived bool) (store.Session, error) {
+	at := ""
+	if archived {
+		at = time.Now().UTC().Format(time.RFC3339)
+	}
+	return c.store.SetSessionArchived(ctx, id, at)
+}
+
+// archiveFinishedRun archives a session whose unattended run has ended and
+// returns the stamped session so callers do not hand back a stale marker. The
+// error is logged rather than returned: a run that did its work must not be
+// reported as failed because its archive stamp did not land. The context is
+// detached because a cancelled run is still a finished one.
+func (c *Core) archiveFinishedRun(ctx context.Context, sess store.Session) store.Session {
+	archived, err := c.SetSessionArchived(context.WithoutCancel(ctx), sess.ID, true)
+	if err != nil {
+		c.log.Warn("archive finished run failed", "event", "run", "session", sess.ID, "err", err)
+		return sess
+	}
+	return archived
+}
+
 // GetSession fetches a durable session.
 func (c *Core) GetSession(ctx context.Context, id string) (store.Session, error) {
 	sess, err := c.store.GetSession(ctx, id)
@@ -479,6 +504,16 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 	sess, err := c.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	// The user writing into an archived session brings it back to life. Only
+	// attended turns count: goal reviews and scheduled runs are exactly the
+	// traffic the archive exists to keep out of the way.
+	if !opts.Unattended && sess.ArchivedAt != "" {
+		if revived, err := c.store.SetSessionArchived(ctx, sess.ID, ""); err == nil {
+			sess = revived
+		} else {
+			c.log.Warn("unarchive on user turn failed", "event", "run", "session", sess.ID, "err", err)
+		}
 	}
 	var goalRun store.GoalRun
 	if sess.GoalID != "" {

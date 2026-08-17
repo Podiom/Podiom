@@ -439,3 +439,52 @@ func TestGoalQuestionAnswerIsHumanActivityWithoutProducerSession(t *testing.T) {
 		t.Fatalf("question answer event = %+v, want human activity without producer provenance", answered.Event)
 	}
 }
+
+// The lead conversation follows its goal into and out of the archive: it is one
+// long-lived session per goal, so it only files away when the goal itself ends.
+func TestGoalLeadSessionArchivesWithTheGoal(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"planned"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "lead"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	sess, err := c.StartGoalPlanning(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("start goal planning: %v", err)
+	}
+	// An active goal's conversation belongs in the live list, unlike the
+	// one-shot schedule and task runs it spawns.
+	if sess.ArchivedAt != "" {
+		t.Fatalf("active goal lead session archived at = %q, want empty", sess.ArchivedAt)
+	}
+
+	if _, err := c.TransitionGoal(ctx, goal.ID, store.GoalAbandoned, "Abandoned by you."); err != nil {
+		t.Fatalf("abandon: %v", err)
+	}
+	stored, err := c.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if stored.ArchivedAt == "" {
+		t.Fatalf("abandoned goal lead session archived at = %q, want a stamp", stored.ArchivedAt)
+	}
+
+	// Reopening the goal brings its conversation back with it.
+	if _, err := c.TransitionGoal(ctx, goal.ID, store.GoalActive, "Back on."); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	revived, err := c.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if revived.ArchivedAt != "" {
+		t.Fatalf("reopened goal lead session archived at = %q, want empty", revived.ArchivedAt)
+	}
+}

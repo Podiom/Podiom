@@ -580,6 +580,16 @@ export async function deleteSession(id: string): Promise<void> {
   await asJSON(await request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }));
 }
 
+export async function setSessionArchived(id: string, archived: boolean): Promise<Session> {
+  return asJSON(
+    await request(`/api/sessions/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    }),
+  );
+}
+
 export async function listSchedules(): Promise<ScheduleStatus[]> {
   return (await asJSON<ScheduleStatus[] | null>(await request("/api/schedules"))) ?? [];
 }

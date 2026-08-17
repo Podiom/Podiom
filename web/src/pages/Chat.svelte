@@ -9,9 +9,10 @@
     listGoals,
     listProfiles,
     listProjects,
+    setSessionArchived,
     uploadPhotoAttachment,
   } from "../lib/api";
-  import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
+  import { goalGroupedEntries, goalGroupOpen, type GoalGroupEntry } from "../lib/goalGrouping";
   import { randomID } from "../lib/id";
   import { live } from "../lib/live.svelte";
   import { DEFAULT_PROVIDER, providerMeta, questionEndsTurn } from "../lib/providers";
@@ -34,6 +35,8 @@
   } from "../lib/photoAttachments";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import {
+    agentChipStyle,
+    isAgentOrigin,
     modeChip,
     originLabel,
     originStyle,
@@ -153,6 +156,10 @@
   let goals = $state<Goal[]>([]);
   let profiles = $state<ProfileInfo[]>([]);
   let goalGroupsOpen = $state<Record<string, boolean>>({});
+  // The archive keeps its own open state: its goal groups start collapsed, the
+  // opposite of the main list's goalGroupOpen default.
+  let archiveOpen = $state(false);
+  let archiveGroupsOpen = $state<Record<string, boolean>>({});
   let draftProvider = $state<Provider | "">("");
   let draftProfile = $state("");
   let draftModel = $state("");
@@ -190,6 +197,7 @@
   // scrolls up to read history, back on when they return near the bottom.
   let stick = true;
   const LAST_SESSION_KEY = "podiom:last-chat-session";
+  const ARCHIVE_OPEN_KEY = "podiom:sessions-archive-open";
   const PLAN_PANEL_WIDTH_KEY = "podiom:plan-panel-width";
   const PLAN_PANEL_DEFAULT_WIDTH = 372;
   const PLAN_PANEL_MIN_WIDTH = 320;
@@ -269,7 +277,12 @@
       return true;
     }),
   );
-  const sessionEntries = $derived(goalGroupedEntries(filteredSessions, (s) => s.GoalID, goals));
+  // ArchivedAt is stamped by the daemon when an unattended run finishes or a goal
+  // ends, and by the header's archive button. The list just reads it.
+  const liveSessions = $derived(filteredSessions.filter((s) => !s.ArchivedAt));
+  const archivedSessions = $derived(filteredSessions.filter((s) => !!s.ArchivedAt));
+  const sessionEntries = $derived(goalGroupedEntries(liveSessions, (s) => s.GoalID, goals));
+  const archiveEntries = $derived(goalGroupedEntries(archivedSessions, (s) => s.GoalID, goals));
   function projectLabel(id: string): string {
     return projects.find((p) => p.id === id)?.name ?? id;
   }
@@ -346,6 +359,32 @@
     goalGroupsOpen = { ...goalGroupsOpen, [key]: !goalGroupOpen(goalGroupsOpen, key) };
   }
 
+  // Archive groups default closed, so the record cannot reuse goalGroupOpen.
+  function archiveGroupOpen(key: string): boolean {
+    return archiveGroupsOpen[key] ?? false;
+  }
+
+  function toggleArchiveGroup(key: string) {
+    archiveGroupsOpen = { ...archiveGroupsOpen, [key]: !archiveGroupOpen(key) };
+  }
+
+  function toggleArchive() {
+    archiveOpen = !archiveOpen;
+    localStorage.setItem(ARCHIVE_OPEN_KEY, String(archiveOpen));
+  }
+
+  async function toggleArchiveActive() {
+    const sess = activeSession;
+    if (!sess) return;
+    try {
+      // The updated session arrives over the WebSocket as a "session" message,
+      // so there is nothing to write back into local state here.
+      await setSessionArchived(sess.ID, !sess.ArchivedAt);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   function groupCountLabel(count: number, noun: string): string {
     return `${count} ${noun}${count === 1 ? "" : "s"}`;
   }
@@ -372,6 +411,7 @@
       }
     };
     restorePlanPanelWidth();
+    archiveOpen = localStorage.getItem(ARCHIVE_OPEN_KEY) === "true";
     syncPhone();
     mq.addEventListener("change", syncPhone);
     window.addEventListener("resize", clampCurrentPlanPanelWidth);
@@ -408,6 +448,17 @@
     explicitTargetSeen = true;
     onConsumeTarget();
     void openTarget(t);
+  });
+
+  // Navigating to an archived session must not leave its row hidden inside a
+  // collapsed archive, so reveal it — both the section and its goal group.
+  $effect(() => {
+    const sess = activeSession;
+    if (!sess?.ArchivedAt) return;
+    archiveOpen = true;
+    if (sess.GoalID && !archiveGroupOpen(sess.GoalID)) {
+      archiveGroupsOpen = { ...archiveGroupsOpen, [sess.GoalID]: true };
+    }
   });
 
   $effect(() => {
@@ -1923,91 +1974,108 @@
         </div>
       </div>
 
+      {#snippet sessionRow(s: Session)}
+        <div class="sess-row-wrap">
+          <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
+            <span class="sess-avatar-wrap">
+              <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
+              {#if live.attention.has(s.ID)}
+                <span class="attn-dot" title="Needs your attention"></span>
+              {/if}
+            </span>
+            <span class="sess-row-text">
+              <span class="sess-row-title">{s.Name || s.AgentName}</span>
+              <span class="sess-row-sub mono">{sessionSub(s)}</span>
+            </span>
+            {#if activeTurns[s.ID]}
+              <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
+                {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
+              </span>
+            {:else if s.PlanState === "awaiting_approval"}
+              <span class="run-pill needs mono">plan</span>
+            {:else if s.PlanState === "pending_submission"}
+              <span class="run-pill mono">plan gate</span>
+            {/if}
+            <span class="sess-row-chips">
+              <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
+              {#if isAgentOrigin(s.Origin)}
+                <span style={agentChipStyle()} title="Started by an agent, not by you">agent</span>
+              {/if}
+            </span>
+          </button>
+          <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+      {/snippet}
+
+      {#snippet goalGroup(entry: GoalGroupEntry<Session>, open: boolean, toggle: () => void)}
+        <div class="sess-goal-group">
+          <div class="sess-goal-head">
+            <button class="sess-goal-toggle" onclick={toggle} aria-expanded={open} title={open ? "Collapse goal group" : "Expand goal group"}>
+              <span class="goal-chevron" class:closed={!open}>⌄</span>
+              <span class="sess-goal-text">
+                <span class="sess-goal-title">{entry.label}</span>
+                <span class="sess-goal-sub mono">{groupCountLabel(entry.items.length, "session")}{entry.goal ? ` · ${entry.goal.Status}` : ""}</span>
+              </span>
+            </button>
+            {#if entry.goal}
+              <button class="sess-goal-open" onclick={() => onOpenGoal(entry.goalId)} title="Open goal" aria-label="Open goal">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
+              </button>
+            {/if}
+          </div>
+          {#if open}
+            {#each entry.items as s (s.ID)}
+              {@render sessionRow(s)}
+            {/each}
+          {/if}
+        </div>
+      {/snippet}
+
       <div class="sess-list">
         {#each sessionEntries as entry}
           {#if entry.kind === "group"}
-            <div class="sess-goal-group">
-              <div class="sess-goal-head">
-                <button class="sess-goal-toggle" onclick={() => toggleGoalGroup(entry.goalId)} title={goalGroupOpen(goalGroupsOpen, entry.goalId) ? "Collapse goal group" : "Expand goal group"}>
-                  <span class="goal-chevron" class:closed={!goalGroupOpen(goalGroupsOpen, entry.goalId)}>⌄</span>
-                  <span class="sess-goal-text">
-                    <span class="sess-goal-title">{entry.label}</span>
-                    <span class="sess-goal-sub mono">{groupCountLabel(entry.items.length, "session")}{entry.goal ? ` · ${entry.goal.Status}` : ""}</span>
-                  </span>
-                </button>
-                {#if entry.goal}
-                  <button class="sess-goal-open" onclick={() => onOpenGoal(entry.goalId)} title="Open goal" aria-label="Open goal">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
-                  </button>
-                {/if}
-              </div>
-              {#if goalGroupOpen(goalGroupsOpen, entry.goalId)}
-                {#each entry.items as s (s.ID)}
-                  <div class="sess-row-wrap">
-                    <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
-                      <span class="sess-avatar-wrap">
-                        <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
-                        {#if live.attention.has(s.ID)}
-                          <span class="attn-dot" title="Needs your attention"></span>
-                        {/if}
-                      </span>
-                      <span class="sess-row-text">
-                        <span class="sess-row-title">{s.Name || s.AgentName}</span>
-                        <span class="sess-row-sub mono">{sessionSub(s)}</span>
-                      </span>
-                      {#if activeTurns[s.ID]}
-                        <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
-                          {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
-                        </span>
-                      {:else if s.PlanState === "awaiting_approval"}
-                        <span class="run-pill needs mono">plan</span>
-                      {:else if s.PlanState === "pending_submission"}
-                        <span class="run-pill mono">plan gate</span>
-                      {/if}
-                      <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
-                    </button>
-                    <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                    </button>
-                  </div>
-                {/each}
-              {/if}
-            </div>
+            {@render goalGroup(entry, goalGroupOpen(goalGroupsOpen, entry.goalId), () => toggleGoalGroup(entry.goalId))}
           {:else}
-            {@const s = entry.item}
-            <div class="sess-row-wrap">
-              <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
-                <span class="sess-avatar-wrap">
-                  <AgentAvatar name={s.AgentName} size={32} radius={10} fontSize={13} />
-                  {#if live.attention.has(s.ID)}
-                    <span class="attn-dot" title="Needs your attention"></span>
-                  {/if}
-                </span>
-                <span class="sess-row-text">
-                  <span class="sess-row-title">{s.Name || s.AgentName}</span>
-                  <span class="sess-row-sub mono">{sessionSub(s)}</span>
-                </span>
-                {#if activeTurns[s.ID]}
-                  <span class="run-pill mono" class:needs={activeTurns[s.ID].pending === "permission" || activeTurns[s.ID].pending === "question"}>
-                    {activeTurns[s.ID].pending === "permission" ? "approve" : activeTurns[s.ID].pending === "question" ? "question" : "running"}
-                  </span>
-                {:else if s.PlanState === "awaiting_approval"}
-                  <span class="run-pill needs mono">plan</span>
-                {:else if s.PlanState === "pending_submission"}
-                  <span class="run-pill mono">plan gate</span>
-                {/if}
-                <span style={originStyle(s.Origin)}>{originLabel(s.Origin)}</span>
-              </button>
-              <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-              </button>
-            </div>
+            {@render sessionRow(entry.item)}
           {/if}
         {/each}
-        {#if filteredSessions.length === 0}
-          <p class="empty-note">No sessions yet. Pick an agent and say hello.</p>
+        {#if liveSessions.length === 0}
+          <p class="empty-note">
+            {archivedSessions.length > 0
+              ? "Nothing active. Finished sessions are in the archive below."
+              : "No sessions yet. Pick an agent and say hello."}
+          </p>
         {/if}
       </div>
+
+      {#if archivedSessions.length > 0}
+        <section class="sess-archive">
+          <button
+            class="sess-archive-head"
+            type="button"
+            aria-expanded={archiveOpen}
+            aria-controls="sess-archive-list"
+            onclick={toggleArchive}
+          >
+            <span class="goal-chevron" class:closed={!archiveOpen}>⌄</span>
+            <span class="sess-archive-title mono">ARCHIVE</span>
+            <span class="sess-archive-count mono">{archivedSessions.length}</span>
+          </button>
+          {#if archiveOpen}
+            <div class="sess-archive-list" id="sess-archive-list">
+              {#each archiveEntries as entry}
+                {#if entry.kind === "group"}
+                  {@render goalGroup(entry, archiveGroupOpen(entry.goalId), () => toggleArchiveGroup(entry.goalId))}
+                {:else}
+                  {@render sessionRow(entry.item)}
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
     </div>
   {/if}
 
@@ -2025,6 +2093,21 @@
       {/if}
       <div class="conv-title">{sessionTitle}</div>
       {#if activeSession}<span style={originStyle(activeSession.Origin)}>{originLabel(activeSession.Origin)}</span>{/if}
+      {#if activeSession}
+        {@const archived = !!activeSession.ArchivedAt}
+        <button
+          class="sq-btn"
+          onclick={toggleArchiveActive}
+          title={archived ? "Unarchive session" : "Archive session"}
+          aria-label={archived ? "Unarchive session" : "Archive session"}
+        >
+          {#if archived}
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M12 17v-6" /><path d="M9.5 13.5 12 11l2.5 2.5" /></svg>
+          {:else}
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M12 11v6" /><path d="M9.5 14.5 12 17l2.5-2.5" /></svg>
+          {/if}
+        </button>
+      {/if}
       {#if !ctxOpen}
         <button class="sq-btn" onclick={() => (ctxOpen = true)} title="Show details">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
@@ -2996,6 +3079,57 @@
     position: relative;
   }
 
+  /* The archive is a sibling of .sess-list, which is the column's only growing
+     child — so it stays pinned to the bottom without overlapping any row. */
+  .sess-archive {
+    flex: none;
+    border-top: 1px solid var(--line);
+    background: var(--surface-3);
+  }
+
+  .sess-archive-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 14px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sess-archive-head:hover {
+    background: #f6efe6;
+  }
+
+  .sess-archive-head:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: -2px;
+  }
+
+  .sess-archive-title {
+    flex: 1;
+    color: var(--faint);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+  }
+
+  .sess-archive-count {
+    color: var(--faint);
+    font-size: 9.5px;
+  }
+
+  .sess-archive-list {
+    /* Capped so a long archive can never crowd out the live list above it. */
+    max-height: min(46dvh, 340px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 12px 12px;
+  }
+
   .sess-goal-group {
     margin: 7px 0 9px;
     padding: 6px;
@@ -3152,6 +3286,16 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Stacks the origin chip and the agent chip. Right-aligned and never wider
+     than the origin chip alone, so the title keeps the width it has today. */
+  .sess-row-chips {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
   }
 
   .run-pill {

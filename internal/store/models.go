@@ -130,6 +130,11 @@ type Session struct {
 	// DreamedAt is set once a session has been consolidated into the agent's
 	// MEMORY.md. Empty means the session is un-dreamed (pending consolidation).
 	DreamedAt string
+	// ArchivedAt is set once a session is done with: an unattended run that
+	// finished, a goal that reached a terminal state, or the user's own archive
+	// action. Empty means the session belongs in the main list. A turn the user
+	// sends into an archived session clears it again.
+	ArchivedAt string
 	// ContextTokens is the last request's prompt size in tokens; ContextLimit is
 	// the model's context window. Both are refreshed each turn from the provider
 	// stream and drive the composer's context-window ring. 0 means un-observed.

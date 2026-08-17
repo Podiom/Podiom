@@ -101,6 +101,25 @@ export function originStyle(o: SessionOrigin | string): string {
   );
 }
 
+// AGENT_ORIGINS mirrors server.unattendedOrigins: sessions nobody typed into,
+// started by a goal's own loop, a schedule, or an agent calling podiom_start_task.
+const AGENT_ORIGINS = new Set<SessionOrigin>(["schedule", "roadmap", "goal"]);
+
+export function isAgentOrigin(o: SessionOrigin | string): boolean {
+  return AGENT_ORIGINS.has(o as SessionOrigin);
+}
+
+// agentChipStyle deliberately matches originStyle's box so the two chips stack
+// to the same width. Keep the label shorter than "◎ goal" — the narrowest origin
+// chip it can sit under — or the pair starts stealing width from the session title.
+export function agentChipStyle(): string {
+  return (
+    "display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;" +
+    "font:600 10.5px 'JetBrains Mono',monospace;white-space:nowrap;" +
+    "background:#F1EADF;color:#6F5B45"
+  );
+}
+
 export function originLabel(o: SessionOrigin | string): string {
   if (o === "onboarding") return "✦ onboarding";
   if (o === "interview") return "✦ interview";

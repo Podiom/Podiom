@@ -1381,6 +1381,15 @@ var migrations = []migration{
 
 		CREATE INDEX idx_schedule_runs_name ON schedule_runs(schedule_name, started_at DESC);`,
 	},
+	{
+		version: 36,
+		name:    "session_archived_at",
+		// Set when an unattended run finishes, when a goal reaches a terminal
+		// state, or when the user archives a session by hand. Empty means the
+		// session is live and belongs in the main list, which is why no backfill
+		// is needed: every pre-existing session stays visible exactly as it is.
+		sql: `ALTER TABLE sessions ADD COLUMN archived_at TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

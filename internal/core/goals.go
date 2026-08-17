@@ -303,6 +303,15 @@ func (c *Core) TransitionGoal(ctx context.Context, id string, to store.GoalStatu
 		}
 		updated.NextStep, updated.NextStepWhy, updated.NextStepAt = "", "", ""
 	}
+	// The lead conversation follows the goal: a terminal goal files it away,
+	// reopening brings it back. Pausing leaves it alone — a paused goal is one
+	// the user still means to return to.
+	switch to {
+	case store.GoalDone, store.GoalAbandoned:
+		c.setGoalLeadArchived(ctx, updated, true)
+	case store.GoalActive:
+		c.setGoalLeadArchived(ctx, updated, false)
+	}
 	payload, _ := json.Marshal(map[string]string{"from": string(from), "to": string(to)})
 	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
 		GoalID:  updated.ID,
@@ -316,6 +325,19 @@ func (c *Core) TransitionGoal(ctx context.Context, id string, to store.GoalStatu
 	return updated, nil
 }
 
+// setGoalLeadArchived files the goal's lead conversation away or brings it back.
+// A goal without a lead session yet is a no-op, and the error is logged rather
+// than returned: the status change itself has already been recorded.
+func (c *Core) setGoalLeadArchived(ctx context.Context, goal store.Goal, archived bool) {
+	if goal.LeadSessionID == "" {
+		return
+	}
+	if _, err := c.SetSessionArchived(ctx, goal.LeadSessionID, archived); err != nil {
+		c.log.Warn("archive goal lead session failed",
+			"event", "goal", "goal", goal.ID, "session", goal.LeadSessionID, "archived", archived, "err", err)
+	}
+}
+
 // DeleteGoal removes a goal, its timeline, and its access requests. Sessions
 // the goal produced are preserved (the durable record of work done).
 func (c *Core) DeleteGoal(ctx context.Context, id string) error {
@@ -326,6 +348,10 @@ func (c *Core) DeleteGoal(ctx context.Context, id string) error {
 	if err := c.store.DeleteGoal(ctx, id); err != nil {
 		return err
 	}
+	// The lead conversation outlives the goal but has nothing left to lead, so
+	// it would otherwise sit in the main list forever pointing at a goal that no
+	// longer exists.
+	c.setGoalLeadArchived(ctx, goal, true)
 	c.log.Info("goal deleted", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent, "status", string(goal.Status))
 	return nil
 }

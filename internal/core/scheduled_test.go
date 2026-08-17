@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -159,5 +160,140 @@ func TestAllowListRelayDecisions(t *testing.T) {
 	d, _ := empty.RequestPermission(context.Background(), adapter.PermissionRequest{ToolName: "Read"}, 0)
 	if d.Behavior != "deny" {
 		t.Fatalf("empty allow-list should deny all, got %q", d.Behavior)
+	}
+}
+
+func TestRunScheduledArchivesFinishedSession(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"did the thing"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "morning-calendar",
+		RunID:        "run-1",
+		AgentName:    "jared",
+		Task:         "Summarise the calendar.",
+	})
+	if err != nil {
+		t.Fatalf("run scheduled: %v", err)
+	}
+	// A schedule session is one-shot, so the run ending is the whole lifecycle.
+	// The returned session carries the stamp, not just the stored row.
+	if sess.ArchivedAt == "" {
+		t.Fatalf("returned session archived at = %q, want a stamp", sess.ArchivedAt)
+	}
+	stored, err := c.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if stored.ArchivedAt == "" {
+		t.Fatalf("stored session archived at = %q, want a stamp", stored.ArchivedAt)
+	}
+}
+
+func TestRunScheduledArchivesEvenWhenTheTurnErrors(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.SendTurnError = errors.New("provider exploded")
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "morning-calendar",
+		RunID:        "run-1",
+		AgentName:    "jared",
+		Task:         "Summarise the calendar.",
+	})
+	// The run is reported as failed, but a failed run is as finished as a
+	// successful one — it must not linger in the live session list.
+	if err == nil {
+		t.Fatal("run scheduled err = nil, want the turn error")
+	}
+	stored, err := c.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if stored.ArchivedAt == "" {
+		t.Fatalf("failed run archived at = %q, want a stamp", stored.ArchivedAt)
+	}
+}
+
+func TestUserTurnUnarchivesSession(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ran", "answered"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "morning-calendar",
+		RunID:        "run-1",
+		AgentName:    "jared",
+		Task:         "Summarise the calendar.",
+	})
+	if err != nil {
+		t.Fatalf("run scheduled: %v", err)
+	}
+	if sess.ArchivedAt == "" {
+		t.Fatal("precondition: scheduled session should be archived")
+	}
+
+	// Picking the conversation back up brings it out of the archive.
+	events, err := c.StreamTurn(ctx, sess.ID, "actually, what about tomorrow?", TurnOptions{})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	for range events {
+	}
+	stored, err := c.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if stored.ArchivedAt != "" {
+		t.Fatalf("archived at after user turn = %q, want empty", stored.ArchivedAt)
+	}
+}
+
+func TestUnattendedTurnLeavesArchivedSessionArchived(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"ran", "ran again"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := c.RunScheduled(ctx, ScheduledRunRequest{
+		ScheduleName: "morning-calendar",
+		RunID:        "run-1",
+		AgentName:    "jared",
+		Task:         "Summarise the calendar.",
+	})
+	if err != nil {
+		t.Fatalf("run scheduled: %v", err)
+	}
+
+	// Unattended traffic is exactly what the archive exists to keep out of the
+	// way, so it must not revive a session the way a user's turn does.
+	events, err := c.StreamTurn(ctx, sess.ID, "another unattended pass", TurnOptions{Unattended: true})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	for range events {
+	}
+	stored, err := c.GetSession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if stored.ArchivedAt == "" {
+		t.Fatalf("archived at after unattended turn = %q, want the stamp to survive", stored.ArchivedAt)
 	}
 }

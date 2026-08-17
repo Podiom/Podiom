@@ -235,6 +235,10 @@ export interface Session {
   // Set once a session has been consolidated into the agent's memory. Empty
   // means the session is un-dreamed (pending consolidation).
   DreamedAt?: string;
+  // Set once a session is done with: a finished unattended run, a goal that
+  // reached a terminal state, or the user's own archive action. Empty means the
+  // session belongs in the main list rather than the sidebar's archive.
+  ArchivedAt: string;
   // Context-window utilization persisted per session: last request's prompt size
   // and the model's window. 0 means un-observed. Drives the composer context ring.
   ContextTokens: number;
