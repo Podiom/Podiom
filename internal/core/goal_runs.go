@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -26,13 +27,62 @@ func (c *Core) beginGoalRun(ctx context.Context, sess store.Session, kind store.
 	if kind == "" {
 		kind, sourceID = goalRunShape(sess)
 	}
-	return c.store.CreateGoalRun(ctx, store.GoalRun{
+	run, err := c.store.CreateGoalRun(ctx, store.GoalRun{
 		GoalID:    sess.GoalID,
 		SessionID: sess.ID,
 		Kind:      kind,
 		AgentName: sess.AgentName,
 		SourceID:  sourceID,
 	})
+	if err != nil {
+		return run, err
+	}
+	c.notifications.Publish(notify.Event{
+		Type:       notify.TypeGoalRunStarted,
+		SessionID:  sess.ID,
+		GoalID:     sess.GoalID,
+		AgentName:  sess.AgentName,
+		Resource:   notify.ResourceGoalRun,
+		ResourceID: run.ID,
+	})
+	return run, nil
+}
+
+// finishGoalRun records a goal run's terminal state and reports it.
+//
+// Every core path that ends a run goes through here rather than calling the store,
+// so a run cannot finish without the outcome being reported. Two statuses
+// deliberately produce no notification:
+//
+//   - interrupted, because InterruptRunningGoalRuns flips every running row at
+//     daemon start and would turn each restart into a burst of notifications. That
+//     bulk update calls the store directly, bypassing this function by design.
+//   - rate_limited, because the rate-limit block already emits goal.rate_limited,
+//     which carries the block id the recovery view needs and this does not.
+func (c *Core) finishGoalRun(ctx context.Context, id string, status store.GoalRunStatus, runErr string) (store.GoalRun, error) {
+	run, err := c.store.FinishGoalRun(ctx, id, status, runErr)
+	if err != nil {
+		return run, err
+	}
+	var notifType string
+	switch status {
+	case store.GoalRunSucceeded:
+		notifType = notify.TypeGoalRunSucceeded
+	case store.GoalRunFailed:
+		notifType = notify.TypeGoalRunFailed
+	default:
+		return run, nil
+	}
+	c.notifications.Publish(notify.Event{
+		Type:       notifType,
+		SessionID:  run.SessionID,
+		GoalID:     run.GoalID,
+		AgentName:  run.AgentName,
+		Resource:   notify.ResourceGoalRun,
+		ResourceID: run.ID,
+		Detail:     runErr,
+	})
+	return run, nil
 }
 
 func (c *Core) goalRunForAgentEvent(ctx context.Context, goalID, sessionID string) string {

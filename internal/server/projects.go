@@ -11,6 +11,7 @@ import (
 	"github.com/Podiom/Podiom/internal/core"
 	podiomgit "github.com/Podiom/Podiom/internal/git"
 	podiomgithub "github.com/Podiom/Podiom/internal/github"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
@@ -634,8 +635,23 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		before := task.Status
 		applyTaskUpdate(&task, req)
 		updated, err := s.core.UpdateTask(r.Context(), task)
+		if err == nil && before != store.TaskDone && updated.Status == store.TaskDone {
+			// Notified from here rather than from core.UpdateTask because only this
+			// handler has both the previous and the new status in hand. core's own
+			// update is also used for transient review/in-progress moves, which would
+			// produce notifications for work that is still running.
+			s.notifications.Publish(notify.Event{
+				Type:       notify.TypeTaskCompleted,
+				GoalID:     updated.GoalID,
+				TaskID:     updated.ID,
+				AgentName:  updated.AssignedAgent,
+				Resource:   notify.ResourceTask,
+				ResourceID: updated.ID,
+			})
+		}
 		writeJSON(w, updated, err)
 	case http.MethodDelete:
 		if err := s.core.DeleteTask(r.Context(), id); err != nil {

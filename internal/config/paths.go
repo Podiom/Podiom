@@ -37,6 +37,8 @@ type Paths struct {
 	PushDir         string // push/ (VAPID keypair for Web Push)
 	MarketplaceDir  string // marketplace/ (skill-registry secrets + cache state)
 	GatewayToken    string // gateway.token (the API/WS gateway token, HA7/HA8)
+	InstallationID  string // installation.id (this installation's stable identity)
+	RelayState      string // relay.json (push relay instance id + credential, 0600)
 	Onboarding      string // onboarding.json (first-run completion state)
 }
 
@@ -83,6 +85,8 @@ func NewPaths(home string) Paths {
 		PushDir:         filepath.Join(home, "push"),
 		MarketplaceDir:  filepath.Join(home, "marketplace"),
 		GatewayToken:    filepath.Join(home, "gateway.token"),
+		InstallationID:  filepath.Join(home, "installation.id"),
+		RelayState:      filepath.Join(home, "relay.json"),
 		Onboarding:      filepath.Join(home, "onboarding.json"),
 	}
 }

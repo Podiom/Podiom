@@ -254,14 +254,14 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 		return sess, fmt.Errorf("goal already has an active run: %w", err)
 	}
 	payload, _ := json.Marshal(map[string]string{"session_id": sess.ID})
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: sess.ID,
 		RunID:     run.ID,
 		Kind:      kind,
 		Payload:   string(payload),
 	}); err != nil {
-		_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
+		_, _ = c.finishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
 		return sess, err
 	}
 
@@ -271,7 +271,7 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 		GoalRunID:        run.ID,
 	})
 	if err != nil {
-		_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
+		_, _ = c.finishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
 		return sess, err
 	}
 	var turnErr string
@@ -413,7 +413,7 @@ func (c *Core) ensureGoalRateLimitBlock(ctx context.Context, goal store.Goal, se
 		"error":    block.Error,
 	})
 	body := fmt.Sprintf("Rate limit reached on %s. Choose a model or provider to retry this goal.", targetLabel(block.Provider, block.Profile))
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: sess.ID,
 		RunID:     runID,

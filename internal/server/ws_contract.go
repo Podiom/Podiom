@@ -77,6 +77,16 @@ type ServerMessage struct {
 	// entry, fanned out to every live connection so open Goals views refresh
 	// and attention badges update without polling.
 	GoalEvent *store.GoalEvent `json:"goal_event,omitempty"`
+
+	// Notification carries a "notification" message (one was just recorded) or a
+	// "notification_update" message (its read or resolved state changed), so the
+	// Notification Center and its unread badge stay current on every open client
+	// without polling — including on a second device that acted on it.
+	//
+	// There is deliberately no unread counter here: an omitempty int would vanish
+	// from the payload exactly when the count reached zero, and the client can
+	// maintain its own count from the list response plus these messages.
+	Notification *store.Notification `json:"notification,omitempty"`
 }
 
 // ContextUsage is the live context-window utilization for a session: how many

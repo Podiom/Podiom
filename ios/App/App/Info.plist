@@ -52,6 +52,10 @@
 	<!-- No storyboard entry point: SceneDelegate builds the window and the root
 	     CAPBridgeViewController itself, so naming one here only had UIKit load a
 	     storyboard whose window was replaced before it was ever shown. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

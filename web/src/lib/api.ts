@@ -69,6 +69,14 @@ import type {
   UpdateStatus,
   UsageSnapshot,
   UserProfileInfo,
+  NotificationActionResponse,
+  NotificationDevice,
+  NotificationDeviceRegistration,
+  NotificationListResponse,
+  NotificationPreferencesResponse,
+  NotificationPreferenceUpdate,
+  NotificationStaleResult,
+  NotificationView,
 } from "./types";
 
 async function asJSON<T>(res: Response): Promise<T> {
@@ -979,6 +987,155 @@ export async function unsubscribePush(subscription: unknown): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(subscription),
     }),
+  );
+}
+
+// --- Notifications -----------------------------------------------------------
+
+// NotificationQuery narrows a Notification Center page.
+export interface NotificationQuery {
+  limit?: number;
+  offset?: number;
+  unreadOnly?: boolean;
+  unresolvedOnly?: boolean;
+  category?: string;
+}
+
+// listNotifications fetches one page of notification history. The response's
+// unread count covers everything, not just the requested filter, so the badge and
+// a filtered view cannot disagree.
+export async function listNotifications(
+  query: NotificationQuery = {},
+): Promise<NotificationListResponse> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  if (query.offset !== undefined) params.set("offset", String(query.offset));
+  if (query.unreadOnly) params.set("unread", "1");
+  if (query.unresolvedOnly) params.set("unresolved", "1");
+  if (query.category) params.set("category", query.category);
+  const suffix = params.size > 0 ? `?${params}` : "";
+  return asJSON(await request(`/api/notifications${suffix}`));
+}
+
+// markNotificationRead marks a notification seen, or returns it to unread.
+//
+// Reading is not resolving: it never touches the domain object the notification is
+// about.
+export async function markNotificationRead(
+  id: string,
+  read = true,
+): Promise<NotificationView> {
+  return asJSON(
+    await request(`/api/notifications/${encodeURIComponent(id)}/${read ? "read" : "unread"}`, {
+      method: "POST",
+    }),
+  );
+}
+
+// markAllNotificationsRead clears the unread badge.
+export async function markAllNotificationsRead(): Promise<{ updated: number }> {
+  return asJSON(await request("/api/notifications/read-all", { method: "POST" }));
+}
+
+// resolveNotification records that the user has dealt with a notification without
+// performing its underlying operation — dismissing an ask, not answering it.
+export async function resolveNotification(id: string): Promise<NotificationView> {
+  return asJSON(
+    await request(`/api/notifications/${encodeURIComponent(id)}/resolve`, { method: "POST" }),
+  );
+}
+
+// getNotificationPreferences fetches the whole preference model — categories,
+// headings, labels and current settings — so the settings screen hardcodes none of
+// it and a newly added notification type appears without a client change.
+export async function getNotificationPreferences(): Promise<NotificationPreferencesResponse> {
+  return asJSON(await request("/api/notifications/preferences"));
+}
+
+// setNotificationPreferences records which events notify the user. The response is
+// the updated model, so callers need no follow-up read.
+export async function setNotificationPreferences(
+  preferences: NotificationPreferenceUpdate[],
+): Promise<NotificationPreferencesResponse> {
+  return asJSON(
+    await request("/api/notifications/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferences }),
+    }),
+  );
+}
+
+// runNotificationAction performs one of a notification's actions.
+//
+// A 409 is an expected outcome, not a transport failure: the notification may have
+// outlived the thing it was about, and the body then carries the actions that are
+// still valid plus the resource's current state. It is returned rather than thrown so
+// callers have to deal with it.
+export async function runNotificationAction(
+  id: string,
+  actionID: string,
+): Promise<NotificationActionResponse> {
+  const response = await request(
+    `/api/notifications/${encodeURIComponent(id)}/actions/${encodeURIComponent(actionID)}`,
+    { method: "POST" },
+  );
+  if (response.status === 409) {
+    return (await response.json()) as NotificationStaleResult;
+  }
+  return asJSON(response);
+}
+
+// registerNotificationDevice registers this device for native push, or refreshes an
+// existing registration.
+//
+// Idempotent on the Podiom device id, so it is safe to call on every launch and on every
+// token refresh. The push token goes up and is never returned: anything holding it can
+// reach the device.
+export async function registerNotificationDevice(body: {
+  device_id: string;
+  platform: "ios" | "android";
+  label?: string;
+  push_token: string;
+  app_version?: string;
+}): Promise<NotificationDeviceRegistration> {
+  return asJSON(
+    await request("/api/notification-devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+// listNotificationDevices returns the devices registered with this installation.
+export async function listNotificationDevices(): Promise<{
+  devices: NotificationDevice[];
+  installation_id: string;
+}> {
+  return asJSON(await request("/api/notification-devices"));
+}
+
+// setNotificationDeviceEnabled mutes or unmutes one device.
+//
+// This is registration state — whether this phone receives anything — and is separate
+// from notification preferences, which decide which events matter.
+export async function setNotificationDeviceEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<NotificationDevice> {
+  return asJSON(
+    await request(
+      `/api/notification-devices/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST" },
+    ),
+  );
+}
+
+// deleteNotificationDevice removes a registration entirely.
+export async function deleteNotificationDevice(id: string): Promise<void> {
+  await asJSON(
+    await request(`/api/notification-devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   );
 }
 

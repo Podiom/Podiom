@@ -1,5 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import NotificationCenter from "./lib/NotificationCenter.svelte";
+  import { notifications } from "./lib/notifications.svelte";
+  import { startNativePush } from "./lib/push";
+  import {
+    formatHash,
+    parseHash,
+    type GoalFocus,
+    type Route as DeepLinkRoute,
+    type Target,
+  } from "./lib/deeplink";
   import {
     applyUpdate,
     checkUpdate,
@@ -17,7 +27,7 @@
   import { avatars } from "./lib/avatars.svelte";
   import { deployment } from "./lib/base";
   import { live } from "./lib/live.svelte";
-  import { initChrome, isNative, onBackButton } from "./lib/native";
+  import { initChrome, onBackButton } from "./lib/native";
   import TokenGate from "./pages/TokenGate.svelte";
   import HAOnboarding from "./pages/HAOnboarding.svelte";
   import ProviderLogo from "./lib/ProviderLogo.svelte";
@@ -35,7 +45,10 @@
   import type { PushState } from "./lib/live.svelte";
   import WorkspaceFileViewer from "./lib/WorkspaceFileViewer.svelte";
 
-  type Route = "chat" | "roadmap" | "goals" | "projects" | "schedules" | "skills" | "terminal" | "settings";
+  // Route and the hash grammar live in lib/deeplink.ts, which is the one place that
+  // knows what a URL looks like — notifications name a logical target and it decides
+  // the route, so nothing here has to be kept in step by hand.
+  type Route = DeepLinkRoute;
   type SettingsTab = "providers" | "general" | "agents" | "about-you" | "updates" | "notifications" | "logs";
 
   interface ChatTarget {
@@ -125,6 +138,15 @@
   });
   let chatTarget = $state<ChatTarget | null>(null);
   let goalTarget = $state<string | null>(null);
+  // goalFocus carries the sub-resource a deep link named — an action item, a question,
+  // an access request — so a notification lands on the exact thing it was about rather
+  // than the goal that holds it.
+  //
+  // Schedules and Roadmap are board views with no per-item detail to open, so their
+  // targets resolve to the page itself. The hash still records the item, which keeps
+  // those links addressable and lets a future detail view use them without a change
+  // to the grammar.
+  let goalFocus = $state<GoalFocus | null>(null);
   let releaseNotesFocusToken = $state(0);
   let settingsFocusTab = $state<SettingsTab>("providers");
   let settingsFocusToken = $state(0);
@@ -234,10 +256,18 @@
     // (toasts, red dots, nav badge) keeps working on every route. Wire toast /
     // push taps to open the relevant chat session.
     live.connect();
-    live.setNavigator((sessionId) => openChat({ sessionId }));
-    live.setGoalNavigator((goalId) => {
-      goalTarget = goalId;
-      route = "goals";
+    // One navigator for every kind of tap — a toast, a Web Push notification, or the
+    // Notification Center — because they all resolve to the same logical target.
+    live.setNavigator(openTarget);
+    // The Notification Center reads its history over REST and stays current from the
+    // same socket, so it is live on every route rather than only while its panel is open.
+    notifications.start();
+    // Native push listeners. Attached on every platform's boot path (they no-op in the
+    // browser) so a notification tapped while the app was terminated still routes once
+    // the web layer is ready.
+    startNativePush({
+      onNavigate: openTarget,
+      onForeground: () => void notifications.refresh(),
     });
     void refreshProviderAuth();
     await refreshPushStatus();
@@ -282,9 +312,14 @@
   // releases every 5 minutes.
   onMount(() => {
     initChrome();
-    // Android's back gesture has no history stack to pop — this app navigates
-    // by state, not URL — so it is mapped onto that state by hand: dismiss
-    // whatever is on top, else step back to Chat, else let the app exit.
+    // The URL is the source of truth, so adopt whatever it already says — this is what
+    // makes a deep link work on a cold start, including one opened from a notification
+    // while the app was terminated.
+    applyHash(window.location.hash);
+    const onHashChange = () => applyHash(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
+    // Android's back gesture: dismiss whatever is on top first, then walk the history
+    // the hash navigation builds, and only let the app exit from the default page.
     const offBack = onBackButton(() => {
       if (hireOpen) {
         hireOpen = false;
@@ -295,7 +330,7 @@
         return true;
       }
       if (route !== "chat") {
-        route = "chat";
+        window.history.back();
         return true;
       }
       return false;
@@ -308,6 +343,7 @@
     }, 5 * 60 * 1000);
     return () => {
       offBack();
+      window.removeEventListener("hashchange", onHashChange);
       window.clearInterval(healthTimer);
       window.clearInterval(updateTimer);
     };
@@ -390,16 +426,20 @@
   }
 
   function openChat(target: ChatTarget) {
+    // The extra fields (agentName, seed) are transient composer state with no place
+    // in a shareable URL, so they are held here while the hash carries the session.
     chatTarget = target;
-    route = "chat";
+    if (target.sessionId) {
+      navigate({ kind: "chat", sessionId: target.sessionId });
+      return;
+    }
+    navigate({ kind: "route", route: "chat" });
   }
 
   function openSettings(tab: SettingsTab = "providers", account: SettingsAccountTarget | null = null) {
     moreOpen = false;
-    settingsFocusTab = tab;
     settingsFocusAccount = account;
-    settingsFocusToken += 1;
-    route = "settings";
+    navigate({ kind: "settings", tab });
   }
 
   function openReleaseNotes() {
@@ -413,7 +453,64 @@
       openSettings();
       return;
     }
-    route = next;
+    navigate({ kind: "route", route: next });
+  }
+
+  // navigate is the only way the app changes page.
+  //
+  // It assigns location.hash rather than setting `route` directly, so the URL is
+  // always the source of truth: a deep link, a notification tap, the back gesture and
+  // a nav click all take the same path through applyHash below. Assigning the hash
+  // (rather than using an <a href>) also keeps this correct under a Home Assistant
+  // ingress sub-path, where an injected <base href> would otherwise resolve a bare
+  // fragment against the base instead of the current document.
+  function navigate(target: Target) {
+    const next = formatHash(target);
+    if (window.location.hash === next) {
+      // Same destination: no history entry, but still re-apply so a repeat tap on a
+      // notification re-focuses the resource.
+      applyHash(next);
+      return;
+    }
+    window.location.hash = next;
+  }
+
+  // applyHash projects the URL onto the shell's state. An unrecognised hash falls
+  // back to Chat rather than rendering nothing, so a stale or hand-edited link is
+  // harmless.
+  function applyHash(hash: string) {
+    const target = parseHash(hash) ?? { kind: "route", route: "chat" };
+    moreOpen = false;
+    switch (target.kind) {
+      case "route":
+        route = target.route;
+        break;
+      case "chat":
+        chatTarget = { sessionId: target.sessionId };
+        route = "chat";
+        break;
+      case "goal":
+        goalTarget = target.goalId;
+        goalFocus = target.focus ?? null;
+        route = "goals";
+        break;
+      case "schedule":
+        route = "schedules";
+        break;
+      case "task":
+        route = "roadmap";
+        break;
+      case "settings":
+        settingsFocusTab = (target.tab as SettingsTab) ?? settingsFocusTab;
+        settingsFocusToken += 1;
+        route = "settings";
+        break;
+    }
+  }
+
+  // openTarget is what a notification tap, a toast tap or the service worker calls.
+  export function openTarget(target: Target) {
+    navigate(target);
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
@@ -661,7 +758,7 @@
           </div>
         </div>
       {/if}
-      {#if pushState !== "enabled" && !isNative}
+      {#if pushState !== "enabled"}
         <button
           class="push-reminder"
           class:warn={pushState === "denied" || pushState === "unsupported"}
@@ -673,6 +770,22 @@
           <span>{pushReminderLabel()}</span>
         </button>
       {/if}
+      <button
+        class="bell-btn"
+        class:has-unread={notifications.attention > 0}
+        title="Notifications"
+        aria-label={notifications.attention > 0
+          ? `Notifications, ${notifications.attention} needing attention`
+          : "Notifications"}
+        onclick={() => notifications.toggle()}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
+        <span>Notifications</span>
+        {#if notifications.attention > 0}
+          <span class="bell-count mono">{notifications.attention > 99 ? "99+" : notifications.attention}</span>
+        {/if}
+      </button>
       <button class="hire-btn" onclick={openHire}><span class="hire-plus">+</span> Hire agent</button>
     </div>
   </aside>
@@ -712,15 +825,23 @@
        should reach the top of the screen (Chat's agent header). -->
   <div class="main" class:flush-top={route === "chat"}>
     {#if route === "chat"}
-      <Chat {agents} target={chatTarget} onConsumeTarget={() => (chatTarget = null)} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
+      <Chat {agents} target={chatTarget} onConsumeTarget={() => (chatTarget = null)} onOpenGoal={(id) => navigate({ kind: "goal", goalId: id })} />
     {:else if route === "roadmap"}
-      <Roadmap {agents} onOpenChat={openChat} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
+      <Roadmap {agents} onOpenChat={openChat} onOpenGoal={(id) => navigate({ kind: "goal", goalId: id })} />
     {:else if route === "goals"}
-      <Goals {agents} target={goalTarget} onConsumeTarget={() => (goalTarget = null)} onOpenChat={openChat} />
+      <Goals
+        {agents}
+        target={goalTarget}
+        focus={goalFocus}
+        onConsumeTarget={() => {
+          goalTarget = null;
+          goalFocus = null;
+        }}
+        onOpenChat={openChat} />
     {:else if route === "projects"}
       <Projects {agents} onOpenChat={openChat} />
     {:else if route === "schedules"}
-      <Schedules {agents} onOpenChat={openChat} onOpenGoal={(id) => { goalTarget = id; route = "goals"; }} />
+      <Schedules {agents} onOpenChat={openChat} onOpenGoal={(id) => navigate({ kind: "goal", goalId: id })} />
     {:else if route === "skills"}
       <Skills />
     {:else if route === "terminal" && mode === "ha"}
@@ -813,17 +934,16 @@
 
   <!-- ============ TOASTS (global, top-right) ============ -->
   <div class="toasts" aria-live="polite">
+    <NotificationCenter onNavigate={openTarget} />
     {#each live.toasts as t (t.id)}
       <button
         class="toast"
-        class:permission={t.kind === "permission" || t.kind === "goal_access_request"}
-        class:plan={t.kind === "plan" || t.kind === "goal_review"}
+        class:permission={t.urgent}
         onclick={() => {
-          if (t.goalId) {
-            live.navigateToGoal(t.goalId);
-          } else {
-            live.navigateToSession(t.sessionId);
-          }
+          navigate(t.target);
+          // Tapping through counts as having seen it, so the Center and the badge agree
+          // with what the user just looked at.
+          if (t.notificationId) void notifications.markRead(t.notificationId);
           live.dismissToast(t.id);
         }}>
         <span class="toast-dot"></span>
@@ -1065,11 +1185,6 @@
     box-shadow: 0 0 0 3px rgba(214, 69, 40, 0.16);
   }
 
-  .toast.plan .toast-dot {
-    background: #9a6e1e;
-    box-shadow: 0 0 0 3px rgba(154, 110, 30, 0.16);
-  }
-
   .toast-body {
     display: flex;
     flex-direction: column;
@@ -1207,6 +1322,42 @@
     display: flex;
     gap: 7px;
     margin-top: 8px;
+  }
+
+  .bell-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    width: 100%;
+    border: 1px solid var(--line, #e7e2da);
+    background: var(--surface, #fff);
+    border-radius: 9px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.8rem;
+    color: var(--ink-soft, #6b625a);
+    cursor: pointer;
+  }
+
+  .bell-btn:hover {
+    border-color: var(--teal-deep, #2f7f6f);
+    color: var(--ink, #2b2724);
+  }
+
+  .bell-btn.has-unread {
+    color: var(--ink, #2b2724);
+    border-color: color-mix(in srgb, var(--teal-deep, #2f7f6f) 45%, var(--line, #e7e2da));
+  }
+
+  .bell-count {
+    margin-left: auto;
+    min-width: 1.15rem;
+    text-align: center;
+    font-size: 0.68rem;
+    padding: 0.05rem 0.3rem;
+    border-radius: 999px;
+    background: var(--teal-deep, #2f7f6f);
+    color: #fff;
   }
 
   .hire-btn {

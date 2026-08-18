@@ -27,6 +27,7 @@
   import VoiceButton from "../lib/VoiceButton.svelte";
   import { appendTranscript } from "../lib/voice";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
+  import type { GoalFocus } from "../lib/deeplink";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import UsageBar from "../lib/UsageBar.svelte";
   import GoalActionItems from "../lib/GoalActionItems.svelte";
@@ -58,14 +59,56 @@
   let {
     agents = [],
     target = null,
+    focus = null,
     onConsumeTarget = () => {},
     onOpenChat = (_t: ChatTarget) => {},
   }: {
     agents?: Agent[];
     target?: string | null;
+    // focus is the sub-resource a deep link named, so a notification about one action
+    // item or question brings that item into view rather than the goal that holds it.
+    focus?: GoalFocus | null;
     onConsumeTarget?: () => void;
     onOpenChat?: (t: ChatTarget) => void;
   } = $props();
+
+  // focusAnchor is the element id a focused deep link should scroll to. The ids are
+  // rendered on the sections and cards below.
+  function focusAnchor(f: GoalFocus): string {
+    switch (f.kind) {
+      case "timeline":
+      case "completion":
+      case "recovery":
+        return `goal-${f.kind}`;
+      case "action":
+        return `goal-action-${f.id}`;
+      case "question":
+        return `goal-question-${f.id}`;
+      case "access":
+        return `goal-access-${f.id}`;
+    }
+  }
+
+  // revealFocus scrolls the focused element into view once the detail has rendered.
+  //
+  // It retries briefly because the goal detail loads asynchronously: a notification tap
+  // arrives before the card it points at exists, and giving up on the first miss would
+  // leave the user looking at the top of the page wondering what they were sent to see.
+  function revealFocus(f: GoalFocus) {
+    const anchor = focusAnchor(f);
+    let attempts = 0;
+    const tick = () => {
+      const el = document.getElementById(anchor);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("deeplink-flash");
+        window.setTimeout(() => el.classList.remove("deeplink-flash"), 1600);
+        return;
+      }
+      if (++attempts < 20) window.setTimeout(tick, 100);
+    };
+    tick();
+  }
 
   let view = $state<"list" | "detail" | "create">("list");
   let goals = $state<Goal[]>([]);
@@ -271,7 +314,10 @@
   onMount(() => {
     void refreshAll().then(() => {
       if (target) {
-        void openGoal(target);
+        const pending = focus;
+        void openGoal(target).then(() => {
+          if (pending) revealFocus(pending);
+        });
         onConsumeTarget();
       }
     });
@@ -299,10 +345,14 @@
     return unsubscribe;
   });
 
-  // Deep-links after mount (a toast/push tap while the page is already open).
+  // Deep-links after mount (a toast, push or Notification Center tap while the page is
+  // already open).
   $effect(() => {
     if (target) {
-      void openGoal(target);
+      const pending = focus;
+      void openGoal(target).then(() => {
+        if (pending) revealFocus(pending);
+      });
       onConsumeTarget();
     }
   });
@@ -1157,7 +1207,7 @@
 
         <!-- PENDING QUESTION banner: the agent is blocked on a decision -->
         {#if detailPendingQuestion}
-          <div class="banner goal-question">
+          <div class="banner goal-question" id={detailPendingQuestion ? `goal-question-${detailPendingQuestion.ID}` : undefined}>
             <div class="banner-icon amber">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
             </div>
@@ -1206,7 +1256,7 @@
 
         <!-- RATE LIMIT RECOVERY banner -->
         {#if detailPendingRateLimit}
-          <div class="banner rate-limit">
+          <div class="banner rate-limit" id="goal-recovery">
             <div class="banner-icon amber">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b14e2a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/></svg>
             </div>
@@ -1241,7 +1291,7 @@
 
         <!-- COMPLETION banner -->
         {#if g.Status === "review"}
-          <div class="completion">
+          <div class="completion" id="goal-completion">
             <div class="completion-head">
               <span class="pulse-dot"></span>
               <div>
@@ -1273,7 +1323,8 @@
                 {@const rk = RK[r.Kind]}
                 {@const [sbg, sbd, stc, rawLbl] = reqStatusChip[r.Status] ?? reqStatusChip.pending}
                 {@const slbl = r.Status === "approved" && isInstallable(r) ? "installing…" : rawLbl}
-                <div class="req-card" class:failed={r.Status === "failed"}>
+                <!-- The id is the deep-link anchor for a notification about this request. -->
+                <div class="req-card" class:failed={r.Status === "failed"} id={`goal-access-${r.ID}`}>
                   <span class="req-icon" style="background:{rk.t};border-color:{rk.b}">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={rk.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html rk.ic}</svg>
                   </span>
@@ -1350,7 +1401,7 @@
         {/if}
 
         <!-- TIMELINE -->
-        <div class="panel timeline">
+        <div class="panel timeline" id="goal-timeline">
           <div class="timeline-head">
             <span class="section-label mono" style="margin-bottom:0">Activity</span>
             <span class="group-rule"></span>
@@ -2927,6 +2978,25 @@
     overflow: hidden;
     box-shadow: 0 18px 40px -26px rgba(177, 67, 34, 0.4);
   }
+  /* deeplink-flash marks the element a notification tap sent the user to. Without it
+     a smooth scroll into a dense page leaves them hunting for what changed. */
+  :global(.deeplink-flash) {
+    animation: deeplink-flash 1.6s ease-out;
+  }
+
+  @keyframes deeplink-flash {
+    0%,
+    100% {
+      box-shadow: none;
+    }
+    12% {
+      box-shadow: 0 0 0 3px var(--teal-deep);
+    }
+    60% {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal-deep) 35%, transparent);
+    }
+  }
+
   .completion-head {
     display: flex;
     align-items: center;

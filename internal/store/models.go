@@ -318,6 +318,131 @@ type PushSubscription struct {
 	CreatedAt string
 }
 
+// Notification device delivery health, mirroring what the push relay reports.
+const (
+	// NotificationDeviceActive means the device is reachable as far as anyone knows.
+	NotificationDeviceActive = "active"
+	// NotificationDeviceInvalid means the relay reported its registration gone. The row
+	// is kept so the user's mute choice and the device's label survive; registering a
+	// fresh token makes it active again.
+	NotificationDeviceInvalid = "invalid"
+)
+
+// NotificationDevice is a registered native-push destination.
+//
+// PushToken is sensitive routing information: it is what lets anything reach this
+// device, so it never leaves the delivery path — not into notification history, not
+// into an API response, and not into a push payload.
+type NotificationDevice struct {
+	ID         string
+	Platform   string
+	Label      string
+	PushToken  string
+	AppVersion string
+	// Enabled is the user's mute for this device: whether it should receive anything.
+	Enabled bool
+	// Status is delivery health — 'active' or 'invalid' — and is not the user's choice.
+	// A device can be enabled and invalid at once: they answer different questions.
+	Status     string
+	CreatedAt  string
+	UpdatedAt  string
+	LastSeenAt string
+}
+
+// NotificationImportance is a notification's delivery weight, independent of its
+// type: a schedule that succeeded and a schedule that failed are the same kind of
+// event at very different volumes. Channels map it to whatever their platform
+// offers (Android channels, APNs interruption levels).
+type NotificationImportance string
+
+const (
+	// NotificationPassive is worth recording but not worth interrupting for.
+	NotificationPassive NotificationImportance = "passive"
+	// NotificationNormal is ordinary informational activity.
+	NotificationNormal NotificationImportance = "normal"
+	// NotificationImportant needs the user reasonably soon — usually because
+	// something is blocked until they act.
+	NotificationImportant NotificationImportance = "important"
+	// NotificationCritical is reserved for failures that stop Podiom working.
+	NotificationCritical NotificationImportance = "critical"
+)
+
+// Notification is the transport-independent record of something meaningful that
+// happened in Podiom. It exists whether or not any delivery channel is enabled:
+// external push is a way of telling the user, never the authoritative record.
+//
+// Read and resolved are separate lifecycles. ReadAt means the user has seen it;
+// ResolvedAt means the underlying actionable condition has been handled. Reading
+// a notification never resolves the domain object behind it.
+//
+// ResourceKind/ResourceID name that domain object, and are what available-action
+// derivation and resolution key on. NavTarget is a logical token (not a URL) that
+// the web and mobile clients turn into a route, so renaming a route cannot break
+// notifications that are already stored.
+type Notification struct {
+	ID           string
+	Type         string
+	Category     string
+	Importance   NotificationImportance
+	Title        string
+	Body         string
+	AgentName    string
+	SessionID    string
+	GoalID       string
+	ScheduleName string
+	TaskID       string
+	ResourceKind string
+	ResourceID   string
+	NavTarget    string
+	Actionable   bool
+	CreatedAt    string
+	ReadAt       string
+	ResolvedAt   string
+}
+
+// NotificationDeliveryStatus is the outcome of one channel's attempt to deliver.
+// End-device delivery receipts are out of scope: 'accepted' means the transport
+// took it, not that a phone displayed it.
+type NotificationDeliveryStatus string
+
+const (
+	// NotificationDeliveryPending is recorded before the attempt is made.
+	NotificationDeliveryPending NotificationDeliveryStatus = "pending"
+	// NotificationDeliveryAccepted means the transport accepted the payload.
+	NotificationDeliveryAccepted NotificationDeliveryStatus = "accepted"
+	// NotificationDeliveryFailed means the attempt failed; Error says why.
+	NotificationDeliveryFailed NotificationDeliveryStatus = "failed"
+)
+
+// NotificationDelivery is one attempt to inform the user through one channel, so
+// a push failure is visible without being confused for a domain failure.
+//
+// Destination is the device id (native push) or the subscription row id (Web
+// Push) — never the FCM token and never the Web Push endpoint URL, both of which
+// are secrets that must not spread through the domain model.
+type NotificationDelivery struct {
+	ID             string
+	NotificationID string
+	Channel        string
+	Destination    string
+	Status         NotificationDeliveryStatus
+	Error          string
+	AttemptedAt    string
+}
+
+// NotificationPreference is one (type, channel) override saying whether that
+// event should reach the user externally.
+//
+// Rows are sparse: absence means "use the registry default". That is what lets a
+// notification type added in a later release pick up its intended default with no
+// data migration, while an explicit opt-out survives upgrades.
+type NotificationPreference struct {
+	Type      string
+	Channel   string
+	Enabled   bool
+	UpdatedAt string
+}
+
 // TaskStatus is a roadmap task's kanban column.
 type TaskStatus string
 

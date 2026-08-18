@@ -11,6 +11,7 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 	podiomtools "github.com/Podiom/Podiom/internal/tools"
 )
@@ -536,21 +537,21 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 	history, err := c.store.ListMessages(ctx, sessionID)
 	if err != nil {
 		if goalRun.ID != "" {
-			_, _ = c.store.FinishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
+			_, _ = c.finishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
 		}
 		return nil, err
 	}
 	userMessages, err := c.store.AppendUserMessage(ctx, sessionID, userMessage, opts.AttachmentIDs)
 	if err != nil {
 		if goalRun.ID != "" {
-			_, _ = c.store.FinishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
+			_, _ = c.finishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
 		}
 		return nil, err
 	}
 	if goalRun.ID != "" {
 		goalRun, err = c.store.SetGoalRunTurn(ctx, goalRun.ID, userMessages[0].ID)
 		if err != nil {
-			_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), goalRun.ID, store.GoalRunFailed, err.Error())
+			_, _ = c.finishGoalRun(context.WithoutCancel(ctx), goalRun.ID, store.GoalRunFailed, err.Error())
 			return nil, err
 		}
 	}
@@ -565,7 +566,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 					runStatus = store.GoalRunInterrupted
 					runError = ctx.Err().Error()
 				}
-				_, _ = c.store.FinishGoalRun(context.WithoutCancel(ctx), goalRun.ID, runStatus, runError)
+				_, _ = c.finishGoalRun(context.WithoutCancel(ctx), goalRun.ID, runStatus, runError)
 			}()
 		}
 		for _, msg := range userMessages {
@@ -795,7 +796,41 @@ func (c *Core) sendPersistedTurnError(ctx context.Context, streamOut chan<- Turn
 	if err != nil && strings.TrimSpace(content) == "" {
 		content = err.Error()
 	}
+	c.notifyTurnFailure(ctx, sessionID, content)
 	return sendTurnEvent(ctx, streamOut, TurnEvent{Kind: "error", Content: content})
+}
+
+// notifyTurnFailure reports a turn that ended in an error.
+//
+// This is the one place a turn error is persisted, and it already filters out
+// deliberate stops, so it is also the right place to notify from: the WebSocket's
+// own failure path never runs for unattended goal, schedule or task runs, which
+// are exactly the runs nobody is watching.
+//
+// A roadmap session failing is reported as a failed task rather than a failed
+// session. Roadmap tasks have no failed status of their own, so this is the only
+// signal that work the user queued did not get done.
+func (c *Core) notifyTurnFailure(ctx context.Context, sessionID, detail string) {
+	sess, err := c.store.GetSession(context.WithoutCancel(ctx), sessionID)
+	if err != nil {
+		return
+	}
+	ev := notify.Event{
+		Type:       notify.TypeSessionExecutionFailed,
+		SessionID:  sessionID,
+		GoalID:     sess.GoalID,
+		AgentName:  sess.AgentName,
+		Resource:   notify.ResourceSession,
+		ResourceID: sessionID,
+		Detail:     detail,
+	}
+	if sess.Origin == store.OriginRoadmap && sess.TaskID != "" {
+		ev.Type = notify.TypeTaskFailed
+		ev.TaskID = sess.TaskID
+		ev.Resource = notify.ResourceTask
+		ev.ResourceID = sess.TaskID
+	}
+	c.notifications.Publish(ev)
 }
 
 func (c *Core) appendFinalMessages(ctx context.Context, sessionID string, messages []store.Message) ([]store.Message, error) {

@@ -11,7 +11,6 @@ import (
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
-	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 	"github.com/Podiom/Podiom/internal/tokenmeter"
 )
@@ -225,7 +224,6 @@ func (s *Server) handleGoals(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if _, err := s.core.StartGoalPlanning(ctx, goalID); err != nil {
 				s.log.Warn("goal planning failed", "event", "goal", "goal", goalID, "err", err)
-				s.notifyGoalRateLimitIfPending(ctx, goalID)
 			}
 			s.broadcastGoalPing(ctx, goalID)
 		}(goal.ID)
@@ -283,9 +281,6 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		s.notifyGoal(notifyKindGoalReview, goal, req.SessionID,
-			goal.LeadAgent+" proposes goal completion",
-			"“"+goal.Title+"” — review the closing report and confirm.")
 		s.broadcastGoalPing(r.Context(), goal.ID)
 		writeJSON(w, goal, nil)
 	case "review":
@@ -314,7 +309,6 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if _, err := s.core.RunGoalReview(ctx, goalID); err != nil {
 				s.log.Warn("manual goal review failed", "event", "goal", "goal", goalID, "err", err)
-				s.notifyGoalRateLimitIfPending(ctx, goalID)
 			}
 			s.broadcastGoalPing(ctx, goalID)
 		}(goal.ID)
@@ -566,11 +560,6 @@ func (s *Server) handleAccessRequests(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, nil, err)
 			return
 		}
-		if goal, gerr := s.core.GetGoal(r.Context(), created.GoalID); gerr == nil {
-			s.notifyGoal(notifyKindGoalAccessRequest, goal, created.SessionID,
-				created.AgentName+" requests access",
-				accessRequestSummary(created)+" — “"+goal.Title+"”")
-		}
 		s.broadcastGoalPing(r.Context(), created.GoalID)
 		writeJSON(w, created, nil)
 	default:
@@ -673,7 +662,6 @@ func (s *Server) retryGoalRateLimit(block store.GoalRateLimitBlock) {
 	}
 	if err != nil {
 		s.log.Warn("goal rate-limit retry failed", "event", "goal", "goal", block.GoalID, "block", block.ID, "phase", string(block.Phase), "err", err)
-		s.notifyGoalRateLimitIfPending(ctx, block.GoalID)
 	}
 	s.broadcastGoalPing(ctx, block.GoalID)
 }
@@ -700,47 +688,6 @@ func accessRequestSummary(req store.AccessRequest) string {
 	default:
 		return string(req.Kind)
 	}
-}
-
-// Notification kinds for goal-scoped attention (extends permission/question).
-const (
-	notifyKindGoalAccessRequest = "goal_access_request"
-	notifyKindGoalReview        = "goal_review"
-	notifyKindGoalRateLimit     = "goal_rate_limit"
-)
-
-// notifyGoal fires an out-of-app notification off the hot path (the
-// notifyAttention precedent): push latency never delays the API response.
-func (s *Server) notifyGoal(kind string, goal store.Goal, sessionID, title, body string) {
-	if s.notifier == nil {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		s.notifier.Notify(ctx, notify.Notification{
-			SessionID: sessionID,
-			AgentName: goal.LeadAgent,
-			GoalID:    goal.ID,
-			Title:     title,
-			Body:      body,
-			Kind:      kind,
-		})
-	}()
-}
-
-func (s *Server) notifyGoalRateLimitIfPending(ctx context.Context, goalID string) {
-	pending, err := s.core.PendingGoalRateLimit(ctx, goalID)
-	if err != nil || pending == nil {
-		return
-	}
-	goal, err := s.core.GetGoal(ctx, goalID)
-	if err != nil {
-		return
-	}
-	s.notifyGoal(notifyKindGoalRateLimit, goal, pending.SessionID,
-		goal.LeadAgent+" hit a rate limit",
-		"Choose a model or provider to continue “"+goal.Title+"”.")
 }
 
 // broadcastGoalEvent fans one appended timeline entry out to every live

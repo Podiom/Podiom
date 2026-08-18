@@ -149,7 +149,8 @@
 
       <div class="actions-track" bind:this={track} onscroll={onScroll}>
         {#each items as item (item.ID)}
-          <div class="action-card" class:answered={item.Status !== "open"}>
+          <!-- The id is the deep-link anchor a notification about this item scrolls to. -->
+          <div class="action-card" class:answered={item.Status !== "open"} id={`goal-action-${item.ID}`}>
             <div class="action-top">
               <AgentAvatar name={item.AgentName} size={19} radius={6} fontSize={9} />
               <span class="action-agent">{item.AgentName}</span>

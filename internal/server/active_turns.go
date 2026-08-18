@@ -65,76 +65,67 @@ type activeTurn struct {
 type activeTurnHub struct {
 	mu    sync.Mutex
 	turns map[string]*activeTurn
-	// notifier + resolveAgent drive out-of-app (Web Push / native) notifications
-	// when a turn blocks on the user. Both are optional; nil disables push.
-	notifier     *notify.Dispatcher
-	resolveAgent func(ctx context.Context, sessionID string) (string, error)
+	// notifications records the fact that a turn is blocked on the user. Optional:
+	// nil disables notifications, which is what bare test servers rely on.
+	notifications *notify.Engine
 }
 
 func newActiveTurnHub() *activeTurnHub {
 	return &activeTurnHub{turns: map[string]*activeTurn{}}
 }
 
-// attachNotifier wires the out-of-app notification dispatcher and an agent-name
-// resolver (the hub only knows session IDs) into the hub.
-func (h *activeTurnHub) attachNotifier(n *notify.Dispatcher, resolve func(ctx context.Context, sessionID string) (string, error)) {
-	h.notifier = n
-	h.resolveAgent = resolve
+// attachNotifications wires the notification engine into the hub.
+func (h *activeTurnHub) attachNotifications(e *notify.Engine) {
+	h.notifications = e
 }
 
-// notifyAttention fires an out-of-app notification for a blocked turn. It runs
-// off the hot path (own goroutine) so push latency never delays the turn, and
-// resolves the agent name for the notification text.
-func (h *activeTurnHub) notifyAttention(sessionID, kind string, approval *adapter.PermissionRequest) {
-	if h.notifier == nil {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		agent := ""
-		if h.resolveAgent != nil {
-			if a, err := h.resolveAgent(ctx, sessionID); err == nil {
-				agent = a
-			}
-		}
-		title, body := attentionText(agent, kind)
-		var action *notify.ApprovalAction
+// attentionKind classifies what a blocked turn is waiting for. The hub reports
+// the state; the notification engine decides what that means for the user.
+type attentionKind int
+
+const (
+	attentionPermission attentionKind = iota
+	attentionQuestion
+	attentionFallback
+	attentionAuth
+)
+
+// notifyAttention records that a turn is blocked on the user.
+//
+// Publishing is non-blocking, so this stays on the hot path without adding
+// latency to the turn — the engine's worker does the rendering, persistence and
+// delivery. Agent names are resolved there too, from the session.
+func (h *activeTurnHub) notifyAttention(sessionID string, kind attentionKind, approval *adapter.PermissionRequest) {
+	ev := notify.Event{SessionID: sessionID}
+	switch kind {
+	case attentionPermission:
+		ev.Type = notify.TypeSessionPermissionRequired
+		ev.Resource = notify.ResourcePermissionRequest
 		if approval != nil {
-			action = &notify.ApprovalAction{
+			ev.ResourceID = approval.ID
+			ev.Approval = &notify.ApprovalAction{
 				RequestID: approval.ID,
 				Input:     append([]byte(nil), approval.Input...),
 			}
 		}
-		h.notifier.Notify(ctx, notify.Notification{
-			SessionID: sessionID,
-			AgentName: agent,
-			Title:     title,
-			Body:      body,
-			Kind:      kind,
-			Approval:  action,
-		})
-	}()
-}
-
-// attentionText renders the human-facing notification strings for a blocked
-// turn. kind is "permission", "question", "fallback", or "auth".
-func attentionText(agent, kind string) (title, body string) {
-	if agent == "" {
-		agent = "An agent"
-	}
-	switch kind {
-	case "permission":
-		return agent + " needs approval", "A tool action is waiting for your decision."
-	case "question":
-		return agent + " has a question", "Answer to let the agent continue."
-	case "fallback":
-		return agent + " hit a session limit", "Choose how to continue after the rate limit."
-	case "auth":
-		return agent + " needs you to sign in", "The account behind this session is signed out."
+	case attentionQuestion:
+		ev.Type = notify.TypeSessionQuestion
+		ev.Resource = notify.ResourceSessionQuestion
+		ev.ResourceID = sessionID
+	case attentionFallback:
+		ev.Type = notify.TypeSessionActionRequired
+		ev.Resource = notify.ResourceFallbackRequest
+		ev.ResourceID = sessionID
+		ev.Detail = "Choose how to continue after the rate limit."
+	case attentionAuth:
+		ev.Type = notify.TypeSessionActionRequired
+		ev.Resource = notify.ResourceAuthRequest
+		ev.ResourceID = sessionID
+		ev.Detail = "The account behind this session is signed out."
 	default:
-		return agent + " needs your attention", ""
+		return
 	}
+	h.notifications.Publish(ev)
 }
 
 func (h *activeTurnHub) start(sessionID, turnID, requestID string, writer *wsWriter, cancel context.CancelFunc) (TurnState, error) {
@@ -408,7 +399,7 @@ func (h *activeTurnHub) recordPermission(sessionID string, req *adapter.Permissi
 	requestID := turn.requestID
 	h.mu.Unlock()
 	h.broadcast(writers, ServerMessage{Type: "permission_request", RequestID: requestID, SessionID: sessionID, Request: req})
-	h.notifyAttention(sessionID, "permission", req)
+	h.notifyAttention(sessionID, attentionPermission, req)
 }
 
 func (h *activeTurnHub) recordUserInput(sessionID string, req *adapter.UserInputRequest) {
@@ -425,7 +416,7 @@ func (h *activeTurnHub) recordUserInput(sessionID string, req *adapter.UserInput
 	requestID := turn.requestID
 	h.mu.Unlock()
 	h.broadcast(writers, ServerMessage{Type: "user_input_request", RequestID: requestID, SessionID: sessionID, Input: req})
-	h.notifyAttention(sessionID, "question", nil)
+	h.notifyAttention(sessionID, attentionQuestion, nil)
 }
 
 func (h *activeTurnHub) recordInterviewState(sessionID string, state *InterviewState) {
@@ -461,7 +452,7 @@ func (h *activeTurnHub) recordFallback(sessionID string, req *core.FallbackReque
 	requestID := turn.requestID
 	h.mu.Unlock()
 	h.broadcast(writers, ServerMessage{Type: "fallback_request", RequestID: requestID, SessionID: sessionID, Fallback: req})
-	h.notifyAttention(sessionID, "fallback", nil)
+	h.notifyAttention(sessionID, attentionFallback, nil)
 }
 
 // recordAuthRequired marks the turn as blocked on a signed-out account. It is
@@ -479,7 +470,7 @@ func (h *activeTurnHub) recordAuthRequired(sessionID string, req *core.AuthRequi
 	requestID := turn.requestID
 	h.mu.Unlock()
 	h.broadcast(writers, ServerMessage{Type: "auth_required", RequestID: requestID, SessionID: sessionID, AuthRequired: req})
-	h.notifyAttention(sessionID, "auth", nil)
+	h.notifyAttention(sessionID, attentionAuth, nil)
 }
 
 func (h *activeTurnHub) finish(sessionID string) {

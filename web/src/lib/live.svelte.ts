@@ -11,9 +11,13 @@
 import { getUsage, getVapidKey, listAccessRequests, listGoals, subscribePush } from "./api";
 import { auth, WS_PROTOCOL, wsTokenProtocol } from "./auth.svelte";
 import { appBase, wsUrl } from "./base";
+import { targetFromNotification, type Target } from "./deeplink";
+import { pushPayloadAsNotification } from "./pushpayload";
 import { request } from "./http";
 import { randomID } from "./id";
 import { isNative } from "./native";
+import { enableNativePush, nativePermissionState, nativePushAvailable } from "./push";
+import type { Notification as PodiomNotification } from "./types";
 import type {
   ActiveTurnSummary,
   ClientMessage,
@@ -33,10 +37,17 @@ export interface Toast {
   id: string;
   title: string;
   body: string;
-  kind: "permission" | "question" | "fallback" | "plan" | "goal_access_request" | "goal_review";
-  sessionId: string;
-  // goalId routes goal-scoped toasts to the Goals page instead of a session.
-  goalId?: string;
+  // urgent styles the ones that block progress. Derived from the notification's
+  // importance rather than from its type, so a new notification type needs no change
+  // here.
+  urgent: boolean;
+  // target is where tapping goes. Resolving it up front keeps the toast from having to
+  // know anything about notification routing.
+  target: Target;
+  // notificationId is set for toasts raised by a notification, so tapping one can mark
+  // it read. The plan-submitted toast has no notification behind it and leaves this
+  // empty.
+  notificationId?: string;
 }
 
 type Pending = "permission" | "question" | "fallback" | "assistant" | "";
@@ -93,8 +104,10 @@ class LiveStore {
   // state, regardless of which message (direct event vs. list state) reveals it.
   private lastPending: Record<string, Pending> = {};
   private subscribers = new Set<(msg: ServerMessage) => void>();
-  private navigator: ((sessionId: string) => void) | null = null;
-  private goalNavigator: ((goalId: string) => void) | null = null;
+  // navigator opens a logical destination. One entry point rather than one per
+  // resource kind: a toast tap, a Web Push notification click and the Notification
+  // Center all resolve to a target, and lib/deeplink.ts owns what that means.
+  private navigator: ((target: Target) => void) | null = null;
   private usageRefreshPromise: Promise<void> | null = null;
 
   // connect is idempotent: the first caller (App.svelte, once the token gate
@@ -215,24 +228,23 @@ class LiveStore {
     return () => this.subscribers.delete(fn);
   }
 
-  // setNavigator lets App.svelte wire "open this session" so toast taps and
-  // Web Push notification clicks can route to the right chat.
-  setNavigator(fn: (sessionId: string) => void) {
+  // setNavigator lets App.svelte wire navigation, which it performs by changing the
+  // URL hash so every kind of tap goes through the same routing path.
+  setNavigator(fn: (target: Target) => void) {
     this.navigator = fn;
   }
 
-  navigateToSession(sessionId: string) {
-    this.navigator?.(sessionId);
+  // openTarget navigates to a logical destination.
+  openTarget(target: Target) {
+    this.navigator?.(target);
   }
 
-  // setGoalNavigator lets App.svelte wire "open this goal" so goal toasts and
-  // push notification taps land on the Goals page.
-  setGoalNavigator(fn: (goalId: string) => void) {
-    this.goalNavigator = fn;
+  navigateToSession(sessionId: string) {
+    this.openTarget({ kind: "chat", sessionId });
   }
 
   navigateToGoal(goalId: string) {
-    this.goalNavigator?.(goalId);
+    this.openTarget({ kind: "goal", goalId });
   }
 
   // refreshGoalAttention recomputes which goals need the user: a proposed
@@ -325,6 +337,9 @@ class LiveStore {
       case "goal_event":
         if (msg.goal_event) this.handleGoalEvent(msg.goal_event);
         break;
+      case "notification":
+        if (msg.notification) this.toastForNotification(msg.notification);
+        break;
     }
     // …then hand the raw message to page-level subscribers (chat rendering).
     for (const fn of this.subscribers) fn(msg);
@@ -364,7 +379,7 @@ class LiveStore {
     const seen = new Set<string>();
     for (const t of turns) {
       seen.add(t.session_id);
-      this.edge(t.session_id, (t.pending ?? "") as Pending);
+      this.trackPending(t.session_id, (t.pending ?? "") as Pending);
     }
     for (const id of Object.keys(this.lastPending)) {
       if (id.includes(":plan")) continue;
@@ -374,7 +389,7 @@ class LiveStore {
 
   private setTurn(summary: ActiveTurnSummary) {
     this.activeTurns = { ...this.activeTurns, [summary.session_id]: summary };
-    this.edge(summary.session_id, (summary.pending ?? "") as Pending);
+    this.trackPending(summary.session_id, (summary.pending ?? "") as Pending);
   }
 
   private markPending(sessionId: string, pending: "permission" | "question" | "fallback") {
@@ -388,7 +403,7 @@ class LiveStore {
         pending,
       },
     };
-    this.edge(sessionId, pending);
+    this.trackPending(sessionId, pending);
   }
 
   private clearTurn(sessionId: string) {
@@ -397,61 +412,48 @@ class LiveStore {
     this.lastPending[sessionId] = "";
   }
 
-  // edge fires a toast on a rising transition into a blocked state.
-  private edge(sessionId: string, pending: Pending) {
-    const prev = this.lastPending[sessionId] ?? "";
+  // trackPending records what a turn is currently blocked on.
+  //
+  // It used to also raise a toast on each rising transition. The daemon reports those
+  // states as notifications now, so the toast comes from there — but the tracking stays
+  // because the plan-submitted toast below still keys off it.
+  private trackPending(sessionId: string, pending: Pending) {
     this.lastPending[sessionId] = pending;
-    if (prev === pending) return;
-    if (pending === "permission" || pending === "question" || pending === "fallback") {
-      this.pushToast(sessionId, pending);
-    }
   }
 
-  private pushToast(sessionId: string, kind: "permission" | "question" | "fallback") {
-    const agent = this.sessions.find((s) => s.ID === sessionId)?.AgentName ?? "An agent";
-    const title =
-      kind === "permission"
-        ? `${agent} needs approval`
-        : kind === "question"
-          ? `${agent} has a question`
-          : `${agent} hit a session limit`;
-    const body =
-      kind === "permission"
-        ? "A tool action is waiting for your decision."
-        : kind === "question"
-          ? "Answer to let the agent continue."
-          : "Choose how to continue after the rate limit.";
+  // toastForNotification raises a toast for a notification that just arrived.
+  //
+  // The wording comes from the daemon. It used to be duplicated here — the same
+  // sentences written once in Go and once in TypeScript — which meant every change had
+  // to be made twice and they drifted whenever it was not.
+  //
+  // Only the ones that block progress interrupt: importance is the daemon's own
+  // judgement of that, so a passive progress update updates the Notification Center
+  // without a toast.
+  private toastForNotification(n: PodiomNotification) {
+    if (n.Importance !== "important" && n.Importance !== "critical") return;
+    // Already seen elsewhere — another device, or this one before a reload — so there is
+    // nothing to interrupt for.
+    if (n.ReadAt) return;
     const toast: Toast = {
       id: randomID(),
-      kind,
-      sessionId,
-      title,
-      body,
+      title: n.Title,
+      body: n.Body,
+      urgent: true,
+      target: targetFromNotification(n),
+      notificationId: n.ID,
     };
     this.toasts = [...this.toasts, toast];
     window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
   }
 
-  // handleGoalEvent refreshes the Goals attention badge and raises a toast for
-  // the two returning-user moments: an access request was filed, or the agent
-  // proposed completion. Everything else just updates the badge silently; the
-  // Goals page itself subscribes for live timeline refresh.
-  private handleGoalEvent(ev: GoalEvent) {
+  // handleGoalEvent keeps the Goals attention badge current.
+  //
+  // It deliberately raises no toast. Access requests and completion proposals are
+  // notifications now, and they surface through toastForNotification with wording the
+  // daemon owns; toasting here as well would show one event twice.
+  private handleGoalEvent(_ev: GoalEvent) {
     void this.refreshGoalAttention();
-    if (ev.Kind !== "access_requested" && ev.Kind !== "completion_proposed") return;
-    const isRequest = ev.Kind === "access_requested";
-    const toast: Toast = {
-      id: randomID(),
-      kind: isRequest ? "goal_access_request" : "goal_review",
-      sessionId: ev.SessionID,
-      goalId: ev.GoalID,
-      title: isRequest ? "An agent requests access" : "Goal completion proposed",
-      body: isRequest
-        ? ev.Body || "Approve or deny it on the Goals page."
-        : "Review the closing report to confirm or reopen.",
-    };
-    this.toasts = [...this.toasts, toast];
-    window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
   }
 
   private edgePlanAttention() {
@@ -463,12 +465,15 @@ class LiveStore {
       }
       if (this.lastPending[key] === "question") continue;
       this.lastPending[key] = "question";
+      // Plan submission is not a notification type — plan mode is outside the
+      // notification model — so this toast is raised locally and carries no
+      // notification id.
       const toast: Toast = {
         id: randomID(),
-        kind: "plan",
-        sessionId: session.ID,
         title: `${session.AgentName} submitted a plan`,
         body: "Review it to approve, revise, or reject.",
+        urgent: true,
+        target: { kind: "chat", sessionId: session.ID },
       };
       this.toasts = [...this.toasts, toast];
       window.setTimeout(() => this.dismissToast(toast.id), TOAST_TTL_MS);
@@ -481,6 +486,10 @@ class LiveStore {
   // If permission is already granted, keep the browser subscribed and registered
   // with the daemon so approved notifications stay effectively on.
   async refreshPushStatus(): Promise<PushState> {
+    // Native apps use APNs/FCM rather than Web Push, so the state comes from the OS
+    // permission there. Both paths report the same PushState, which keeps the settings
+    // screen from needing to know which transport it is looking at.
+    if (nativePushAvailable) return await nativePermissionState();
     if (!this.pushSupported()) return "unsupported";
     if (Notification.permission === "denied") return "denied";
 
@@ -496,6 +505,7 @@ class LiveStore {
   // permission, and subscribes this browser with the daemon. Must be invoked
   // from a user gesture (browsers gate the permission prompt on one).
   async enablePush(): Promise<PushState> {
+    if (nativePushAvailable) return await enableNativePush();
     if (!this.pushSupported()) return "unsupported";
     // Confirm the daemon actually has push configured before prompting the user.
     const { public_key } = await getVapidKey();
@@ -510,9 +520,9 @@ class LiveStore {
 
   private pushSupported(): boolean {
     // Web push is a service-worker feature and the native apps have no service
-    // worker: iOS does not run one under a custom scheme at all. Native push
-    // (APNs/FCM) is deliberately out of scope for now, so report unsupported
-    // rather than letting the UI offer a switch that cannot work.
+    // worker: iOS does not run one under a custom scheme at all. Native apps take the
+    // APNs/FCM path instead, which the callers above check for first, so reaching here
+    // on native means Web Push genuinely cannot work.
     if (isNative) return false;
     return "Notification" in window && "serviceWorker" in navigator && "PushManager" in window;
   }
@@ -536,8 +546,22 @@ class LiveStore {
   private listenForServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker.addEventListener("message", (event) => {
-      const data = event.data as { type?: string; session_id?: string; goal_id?: string } | undefined;
+      const data = event.data as
+        | {
+            type?: string;
+            session_id?: string;
+            goal_id?: string;
+            notification?: Record<string, unknown>;
+          }
+        | undefined;
       if (data?.type !== "notification-click") return;
+      // Prefer the full payload, which routes to the exact resource. The two ids are
+      // the fallback for a notification delivered by an older daemon that did not send
+      // the routing fields.
+      if (data.notification) {
+        this.openTarget(targetFromNotification(pushPayloadAsNotification(data.notification)));
+        return;
+      }
       if (data.goal_id) {
         this.navigateToGoal(data.goal_id);
       } else if (data.session_id) {

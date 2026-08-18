@@ -1,79 +1,108 @@
-// Package notify delivers "an agent needs you" signals to out-of-app
-// destinations: the OS notification tray via Web Push today, and — behind the
-// same Channel seam — native APNs/FCM push later. It is deliberately decoupled
-// from core/server: callers hand it a Notification and a set of Channels, and
-// each Channel owns its own transport and subscription storage.
+// Package notify turns Podiom domain activity into notifications and gets them to
+// the user.
 //
-// In-app signalling (toasts, red dots) is NOT this package's job; that is
-// driven live off the WebSocket. notify is only for reaching a user who is not
-// currently looking at the dashboard.
+// It owns four things: the registry of every notification type Podiom produces
+// (registry.go), the engine that maps domain events onto notifications, filters
+// them against the user's preferences, persists them and fans them out
+// (engine.go), the rendering of their human-readable text (render.go), and the
+// delivery channels themselves (webpush.go, relay.go).
+//
+// The persisted notification is the authoritative record: external push is a way
+// of telling the user about it, never the record itself. In-app delivery is the
+// engine's broadcast callback, which drives the Notification Center live off the
+// WebSocket; out-of-app delivery is the Channel set.
+//
+// The package depends on internal/store and nothing else of Podiom's. Producers
+// reach in by holding an *Engine, and the two server-dependent pieces arrive
+// through setters, so core and server never have to be imported here.
 package notify
 
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 )
 
-// Notification is a provider-neutral "attention required" event. Kind is the
-// underlying trigger ("permission", "question", "goal_access_request", or
-// "goal_review"); Title/Body are the rendered human strings a Channel presents.
-// GoalID is set for goal-scoped kinds so a notification tap can deep-link to
-// the goal instead of a session.
-type Notification struct {
-	SessionID string
-	AgentName string
-	GoalID    string
-	Title     string
-	Body      string
-	Kind      string // "permission" | "question" | "goal_access_request" | "goal_review"
-	Approval  *ApprovalAction
-}
-
-// ApprovalAction is the minimal data a trusted same-origin client needs to
-// allow a pending permission request from an OS notification action.
+// ApprovalAction is the minimal data a trusted same-origin client needs to allow
+// a pending permission request straight from an OS notification action.
 type ApprovalAction struct {
 	RequestID string          `json:"request_id"`
 	Input     json.RawMessage `json:"input"`
 }
 
-// Channel is one delivery technology. Implementations are responsible for their
-// own subscription lookup and transport. New destinations (APNs, FCM) implement
-// this interface and are registered on the Dispatcher without touching callers.
+// Action is one operation offered on a notification, already narrowed against
+// live domain state. Label is display text; ID is what the client sends back.
+type Action struct {
+	ID    ActionID `json:"id"`
+	Label string   `json:"label"`
+}
+
+// Envelope is what a delivery channel receives: the stored notification plus the
+// context a transport needs and the actions that are valid right now.
+//
+// Actions are computed per delivery rather than stored, because a notification's
+// available operations depend on domain state that moves after it was recorded —
+// an access request approved from the dashboard must stop offering Approve on a
+// phone that is still showing the notification.
+type Envelope struct {
+	// ID is the notification id, and the handle a client sends actions against.
+	ID string
+	// Type is the registry type identifier.
+	Type string
+	// PushKind is the transport-facing kind. Types that predate the engine keep
+	// their original value so the service worker's behaviour still applies.
+	PushKind string
+	// InstallationID names the Podiom installation that produced this, so one app
+	// connected to several installations can tell them apart.
+	InstallationID string
+	// Importance lets a channel map onto platform notification weights.
+	Importance   string
+	Title        string
+	Body         string
+	AgentName    string
+	SessionID    string
+	GoalID       string
+	ScheduleName string
+	TaskID       string
+	// ResourceKind/ResourceID name the domain object, so a tap can land on the exact
+	// item rather than the page holding it.
+	ResourceKind string
+	ResourceID   string
+	// NavTarget is the logical view a tap should open; the client owns the route.
+	NavTarget string
+	// ActionSet names the native action group, which becomes the APNs category. Empty
+	// means tap-to-open with no buttons.
+	ActionSet string
+	// Actions is the set valid at send time. Empty means tap-to-open only.
+	Actions []Action
+	// Approval carries a pending permission request's id and input for the
+	// existing Web Push approve action.
+	Approval *ApprovalAction
+}
+
+// Result is one destination's outcome within a single Send.
+//
+// Channels report per destination rather than collapsing to one error so a
+// delivery row can say what happened where: "three phones, one dead" is a
+// different situation from "the transport is down", and only the former should
+// prune a registration.
+type Result struct {
+	// Destination identifies where this attempt went — a device id or a
+	// subscription row id. Never a push token or endpoint URL: those are secrets
+	// and must not spread into notification history.
+	Destination string
+	// Err is nil when the transport accepted the payload.
+	Err error
+}
+
+// Channel is one delivery technology. Implementations own their own destination
+// lookup and transport, so a new one is registered on the engine without any
+// producer changing.
 type Channel interface {
+	// Name is the channel identifier used in preferences and delivery rows.
 	Name() string
-	Send(ctx context.Context, n Notification) error
-}
-
-// Dispatcher fans a Notification out to every registered Channel. Delivery is
-// best-effort: a failing channel is logged, never propagated, so one dead
-// transport can't suppress the others.
-type Dispatcher struct {
-	channels []Channel
-	log      *slog.Logger
-}
-
-// NewDispatcher builds a Dispatcher over the given channels. Nil channels are
-// dropped so callers can pass optional channels inline.
-func NewDispatcher(log *slog.Logger, channels ...Channel) *Dispatcher {
-	if log == nil {
-		log = slog.Default()
-	}
-	live := make([]Channel, 0, len(channels))
-	for _, ch := range channels {
-		if ch != nil {
-			live = append(live, ch)
-		}
-	}
-	return &Dispatcher{channels: live, log: log}
-}
-
-// Notify delivers to every channel synchronously. Callers that must not block
-// (e.g. a turn hot path) should invoke this in a goroutine.
-func (d *Dispatcher) Notify(ctx context.Context, n Notification) {
-	for _, ch := range d.channels {
-		if err := ch.Send(ctx, n); err != nil {
-			d.log.Warn("notification channel failed", "channel", ch.Name(), "kind", n.Kind, "err", err)
-		}
-	}
+	// Send delivers env to every destination this channel knows about. The error
+	// is channel-level (destination lookup failed, payload could not be built);
+	// per-destination outcomes are in the results. No results and no error means
+	// nothing is registered — not a failure.
+	Send(ctx context.Context, env Envelope) ([]Result, error)
 }

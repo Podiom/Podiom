@@ -92,7 +92,7 @@ func (c *Core) CreateGoal(ctx context.Context, goal store.Goal) (store.Goal, err
 	if err != nil {
 		return store.Goal{}, err
 	}
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID: created.ID,
 		Kind:   store.GoalEventCreated,
 	}); err != nil {
@@ -313,7 +313,7 @@ func (c *Core) TransitionGoal(ctx context.Context, id string, to store.GoalStatu
 		c.setGoalLeadArchived(ctx, updated, false)
 	}
 	payload, _ := json.Marshal(map[string]string{"from": string(from), "to": string(to)})
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:  updated.ID,
 		Kind:    store.GoalEventStatusChange,
 		Body:    note,
@@ -376,7 +376,7 @@ func (c *Core) AddGoalFeedback(ctx context.Context, goalID, body string) (store.
 	if body == "" {
 		return store.GoalEvent{}, fmt.Errorf("goal feedback body is required")
 	}
-	ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	ev, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID: goal.ID,
 		Kind:   store.GoalEventUserFeedback,
 		Body:   body,
@@ -486,7 +486,7 @@ func (c *Core) ResolveGoalRateLimit(ctx context.Context, in ResolveGoalRateLimit
 		"effort":   target.Effort,
 	})
 	body := fmt.Sprintf("Retry target selected: %s (%s, %s).", targetLabel(target.Provider, target.Profile), target.Model, target.Effort)
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:  updated.ID,
 		Kind:    store.GoalEventRateLimitResolved,
 		Body:    body,
@@ -637,7 +637,7 @@ func (c *Core) RecordGoalProgress(ctx context.Context, req RecordGoalProgressReq
 			raw, _ := json.Marshal(map[string]string{"next_step": nextStep, "next_step_why": nextStepWhy})
 			payload = string(raw)
 		}
-		ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+		ev, err := c.appendGoalEvent(ctx, store.GoalEvent{
 			GoalID:    goal.ID,
 			SessionID: req.SessionID,
 			RunID:     runID,
@@ -680,7 +680,7 @@ func (c *Core) RecordGoalProgress(ctx context.Context, req RecordGoalProgressReq
 			}
 		}
 		payload, _ := json.Marshal(map[string]any{"updates": deltas})
-		ev, err := c.store.AppendGoalEventWithMetrics(ctx, store.GoalEvent{
+		ev, err := c.appendGoalEventWithMetrics(ctx, store.GoalEvent{
 			GoalID:    goal.ID,
 			SessionID: req.SessionID,
 			RunID:     runID,
@@ -721,7 +721,7 @@ func (c *Core) ProposeGoalCompletion(ctx context.Context, goalID, sessionID, clo
 		return store.Goal{}, err
 	}
 	updated.NextStep, updated.NextStepWhy, updated.NextStepAt = "", "", ""
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    updated.ID,
 		SessionID: sessionID,
 		RunID:     c.goalRunForAgentEvent(ctx, updated.ID, sessionID),
@@ -828,7 +828,7 @@ func (c *Core) CreateAccessRequest(ctx context.Context, in CreateAccessRequestIn
 		return store.AccessRequest{}, err
 	}
 	evPayload, _ := json.Marshal(map[string]string{"request_id": req.ID, "kind": string(req.Kind)})
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: in.SessionID,
 		RunID:     c.goalRunForAgentEvent(ctx, goal.ID, in.SessionID),
@@ -880,7 +880,7 @@ func (c *Core) DecideAccessRequest(ctx context.Context, id string, approve bool,
 		body += "\n\nNote to agent: " + note
 	}
 	payload, _ := json.Marshal(map[string]string{"request_id": req.ID, "kind": string(req.Kind), "status": string(req.Status)})
-	if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:  req.GoalID,
 		Kind:    store.GoalEventAccessDecided,
 		Body:    body,
@@ -910,7 +910,7 @@ func (c *Core) MarkAccessRequestExecuted(ctx context.Context, id, execErr, evide
 	}
 	if execErr != "" {
 		payload, _ := json.Marshal(map[string]string{"request_id": req.ID, "kind": string(req.Kind), "status": string(req.Status), "error": execErr})
-		if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+		if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 			GoalID:  req.GoalID,
 			Kind:    store.GoalEventAccessDecided,
 			Body:    "Grant failed — " + string(req.Kind) + ": " + execErr,
@@ -920,7 +920,7 @@ func (c *Core) MarkAccessRequestExecuted(ctx context.Context, id, execErr, evide
 		}
 	} else if strings.TrimSpace(evidence) != "" {
 		payload, _ := json.Marshal(map[string]string{"request_id": req.ID, "kind": string(req.Kind), "status": string(req.Status)})
-		if _, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+		if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 			GoalID:  req.GoalID,
 			Kind:    store.GoalEventAccessDecided,
 			Body:    evidence,

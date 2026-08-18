@@ -84,7 +84,10 @@ type Config struct {
 	Agents      []Agent     `yaml:"agents"`
 	Voice       Voice       `yaml:"voice,omitempty"`
 	Server      Server      `yaml:"server"`
-	Logging     Logging     `yaml:"logging"`
+	// Notifications configures out-of-app notification delivery. Absent means Web
+	// Push only: native push needs the hosted relay's address.
+	Notifications Notifications `yaml:"notifications,omitempty"`
+	Logging       Logging       `yaml:"logging"`
 }
 
 // Voice configures voice input (speech-to-text). The OpenAI key is used
@@ -200,6 +203,34 @@ func (s Server) AdvertiseEnabled() bool {
 }
 
 // Logging configures daemon-owned structured log files under Paths.LogsDir.
+// Notifications configures notification delivery.
+//
+// Native push goes through the hosted Podiom Push Relay, which is why this is an
+// address and a token rather than Firebase credentials: a self-hosted Podiom needs
+// only outbound HTTPS, and never a Firebase project or an APNs certificate of its
+// own. Leaving RelayURL empty disables native push and leaves Web Push untouched.
+type Notifications struct {
+	// RelayURL is the Push Relay to use. Empty means the hosted default, so native push
+	// needs no configuration; set it to point at a development relay or a self-hosted
+	// one. There is deliberately no credential here: the daemon registers itself and
+	// keeps what the relay issues in $PODIOM_HOME/relay.json.
+	RelayURL string `yaml:"relay_url,omitempty"`
+}
+
+// DefaultRelayURL is the hosted Podiom Push Relay.
+//
+// Shipped as a default because users running their own Podiom must not have to deploy a
+// relay, create a Firebase project, or configure APNs to receive a notification.
+const DefaultRelayURL = "https://push.podiom.org"
+
+// RelayEndpoint returns the relay to use, falling back to the hosted one.
+func (n Notifications) RelayEndpoint() string {
+	if url := strings.TrimSpace(n.RelayURL); url != "" {
+		return url
+	}
+	return DefaultRelayURL
+}
+
 type Logging struct {
 	RetentionDays int    `yaml:"retention_days"`
 	Level         string `yaml:"level"`

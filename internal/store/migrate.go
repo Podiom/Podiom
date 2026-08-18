@@ -1390,6 +1390,128 @@ var migrations = []migration{
 		// is needed: every pre-existing session stays visible exactly as it is.
 		sql: `ALTER TABLE sessions ADD COLUMN archived_at TEXT NOT NULL DEFAULT '';`,
 	},
+	{
+		version: 37,
+		name:    "notifications",
+		// The central notification record: one row per meaningful thing that
+		// happened, independent of how (or whether) it was delivered anywhere.
+		//
+		// session_id/goal_id/schedule_name/task_id are deliberately FK-free.
+		// Notification history has to outlive the thing it was about — opening an
+		// old notification is one of the reasons the table exists — so a CASCADE
+		// would destroy exactly what we are keeping, and a RESTRICT would make
+		// deleting a goal fail. Same trade-off as workspace_file_snapshots.
+		//
+		// type/category/channel carry no CHECK: validity is enforced in Go against
+		// the notify registry, the rule migration 25 established for providers.
+		// importance and delivery status do get CHECKs — those are closed enums no
+		// registry will extend.
+		//
+		// resource_kind/resource_id name the actionable domain object (an access
+		// request, an action item, a pending question). That pair is what action
+		// derivation and resolution key on, which is why it gets its own index.
+		sql: `CREATE TABLE notifications (
+			id            TEXT PRIMARY KEY,
+			type          TEXT NOT NULL,
+			category      TEXT NOT NULL,
+			importance    TEXT NOT NULL DEFAULT 'normal'
+				CHECK (importance IN ('passive', 'normal', 'important', 'critical')),
+			title         TEXT NOT NULL,
+			body          TEXT NOT NULL DEFAULT '',
+			agent_name    TEXT NOT NULL DEFAULT '',
+			session_id    TEXT NOT NULL DEFAULT '',
+			goal_id       TEXT NOT NULL DEFAULT '',
+			schedule_name TEXT NOT NULL DEFAULT '',
+			task_id       TEXT NOT NULL DEFAULT '',
+			resource_kind TEXT NOT NULL DEFAULT '',
+			resource_id   TEXT NOT NULL DEFAULT '',
+			nav_target    TEXT NOT NULL DEFAULT '',
+			actionable    INTEGER NOT NULL DEFAULT 0,
+			created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+			read_at       TEXT,
+			resolved_at   TEXT
+		);
+
+		-- Listing orders by (created_at DESC, rowid DESC) so notifications recorded
+		-- in the same second have a stable order; rowid cannot be part of an index,
+		-- so it is resolved against the small set of rows sharing a timestamp.
+		CREATE INDEX idx_notifications_created  ON notifications(created_at DESC);
+		CREATE INDEX idx_notifications_unread   ON notifications(read_at, created_at DESC);
+		CREATE INDEX idx_notifications_resource ON notifications(resource_kind, resource_id, resolved_at);
+
+		CREATE TABLE notification_deliveries (
+			id              TEXT PRIMARY KEY,
+			notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+			channel         TEXT NOT NULL,
+			destination     TEXT NOT NULL DEFAULT '',
+			status          TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'failed')),
+			error           TEXT NOT NULL DEFAULT '',
+			attempted_at    TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		CREATE INDEX idx_notification_deliveries_notification
+			ON notification_deliveries(notification_id, attempted_at);
+
+		CREATE TABLE notification_preferences (
+			type       TEXT NOT NULL,
+			channel    TEXT NOT NULL,
+			enabled    INTEGER NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (type, channel)
+		);`,
+	},
+	{
+		version: 38,
+		name:    "notification_devices",
+		// Native push destinations, keyed by an id Podiom generates rather than by
+		// the push token.
+		//
+		// The token rotates while the device stays the same, so upserting on it
+		// would create a new row per refresh, orphan the old one, and deliver the
+		// same notification to one phone twice. The opaque id also keeps the token
+		// out of the rest of the domain model, where it does not belong: it is
+		// routing information for one transport.
+		//
+		// push_subscriptions (migration 8) keeps holding Web Push only. Its comment
+		// predicted native tokens would reuse that table; that prediction does not
+		// survive contact with token refresh, because its single `endpoint` identity
+		// column cannot express "same device, new token".
+		sql: `CREATE TABLE notification_devices (
+			id           TEXT PRIMARY KEY,
+			platform     TEXT NOT NULL CHECK (platform IN ('ios', 'android')),
+			label        TEXT NOT NULL DEFAULT '',
+			push_token   TEXT NOT NULL,
+			app_version  TEXT NOT NULL DEFAULT '',
+			enabled      INTEGER NOT NULL DEFAULT 1,
+			created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+			last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+
+		-- Indexed but deliberately not UNIQUE: the push service reassigns a token to
+		-- a different install after a reinstall or a device restore, so two rows can
+		-- briefly claim one token. Registration resolves that by releasing it from
+		-- the other row.
+		CREATE INDEX idx_notification_devices_token   ON notification_devices(push_token);
+		CREATE INDEX idx_notification_devices_enabled ON notification_devices(enabled);`,
+	},
+	{
+		version: 39,
+		name:    "notification_device_status",
+		// Delivery health, mirroring the vocabulary the push relay reports back.
+		//
+		// Deliberately separate from `enabled`, which is the user muting a phone. The two
+		// are easy to confuse and mean opposite things about intent: a muted device is
+		// working and chosen to be quiet, an invalid one is broken and would be notified
+		// if it could be. Collapsing them would let a token rotation silently un-mute a
+		// device, or a mute look like a fault.
+		//
+		// A device becomes 'invalid' when the relay reports its registration gone, and
+		// 'active' again the moment the app registers a fresh token for it — which is why
+		// the row is kept rather than deleted.
+		sql: `ALTER TABLE notification_devices
+			ADD COLUMN status TEXT NOT NULL DEFAULT 'active';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

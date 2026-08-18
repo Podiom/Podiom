@@ -61,7 +61,9 @@ type Server struct {
 	providerStatus providerStatusCache
 	paths          config.Paths
 	log            *slog.Logger
-	notifier       *notify.Dispatcher
+	notifications  *notify.Engine
+	installationID string
+	registrar      notify.DeviceRegistrar
 	// vapidPublic is the VAPID public key served to browsers so they can create
 	// a Web Push subscription bound to this daemon. Empty disables push.
 	vapidPublic string
@@ -105,11 +107,19 @@ type Options struct {
 	Paths      config.Paths
 	GitHub     config.GitHub
 	Logger     *slog.Logger
-	// Notifier delivers out-of-app (Web Push / future native) attention
-	// notifications. Optional; nil disables out-of-app delivery.
-	Notifier *notify.Dispatcher
+	// Notifications turns domain activity into user notifications. Optional; nil
+	// disables notifications entirely, which bare test servers rely on.
+	Notifications *notify.Engine
 	// VAPIDPublicKey is served at GET /api/push/vapid for browser subscription.
 	VAPIDPublicKey string
+	// DeviceRegistrar mirrors device registrations to the push relay, which needs a
+	// routing record before it can resolve a device id. Nil disables mirroring, which is
+	// the case when no relay is configured.
+	DeviceRegistrar notify.DeviceRegistrar
+	// InstallationID is this installation's stable identity, returned to registering
+	// devices so one app can tell several Podioms apart. Independent of address by
+	// design, so moving the daemon is not a new installation.
+	InstallationID string
 	// Tokens enforces the gateway token on the API/WS surface (HA7). Nil
 	// disables enforcement.
 	Tokens *gateway.Keeper
@@ -140,26 +150,28 @@ func New(opts Options) *Server {
 		log = slog.Default()
 	}
 	s := &Server{
-		addr:        addr,
-		build:       opts.Build,
-		started:     time.Now(),
-		core:        opts.Core,
-		scheduler:   opts.Scheduler,
-		usage:       opts.Usage,
-		tokenMeter:  opts.TokenMeter,
-		github:      podiomgithub.New(podiomgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
-		broker:      newPermissionBroker(log),
-		input:       newUserInputBroker(log),
-		interviews:  newInterviewCoordinator(),
-		fallback:    newFallbackBroker(log),
-		turns:       newActiveTurnHub(),
-		logins:      providerlogin.New(providerlogin.Options{}),
-		paths:       opts.Paths,
-		log:         log,
-		notifier:    opts.Notifier,
-		vapidPublic: opts.VAPIDPublicKey,
-		tokens:      opts.Tokens,
-		haMode:      opts.HAMode,
+		addr:           addr,
+		build:          opts.Build,
+		started:        time.Now(),
+		core:           opts.Core,
+		scheduler:      opts.Scheduler,
+		usage:          opts.Usage,
+		tokenMeter:     opts.TokenMeter,
+		github:         podiomgithub.New(podiomgithub.Options{Config: opts.GitHub, Home: opts.Paths.Home, Logger: log}),
+		broker:         newPermissionBroker(log),
+		input:          newUserInputBroker(log),
+		interviews:     newInterviewCoordinator(),
+		fallback:       newFallbackBroker(log),
+		turns:          newActiveTurnHub(),
+		logins:         providerlogin.New(providerlogin.Options{}),
+		paths:          opts.Paths,
+		log:            log,
+		notifications:  opts.Notifications,
+		installationID: opts.InstallationID,
+		registrar:      opts.DeviceRegistrar,
+		vapidPublic:    opts.VAPIDPublicKey,
+		tokens:         opts.Tokens,
+		haMode:         opts.HAMode,
 		// HA's opt-in LAN endpoint uses a Supervisor-selected host port that the
 		// container cannot advertise correctly.
 		advertise: opts.Advertise && !opts.HAMode,
@@ -190,17 +202,10 @@ func New(opts Options) *Server {
 	} else {
 		s.marketplace = mp
 	}
-	// Let the turn hub raise out-of-app notifications when a turn blocks on the
-	// user, resolving the session's agent name for the notification text.
-	if opts.Core != nil {
-		s.turns.attachNotifier(opts.Notifier, func(ctx context.Context, sessionID string) (string, error) {
-			sess, err := opts.Core.GetSession(ctx, sessionID)
-			if err != nil {
-				return "", err
-			}
-			return sess.AgentName, nil
-		})
-	}
+	// Let the turn hub raise notifications when a turn blocks on the user. The hub
+	// only knows session ids; the engine resolves the agent name from the session
+	// itself, so no resolver has to be threaded through here.
+	s.turns.attachNotifications(opts.Notifications)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
 	for _, rt := range s.apiRoutes() {

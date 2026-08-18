@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "369381897613",
+    "project_id": "podiom-5e0b2",
+    "storage_bucket": "podiom-5e0b2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:369381897613:android:337c67cad5f9258b2ab9c4",
+        "android_client_info": {
+          "package_name": "com.podiom.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCRCX-0w6MMBZOjv5J8LYG33XA29U1rO3g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

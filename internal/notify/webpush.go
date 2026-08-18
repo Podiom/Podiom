@@ -23,6 +23,14 @@ type WebPushStore interface {
 }
 
 // webPushPayload is the JSON delivered to the service worker's `push` handler.
+//
+// The first six fields are the original shape and are load-bearing: the shipped
+// service worker keys its behaviour off `kind` and reads `approval` to offer its
+// approve action, so they keep their names and values.
+//
+// The routing fields below were added with the notification engine so a browser tap
+// lands on the exact resource rather than merely the right page, the same way a
+// native notification does.
 type webPushPayload struct {
 	Title     string          `json:"title"`
 	Body      string          `json:"body"`
@@ -30,6 +38,13 @@ type webPushPayload struct {
 	GoalID    string          `json:"goal_id,omitempty"`
 	Kind      string          `json:"kind"`
 	Approval  *ApprovalAction `json:"approval,omitempty"`
+
+	NotificationID string `json:"notification_id,omitempty"`
+	Type           string `json:"type,omitempty"`
+	NavTarget      string `json:"nav_target,omitempty"`
+	ScheduleName   string `json:"schedule_name,omitempty"`
+	TaskID         string `json:"task_id,omitempty"`
+	ResourceID     string `json:"resource_id,omitempty"`
 }
 
 // WebPushChannel delivers notifications to every registered browser Web Push
@@ -54,43 +69,53 @@ func NewWebPushChannel(st WebPushStore, keys VAPIDKeys, subject string, log *slo
 	return &WebPushChannel{store: st, keys: keys, subject: subject, log: log}
 }
 
-// Name identifies the channel in dispatcher logs.
-func (c *WebPushChannel) Name() string { return webPushKind }
+// Name identifies the channel in preferences and delivery rows.
+func (c *WebPushChannel) Name() string { return ChannelWebPush }
 
-// Send encrypts and delivers n to every stored Web Push subscription.
-func (c *WebPushChannel) Send(ctx context.Context, n Notification) error {
+// Send encrypts and delivers env to every stored Web Push subscription, and
+// reports one result per subscription.
+//
+// Results are keyed by the subscription row id rather than its endpoint: the
+// endpoint URL embeds a per-browser secret path, and delivery history is read
+// back by the dashboard.
+func (c *WebPushChannel) Send(ctx context.Context, env Envelope) ([]Result, error) {
 	subs, err := c.store.ListPushSubscriptions(ctx, webPushKind)
 	if err != nil {
-		return fmt.Errorf("list web push subscriptions: %w", err)
+		return nil, fmt.Errorf("list web push subscriptions: %w", err)
 	}
 	if len(subs) == 0 {
-		return nil
+		return nil, nil
 	}
-	payload, err := json.Marshal(webPushPayloadForNotification(n))
+	payload, err := json.Marshal(webPushPayloadForEnvelope(env))
 	if err != nil {
-		return fmt.Errorf("encode web push payload: %w", err)
+		return nil, fmt.Errorf("encode web push payload: %w", err)
 	}
 
-	var firstErr error
+	results := make([]Result, 0, len(subs))
 	for _, sub := range subs {
-		if err := c.sendOne(ctx, sub, payload); err != nil {
+		err := c.sendOne(ctx, sub, payload)
+		if err != nil {
 			c.log.Warn("web push delivery failed", "endpoint", sub.Endpoint, "err", err)
-			if firstErr == nil {
-				firstErr = err
-			}
 		}
+		results = append(results, Result{Destination: sub.ID, Err: err})
 	}
-	return firstErr
+	return results, nil
 }
 
-func webPushPayloadForNotification(n Notification) webPushPayload {
+func webPushPayloadForEnvelope(env Envelope) webPushPayload {
 	return webPushPayload{
-		Title:     n.Title,
-		Body:      n.Body,
-		SessionID: n.SessionID,
-		GoalID:    n.GoalID,
-		Kind:      n.Kind,
-		Approval:  n.Approval,
+		Title:          env.Title,
+		Body:           env.Body,
+		SessionID:      env.SessionID,
+		GoalID:         env.GoalID,
+		Kind:           env.PushKind,
+		Approval:       env.Approval,
+		NotificationID: env.ID,
+		Type:           env.Type,
+		NavTarget:      env.NavTarget,
+		ScheduleName:   env.ScheduleName,
+		TaskID:         env.TaskID,
+		ResourceID:     env.ResourceID,
 	}
 }
 

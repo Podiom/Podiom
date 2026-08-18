@@ -16,6 +16,7 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 	cron "github.com/robfig/cron/v3"
 )
@@ -34,6 +35,9 @@ type Options struct {
 	Core   *core.Core
 	Store  *store.Store
 	Logger *slog.Logger
+	// Notifications reports run outcomes to the user. Nil disables notifications,
+	// which is what unit tests rely on.
+	Notifications *notify.Engine
 }
 
 // Scheduler scans schedule files, registers cron jobs inside podiomd, and runs
@@ -44,6 +48,8 @@ type Scheduler struct {
 	store *store.Store
 	log   *slog.Logger
 	cron  *cron.Cron
+
+	notifications *notify.Engine
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -66,15 +72,16 @@ func New(opts Options) *Scheduler {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
-		dir:       opts.Dir,
-		core:      opts.Core,
-		store:     opts.Store,
-		log:       log,
-		cron:      cron.New(),
-		ctx:       ctx,
-		cancel:    cancel,
-		jobs:      map[string]*job{},
-		parseErrs: map[string]error{},
+		dir:           opts.Dir,
+		core:          opts.Core,
+		store:         opts.Store,
+		log:           log,
+		cron:          cron.New(),
+		ctx:           ctx,
+		cancel:        cancel,
+		jobs:          map[string]*job{},
+		parseErrs:     map[string]error{},
+		notifications: opts.Notifications,
 	}
 }
 
@@ -226,6 +233,16 @@ func (s *Scheduler) Sync() {
 	}
 	for name, perr := range parseErrs {
 		s.log.Warn("schedule parse failed", "event", "schedule", "schedule", name, podiomlog.ErrorAttr(perr))
+		// A schedule file that will not parse silently never runs, which the user
+		// has no other way to find out about. Deduplicated per file by the resource
+		// id, so a resync every few minutes does not re-notify.
+		s.notifications.Publish(notify.Event{
+			Type:         notify.TypeSystemWarning,
+			ScheduleName: name,
+			Resource:     notify.ResourceScheduleRun,
+			ResourceID:   "schedule-file:" + name,
+			Detail:       "Schedule “" + name + "” could not be read: " + perr.Error(),
+		})
 	}
 	s.log.Info("schedule scan finished",
 		"event", "schedule",
@@ -488,6 +505,17 @@ func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, ru
 		"permission", permission,
 		"allowed_tools", len(sched.AllowedTools),
 	)
+	// The run's session id is only written when the run finishes, so a start
+	// notification navigates to the run itself and the client resolves the session
+	// once there is one.
+	s.notifications.Publish(notify.Event{
+		Type:         notify.TypeScheduleStarted,
+		ScheduleName: name,
+		GoalID:       sched.GoalID,
+		AgentName:    sched.Agent,
+		Resource:     notify.ResourceScheduleRun,
+		ResourceID:   run.ID,
+	})
 
 	sess, runErr := s.core.RunScheduled(ctx, core.ScheduledRunRequest{
 		ScheduleName: name,
@@ -517,6 +545,22 @@ func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, ru
 	}
 	s.log.Info("scheduled run finished",
 		"event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "status", status, "session", sess.ID, podiomlog.DurationMS("duration_ms", time.Since(started)))
+	// The finished row carries the durable session the run created, which is what
+	// the notification navigates to.
+	notifType := notify.TypeScheduleSucceeded
+	if status == store.RunError {
+		notifType = notify.TypeScheduleFailed
+	}
+	s.notifications.Publish(notify.Event{
+		Type:         notifType,
+		ScheduleName: name,
+		SessionID:    finished.SessionID,
+		GoalID:       sched.GoalID,
+		AgentName:    sched.Agent,
+		Resource:     notify.ResourceScheduleRun,
+		ResourceID:   run.ID,
+		Detail:       errMsg,
+	})
 	return finished, runErr
 }
 

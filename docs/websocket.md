@@ -139,6 +139,9 @@ automatically along the configured chain.
 | `turn_state` | Current active-turn snapshot for a session. |
 | `interview_state` | USER.md interview progress (`answered`, covered topics, status) and the server-rendered review draft when ready. |
 | `notice` | Non-history UI notice, usually from slash commands. |
+| `notification` | A notification was just recorded. Carries the full `notification` row. Broadcast whether or not any external channel is enabled — the Notification Center is where a notification lives, not a delivery destination. |
+| `notification_update` | An existing notification's read or resolved state changed, including when acting on another device resolved it. Clients revise the row they already hold rather than announcing it again. |
+| `notifications_read_all` | Every notification was marked read. Carries no payload: clients re-read the list, because a single call can touch hundreds of rows and sending each one would cost far more than a refresh. |
 | `done` | Turn complete. |
 | `error` | Error string. |
 
@@ -174,6 +177,44 @@ and entries in `history`:
 
 Filesystem paths are deliberately absent from this payload.
 
+### Notifications
+
+A `notification` payload is the stored row. `NavTarget` is a logical token, not a
+URL — the client owns the mapping from token plus ids to a route, so renaming a
+route cannot break notifications already sitting on someone's phone:
+
+```json
+{
+  "type": "notification",
+  "notification": {
+    "ID": "8f2c…",
+    "Type": "goal.action_requested",
+    "Category": "goals",
+    "Importance": "important",
+    "Title": "Alice needs your help",
+    "Body": "Publish the release announcement.",
+    "AgentName": "Alice",
+    "GoalID": "4b8d…",
+    "ResourceKind": "goal_action_item",
+    "ResourceID": "1a7e…",
+    "NavTarget": "goal_action_item",
+    "Actionable": true,
+    "CreatedAt": "2026-08-18 06:36:28",
+    "ReadAt": "",
+    "ResolvedAt": ""
+  }
+}
+```
+
+`Actionable` says the notification has operations beyond navigation; the
+operations valid *right now* come from the REST endpoints below, not from the
+broadcast, because they depend on domain state that keeps moving after the
+notification was recorded.
+
+`ReadAt` and `ResolvedAt` are separate lifecycles. Read means the user has seen
+it; resolved means the underlying condition has been handled. Reading a
+notification never resolves the domain object behind it.
+
 USER.md interviews start with `start_interview`, use the same
 `user_input_decision` response shape as chat questions, and can be reattached
 with `attach_session`. If an interviewer ends before using its dedicated MCP
@@ -196,6 +237,20 @@ The web UI also uses REST for initial CRUD and history fetches:
 | `GET /api/attachments/{id}` | Retrieve the authenticated retained original. |
 | `GET /api/attachments/{id}/thumbnail` | Retrieve the authenticated normalized JPEG preview. |
 | `DELETE /api/attachments/{id}` | Delete an unbound draft upload. |
+| `GET /api/notifications` | Notification Center page. Accepts `limit`, `offset`, `unread=1`, `unresolved=1`, `category`. Returns the rows with their currently valid `actions`, plus `unread` (counted across everything, not just the filtered view), `attention`, and `total`. `attention` counts only unread notifications the registry marks important or critical — that is what a badge should show, because counting every unread row leaves it permanently lit by routine progress and run activity. |
+| `GET /api/notifications/{id}` | One notification and its currently valid actions. |
+| `POST /api/notifications/{id}/read` | Mark seen. Guarded, so a repeat is `404` rather than a re-stamp that would reorder the list. |
+| `POST /api/notifications/{id}/unread` | Return to unread. |
+| `POST /api/notifications/{id}/resolve` | Mark the notification handled. Does not touch the domain object. |
+| `POST /api/notifications/read-all` | Mark everything read. |
+| `GET /api/notifications/preferences` | The whole preference model: categories, titles, labels, and each type's effective setting. Served so the settings screen has nothing hardcoded. |
+| `GET /api/notification-devices` | Registered native-push devices, plus this installation's id. Push tokens are never returned. |
+| `POST /api/notification-devices` | Register or refresh a device: `{device_id, platform, push_token, label?, app_version?}`. Idempotent on the Podiom device id, because the push token rotates while the device stays the same. Re-registering never changes the enabled flag, so the app cannot silently un-mute a device. |
+| `POST /api/notification-devices/{id}/enable` | Resume delivery to one device. |
+| `POST /api/notification-devices/{id}/disable` | Stop delivery to one device. This is registration state, separate from preferences: muting a device does not change which events matter. |
+| `DELETE /api/notification-devices/{id}` | Remove a registration. |
+| `POST /api/notifications/{id}/actions/{actionID}` | Perform one of a notification's actions. Dispatches to the same core operation the web UI uses. Returns `409` with `{status:"stale", reason, actions, resource:{kind,id,state}}` when the action is no longer valid — a notification can outlive the thing it was about. |
+| `PUT /api/notifications/preferences` | `{"preferences":[{"type":…,"enabled":…}]}`. Unknown types are rejected as a whole, so a bad request is never half-applied. One update writes a row for every known channel, which is what keeps a switched-off type off when a new channel is added later. |
 
 The older Phase 2 NDJSON `POST /api/chat` endpoint remains for the CLI.
 

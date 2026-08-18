@@ -68,20 +68,15 @@ func (c *Core) appendGoalToolUseEvent(ctx context.Context, goalID, sessionID, ru
 		"input_truncated": inputTruncated,
 	})
 
-	ev, err := c.store.AppendGoalEvent(writeCtx, store.GoalEvent{
+	if _, err := c.appendGoalEvent(writeCtx, store.GoalEvent{
 		GoalID:    goalID,
 		SessionID: sessionID,
 		RunID:     runID,
 		Kind:      store.GoalEventToolUse,
 		Body:      body,
 		Payload:   string(payload),
-	})
-	if err != nil {
+	}); err != nil {
 		c.log.Warn("append goal tool_use event failed", "event", "goal", "goal", goalID, "session", sessionID, "tool", tu.Name, "error", err)
-		return
-	}
-	if c.onGoalEvent != nil {
-		c.onGoalEvent(ev)
 	}
 }
 

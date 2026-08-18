@@ -1117,6 +1117,9 @@ export interface ServerMessage {
     | "done"
     | "dream_state"
     | "goal_event"
+    | "notification"
+    | "notification_update"
+    | "notifications_read_all"
     | "error";
   request_id?: string;
   session_id?: string;
@@ -1141,6 +1144,10 @@ export interface ServerMessage {
   context?: ContextUsage;
   // session_usage: the session's updated token-usage estimate, pushed after a turn.
   session_usage?: UsageEstimate;
+  // notification: carried by both "notification" (just recorded) and
+  // "notification_update" (its read or resolved state changed). The
+  // "notifications_read_all" message carries no payload — re-read the list.
+  notification?: Notification;
   error?: string;
   // dream_state fields.
   agent_name?: string;
@@ -1280,4 +1287,143 @@ export interface InstallSkillRequest {
   id?: string;
   url?: string;
   acknowledge?: boolean;
+}
+
+// NotificationImportance is a notification's delivery weight, independent of its
+// type. Channels map it onto whatever their platform offers.
+export type NotificationImportance = "passive" | "normal" | "important" | "critical";
+
+// Notification mirrors store.Notification. Field names are Go's, because store
+// models are serialised without JSON tags.
+//
+// NavTarget is a logical token rather than a URL: the client owns the mapping from
+// token plus ids to a route, so a route rename cannot break a notification that is
+// already sitting on someone's phone.
+//
+// ReadAt and ResolvedAt are separate lifecycles. Read means the user has seen it;
+// resolved means the underlying condition has been handled. Both are empty strings
+// rather than null when unset.
+export interface Notification {
+  ID: string;
+  Type: string;
+  Category: string;
+  Importance: NotificationImportance;
+  Title: string;
+  Body: string;
+  AgentName: string;
+  SessionID: string;
+  GoalID: string;
+  ScheduleName: string;
+  TaskID: string;
+  ResourceKind: string;
+  ResourceID: string;
+  NavTarget: string;
+  // Actionable says operations beyond navigation exist. Which ones are valid right
+  // now comes from the API, not from this flag.
+  Actionable: boolean;
+  CreatedAt: string;
+  ReadAt: string;
+  ResolvedAt: string;
+}
+
+// NotificationAction is one operation offered on a notification, already narrowed
+// against live domain state by the server.
+export interface NotificationAction {
+  id: string;
+  label: string;
+}
+
+// NotificationView is a notification plus the actions valid at read time.
+export interface NotificationView extends Notification {
+  actions: NotificationAction[];
+}
+
+// NotificationListResponse is one page of the Notification Center.
+//
+// unread counts every unread notification, not just those matching the request's
+// filter, so a filtered view cannot make the badge undercount.
+export interface NotificationListResponse {
+  notifications: NotificationView[];
+  unread: number;
+  // attention is the unread count worth interrupting for — important and critical
+  // only. The badge shows this rather than `unread`, which on a busy installation would
+  // be permanently lit by routine progress and run activity and so mean nothing.
+  attention: number;
+  total: number;
+}
+
+// NotificationPreferenceRow is one togglable notification type.
+export interface NotificationPreferenceRow {
+  type: string;
+  label: string;
+  importance: NotificationImportance;
+  enabled: boolean;
+}
+
+// NotificationPreferenceGroup is one category's rows, with its heading. The whole
+// model comes from the server so no labels or defaults are hardcoded here.
+export interface NotificationPreferenceGroup {
+  category: string;
+  title: string;
+  rows: NotificationPreferenceRow[];
+}
+
+export interface NotificationPreferencesResponse {
+  groups: NotificationPreferenceGroup[];
+}
+
+// NotificationPreferenceUpdate is one requested change.
+export interface NotificationPreferenceUpdate {
+  type: string;
+  enabled: boolean;
+}
+
+// NotificationActionResult is a successful action. NavTarget lets a client that
+// tapped "open" route without a second request.
+export interface NotificationActionResult {
+  status: "ok";
+  notification: NotificationView;
+  nav_target: string;
+}
+
+// NotificationStaleResult is returned with HTTP 409 when the requested action is no
+// longer valid — usually because the same thing was already handled elsewhere.
+//
+// It carries the actions that *are* valid and the resource's current state, so a
+// client can correct what it is showing and explain the conflict rather than only
+// reporting one.
+export interface NotificationStaleResult {
+  status: "stale";
+  reason: string;
+  actions: NotificationAction[];
+  resource: { kind: string; id: string; state: string };
+  notification: NotificationView;
+}
+
+export type NotificationActionResponse = NotificationActionResult | NotificationStaleResult;
+
+// NotificationDevice is a registered native-push destination as the API reports it.
+//
+// The push token is deliberately absent: it is what lets anything reach the device, so it
+// goes up at registration and never comes back.
+export interface NotificationDevice {
+  id: string;
+  platform: string;
+  label: string;
+  app_version: string;
+  // enabled is the user's mute for this device. status is delivery health, reported by the
+  // push relay — 'active' or 'invalid'. A device can be enabled and invalid at once.
+  enabled: boolean;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+}
+
+// NotificationDeviceRegistration confirms a registration and names the installation, so
+// an app connected to several Podioms can label them and knows which one to send a
+// notification action back to.
+export interface NotificationDeviceRegistration {
+  device: NotificationDevice;
+  installation_id: string;
 }

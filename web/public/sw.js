@@ -67,13 +67,20 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 async function focusSession(data) {
-  const sessionId = data.session_id;
-  const goalId = data.goal_id;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   for (const client of windows) {
     if ("focus" in client) {
       await client.focus();
-      client.postMessage({ type: "notification-click", session_id: sessionId, goal_id: goalId });
+      // The whole payload is forwarded, not just the two ids: the app resolves the
+      // notification's routing fields into a destination, so a tap lands on the exact
+      // item rather than merely the right page. session_id and goal_id are still sent
+      // at the top level so an older app build keeps working.
+      client.postMessage({
+        type: "notification-click",
+        session_id: data.session_id,
+        goal_id: data.goal_id,
+        notification: data,
+      });
       return;
     }
   }

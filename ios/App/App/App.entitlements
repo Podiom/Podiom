@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- APNs is the transport Firebase Cloud Messaging uses to reach iOS, so the app
+	     needs the push capability even though Podiom never talks to APNs directly.
+
+	     "development" is the sandbox environment. Xcode rewrites this to "production"
+	     when exporting a release archive, so the committed value is the one that lets a
+	     debug build on a device register. -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- The relay maps Podiom's `important` and `critical` importances to the APNs
+	     time-sensitive interruption level, which iOS silently downgrades without this
+	     entitlement — so an agent waiting on approval would arrive as quietly as a
+	     routine progress update.
+
+	     Critical alerts are a separate entitlement that needs Apple's approval and are
+	     deliberately not requested: nothing Podiom does warrants breaking through Do Not
+	     Disturb. -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
+</dict>
+</plist>

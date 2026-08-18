@@ -13,6 +13,7 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 	podiomgit "github.com/Podiom/Podiom/internal/git"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 	"gopkg.in/yaml.v3"
@@ -740,6 +741,17 @@ func (c *Core) StartTask(ctx context.Context, req StartTaskRequest) (store.Sessi
 	if _, err := c.UpdateTask(ctx, task); err != nil {
 		return store.Session{}, err
 	}
+	// Both callers — the unattended scheduler path and the manual one — reach the
+	// task's in-progress transition through here, so this covers both.
+	c.notifications.Publish(notify.Event{
+		Type:       notify.TypeTaskStarted,
+		SessionID:  sess.ID,
+		GoalID:     task.GoalID,
+		TaskID:     task.ID,
+		AgentName:  task.AssignedAgent,
+		Resource:   notify.ResourceTask,
+		ResourceID: task.ID,
+	})
 
 	if req.Unattended {
 		return sess, c.RunTaskTurn(ctx, sess)

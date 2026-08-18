@@ -25,6 +25,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Per-developer Xcode signing settings. Committing a DEVELOPMENT_TEAM makes every other
+# clone and CI try to sign with an account they do not have; ios/debug.xcconfig includes
+# this optionally, so its absence is fine. See ios/local.xcconfig.example.
+/ios/local.xcconfig
+
 # Local env / secrets
 .env
 .env.*

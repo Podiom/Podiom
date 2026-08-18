@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
@@ -14,6 +16,21 @@ export default defineConfig({
   // sub-path (/api/hassio_ingress/<token>/...), so asset URLs cannot assume
   // the origin root (HA14). podiomd injects a <base href> for deep paths.
   base: "./",
+  resolve: {
+    alias: {
+      // @capacitor-firebase/messaging ships a web implementation built on the Firebase
+      // JS SDK. The bundler follows that import even though it is unreachable: browsers
+      // use Web Push, and the native apps use the plugin's own Swift and Kotlin code.
+      //
+      // Installing the real SDK would pull it into the browser bundle and make every
+      // self-hosted installation's browser talk to Podiom's Firebase project — which is
+      // what the Web Push path exists to avoid. Its peer dependency is optional for that
+      // reason, so it is stubbed rather than added.
+      "firebase/messaging": fileURLToPath(
+        new URL("./src/lib/firebase-messaging-web-stub.ts", import.meta.url),
+      ),
+    },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

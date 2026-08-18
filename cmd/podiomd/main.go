@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -184,16 +185,64 @@ func run() error {
 	} else {
 		adapters[config.ProviderCodex] = codex
 	}
+	// Notifications: build the delivery channels, then the engine that records
+	// notifications and hands them to those channels.
+	//
+	// Channel setup failing is non-fatal. A Podiom without Web Push keys still
+	// records every notification and still shows them in the Notification Center;
+	// only out-of-app delivery is lost.
+	// The installation's identity, needed before any device can register against it.
+	// Failure is non-fatal in the same way missing VAPID keys are: notifications are
+	// still recorded and still shown, only the transports that need an identity stop.
+	installationID, err := config.LoadOrCreateInstallationID(paths.InstallationID)
+	if err != nil {
+		log.Warn("installation id unavailable: native push disabled", "error", err)
+	}
+
+	var channels []notify.Channel
+	var vapidPublic string
+	if keys, err := notify.LoadOrCreateVAPIDKeys(paths.PushDir); err != nil {
+		log.Warn("web push disabled: vapid keys unavailable", "error", err)
+	} else {
+		vapidPublic = keys.Public
+		channels = append(channels, notify.NewWebPushChannel(db, keys, "", log))
+		log.Info("web push enabled", "vapid_dir", paths.PushDir)
+	}
+	// Native push. The daemon registers itself with the relay lazily — the first time a
+	// device is registered — so an installation that never uses the mobile app never
+	// contacts Podiom infrastructure at all.
+	var relayChannel *notify.RelayChannel
+	if installationID != "" {
+		relayEndpoint := cfg.Notifications.RelayEndpoint()
+		if warning := relayEndpointWarning(relayEndpoint); warning != "" {
+			log.Warn(warning, "event", "notification", "relay", relayEndpoint)
+		}
+		if relay := notify.NewRelayChannel(db, relayEndpoint, paths.RelayState,
+			installationID, log); relay != nil {
+			relayChannel = relay
+			channels = append(channels, relay)
+			log.Info("native push enabled", "relay", relayEndpoint)
+		}
+	}
+	notifications := notify.New(notify.Options{
+		Store:          db,
+		Channels:       channels,
+		InstallationID: installationID,
+		Logger:         log,
+	})
+	defer notifications.Close()
+
 	coreSvc, err := core.New(core.Options{
-		Paths:       paths,
-		Store:       db,
-		Adapter:     adapter.NewRouter(adapters),
-		Global:      cfg.Global,
-		Voice:       cfg.Voice,
-		Profiles:    cfg.Profiles,
-		DaemonAddr:  callbackAddr,
-		Logger:      log,
-		Credentials: credsStore,
+		Paths:         paths,
+		Store:         db,
+		Adapter:       adapter.NewRouter(adapters),
+		Global:        cfg.Global,
+		Voice:         cfg.Voice,
+		Profiles:      cfg.Profiles,
+		DaemonAddr:    callbackAddr,
+		Logger:        log,
+		Credentials:   credsStore,
+		Notifications: notifications,
 	})
 	if err != nil {
 		return err
@@ -208,10 +257,11 @@ func run() error {
 	}
 
 	scheduler := schedule.New(schedule.Options{
-		Dir:    paths.SchedulesDir,
-		Core:   coreSvc,
-		Store:  db,
-		Logger: log,
+		Dir:           paths.SchedulesDir,
+		Core:          coreSvc,
+		Store:         db,
+		Logger:        log,
+		Notifications: notifications,
 	})
 	scheduler.Start()
 	defer scheduler.Stop()
@@ -236,19 +286,6 @@ func run() error {
 		tokenMeter.RecordTokens(provider, profile, delta)
 	})
 
-	// Web Push: load (or first-time generate) the VAPID keypair and build the
-	// notification dispatcher. Failure here is non-fatal — the daemon still runs,
-	// just without out-of-app push (in-app toasts/red dots are unaffected).
-	var notifier *notify.Dispatcher
-	var vapidPublic string
-	if keys, err := notify.LoadOrCreateVAPIDKeys(paths.PushDir); err != nil {
-		log.Warn("web push disabled: vapid keys unavailable", "error", err)
-	} else {
-		vapidPublic = keys.Public
-		notifier = notify.NewDispatcher(log, notify.NewWebPushChannel(db, keys, "", log))
-		log.Info("web push enabled", "vapid_dir", paths.PushDir)
-	}
-
 	srv := server.New(server.Options{
 		Bind:    cfg.Server.Bind,
 		Port:    cfg.Server.Port,
@@ -257,21 +294,23 @@ func run() error {
 			Version: buildinfo.Version,
 			Commit:  buildinfo.Commit,
 		},
-		Core:           coreSvc,
-		Scheduler:      scheduler,
-		Usage:          usageTracker,
-		TokenMeter:     tokenMeter,
-		Paths:          paths,
-		GitHub:         cfg.GitHub,
-		Marketplace:    cfg.Marketplace,
-		Logger:         log,
-		Notifier:       notifier,
-		VAPIDPublicKey: vapidPublic,
-		Tokens:         tokens,
-		HAMode:         haMode,
-		AllowFrom:      cfg.Server.AllowFrom,
-		Advertise:      cfg.Server.AdvertiseEnabled(),
-		TerminalProxy:  os.Getenv("PODIOM_TERMINAL_PROXY"),
+		Core:            coreSvc,
+		Scheduler:       scheduler,
+		Usage:           usageTracker,
+		TokenMeter:      tokenMeter,
+		Paths:           paths,
+		GitHub:          cfg.GitHub,
+		Marketplace:     cfg.Marketplace,
+		Logger:          log,
+		Notifications:   notifications,
+		VAPIDPublicKey:  vapidPublic,
+		InstallationID:  installationID,
+		DeviceRegistrar: relayChannel,
+		Tokens:          tokens,
+		HAMode:          haMode,
+		AllowFrom:       cfg.Server.AllowFrom,
+		Advertise:       cfg.Server.AdvertiseEnabled(),
+		TerminalProxy:   os.Getenv("PODIOM_TERMINAL_PROXY"),
 	})
 
 	// The dream runner needs to know which sessions have a live turn so it never
@@ -281,6 +320,13 @@ func run() error {
 	// Goal tool_use audit events appended during a turn broadcast live so the
 	// goal timeline updates in real time as the agent works.
 	coreSvc.SetGoalEventHandler(srv.BroadcastGoalEvent)
+	// New and updated notifications broadcast to every live client, which is what
+	// keeps the Notification Center and its unread badge in sync across devices.
+	notifications.SetBroadcaster(srv.BroadcastNotification, srv.BroadcastNotificationUpdate)
+	// Permission prompts and live questions exist only in memory for the duration of
+	// a turn, so the engine asks the server whether one is still open before offering
+	// its actions.
+	notifications.SetPendingCheck(srv.RequestPending)
 	dreamRunner := dream.New(dream.Options{Core: coreSvc, Logger: log})
 	dreamRunner.Start()
 	defer dreamRunner.Stop()
@@ -353,4 +399,24 @@ func syncConfiguredAgents(ctx context.Context, coreSvc *core.Core, cfg *config.C
 		}
 	}
 	return nil
+}
+
+// relayEndpointWarning reports a relay address that will not work, without refusing to
+// start over it.
+//
+// The relay rejects plaintext outright in production, and a token crossing an unencrypted
+// hop is worse than no push at all — but a developer pointing at a local relay over http
+// is doing so deliberately, so loopback is left alone.
+func relayEndpointWarning(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "notifications.relay_url is not a valid URL; native push will fail"
+	}
+	if parsed.Scheme == "https" {
+		return ""
+	}
+	if host := parsed.Hostname(); host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return ""
+	}
+	return "notifications.relay_url is not https; the relay refuses plaintext and the credential would cross the network in the clear"
 }

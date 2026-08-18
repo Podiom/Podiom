@@ -53,6 +53,12 @@ jobs:
       - name: Run Svelte check
         run: npm run check -w web
 
+      # Pure-logic tests for the pieces where a mistake is silent: hash parsing and
+      # formatting, and the mapping from a notification to a destination. A wrong
+      # route does not throw — it just lands on the wrong page.
+      - name: Run web tests
+        run: npm test -w web
+
   # The two mobile jobs are what R12 asks for: prove that a change to the shared
   # Svelte app still produces valid native projects. Neither needs signing
   # credentials, so both run on ordinary pull requests.

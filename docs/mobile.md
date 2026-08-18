@@ -228,15 +228,108 @@ Capacitor is the only bridge to native APIs. Plugins in use:
 lines per platform (`NWBrowser` on iOS, `NsdManager` on Android), and this app
 holds a credential that grants shell access to a machine.
 
+## Push notifications
+
+The apps use native push through Firebase Cloud Messaging, delivered by the hosted
+Podiom Push Relay. Web Push stays the browser's path — a WebView provides no service
+worker, and iOS runs none at all under a custom scheme — so the two transports sit
+behind one delivery abstraction and one set of preferences. See
+[notifications.md](notifications.md).
+
+`@capacitor-firebase/messaging` is used rather than `@capacitor/push-notifications`
+because the official plugin hands back an **APNs** token on iOS, and Podiom needs the
+FCM token on both platforms: one relay reaches both, and `podiomd` never holds an Apple
+or Google credential of its own.
+
+### Firebase configuration
+
+Both client config files are committed:
+
+```
+android/app/google-services.json
+ios/App/App/GoogleService-Info.plist
+```
+
+They are what let the app reach the Podiom Firebase project, so a clone builds and runs
+native push with no setup step, and CI needs no secrets.
+
+They are client configuration rather than credentials — Google publishes them as such,
+and they ship inside every APK and IPA, so a released app already discloses them. What
+they permit is narrow: registering an app instance and obtaining an FCM token for
+`com.podiom.app`. They cannot send a notification to anyone; sending needs the FCM
+service-account key, which belongs to the relay and never appears here. They also grant
+no access to Podiom itself, which is guarded by the gateway token.
+
+The control that matters is on the keys, not on the files. Both are restricted in the
+Google Cloud console:
+
+- **Application restriction** — Android key to the `com.podiom.app` package and its
+  signing certificate; iOS key to the `com.podiom.app` bundle id.
+- **API restriction** — Firebase Cloud Messaging and Firebase Installations only.
+
+Without those restrictions a key can be used against any other Google API enabled on
+the project, on this project's quota. With them, a copied key is of no use off-device.
+
+The iOS plist must also be a member of the App target, not merely present on disk:
+`project.pbxproj` references it in the Resources build phase, which is what copies it
+into the bundle. Firebase looks for it there at launch, and `FirebaseApp.configure()`
+fails hard if it is missing — so if the reference is ever dropped, the app crashes on
+start rather than quietly losing push.
+
+### Signing on a device
+
+`project.pbxproj` is committed, and both Xcode and `cap sync` write signing settings
+into it — so a team id set in Xcode shows up as a diff, and committing one makes every
+other clone and CI try to sign with an account they do not have.
+
+Put it in a local override instead:
+
+```
+cp ios/local.xcconfig.example ios/local.xcconfig
+# then set DEVELOPMENT_TEAM to your own team id
+```
+
+`ios/debug.xcconfig` pulls it in with `#include?`, which does not fail when the file is
+absent, so CI and a fresh clone need nothing. `ios/local.xcconfig` is gitignored.
+
+If a `DEVELOPMENT_TEAM` line does appear in `project.pbxproj`, drop it before
+committing — it is machine state, not project configuration.
+
+### Notification channels and categories
+
+Android expresses "how much should this interrupt" through channels, so
+`MainActivity.java` creates one per Podiom importance level — `podiom_passive`,
+`podiom_default`, `podiom_important`, `podiom_critical`. The relay derives the channel from
+the notification's importance and names it in the FCM payload, so these ids must match what
+it sends **exactly**. A channel that does not exist here means the notification is filed
+under Android's default and the user's per-importance settings stop applying, with nothing
+reporting a problem. `TestAndroidCreatesEveryChannelTheRelayNames` pins both directions.
+
+iOS renders action buttons from the APNs category, which comes from the `action_set` Podiom
+sends. The relay does not validate it, so an unrecognised value arrives with no buttons and
+no error. Podiom sends exactly five: `session_permission`, `access_request`,
+`goal_action_item`, `goal_completion`, `question`. **Registering the matching
+`UNNotificationCategory` values is still outstanding** — see "Not included" below.
+
+The `com.apple.developer.usernotifications.time-sensitive` entitlement is required: the
+relay maps `important` and `critical` to the APNs time-sensitive interruption level, which
+iOS silently downgrades without it. Critical alerts are a separate, approval-gated
+entitlement and are deliberately not requested.
+
+A channel's importance is fixed once created — Android ignores later changes, which is
+correct here: Podiom should not be able to override someone silencing its progress
+updates.
+
 ## Not included
 
-Push notifications are deliberately out of scope for now. Web Push is disabled
-on native because it needs a service worker, which a WebView does not provide;
-adding APNs/FCM later is a separate piece of work that builds on this
-foundation rather than replacing it.
+App Store / Google Play publishing, release signing in CI, and any reimplementation of
+the UI in native components.
 
-Also absent: App Store / Google Play publishing, release signing in CI, and any
-reimplementation of the UI in native components.
+Notification action buttons (Allow/Deny, Done/Can't do) are not built yet either.
+Tapping a notification opens the resource, and the actions are available in the
+Notification Center — rendering buttons on the notification itself needs a custom
+`FirebaseMessagingService` on Android and `UNNotificationCategory` registration on iOS,
+which is its own piece of work.
 
 ## CI
 

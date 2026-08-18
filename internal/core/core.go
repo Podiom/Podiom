@@ -18,6 +18,7 @@ import (
 	"github.com/Podiom/Podiom/internal/capabilities"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/creds"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
@@ -43,6 +44,9 @@ type Options struct {
 	// Credentials stores user-granted secrets (env_var access requests).
 	// nil disables credential storage (unit tests).
 	Credentials *creds.Store
+	// Notifications turns domain activity into user notifications. Nil disables
+	// them, which is what unit tests rely on.
+	Notifications *notify.Engine
 }
 
 // Core coordinates typed persistence, filesystem scaffolding, instruction
@@ -54,16 +58,17 @@ type Core struct {
 	adapter adapter.Adapter
 	// mu guards global, voice, and profiles, which the Settings/Profile APIs
 	// mutate at runtime after persisting config.yaml.
-	mu          sync.RWMutex
-	global      config.Global
-	voice       config.Voice
-	profiles    map[string]config.Profile
-	composer    InstructionComposer
-	ledger      *projects.Ledger
-	log         *slog.Logger
-	daemonAddr  string
-	noBg        bool
-	credentials *creds.Store
+	mu            sync.RWMutex
+	global        config.Global
+	voice         config.Voice
+	profiles      map[string]config.Profile
+	composer      InstructionComposer
+	ledger        *projects.Ledger
+	log           *slog.Logger
+	daemonAddr    string
+	noBg          bool
+	notifications *notify.Engine
+	credentials   *creds.Store
 	// onRateStatus, when set, receives provider rate-limit updates observed
 	// mid-turn (attributed to the session's profile/provider). The usage tracker
 	// wires this to IngestPassive; nil disables passive enrichment.
@@ -152,20 +157,21 @@ func New(opts Options) (*Core, error) {
 		logger = slog.Default()
 	}
 	c := &Core{
-		paths:       opts.Paths,
-		store:       opts.Store,
-		adapter:     ad,
-		global:      global,
-		voice:       opts.Voice,
-		profiles:    map[string]config.Profile{},
-		composer:    NewFileComposer(opts.Paths),
-		ledger:      projects.New(opts.Paths.ProjectsDir),
-		log:         logger,
-		daemonAddr:  opts.DaemonAddr,
-		noBg:        opts.DisableBackgroundWork,
-		credentials: opts.Credentials,
-		dreaming:    map[string]bool{},
-		capCache:    map[string]capabilityCacheEntry{},
+		paths:         opts.Paths,
+		store:         opts.Store,
+		adapter:       ad,
+		global:        global,
+		voice:         opts.Voice,
+		profiles:      map[string]config.Profile{},
+		composer:      NewFileComposer(opts.Paths),
+		ledger:        projects.New(opts.Paths.ProjectsDir),
+		log:           logger,
+		daemonAddr:    opts.DaemonAddr,
+		noBg:          opts.DisableBackgroundWork,
+		credentials:   opts.Credentials,
+		notifications: opts.Notifications,
+		dreaming:      map[string]bool{},
+		capCache:      map[string]capabilityCacheEntry{},
 	}
 	for _, profile := range opts.Profiles {
 		c.profiles[profile.Name] = profile

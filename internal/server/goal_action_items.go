@@ -9,10 +9,6 @@ import (
 	"github.com/Podiom/Podiom/internal/store"
 )
 
-// notifyKindGoalAction is the attention kind for work a goal handed back to the
-// user.
-const notifyKindGoalAction = "goal_action_item"
-
 // goalActionDetailItems caps how many answered items the detail view carries
 // behind the open ones.
 const goalActionDetailItems = 20
@@ -76,9 +72,6 @@ func (s *Server) handleGoalActionItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.broadcastGoalEvent(res.Event)
-	s.notifyGoal(notifyKindGoalAction, res.Goal, res.Item.SessionID,
-		res.Goal.LeadAgent+" needs you to do something",
-		"“"+res.Item.Title+"” — respond on the goal page.")
 	writeJSON(w, map[string]any{
 		"status":         "recorded",
 		"action_item_id": res.Item.ID,

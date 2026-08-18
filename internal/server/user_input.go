@@ -162,6 +162,15 @@ func (b *userInputBroker) decide(id string, decision adapter.UserInputDecision) 
 	}
 }
 
+// isPending reports whether a user-input request is still awaiting an answer.
+// Like permission requests, these live in memory for the turn's duration, so the
+// broker is the only record of whether one is still open.
+func (b *userInputBroker) isPending(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pending[id] != nil
+}
+
 func (b *userInputBroker) attach(id, sessionID string, restoreRoadmap bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

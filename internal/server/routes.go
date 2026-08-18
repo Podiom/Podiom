@@ -96,6 +96,15 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/transcribe", s.handleTranscribe},
 		{"/api/provider-capabilities", s.handleProviderCapabilities},
 		{"/api/usage", s.handleUsage},
+		// The literal patterns beat the /api/notifications/ subtree under Go's
+		// most-specific-wins routing, so read-all and preferences are not mistaken
+		// for notification ids.
+		{"/api/notifications", s.handleNotifications},
+		{"/api/notifications/read-all", s.handleNotificationsReadAll},
+		{"/api/notifications/preferences", s.handleNotificationPreferences},
+		{"/api/notifications/", s.handleNotification},
+		{"/api/notification-devices", s.handleNotificationDevices},
+		{"/api/notification-devices/", s.handleNotificationDevice},
 		{"/api/push/vapid", s.handlePushVAPID},
 		{"/api/push/subscribe", s.handlePushSubscribe},
 		{"/api/push/unsubscribe", s.handlePushUnsubscribe},

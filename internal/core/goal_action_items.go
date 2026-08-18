@@ -64,7 +64,7 @@ func (c *Core) RequestGoalAction(ctx context.Context, sessionID string, item sto
 		return GoalActionResult{}, err
 	}
 	payload, _ := json.Marshal(map[string]string{"action_item_id": created.ID})
-	ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	ev, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
 		SessionID: sess.ID,
 		RunID:     created.RunID,
@@ -100,7 +100,7 @@ func (c *Core) RespondGoalActionItem(ctx context.Context, id string, status stor
 	payload, _ := json.Marshal(map[string]string{"action_item_id": item.ID, "status": string(item.Status)})
 	// No session or run id: this is the user acting, like access_decided and
 	// question_answered.
-	ev, err := c.store.AppendGoalEvent(ctx, store.GoalEvent{
+	ev, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:  item.GoalID,
 		Kind:    store.GoalEventActionResponded,
 		Body:    goalActionResponseSummary(item),

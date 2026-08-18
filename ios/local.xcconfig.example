@@ -1,0 +1,8 @@
+// Copy to ios/local.xcconfig and set your own team to build on a device.
+//
+// Find the id in Xcode under Settings → Accounts → your Apple ID → Manage
+// Certificates, or in the Apple Developer portal under Membership.
+//
+// local.xcconfig is gitignored: it is machine-specific, and a committed team id breaks
+// signing for everyone else.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

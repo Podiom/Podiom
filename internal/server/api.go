@@ -16,6 +16,7 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 	"github.com/Podiom/Podiom/internal/tokenmeter"
 	"github.com/google/uuid"
@@ -962,6 +963,9 @@ func (s *Server) handleUserInputDecision(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "user input request not found", http.StatusNotFound)
 		return
 	}
+	// Live session questions do not reach the goal timeline either, so the
+	// notification about this one is settled here.
+	s.resolveNotificationsFor(r, notify.ResourceSessionQuestion, id)
 	writeJSON(w, map[string]string{"status": "ok"}, nil)
 }
 
@@ -1054,6 +1058,10 @@ func (s *Server) handlePermissionDecision(w http.ResponseWriter, r *http.Request
 		http.Error(w, "permission request not found", http.StatusNotFound)
 		return
 	}
+	// A permission request never reaches the goal timeline, so the notification
+	// about it is settled here — otherwise deciding in the dashboard would leave a
+	// phone still showing Allow and Deny.
+	s.resolveNotificationsFor(r, notify.ResourcePermissionRequest, id)
 	writeJSON(w, map[string]string{"status": "ok"}, nil)
 }
 

@@ -41,4 +41,9 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Voice input (VoiceButton.svelte uses getUserMedia + MediaRecorder). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Android 13+ requires this to be requested at runtime before any notification is
+         shown. Podiom asks for it from Settings, in the context of explaining what it
+         would notify about, rather than at first launch. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

@@ -4,9 +4,14 @@
     createProfile,
     deleteProfile,
     getConfig,
+    deleteNotificationDevice,
+    getNotificationPreferences,
+    listNotificationDevices,
     gitStatus,
     listProfiles,
     setGitIdentity,
+    setNotificationDeviceEnabled,
+    setNotificationPreferences,
     updateConfig,
     updateProfile,
   } from "../lib/api";
@@ -14,6 +19,7 @@
   import ProviderLogo from "../lib/ProviderLogo.svelte";
   import * as connection from "../lib/connection";
   import { isNative } from "../lib/native";
+  import { currentDeviceID, unregisterFromDaemon } from "../lib/push";
   import { DEFAULT_PROVIDER, PROVIDERS, isProvider, providerMeta } from "../lib/providers";
   import type { PushState } from "../lib/live.svelte";
   import type {
@@ -21,6 +27,8 @@
     GitStatus,
     GlobalConfig,
     Health,
+    NotificationDevice,
+    NotificationPreferenceGroup,
     ProfileInfo,
     Provider,
     ProviderAuthStatus,
@@ -217,6 +225,8 @@
   onMount(() => {
     void load();
     void refreshGit();
+    void loadPreferences();
+    void loadDevices();
     if (isNative) void connection.storedAddress().then((a) => (connectedAddress = a));
   });
 
@@ -580,6 +590,87 @@
   const updateBadge = $derived(updateBadgeFor(updateState));
   const releaseNotes = $derived(update?.release_notes ?? "");
   const pushBadge = $derived(pushBadgeFor(pushState));
+
+  // ---- registered devices ----------------------------------------------------
+  //
+  // One installation can have several. Muting one is registration state — whether that
+  // phone receives anything — and is deliberately separate from the preferences below,
+  // which decide which events matter at all.
+  let devices = $state<NotificationDevice[]>([]);
+  let devicesBusy = $state<string | null>(null);
+
+  async function loadDevices() {
+    try {
+      devices = (await listNotificationDevices()).devices;
+    } catch {
+      // A daemon without native push configured has none. Not worth an error.
+      devices = [];
+    }
+  }
+
+  async function toggleDevice(id: string, enabled: boolean) {
+    devicesBusy = id;
+    try {
+      const updated = await setNotificationDeviceEnabled(id, enabled);
+      devices = devices.map((d) => (d.id === updated.id ? updated : d));
+    } catch (e) {
+      prefsError = e instanceof Error ? e.message : String(e);
+    } finally {
+      devicesBusy = null;
+    }
+  }
+
+  async function forgetDevice(id: string) {
+    devicesBusy = id;
+    try {
+      // Removing the device this app is running on also drops its push token and the
+      // stored device id, so it stops receiving and does not silently re-register.
+      if (isNative && id === (await currentDeviceID())) await unregisterFromDaemon();
+      else await deleteNotificationDevice(id);
+      devices = devices.filter((d) => d.id !== id);
+    } catch (e) {
+      prefsError = e instanceof Error ? e.message : String(e);
+    } finally {
+      devicesBusy = null;
+    }
+  }
+
+  // ---- notification preferences ------------------------------------------------
+  //
+  // The daemon owns the model. It is fetched rather than assembled here so the labels,
+  // grouping and defaults live in one place, and so a notification type added later
+  // shows up without a frontend change.
+  let prefGroups = $state<NotificationPreferenceGroup[]>([]);
+  let prefsSaving = $state(false);
+  let prefsError = $state<string | null>(null);
+
+  async function loadPreferences() {
+    prefsError = null;
+    try {
+      prefGroups = (await getNotificationPreferences()).groups;
+    } catch (e) {
+      prefsError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // togglePreference writes one switch and adopts the response.
+  //
+  // The response is the whole updated model, so there is no follow-up read and no local
+  // guess about what the server decided — one switch writes a preference for every
+  // delivery channel, which is not something to reimplement here.
+  async function togglePreference(type: string, enabled: boolean) {
+    prefsSaving = true;
+    prefsError = null;
+    try {
+      prefGroups = (await setNotificationPreferences([{ type, enabled }])).groups;
+    } catch (e) {
+      prefsError = e instanceof Error ? e.message : String(e);
+      // Re-read so the checkboxes reflect the server rather than the failed attempt.
+      await loadPreferences();
+    } finally {
+      prefsSaving = false;
+    }
+  }
   const pushStatusCopy = $derived(pushCopyFor(pushState));
   function updateBadgeFor(state: UpdateState): { label: string; tone: "neutral" | "green" | "amber" } {
     switch (state) {
@@ -612,18 +703,32 @@
         return { label: "not enabled", tone: "neutral" };
     }
   }
+  // The wording differs between the app and the browser because the thing being granted
+  // does — an OS-level permission for this device, or a site permission for this browser
+  // — and so does where the user goes to change their mind about it.
+  //
+  // This describes whether Podiom can reach you at all. Which events are worth reaching
+  // you about is the separate card below; keeping them apart is what lets a user tell
+  // which of the two is stopping a notification.
   function pushCopyFor(state: PushState): { title: string; body: string } {
     switch (state) {
       case "enabled":
-        return { title: "Notifications are on", body: "Podiom will keep this browser registered while notification permission remains approved." };
+        return isNative
+          ? { title: "Notifications are on", body: "This device is registered with Podiom and will receive notifications wherever you are." }
+          : { title: "Notifications are on", body: "Podiom will keep this browser registered while notification permission remains approved." };
       case "enabling":
-        return { title: "Enabling notifications", body: "Waiting for the browser and daemon to finish registration." };
+        return { title: "Enabling notifications", body: "Waiting for registration to finish." };
       case "denied":
-        return { title: "Notifications are blocked", body: "Your browser has blocked notification permission for Podiom. Change the site permission in the browser to use them." };
+        return isNative
+          ? { title: "Notifications are blocked", body: "Notifications are turned off for Podiom in your device settings. Allow them there to use them here." }
+          : { title: "Notifications are blocked", body: "Your browser has blocked notification permission for Podiom. Change the site permission in the browser to use them." };
       case "unsupported":
         return { title: "Notifications are unavailable", body: "This browser or daemon is missing Web Push support." };
       default:
-        return { title: "Notifications are not enabled", body: "Enable notifications to get alerted when an agent needs your approval or answer." };
+        return {
+          title: "Notifications are not enabled",
+          body: "Turn them on to hear about agent questions, permission requests, goal and schedule activity, action items, and failures — without watching the dashboard.",
+        };
     }
   }
 </script>
@@ -1084,8 +1189,12 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         </div>
         <div class="grow">
-          <div class="card-title">Notifications</div>
-          <div class="card-sub">Alerts when an agent needs your approval or answer.</div>
+          <div class="card-title">{isNative ? "Push notifications" : "Browser notifications"}</div>
+          <div class="card-sub">
+            {isNative
+              ? "Whether this device can receive Podiom notifications."
+              : "Whether this browser can receive Podiom notifications."}
+          </div>
         </div>
         <span class="badge {pushBadge.tone}">{pushBadge.label}</span>
       </div>
@@ -1102,6 +1211,92 @@
           <span class="spinner-note amber"><span class="spinner amber"></span>Registering…</span>
         {/if}
       </div>
+    </section>
+
+    {#if devices.length > 0}
+      <section class="card">
+        <div class="card-head">
+          <div class="card-icon teal">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+          </div>
+          <div class="grow">
+            <div class="card-title">Devices</div>
+            <div class="card-sub">
+              Phones and tablets registered for push. Muting one stops notifications
+              reaching it without changing what the others get.
+            </div>
+          </div>
+        </div>
+        <div class="pref-group">
+          {#each devices as device (device.id)}
+            <div class="pref-row">
+              <input
+                type="checkbox"
+                checked={device.enabled}
+                disabled={devicesBusy === device.id}
+                onchange={() => toggleDevice(device.id, !device.enabled)} />
+              <span class="pref-label">{device.label || device.platform}</span>
+              <span class="pref-type mono">
+                {device.status === "invalid" ? "needs re-registering" : device.platform}
+              </span>
+              <button
+                class="link"
+                disabled={devicesBusy === device.id}
+                onclick={() => forgetDevice(device.id)}>Forget</button>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    <!-- Which Podiom events notify you.
+         Deliberately separate from the delivery status above: that answers "can this
+         device receive anything", these answer "which events are worth telling me
+         about". Conflating the two would make muting a device look like changing what
+         Podiom considers important.
+
+         The whole model — groups, headings, labels and defaults — comes from the daemon,
+         so a notification type added in a later release appears here with no change to
+         this file. -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-icon teal">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>
+        </div>
+        <div class="grow">
+          <div class="card-title">What notifies you</div>
+          <div class="card-sub">
+            Events that need you are on by default. Routine activity is off — turn on what
+            you want to follow.
+          </div>
+        </div>
+        {#if prefsSaving}
+          <span class="spinner-note amber"><span class="spinner amber"></span>Saving…</span>
+        {/if}
+      </div>
+
+      {#if prefsError}
+        <div class="notification-panel"><div class="grow"><div class="notification-copy">{prefsError}</div></div></div>
+      {:else if prefGroups.length === 0}
+        <div class="notification-panel"><div class="grow"><div class="notification-copy">Loading…</div></div></div>
+      {:else}
+        {#each prefGroups as group (group.category)}
+          <div class="pref-group">
+            <div class="route-tag">{group.title}</div>
+            {#each group.rows as row (row.type)}
+              <label class="pref-row">
+                <input
+                  type="checkbox"
+                  checked={row.enabled}
+                  disabled={prefsSaving}
+                  onchange={() => togglePreference(row.type, !row.enabled)} />
+                <span class="pref-label">{row.label}</span>
+                <span class="pref-type mono">{row.type}</span>
+              </label>
+            {/each}
+          </div>
+        {/each}
+      {/if}
     </section>
 
     {:else}
@@ -1999,6 +2194,32 @@
 
   .rel-link:hover {
     text-decoration: underline;
+  }
+
+  .pref-group {
+    padding: 0.75rem 1rem 0.5rem;
+    border-top: 1px solid var(--line-soft, #f0ece5);
+  }
+
+  .pref-row {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.3rem 0;
+    cursor: pointer;
+  }
+
+  .pref-label {
+    font-size: 0.84rem;
+  }
+
+  /* The machine-readable type is shown alongside the label: it is what the API and the
+     docs use, so seeing it here makes a preference traceable to what produces it. */
+  .pref-type {
+    margin-left: auto;
+    font-size: 0.68rem;
+    color: var(--ink-soft, #6b625a);
+    opacity: 0.6;
   }
 
   .notification-panel {

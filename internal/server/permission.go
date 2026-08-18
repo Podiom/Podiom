@@ -183,6 +183,18 @@ func (b *permissionBroker) decide(id string, decision adapter.PermissionDecision
 	}
 }
 
+// pending reports whether a permission request is still awaiting a decision.
+//
+// A notification about a request that has already been answered — from the
+// dashboard, or by the timeout — must stop offering Allow and Deny, and the
+// broker's own map is the only record of that: the request lives in memory for the
+// duration of the turn, never in the database.
+func (b *permissionBroker) isPending(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.pending[id] != nil
+}
+
 func (b *permissionBroker) attach(id, sessionID string, restoreRoadmap bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

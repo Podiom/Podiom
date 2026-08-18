@@ -1,18 +1,13 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
 )
-
-// notifyKindGoalQuestion is the attention kind for a deferred goal question.
-const notifyKindGoalQuestion = "goal_question"
 
 type agentQuestionCreateRequest struct {
 	SessionID string                    `json:"session_id"`
@@ -50,12 +45,17 @@ func (s *Server) handleAgentQuestions(w http.ResponseWriter, r *http.Request) {
 	if res.Event != nil {
 		s.broadcastGoalEvent(*res.Event)
 	}
-	if res.Goal != nil {
-		s.notifyGoal(notifyKindGoalQuestion, *res.Goal, res.Question.SessionID,
-			res.Goal.LeadAgent+" needs an answer",
-			"“"+res.Goal.Title+"” — answer the question to continue.")
-	} else {
-		s.notifyScheduleQuestion(res.Question)
+	// Goal-scoped questions notify through the goal timeline hook in core. A
+	// schedule-scoped one appends no goal event, so there is nothing for that hook
+	// to see and the notification is published here instead.
+	if res.Goal == nil {
+		s.notifications.Publish(notify.Event{
+			Type:         notify.TypeScheduleQuestion,
+			SessionID:    res.Question.SessionID,
+			ScheduleName: res.Question.RefID,
+			Resource:     notify.ResourceAgentQuestion,
+			ResourceID:   res.Question.ID,
+		})
 	}
 	writeJSON(w, map[string]any{
 		"status":      "recorded",
@@ -104,22 +104,4 @@ func (s *Server) handleAgentQuestion(w http.ResponseWriter, r *http.Request) {
 		s.broadcastGoalPing(r.Context(), res.Goal.ID)
 	}
 	writeJSON(w, res.Question, nil)
-}
-
-// notifyScheduleQuestion fires an out-of-app notification for a scheduled run's
-// deferred question, off the hot path.
-func (s *Server) notifyScheduleQuestion(q store.AgentQuestion) {
-	if s.notifier == nil {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		s.notifier.Notify(ctx, notify.Notification{
-			SessionID: q.SessionID,
-			Title:     "A scheduled task needs an answer",
-			Body:      "Schedule “" + q.RefID + "” asked a question — answer it to guide the next run.",
-			Kind:      notifyKindGoalQuestion,
-		})
-	}()
 }

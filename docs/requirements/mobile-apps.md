@@ -10,7 +10,12 @@ Capacitor provides a native runtime that can be added to the existing web applic
 
 Capacitor should therefore be introduced as the foundation for Podiom's mobile applications.
 
-Push notifications are explicitly **out of scope for the initial implementation**. The architecture should, however, allow native push notifications to be introduced later without requiring a different mobile application architecture.
+Push notifications were **out of scope for this document's initial implementation**, which is why the architecture below only had to avoid precluding them.
+
+> **Superseded.** Native push has since been specified in
+> [notifications.md](notifications.md) and implemented — see
+> [../mobile.md](../mobile.md) for how it is configured. The requirement below is kept
+> as the record of what this document originally scoped.
 
 ## Goal
 
@@ -386,19 +391,24 @@ The initial implementation does not include:
 
 ## Future work
 
-Once the Capacitor applications are established, subsequent work can introduce native push notifications.
+The next phase anticipated here was native push. Most of it has since been specified in
+[notifications.md](notifications.md) and built:
 
-A likely next phase would cover:
+- Device registration — **done**.
+- FCM integration for iOS (via APNs) and Android — **done**.
+- Notification deep links — **done**.
+- Podiom Push Relay — the `podiomd` client and its payload contract are **done**; the
+  hosted multi-tenant service itself is not built, and has no requirements document yet.
+- Notification actions — available in the Notification Center; **action buttons on the
+  notification itself are not built**, since they need a custom
+  `FirebaseMessagingService` on Android and `UNNotificationCategory` registration on iOS.
 
-- Device registration.
-- APNs integration for iOS.
-- FCM integration for Android.
-- Podiom push relay.
-- Notification deep links.
-- Notification actions.
+Still outstanding:
+
 - Secure remote connectivity.
 - TestFlight publishing.
 - App Store publishing.
+- Release signing in CI.
 - Google Play publishing.
 
 Push notifications should be treated as a separate capability built on top of the Capacitor foundation rather than a prerequisite for the initial Podiom mobile applications.

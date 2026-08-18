@@ -360,3 +360,47 @@ sensitive local troubleshooting details even after redaction.
   `chdir` cannot relocate the storage root.
 
 All OS-specific behaviour is isolated to `internal/exec` and `internal/config`.
+
+## Firebase client configuration
+
+`android/app/google-services.json` and `ios/App/App/GoogleService-Info.plist` are
+committed. They identify the app to the Podiom Firebase project and are what make native
+push work out of a clone.
+
+They are not credentials. They ship inside every published APK and IPA, so a released app
+already exposes them, and what they permit is limited to registering an app instance and
+obtaining an FCM token for `com.podiom.app`. They cannot send a notification — that needs
+the FCM service-account key, which lives in the Push Relay — and they grant no access to
+a Podiom installation, which is guarded by the gateway token.
+
+The keys they contain are restricted in the Google Cloud console by application
+(`com.podiom.app`) and by API (Firebase Cloud Messaging and Firebase Installations only).
+That restriction, not the files' location, is what makes a copied key useless.
+
+## The push relay credential
+
+Registering with the Push Relay yields an instance id and a bearer credential, kept in
+`$PODIOM_HOME/relay.json` at mode 0600.
+
+It authorizes exactly one thing: pushing to, and managing, the devices registered under
+this installation's own tenant. It is deliberately **not** the Podiom gateway token — a
+relay compromise must not become access to the installation, and the relay is never in the
+return path for a notification action, which goes from the app straight to `podiomd`.
+
+The relay returns the credential once and has no endpoint that reads it back. So an
+unreadable `relay.json` is treated as a hard error rather than as "not enrolled":
+re-registering would abandon the existing tenant and every device under it, irrecoverably,
+and registration is rate limited per address. Back it up with the rest of `$PODIOM_HOME`.
+
+## Push tokens
+
+Registering a mobile device stores a push token — the value that lets the Podiom
+Push Relay reach that device. It is treated as sensitive routing information, not as
+device metadata: it is accepted at registration and never returned by any API, never
+written into notification history (which records device ids), and never included in
+a push payload.
+
+Push payloads themselves carry only what is needed to present a notification and
+route a tap. They never carry the gateway token, secrets, environment values,
+prompts, transcripts, tool output, or file contents, because a payload crosses
+infrastructure Podiom does not operate. See [notifications.md](notifications.md).

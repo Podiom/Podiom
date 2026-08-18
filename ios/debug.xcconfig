@@ -1,1 +1,12 @@
 CAPACITOR_DEBUG = true
+
+// Per-developer settings, chiefly DEVELOPMENT_TEAM for building on a device.
+//
+// Xcode and `cap sync` both write signing configuration straight into
+// project.pbxproj, which is committed — so without somewhere else to put it, every
+// developer's team id shows up as a diff, and committing one makes every other clone
+// (and CI) try to sign with an account it does not have.
+//
+// `#include?` does not fail when the file is absent, so CI and a fresh clone need
+// nothing. See docs/mobile.md.
+#include? "local.xcconfig"
