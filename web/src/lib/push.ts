@@ -22,6 +22,13 @@ import { pushPayloadAsNotification } from "./pushpayload";
 // device to the daemon.
 const DEVICE_ID_KEY = "notification-device-id";
 
+// INSTALLATION_KEY holds the id of the Podiom this app is registered with.
+//
+// A notification carries the installation that produced it, and an action has to go back to
+// that same daemon — the relay is never in the return path. Without this there is nothing to
+// compare against, and an action would be sent wherever the app happens to be pointed.
+const INSTALLATION_KEY = "notification-installation-id";
+
 export type NativePushState =
   | "unsupported"
   | "idle"
@@ -42,6 +49,12 @@ export interface PushHandlers {
   // the Notification Center can refresh instead of the OS interrupting over a screen
   // the user is already reading.
   onForeground: () => void;
+  // onAction performs an action pressed on the notification itself.
+  //
+  // It returns whether the operation went through. A false answer opens the app at the
+  // notification instead: a button press that quietly failed is worse than one that hands
+  // the decision back, because the user believes it was made.
+  onAction: (notificationID: string, actionID: string) => Promise<boolean>;
 }
 
 let handlers: PushHandlers | null = null;
@@ -99,12 +112,13 @@ export async function registerWithDaemon(): Promise<void> {
   if (!nativePushAvailable) return;
   const { token } = await FirebaseMessaging.getToken();
   if (!token) return;
-  await registerNotificationDevice({
+  const registration = await registerNotificationDevice({
     device_id: await deviceID(),
     platform: platform === "ios" ? "ios" : "android",
     label: deviceLabel(),
     push_token: token,
   });
+  await secureSet(INSTALLATION_KEY, registration.installation_id);
 }
 
 // unregisterFromDaemon stops delivery to this device and forgets its token.
@@ -149,13 +163,70 @@ export function startNativePush(next: PushHandlers): void {
     handlers?.onForeground();
   });
 
-  // Tapped, from any app state: foreground, background, or launched by the tap itself.
-  // The plugin delivers this after the web layer is ready in all three cases, which is
-  // what makes a cold-start deep link work.
+  // Tapped or acted on, from any app state: foreground, background, or launched by the
+  // interaction itself. The plugin delivers this after the web layer is ready in all three
+  // cases, which is what makes a cold-start deep link work.
   void FirebaseMessaging.addListener("notificationActionPerformed", (event) => {
-    const data = (event.notification?.data ?? {}) as Record<string, unknown>;
-    handlers?.onNavigate(targetFromNotification(pushPayloadAsNotification(data)));
+    void handleNotificationInteraction(event.actionId, (event.notification?.data ?? {}) as Record<string, unknown>);
   });
+}
+
+// handleNotificationInteraction routes a tap or a pressed action button.
+//
+// The plugin reports a plain tap as "tap" and a swipe-away as "dismiss"; anything else is
+// one of the action identifiers registered in AppDelegate.swift, which are the same ids the
+// daemon accepts.
+export async function handleNotificationInteraction(
+  actionID: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const notification = pushPayloadAsNotification(data);
+  const navigate = () => handlers?.onNavigate(targetFromNotification(notification));
+
+  if (actionID === "dismiss") {
+    // Swiped away. Deliberately does nothing: dismissing the OS notification is not a
+    // decision about what it was asking, and the notification is still in the Center.
+    return;
+  }
+  if (actionID === "tap" || actionID === "open" || actionID === "review") {
+    navigate();
+    return;
+  }
+
+  // An action must reach the daemon that produced the notification. Receiving a push says
+  // nothing about being able to reach that daemon — it travelled out through the relay,
+  // which the phone can reach from anywhere, while podiomd may be on a network the phone is
+  // nowhere near. And with several installations, this app may be pointed at another one.
+  if (!(await addressesTheSameInstallation(data))) {
+    navigate();
+    return;
+  }
+  if (!notification.ID) {
+    navigate();
+    return;
+  }
+  const performed = await handlers?.onAction(notification.ID, actionID);
+  if (!performed) {
+    // Either unreachable or refused. Open the app at the notification so the decision is
+    // handed back rather than silently lost.
+    navigate();
+  }
+}
+
+// addressesTheSameInstallation reports whether this app is registered with the daemon that
+// produced the notification.
+//
+// Read from the raw payload rather than the mapped notification: the originating installation
+// is delivery metadata, not part of what a notification is, so it has no place on that type.
+//
+// An unknown installation on either side counts as a match. An older daemon sends none, and
+// refusing to act on that would be worse than trying and letting the attempt answer.
+async function addressesTheSameInstallation(data: Record<string, unknown>): Promise<boolean> {
+  const sending = typeof data.installation_id === "string" ? data.installation_id : "";
+  if (!sending) return true;
+  const registered = await secureGet(INSTALLATION_KEY);
+  if (!registered) return true;
+  return sending === registered;
 }
 
 // deviceLabel names the device in Podiom's own device list, so a user with several can

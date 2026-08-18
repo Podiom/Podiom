@@ -268,6 +268,13 @@
     startNativePush({
       onNavigate: openTarget,
       onForeground: () => void notifications.refresh(),
+      // A button pressed on the notification itself. The same domain operation the
+      // Notification Center performs, so a stale action is refused identically — and a
+      // refusal or an unreachable daemon opens the app rather than looking like success.
+      onAction: async (notificationID, actionID) => {
+        const outcome = await notifications.act(notificationID, actionID);
+        return outcome.status === "ok";
+      },
     });
     void refreshProviderAuth();
     await refreshPushStatus();

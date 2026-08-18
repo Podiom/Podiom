@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import UserNotifications
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,8 +8,80 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        registerNotificationCategories()
         return true
+    }
+
+    /// Registers the notification categories that give Podiom's notifications their action
+    /// buttons.
+    ///
+    /// On iOS the APNs category is the only thing that makes buttons appear. The Push Relay
+    /// sets it from the `action_set` Podiom sends, so these identifiers and the action
+    /// identifiers inside them have to match Podiom's notification registry exactly — a
+    /// category iOS does not know about produces a notification with no buttons, and no
+    /// error anywhere. `TestIOSRegistersEveryActionSet` in internal/notify pins both sides.
+    ///
+    /// iOS keeps registered categories across launches, so a notification arriving while
+    /// the app is not running still finds them. Re-registering every launch is how they stay
+    /// current after an update.
+    ///
+    /// Deliberately absent: the `question` category. Its buttons are the question's own
+    /// answer options, whose text is only known when the question is asked, and a category's
+    /// action titles are fixed at registration. Generic "Option 1" buttons would be worse
+    /// than tapping through to read the actual question, so a question notification opens
+    /// Podiom instead.
+    private func registerNotificationCategories() {
+        let center = UNUserNotificationCenter.current()
+
+        // A tool call waiting on a decision. Allowing requires an unlocked device: it grants
+        // an agent a capability, which is not something to hand over from a lock screen.
+        let permission = UNNotificationCategory(
+            identifier: "session_permission",
+            actions: [
+                UNNotificationAction(identifier: "deny", title: "Deny", options: [.destructive]),
+                UNNotificationAction(identifier: "allow", title: "Allow", options: [.authenticationRequired])
+            ],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        // An agent asking for access to something. Same reasoning for the unlock requirement.
+        let access = UNNotificationCategory(
+            identifier: "access_request",
+            actions: [
+                UNNotificationAction(identifier: "deny", title: "Deny", options: [.destructive]),
+                UNNotificationAction(identifier: "approve", title: "Approve", options: [.authenticationRequired])
+            ],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        // Work handed back to the user. Answering either way is theirs to give and reverses
+        // nothing, so neither button needs an unlock.
+        let actionItem = UNNotificationCategory(
+            identifier: "goal_action_item",
+            actions: [
+                UNNotificationAction(identifier: "open", title: "Open", options: [.foreground]),
+                UNNotificationAction(identifier: "blocked", title: "Can't do", options: []),
+                UNNotificationAction(identifier: "done", title: "Done", options: [])
+            ],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        // An agent proposing a goal is finished. Review opens Podiom because the closing
+        // report is the whole point of reviewing it.
+        let completion = UNNotificationCategory(
+            identifier: "goal_completion",
+            actions: [
+                UNNotificationAction(identifier: "review", title: "Review", options: [.foreground]),
+                UNNotificationAction(identifier: "mark_done", title: "Mark done", options: [])
+            ],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        center.setNotificationCategories([permission, access, actionItem, completion])
     }
 
     func applicationWillResignActive(_ application: UIApplication) {

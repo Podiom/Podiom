@@ -119,3 +119,108 @@ func TestActionableTypesNameAnActionSet(t *testing.T) {
 		}
 	}
 }
+
+// actionSetsWithoutACategory are action sets Podiom sends but deliberately does not give
+// iOS buttons, with the reason.
+//
+// Recorded here rather than in a comment so the omission is provable and cannot be
+// forgotten: registering the category is what makes this test pass again.
+var actionSetsWithoutACategory = map[string]string{
+	ActionSetQuestion: "its buttons are the question's own answer options, whose text is only " +
+		"known when the question is asked; a category's action titles are fixed at registration, " +
+		"so generic labels would be worse than opening Podiom to read the question",
+}
+
+// TestIOSRegistersEveryActionSet keeps the iOS categories and Podiom's registry in step.
+//
+// The APNs category is the only thing that makes buttons appear on iOS, and the relay does
+// not know or check what the app registered — so a category Podiom sends but iOS does not
+// know produces a notification with no buttons and no error anywhere. This is the only
+// place the two halves are compared.
+func TestIOSRegistersEveryActionSet(t *testing.T) {
+	source := readAppDelegate(t)
+
+	for _, actionSet := range ActionSets() {
+		if reason, skipped := actionSetsWithoutACategory[actionSet]; skipped {
+			if reason == "" {
+				t.Errorf("actionSetsWithoutACategory[%q] needs a reason", actionSet)
+			}
+			if strings.Contains(source, `identifier: "`+actionSet+`"`) {
+				t.Errorf("%q is registered on iOS but listed as deliberately unregistered", actionSet)
+			}
+			continue
+		}
+		if !strings.Contains(source, `identifier: "`+actionSet+`"`) {
+			t.Errorf("iOS registers no UNNotificationCategory for the action set %q, so those "+
+				"notifications arrive with no buttons; register it in AppDelegate.swift or record "+
+				"the omission in actionSetsWithoutACategory", actionSet)
+		}
+	}
+}
+
+// TestIOSRegistersEveryActionOfEachSet checks the buttons inside each category cover the
+// actions Podiom can offer for it.
+//
+// A missing action identifier is the subtler half of the same silent failure: the category
+// matches, some buttons appear, and one operation is simply unavailable on the phone.
+func TestIOSRegistersEveryActionOfEachSet(t *testing.T) {
+	source := readAppDelegate(t)
+
+	for _, info := range All() {
+		if info.ActionSet == "" {
+			continue
+		}
+		if _, skipped := actionSetsWithoutACategory[info.ActionSet]; skipped {
+			continue
+		}
+		for _, action := range info.Actions {
+			// `open` is navigation, and tapping the notification body already does it, so a
+			// category need not spend a button on it.
+			if action == ActionOpen {
+				continue
+			}
+			if !strings.Contains(source, `identifier: "`+string(action)+`"`) {
+				t.Errorf("%q offers the action %q but iOS registers no button for it in the %q "+
+					"category, so it cannot be performed from the notification",
+					info.Type, action, info.ActionSet)
+			}
+		}
+	}
+}
+
+// TestIOSRegistersNoUnknownAction checks the reverse: a button iOS draws that Podiom would
+// reject is worse than a missing one, because the user presses it and nothing happens.
+func TestIOSRegistersNoUnknownAction(t *testing.T) {
+	source := readAppDelegate(t)
+	known := map[string]bool{
+		string(ActionOpen): true, string(ActionAllow): true, string(ActionDeny): true,
+		string(ActionApprove): true, string(ActionDone): true, string(ActionBlocked): true,
+		string(ActionReview): true, string(ActionMarkDone): true,
+	}
+	categories := map[string]bool{}
+	for _, actionSet := range ActionSets() {
+		categories[actionSet] = true
+	}
+
+	for _, match := range regexp.MustCompile(`identifier: "([a-z_]+)"`).FindAllStringSubmatch(source, -1) {
+		id := match[1]
+		if categories[id] || known[id] {
+			continue
+		}
+		t.Errorf("AppDelegate.swift registers %q, which is neither an action set Podiom sends "+
+			"nor an action it accepts; pressing that button would do nothing", id)
+	}
+}
+
+func readAppDelegate(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "ios", "App", "App", "AppDelegate.swift"))
+	if err != nil {
+		t.Fatalf("read AppDelegate: %v", err)
+	}
+	return string(body)
+}

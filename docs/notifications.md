@@ -170,6 +170,19 @@ Actions run through `POST /api/notifications/{id}/actions/{actionID}`, which
 dispatches to the same core operation the web UI uses — a notification action and a
 click in the dashboard are the same operation, not two implementations.
 
+On iOS those actions are also buttons on the notification itself (see
+[mobile.md](mobile.md)). Pressing one goes straight to the originating daemon, never through
+the relay. Two things can stop that:
+
+- **The app is pointed at a different installation.** A notification names the installation
+  that produced it, and an action has to reach that one.
+- **The daemon is unreachable.** A push arrives through the relay, which a phone can reach
+  from anywhere, while `podiomd` may be on a network it is nowhere near.
+
+In both cases the app opens at the notification rather than reporting success, so the
+decision is handed back instead of quietly lost. A dismissal — swiping the notification away
+— is deliberately not a decision about what it asked; the notification stays in the Center.
+
 ### Stale actions
 
 A notification can outlive the thing it is about. Deny an access request at your

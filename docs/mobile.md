@@ -306,10 +306,38 @@ under Android's default and the user's per-importance settings stop applying, wi
 reporting a problem. `TestAndroidCreatesEveryChannelTheRelayNames` pins both directions.
 
 iOS renders action buttons from the APNs category, which comes from the `action_set` Podiom
-sends. The relay does not validate it, so an unrecognised value arrives with no buttons and
-no error. Podiom sends exactly five: `session_permission`, `access_request`,
-`goal_action_item`, `goal_completion`, `question`. **Registering the matching
-`UNNotificationCategory` values is still outstanding** — see "Not included" below.
+sends. `AppDelegate.swift` registers a `UNNotificationCategory` for each one, and the action
+identifiers inside them are the same ids the daemon accepts:
+
+| category | buttons |
+|---|---|
+| `session_permission` | Deny, Allow |
+| `access_request` | Deny, Approve |
+| `goal_action_item` | Open, Can't do, Done |
+| `goal_completion` | Review, Mark done |
+
+Allow and Approve carry `.authenticationRequired`, so the device must be unlocked: both grant
+an agent a capability, which is not something to hand over from a lock screen. Deny and
+Can't do are `.destructive` so they read as the negative choice. Open and Review are
+`.foreground` because they exist to bring the user into the app.
+
+`question` is deliberately **not** registered. Its buttons would be the question's own answer
+options, whose text is only known when the question is asked, and a category's action titles
+are fixed at registration — generic "Option 1" labels would be worse than tapping through to
+read the actual question. Those notifications open Podiom instead.
+
+iOS keeps registered categories across launches, so a notification arriving while the app is
+not running still finds them. `TestIOSRegistersEveryActionSet` and its two companions in
+`internal/notify` compare the Swift against the registry in both directions, because every
+mismatch here fails silently: a wrong category means no buttons, a missing action means one
+operation is quietly unavailable, and an extra one means a button that does nothing.
+
+**Android shows no action buttons.** The relay sends Android a notification message, which
+the FCM SDK displays itself while the app is backgrounded — the app's code never runs, so it
+has no opportunity to add them. Getting buttons there needs the relay to send Android a
+data-only message and the app to build the notification in a custom
+`FirebaseMessagingService`. Until then an Android notification opens Podiom, where the
+Notification Center offers the same actions.
 
 The `com.apple.developer.usernotifications.time-sensitive` entitlement is required: the
 relay maps `important` and `critical` to the APNs time-sensitive interruption level, which
@@ -325,11 +353,11 @@ updates.
 App Store / Google Play publishing, release signing in CI, and any reimplementation of
 the UI in native components.
 
-Notification action buttons (Allow/Deny, Done/Can't do) are not built yet either.
-Tapping a notification opens the resource, and the actions are available in the
-Notification Center — rendering buttons on the notification itself needs a custom
-`FirebaseMessagingService` on Android and `UNNotificationCategory` registration on iOS,
-which is its own piece of work.
+Android notification action buttons. iOS has them; Android needs the relay to send it a
+data-only message and a custom `FirebaseMessagingService` in the app to build the
+notification, since the FCM SDK displays a notification message itself while the app is
+backgrounded. An Android notification opens Podiom instead, where the Notification Center
+offers the same actions.
 
 ## CI
 
