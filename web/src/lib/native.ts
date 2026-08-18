@@ -108,3 +108,20 @@ export function onBackButton(handler: () => boolean): () => void {
     void registration.then((r) => r.remove());
   };
 }
+
+// onKeyboardToggle reports the on-screen keyboard opening and closing. Returns
+// an unsubscribe. It never fires in a browser — keyboard.svelte.ts reads
+// visualViewport there instead — because the plugin has no web implementation
+// worth trusting for this.
+//
+// The "will" events rather than "did": the UI that folds away on a phone should
+// collapse while the keyboard animates in, not after it has landed.
+export function onKeyboardToggle(handler: (open: boolean) => void): () => void {
+  if (!isNative) return () => {};
+  const shown = Keyboard.addListener("keyboardWillShow", () => handler(true));
+  const hidden = Keyboard.addListener("keyboardWillHide", () => handler(false));
+  return () => {
+    void shown.then((r) => r.remove());
+    void hidden.then((r) => r.remove());
+  };
+}

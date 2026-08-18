@@ -26,6 +26,7 @@
   import { auth } from "./lib/auth.svelte";
   import { avatars } from "./lib/avatars.svelte";
   import { deployment } from "./lib/base";
+  import { keyboard, watchKeyboard } from "./lib/keyboard.svelte";
   import { live } from "./lib/live.svelte";
   import { initChrome, onBackButton } from "./lib/native";
   import TokenGate from "./pages/TokenGate.svelte";
@@ -319,6 +320,8 @@
   // releases every 5 minutes.
   onMount(() => {
     initChrome();
+    // Phones fold the nav away while the keyboard is up; see keyboard.svelte.ts.
+    const offKeyboard = watchKeyboard();
     // The URL is the source of truth, so adopt whatever it already says — this is what
     // makes a deep link work on a cold start, including one opened from a notification
     // while the app was terminated.
@@ -350,6 +353,7 @@
     }, 5 * 60 * 1000);
     return () => {
       offBack();
+      offKeyboard();
       window.removeEventListener("hashchange", onHashChange);
       window.clearInterval(healthTimer);
       window.clearInterval(updateTimer);
@@ -660,7 +664,7 @@
 {:else if !auth.token}
   <TokenGate />
 {:else}
-<div class="app-root">
+<div class="app-root" class:kbd-open={keyboard.open}>
   <!-- ============ SIDEBAR ============ -->
   <aside class="sidebar">
     <div class="brand">
@@ -1503,6 +1507,18 @@
   }
 
   @media (max-width: 768px) {
+    /* The keyboard takes roughly half the screen, and the nav is not what the
+       user is reaching for mid-sentence. Hand its 72px back to the page for as
+       long as they are typing — on every route, not just Chat. */
+    .app-root.kbd-open .sidebar {
+      display: none;
+    }
+
+    .app-root.kbd-open .main,
+    .app-root.kbd-open .main.flush-top {
+      padding-bottom: 0;
+    }
+
     .sidebar {
       position: fixed;
       left: 0;

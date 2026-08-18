@@ -14,6 +14,7 @@
   } from "../lib/api";
   import { goalGroupedEntries, goalGroupOpen, type GoalGroupEntry } from "../lib/goalGrouping";
   import { randomID } from "../lib/id";
+  import { keyboard } from "../lib/keyboard.svelte";
   import { live } from "../lib/live.svelte";
   import { DEFAULT_PROVIDER, providerMeta, questionEndsTurn } from "../lib/providers";
   import { renderMarkdown } from "../lib/markdown";
@@ -1100,6 +1101,14 @@
     if (stick) void scrollMessagesToBottom();
   });
 
+  // Opening the keyboard folds the header, strips and chip bar away and shrinks
+  // .msgs; without this the message the user was reading ends up above the
+  // visible area at the exact moment they start replying to it.
+  $effect(() => {
+    void keyboard.open;
+    if (stick) void scrollMessagesToBottom("auto");
+  });
+
   // Errors and notices render at the bottom; make their appearance visible.
   $effect(() => {
     if (error || notice) forceScrollToBottom();
@@ -1917,7 +1926,7 @@
   }
 </script>
 
-<div class="chat" bind:this={chatEl} style="flex:1;display:flex;min-height:0">
+<div class="chat" class:kbd-open={keyboard.open} bind:this={chatEl} style="flex:1;display:flex;min-height:0">
   {#if isPhone && (sessOpen || ctxOpen || (planAwaiting && mobilePlanPanelOpen))}
     <button class="mobile-panel-backdrop" aria-label="Close panel" onclick={closeMobilePanels}></button>
   {/if}
@@ -5227,6 +5236,31 @@
   }
 
   @media (max-width: 768px) {
+    /* Typing on a phone: the keyboard covers about half the screen, so
+       everything that isn't the conversation or the field itself folds away
+       until focus leaves the composer. The approval and plan banners stay —
+       they are the two things that need answering, and losing sight of them
+       mid-sentence is worse than the space they cost. */
+    .chat.kbd-open .conv-head,
+    .chat.kbd-open .usage-strip,
+    .chat.kbd-open .proj-strip,
+    .chat.kbd-open .composer-meta {
+      display: none;
+    }
+
+    /* The chip row and its margin (45px) are gone from under the menu. */
+    .chat.kbd-open .slash-menu {
+      bottom: 37px;
+    }
+
+    /* App.svelte drops the nav in this state, so the drawers reach the floor. */
+    .chat.kbd-open .sess-col,
+    .chat.kbd-open .ctx,
+    .chat.kbd-open .plan-panel,
+    .chat.kbd-open .mobile-panel-backdrop {
+      bottom: 0;
+    }
+
     .mobile-panel-backdrop {
       display: block;
       position: fixed;
@@ -5428,7 +5462,9 @@
 
     .composer-input {
       min-width: 0;
-      font-size: 14.5px;
+      /* Not 14.5px like the bubbles: iOS zooms the WebView when it focuses a
+         field under 16px, which pans a view that is already half keyboard. */
+      font-size: 16px;
     }
 
     .composer-send {
