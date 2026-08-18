@@ -388,9 +388,13 @@ func (e *Engine) recordResults(ctx context.Context, row store.NotificationDelive
 		}
 		id := row.ID
 		if i > 0 {
+			// The destination is known by now, so it goes in at creation. The row for the
+			// first result was created before the send, when it could not be, and picks its
+			// destination up when it is finished below.
 			extra, err := e.store.CreateNotificationDelivery(ctx, store.NotificationDelivery{
 				NotificationID: row.NotificationID,
 				Channel:        row.Channel,
+				Destination:    res.Destination,
 			})
 			if err != nil {
 				e.log.Error("record delivery failed", "event", "notification",

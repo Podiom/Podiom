@@ -16,16 +16,31 @@ type fakeChannel struct {
 	name string
 	mu   sync.Mutex
 	got  []Envelope
-	// err fails the whole channel; destErr fails one named destination.
+	// err fails the whole channel; results scripts a per-destination answer.
 	err     error
 	results []Result
-	panics  bool
+	// panics is read by the engine's worker goroutine and written by the test, so it is
+	// guarded like everything else on this struct.
+	panics bool
+}
+
+// setPanics scripts whether the next Send explodes.
+func (f *fakeChannel) setPanics(v bool) {
+	f.mu.Lock()
+	f.panics = v
+	f.mu.Unlock()
+}
+
+func (f *fakeChannel) shouldPanic() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.panics
 }
 
 func (f *fakeChannel) Name() string { return f.name }
 
 func (f *fakeChannel) Send(_ context.Context, env Envelope) ([]Result, error) {
-	if f.panics {
+	if f.shouldPanic() {
 		panic("channel exploded")
 	}
 	f.mu.Lock()
@@ -88,6 +103,48 @@ func (r *broadcastRecorder) updateCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.updated)
+}
+
+// settledDeliveries returns the delivery rows that have an outcome.
+//
+// A row is created before its attempt and settled after it, so a pending one is a real
+// intermediate state rather than a result. Waiting on settled rows is what keeps a test
+// from racing the attempt it is asserting about.
+func settledDeliveries(t *testing.T, db *store.Store, notificationID string) []store.NotificationDelivery {
+	t.Helper()
+	rows, err := db.ListNotificationDeliveries(context.Background(), notificationID)
+	if err != nil {
+		t.Fatalf("list deliveries: %v", err)
+	}
+	var out []store.NotificationDelivery
+	for _, row := range rows {
+		if row.Status != store.NotificationDeliveryPending {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// deliveriesByDestination indexes a notification's settled delivery rows.
+//
+// A row is created before its attempt and settled after it, so an unsettled one is a real
+// intermediate state rather than a result. Skipping those is what lets a caller wait for
+// the outcomes without racing them: a pending row has no destination yet, or has one and no
+// verdict, depending on how much the channel already knew.
+func deliveriesByDestination(t *testing.T, db *store.Store, notificationID string) map[string]store.NotificationDelivery {
+	t.Helper()
+	rows, err := db.ListNotificationDeliveries(context.Background(), notificationID)
+	if err != nil {
+		t.Fatalf("list deliveries: %v", err)
+	}
+	out := map[string]store.NotificationDelivery{}
+	for _, row := range rows {
+		if row.Destination == "" || row.Status == store.NotificationDeliveryPending {
+			continue
+		}
+		out[row.Destination] = row
+	}
+	return out
 }
 
 // waitFor polls until cond holds or the deadline passes. The engine's worker is
@@ -265,16 +322,14 @@ func TestChannelFailureIsolated(t *testing.T) {
 	waitFor(t, "the notification to be stored", func() bool { return countNotifications(t, db) == 1 })
 
 	list, _ := db.ListNotifications(ctx, store.NotificationFilter{})
-	waitFor(t, "both delivery rows", func() bool {
-		d, err := db.ListNotificationDeliveries(ctx, list[0].ID)
-		return err == nil && len(d) == 2
+	// Waits for both attempts to have settled rather than for both rows to exist: a row is
+	// written before its attempt is made, so counting rows can observe one that is still
+	// pending and read that as its verdict.
+	waitFor(t, "both deliveries to settle", func() bool {
+		return len(settledDeliveries(t, db, list[0].ID)) == 2
 	})
-	deliveries, err := db.ListNotificationDeliveries(ctx, list[0].ID)
-	if err != nil {
-		t.Fatalf("list deliveries: %v", err)
-	}
 	byChannel := map[string]store.NotificationDelivery{}
-	for _, d := range deliveries {
+	for _, d := range settledDeliveries(t, db, list[0].ID) {
 		byChannel[d.Channel] = d
 	}
 	if got := byChannel["relay"].Status; got != store.NotificationDeliveryFailed {
@@ -309,16 +364,15 @@ func TestChannelResultsRecordEachDestination(t *testing.T) {
 	})
 	waitFor(t, "the notification to be stored", func() bool { return countNotifications(t, db) == 1 })
 	list, _ := db.ListNotifications(ctx, store.NotificationFilter{})
-	waitFor(t, "three delivery rows", func() bool {
-		d, err := db.ListNotificationDeliveries(ctx, list[0].ID)
-		return err == nil && len(d) == 3
+	// Waits for every destination to have an outcome, not merely for three rows to exist.
+	// A delivery row is written before its attempt is made and settled afterwards, so both
+	// "three rows" and "three destinations" can be true while a row is still pending —
+	// real intermediate states, and waiting on either of them raced the result.
+	waitFor(t, "a settled delivery row per destination", func() bool {
+		return len(deliveriesByDestination(t, db, list[0].ID)) == 3
 	})
 
-	deliveries, _ := db.ListNotificationDeliveries(ctx, list[0].ID)
-	byDest := map[string]store.NotificationDelivery{}
-	for _, d := range deliveries {
-		byDest[d.Destination] = d
-	}
+	byDest := deliveriesByDestination(t, db, list[0].ID)
 	for _, want := range []struct {
 		dest   string
 		status store.NotificationDeliveryStatus
@@ -342,7 +396,8 @@ func TestChannelResultsRecordEachDestination(t *testing.T) {
 // only thing turning domain activity into notifications, so its silent death
 // would disable them for the rest of the daemon's life with no other symptom.
 func TestPanickingChannelDoesNotKillWorker(t *testing.T) {
-	boom := &fakeChannel{name: "boom", panics: true}
+	boom := &fakeChannel{name: "boom"}
+	boom.setPanics(true)
 	e, db, _ := newTestEngine(t, boom)
 
 	e.Publish(Event{
@@ -352,7 +407,7 @@ func TestPanickingChannelDoesNotKillWorker(t *testing.T) {
 	// The panic happens after the row is written, so the first notification lands.
 	waitFor(t, "the first notification", func() bool { return countNotifications(t, db) == 1 })
 
-	boom.panics = false
+	boom.setPanics(false)
 	e.Publish(Event{Type: TypeGoalProgress, GoalID: "goal-1", Detail: "still working"})
 	waitFor(t, "the worker to recover and handle the next event", func() bool {
 		return countNotifications(t, db) == 2
