@@ -51,15 +51,21 @@ tidy: ## Tidy go modules
 
 # Cross-compile both binaries for the three supported OSes. Requires the web UI
 # to be built first (run `make web`); the embed is OS-independent.
+# One target pair per background subshell, then wait and collect. `set -e` does
+# not reach into a background subshell, hence the explicit && and the exit-code
+# sweep — without both, a failed cross build would pass silently.
 cross: ## Cross-compile podiomd/podiom for linux, darwin, windows (amd64+arm64)
-	@set -e; for os in $(CROSS_OS); do \
+	@set -e; pids=""; \
+	for os in $(CROSS_OS); do \
 	  for arch in $(CROSS_ARCH); do \
 	    ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	    echo "building $$os/$$arch"; \
-	    GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$$os-$$arch/podiomd$$ext ./cmd/podiomd; \
-	    GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$$os-$$arch/podiom$$ext ./cmd/podiom; \
+	    ( GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$$os-$$arch/podiomd$$ext ./cmd/podiomd && \
+	      GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$$os-$$arch/podiom$$ext ./cmd/podiom ) & \
+	    pids="$$pids $$!"; \
 	  done; \
-	done
+	done; \
+	rc=0; for p in $$pids; do wait $$p || rc=1; done; exit $$rc
 
 package: web cross ## Archive release binaries and emit SHA256SUMS in dist/
 	@set -e; \

@@ -5,6 +5,12 @@ on:
   push:
     branches:
       - master
+  # Monday 04:17 UTC: the weekly cold add-on image build. The layer cache the
+  # ha-smoke job normally reads would otherwise freeze the Debian package set and
+  # stop pipx re-resolving mcp-proxy's transitive deps — the break that 9da70e9
+  # and 84933c1 existed to fix. This run is what keeps catching that class of bug.
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -32,7 +38,23 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # The action's own cache is deliberately off. Its key is go.sum plus the
+          # exact Go patch version with no restore-keys, which fails both ways: a
+          # runner-image Go bump misses stone cold, and an unchanged go.sum hits the
+          # key exactly so the action never *saves* — GOCACHE freezes at the last
+          # dependency change and `go test` reports nothing as cached.
+          cache: false
+
+      - name: Restore Go build and module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -59,13 +81,30 @@ jobs:
       - name: Run web tests
         run: npm test -w web
 
+      # Saved only on master, so the cache accumulates along one lineage instead of
+      # adding an entry per pull-request commit and evicting the npm and Gradle
+      # caches from the repo's shared 10 GB budget. `always()` because a red run's
+      # compiled packages are exactly what its successor wants warm.
+      - name: Save Go build and module cache
+        uses: actions/cache/save@v4
+        if: always() && github.ref == 'refs/heads/master'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+
   # The two mobile jobs are what R12 asks for: prove that a change to the shared
   # Svelte app still produces valid native projects. Neither needs signing
   # credentials, so both run on ordinary pull requests.
+  #
+  # None of the three jobs below consumes an output of `test` — each checks out and
+  # installs on its own — so none of them gates on it and all four run in parallel.
+  # A failing Go test therefore also spends the mobile and Docker jobs, which is
+  # free on a public repo, and cancel-in-progress still kills a superseded push.
   android:
     name: Android build
     runs-on: ubuntu-latest
-    needs: test
 
     steps:
       - name: Check out repository
@@ -114,7 +153,6 @@ jobs:
   ios:
     name: iOS build
     runs-on: macos-15
-    needs: test
 
     steps:
       - name: Check out repository
@@ -144,6 +182,19 @@ jobs:
       - name: Check the committed project is in sync
         run: .github/scripts/check-native-sync.sh ios
 
+      # Package.resolved pins 15 remote packages headed by firebase-ios-sdk, gRPC
+      # and abseil, re-cloned on every run. Only the clones are cached, not
+      # DerivedData: Xcode does not reliably reuse DerivedData across runners, and a
+      # half-valid one fails in ways that read as a source problem. The cache lives
+      # under $HOME rather than in the tree so it cannot put an untracked directory
+      # under ios/ where check-native-sync.sh looks.
+      - name: Cache Swift package clones
+        uses: actions/cache@v4
+        with:
+          path: ~/.spm-clones
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
       # Capacitor 8 resolves iOS plugins through Swift Package Manager, so there
       # is no CocoaPods step and no .xcworkspace — the project builds directly.
       # CODE_SIGNING_ALLOWED=NO keeps signing secrets out of pull-request CI.
@@ -155,6 +206,7 @@ jobs:
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
+            -clonedSourcePackagesDirPath ~/.spm-clones \
             CODE_SIGNING_ALLOWED=NO \
             build
         working-directory: ios/App
@@ -162,7 +214,6 @@ jobs:
   ha-smoke:
     name: Home Assistant add-on smoke
     runs-on: ubuntu-latest
-    needs: test
 
     steps:
       - name: Check out repository
@@ -190,7 +241,18 @@ jobs:
           make cross CROSS_OS=linux CROSS_ARCH=amd64 \
             VERSION="ci-${GITHUB_SHA::7}" COMMIT="${GITHUB_SHA::7}"
 
+      # cache-from only, never cache-to: a pull request must not be able to poison
+      # the layer cache that the release build consumes, and a fork PR's read-only
+      # GITHUB_TOKEN could not write it anyway. ghcr.io/podiom/podiom-ha is a public
+      # package, so the read needs no login step and no change to `permissions`.
+      # ha-addon.yml is what populates this ref.
+      #
+      # --no-cache on the weekly schedule instead: neither `apt-get install` nor
+      # `pipx install mcp-proxy` pins what it resolves, so a permanently warm cache
+      # would quietly stop verifying both. See the `schedule` trigger above.
       - name: Build amd64 add-on image
+        env:
+          CACHE_ARGS: ${{ github.event_name == 'schedule' && '--no-cache' || '--cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache' }}
         run: |
           set -euo pipefail
           set -a; . ha/versions.env; set +a
@@ -199,6 +261,7 @@ jobs:
             --platform linux/amd64 \
             -f ha/Dockerfile \
             $build_args \
+            $CACHE_ARGS \
             --build-arg PODIOM_VERSION="ci-${GITHUB_SHA::7}" \
             -t "podiom-ha:ci" .
 

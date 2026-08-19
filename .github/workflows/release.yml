@@ -21,7 +21,14 @@ jobs:
   release:
     name: Publish GitHub release
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # A release follows a *push* to master and nothing else. ci also runs on a
+    # weekly schedule now (the cold add-on image build), and those runs land on
+    # master with a successful conclusion too — without this guard each one would
+    # cut a release and publish an add-on version containing no new commits.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
 
     steps:
       - name: Check out repository

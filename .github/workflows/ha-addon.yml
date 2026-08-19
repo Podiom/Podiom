@@ -69,13 +69,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # CROSS_OS=linux because ha/Dockerfile COPYs only from bin/linux-${TARGETARCH}
+      # and ha/Dockerfile.dockerignore excludes everything else from the build
+      # context. The default matrix would also cross-compile darwin and windows —
+      # eight binaries that are discarded here and that release.yml already
+      # published minutes earlier. CROSS_ARCH keeps its default: the image needs
+      # both amd64 and arm64.
       - name: Build web and Linux binaries
         env:
           VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
         run: |
           make web
           target_sha="$(git rev-parse HEAD)"
-          make cross VERSION="$VERSION" COMMIT="${target_sha::7}"
+          make cross CROSS_OS=linux VERSION="$VERSION" COMMIT="${target_sha::7}"
 
       - name: Build amd64 add-on image
         env:
@@ -88,12 +94,32 @@ jobs:
             --platform linux/amd64 \
             -f ha/Dockerfile \
             $build_args \
+            --cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache \
             --build-arg PODIOM_VERSION="${VERSION#v}" \
             -t "ghcr.io/podiom/podiom-ha:smoke" .
 
       - name: Smoke test add-on image
         run: bash ha/test/smoke.sh ghcr.io/podiom/podiom-ha:smoke
 
+      # This is the one step that writes the layer cache, and it has to be this one:
+      # a single --cache-to on a multi-platform build stores an index covering both
+      # platforms, so one ref serves amd64 and arm64 without either clobbering the
+      # other. mode=max is required — this is a single-stage Dockerfile whose whole
+      # value is its intermediate layers, which mode=min would discard.
+      #
+      # Without this the arm64 half re-ran apt, NodeSource, `npm install -g` and
+      # pipx under QEMU on every release: 523s. Every one of those layers depends
+      # only on ha/versions.env, which changes a handful of times a year.
+      #
+      # Registry rather than type=gha deliberately: these layers are ~1 GB across
+      # both arches and would evict the Go, npm and Gradle entries from the repo's
+      # shared 10 GB Actions cache budget. A registry cache does not count against
+      # it, and the ghcr login above already grants the write.
+      #
+      # image-manifest/oci-mediatypes are not optional on GHCR: it rejects
+      # buildx's default cache manifest media type, and the export fails without
+      # them. The cache is a tag on the image's own package, so its blobs are the
+      # ones just pushed and the export is mostly manifest writes.
       - name: Push multi-arch add-on image
         env:
           VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
@@ -106,6 +132,8 @@ jobs:
             --platform linux/amd64,linux/arm64 \
             -f ha/Dockerfile \
             $build_args \
+            --cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache \
+            --cache-to type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache,mode=max,image-manifest=true,oci-mediatypes=true \
             --build-arg PODIOM_VERSION="${addon_version}" \
             -t "ghcr.io/podiom/podiom-ha:${addon_version}" \
             -t "ghcr.io/podiom/podiom-ha:latest" .

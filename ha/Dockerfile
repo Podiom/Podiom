@@ -23,23 +23,6 @@ ARG TTYD_SHA256_AMD64
 ARG TTYD_SHA256_ARM64
 ARG PODIOM_VERSION=dev
 
-# Optional language toolchains: pins only. Nothing is downloaded at build time —
-# podiom-toolchains installs the ticked ones into /data at start (see
-# ha/rootfs/usr/local/bin/podiom-toolchains).
-ARG GO_VERSION
-ARG GO_SHA256_AMD64
-ARG GO_SHA256_ARM64
-ARG RUSTUP_INIT_VERSION
-ARG RUSTUP_INIT_SHA256_AMD64
-ARG RUSTUP_INIT_SHA256_ARM64
-ARG RUST_VERSION
-ARG SWIFTLY_VERSION
-ARG SWIFTLY_SHA256_AMD64
-ARG SWIFTLY_SHA256_ARM64
-ARG SWIFT_VERSION
-ARG SWIFTLY_PLATFORM
-ARG PYTHON_VERSION
-
 # Container ↔ podiomd interface contract (plan Part B):
 #   PODIOM_HOME/HOME anchor all persistent state on /data (HA19),
 #   DISABLE_AUTOUPDATER stops the claude CLI self-updating past its pin (HA18),
@@ -49,8 +32,10 @@ ENV PODIOM_HOME=/data/podiom \
     DISABLE_AUTOUPDATER=1 \
     PODIOM_TERMINAL_PROXY=http://127.0.0.1:7681
 
-# Toolchain pins reach podiom-toolchains through the environment; the versions
-# themselves live in ha/versions.env.
+# Where the optional toolchains live. These are paths, not versions, and they
+# never change, so they belong up here where they cost nothing to invalidate.
+# The *_VERSION/*_SHA256 pins they pair with are deliberately set much further
+# down, just above the COPYs — see the note there.
 #
 # RUSTUP_HOME/CARGO_HOME and the SWIFTLY_* trio are runtime settings, not just
 # install-time ones: the `cargo` and `swift` shims resolve their toolchain
@@ -64,20 +49,7 @@ ENV PODIOM_TOOLCHAINS_DIR=/data/podiom/toolchains \
     CARGO_HOME=/data/podiom/toolchains/cargo \
     SWIFTLY_HOME_DIR=/data/podiom/toolchains/swiftly \
     SWIFTLY_BIN_DIR=/data/podiom/toolchains/swiftly/bin \
-    SWIFTLY_TOOLCHAINS_DIR=/data/podiom/toolchains/swiftly/toolchains \
-    GO_VERSION=${GO_VERSION} \
-    GO_SHA256_AMD64=${GO_SHA256_AMD64} \
-    GO_SHA256_ARM64=${GO_SHA256_ARM64} \
-    RUSTUP_INIT_VERSION=${RUSTUP_INIT_VERSION} \
-    RUSTUP_INIT_SHA256_AMD64=${RUSTUP_INIT_SHA256_AMD64} \
-    RUSTUP_INIT_SHA256_ARM64=${RUSTUP_INIT_SHA256_ARM64} \
-    RUST_VERSION=${RUST_VERSION} \
-    SWIFTLY_VERSION=${SWIFTLY_VERSION} \
-    SWIFTLY_SHA256_AMD64=${SWIFTLY_SHA256_AMD64} \
-    SWIFTLY_SHA256_ARM64=${SWIFTLY_SHA256_ARM64} \
-    SWIFT_VERSION=${SWIFT_VERSION} \
-    SWIFTLY_PLATFORM=${SWIFTLY_PLATFORM} \
-    PYTHON_VERSION=${PYTHON_VERSION}
+    SWIFTLY_TOOLCHAINS_DIR=/data/podiom/toolchains/swiftly/toolchains
 
 # Toolchain bin dirs go on PATH unconditionally, whether or not the user ticked
 # the toolchain: a missing PATH entry is harmless, and PATH is resolved at exec
@@ -100,12 +72,12 @@ RUN set -eu; \
       --shell /bin/bash --no-create-home podiom; \
     getent passwd podiom | grep -q '^podiom:x:1000:1000:.*:/data/home:/bin/bash$'
 
-# Fail early if the pins were not passed (versions.env is the source of truth).
+# Fail early if the pins this image actually installs were not passed
+# (versions.env is the source of truth). The optional-toolchain pins are checked
+# separately further down, next to where they are set.
 RUN set -eu; \
     for v in "$NODE_MAJOR" "$CLAUDE_CODE_VERSION" "$CODEX_VERSION" \
-             "$MCP_PROXY_VERSION" "$UV_VERSION" "$TTYD_VERSION" \
-             "$GO_VERSION" "$RUSTUP_INIT_VERSION" "$RUST_VERSION" \
-             "$SWIFTLY_VERSION" "$SWIFT_VERSION" "$SWIFTLY_PLATFORM" "$PYTHON_VERSION"; do \
+             "$MCP_PROXY_VERSION" "$UV_VERSION" "$TTYD_VERSION"; do \
       [ -n "$v" ] || { echo "missing build-arg; source ha/versions.env" >&2; exit 1; }; \
     done
 
@@ -163,6 +135,57 @@ RUN set -eu; \
       "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${ttyd_arch}"; \
     echo "${ttyd_sha}  /usr/local/bin/ttyd" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/ttyd
+
+# Optional language toolchains: pins only. Nothing is downloaded at build time —
+# podiom-toolchains installs the ticked ones into /data at start (see
+# ha/rootfs/usr/local/bin/podiom-toolchains).
+#
+# Declared HERE, at the bottom, ON PURPOSE — and it must be the ARG lines that
+# live here, not just the ENV below them. BuildKit invalidates every step from
+# the point an ARG is *declared* once that arg is given a value it has not been
+# built with before; it does not wait for the arg to be used. So while these
+# sat with the others at the top of the file, bumping GO_VERSION or refreshing
+# a SHA256 rebuilt apt, NodeSource, `npm install -g` and both pipx layers —
+# about eight emulated minutes on arm64 to change a string nothing in the image
+# build reads. Commit 2a548c3 paid exactly that. Down here the same bump costs
+# only the cheap layers below.
+#
+# Keep these ARGs below every RUN that installs something, and keep
+# PODIOM_VERSION's only use in the trailing LABEL, for the same reason.
+ARG GO_VERSION
+ARG GO_SHA256_AMD64
+ARG GO_SHA256_ARM64
+ARG RUSTUP_INIT_VERSION
+ARG RUSTUP_INIT_SHA256_AMD64
+ARG RUSTUP_INIT_SHA256_ARM64
+ARG RUST_VERSION
+ARG SWIFTLY_VERSION
+ARG SWIFTLY_SHA256_AMD64
+ARG SWIFTLY_SHA256_ARM64
+ARG SWIFT_VERSION
+ARG SWIFTLY_PLATFORM
+ARG PYTHON_VERSION
+
+ENV GO_VERSION=${GO_VERSION} \
+    GO_SHA256_AMD64=${GO_SHA256_AMD64} \
+    GO_SHA256_ARM64=${GO_SHA256_ARM64} \
+    RUSTUP_INIT_VERSION=${RUSTUP_INIT_VERSION} \
+    RUSTUP_INIT_SHA256_AMD64=${RUSTUP_INIT_SHA256_AMD64} \
+    RUSTUP_INIT_SHA256_ARM64=${RUSTUP_INIT_SHA256_ARM64} \
+    RUST_VERSION=${RUST_VERSION} \
+    SWIFTLY_VERSION=${SWIFTLY_VERSION} \
+    SWIFTLY_SHA256_AMD64=${SWIFTLY_SHA256_AMD64} \
+    SWIFTLY_SHA256_ARM64=${SWIFTLY_SHA256_ARM64} \
+    SWIFT_VERSION=${SWIFT_VERSION} \
+    SWIFTLY_PLATFORM=${SWIFTLY_PLATFORM} \
+    PYTHON_VERSION=${PYTHON_VERSION}
+
+RUN set -eu; \
+    for v in "$GO_VERSION" "$RUSTUP_INIT_VERSION" "$RUST_VERSION" \
+             "$SWIFTLY_VERSION" "$SWIFT_VERSION" "$SWIFTLY_PLATFORM" \
+             "$PYTHON_VERSION"; do \
+      [ -n "$v" ] || { echo "missing build-arg; source ha/versions.env" >&2; exit 1; }; \
+    done
 
 # Podiom binaries, prebuilt by `make cross` on the host/CI.
 COPY bin/linux-${TARGETARCH}/podiomd bin/linux-${TARGETARCH}/podiom /usr/local/bin/
