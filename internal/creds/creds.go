@@ -20,13 +20,17 @@ import (
 
 // Credential is one stored secret. Name is the environment variable name the
 // agent asked for; Purpose and GoalID are display metadata from the access
-// request that produced it.
+// request that produced it. CreatedByAgent/CreatedBySession carry provenance
+// when an agent stored it itself — empty means the user did, matching the
+// attribution rule roadmap tasks and schedules already follow.
 type Credential struct {
-	Name      string `yaml:"name"`
-	Value     string `yaml:"value"`
-	Purpose   string `yaml:"purpose,omitempty"`
-	GoalID    string `yaml:"goal_id,omitempty"`
-	CreatedAt string `yaml:"created_at,omitempty"`
+	Name             string `yaml:"name"`
+	Value            string `yaml:"value"`
+	Purpose          string `yaml:"purpose,omitempty"`
+	GoalID           string `yaml:"goal_id,omitempty"`
+	CreatedAt        string `yaml:"created_at,omitempty"`
+	CreatedByAgent   string `yaml:"created_by_agent,omitempty"`
+	CreatedBySession string `yaml:"created_by_session,omitempty"`
 }
 
 // reservedNames are adapter-managed variables that stored credentials must

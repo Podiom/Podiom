@@ -224,6 +224,7 @@ func run() error {
 			log.Info("native push enabled", "relay", relayEndpoint)
 		}
 	}
+	deviceRegistrar, nativePush := relayInterfaces(relayChannel)
 	notifications := notify.New(notify.Options{
 		Store:          db,
 		Channels:       channels,
@@ -305,7 +306,8 @@ func run() error {
 		Notifications:   notifications,
 		VAPIDPublicKey:  vapidPublic,
 		InstallationID:  installationID,
-		DeviceRegistrar: relayChannel,
+		DeviceRegistrar: deviceRegistrar,
+		NativePush:      nativePush,
 		Tokens:          tokens,
 		HAMode:          haMode,
 		AllowFrom:       cfg.Server.AllowFrom,
@@ -399,6 +401,21 @@ func syncConfiguredAgents(ctx context.Context, coreSvc *core.Core, cfg *config.C
 		}
 	}
 	return nil
+}
+
+// relayInterfaces widens the relay channel to the interfaces the server takes, keeping a
+// missing relay genuinely nil.
+//
+// Assigning a nil *RelayChannel straight into an interface field would produce a non-nil
+// interface holding a nil pointer, so the server's "no relay configured" guards would not
+// fire and the first device registration would call a method on a nil receiver. That is a
+// reachable state, not a theoretical one: an unreadable installation id disables native
+// push by design and leaves this pointer nil.
+func relayInterfaces(relay *notify.RelayChannel) (notify.DeviceRegistrar, notify.Channel) {
+	if relay == nil {
+		return nil, nil
+	}
+	return relay, relay
 }
 
 // relayEndpointWarning reports a relay address that will not work, without refusing to

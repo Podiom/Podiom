@@ -104,6 +104,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/notifications/preferences", s.handleNotificationPreferences},
 		{"/api/notifications/", s.handleNotification},
 		{"/api/notification-devices", s.handleNotificationDevices},
+		// Ahead of the {id} route: "test" is an operation on the fleet, not a device id.
+		{"/api/notification-devices/test", s.handleNotificationTestPush},
 		{"/api/notification-devices/", s.handleNotificationDevice},
 		{"/api/push/vapid", s.handlePushVAPID},
 		{"/api/push/subscribe", s.handlePushSubscribe},

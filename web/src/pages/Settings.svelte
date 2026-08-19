@@ -10,6 +10,7 @@
     gitStatus,
     listProfiles,
     setGitIdentity,
+    sendTestNotificationPush,
     setNotificationDeviceEnabled,
     setNotificationPreferences,
     updateConfig,
@@ -29,6 +30,7 @@
     Health,
     NotificationDevice,
     NotificationPreferenceGroup,
+    NotificationTestResult,
     ProfileInfo,
     Provider,
     ProviderAuthStatus,
@@ -635,6 +637,41 @@
     }
   }
 
+  // ---- test push ---------------------------------------------------------------
+  //
+  // Deliberately reports per device rather than as one success/failure. The relay
+  // answers HTTP 200 even when every device is rejected, so "the request worked" and
+  // "the phone buzzed" are different questions and only the second one matters here.
+  let testBusy = $state(false);
+  let testResults = $state<NotificationTestResult[] | null>(null);
+  let testError = $state<string | null>(null);
+
+  async function sendTestPush() {
+    testBusy = true;
+    testError = null;
+    testResults = null;
+    try {
+      testResults = (await sendTestNotificationPush()).results;
+      // A verdict can retire a device, so the list is refreshed rather than left
+      // showing a registration the relay has just told us is gone.
+      await loadDevices();
+    } catch (e) {
+      testError = e instanceof Error ? e.message : String(e);
+    } finally {
+      testBusy = false;
+    }
+  }
+
+  // testResultCopy turns the relay's vocabulary into something readable, keeping the
+  // raw reason available for the cases the UI has no wording for.
+  function testResultCopy(result: NotificationTestResult): string {
+    if (result.status === "accepted") return "sent to this device";
+    if (result.error?.includes("unregistered") || result.error?.includes("unknown_device")) {
+      return "needs re-registering";
+    }
+    return result.error || "delivery failed";
+  }
+
   // ---- notification preferences ------------------------------------------------
   //
   // The daemon owns the model. It is fetched rather than assembled here so the labels,
@@ -1114,7 +1151,7 @@
     </section>
 
     <!-- ===== AGENT-GRANTED SECRETS ===== -->
-    <Credentials />
+    <Credentials {onOpenChat} />
 
     {:else if tab === "updates"}
     <!-- ===== VERSION & UPDATES ===== -->
@@ -1246,6 +1283,46 @@
             </div>
           {/each}
         </div>
+
+        <!-- A real push, on demand. The relay answers 200 even when every device is
+             rejected, so the verdict is reported per device rather than as one
+             "sent" — that difference is the only thing that makes this useful. -->
+        <div class="notification-panel">
+          <div class="grow">
+            <div class="route-tag">test</div>
+            <div class="notification-title">Send a test notification</div>
+            <div class="notification-copy">
+              Pushes a real notification to every device above and reports what the relay
+              said about each one. Ignores the preferences below, so a muted event type
+              does not change the answer.
+            </div>
+          </div>
+          {#if testBusy}
+            <span class="spinner-note amber"><span class="spinner amber"></span>Sending…</span>
+          {:else}
+            <button class="btn-save" onclick={sendTestPush}>Send test</button>
+          {/if}
+        </div>
+
+        {#if testError}
+          <div class="error-banner" style="margin-top:10px">{testError}</div>
+        {:else if testResults}
+          <div class="pref-group">
+            {#if testResults.length === 0}
+              <div class="pref-row">
+                <span class="pref-label">No device was eligible</span>
+                <span class="pref-type mono">all muted or awaiting re-registration</span>
+              </div>
+            {:else}
+              {#each testResults as result (result.device_id)}
+                <div class="pref-row">
+                  <span class="pref-label">{result.label || result.platform || result.device_id}</span>
+                  <span class="pref-type mono">{testResultCopy(result)}</span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        {/if}
       </section>
     {/if}
 

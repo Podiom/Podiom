@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/Podiom/Podiom/internal/notify"
+	"github.com/Podiom/Podiom/internal/store"
+)
 
 func TestInternalCallbackAddrNormalizesWildcardBinds(t *testing.T) {
 	tests := []struct {
@@ -22,3 +28,43 @@ func TestInternalCallbackAddrNormalizesWildcardBinds(t *testing.T) {
 		})
 	}
 }
+
+// TestRelayInterfacesKeepAMissingRelayNil is a nil-interface invariant, not a style
+// preference. A nil *notify.RelayChannel assigned straight into an interface field yields
+// a non-nil interface holding a nil pointer, so the server's "no relay configured" guards
+// would not fire and the first device registration would call a method on a nil receiver.
+//
+// The state is reachable: an unreadable installation id disables native push by design
+// and leaves that pointer nil.
+func TestRelayInterfacesKeepAMissingRelayNil(t *testing.T) {
+	registrar, channel := relayInterfaces(nil)
+	if registrar != nil {
+		t.Error("DeviceRegistrar is not nil for a missing relay; the server's nil guard will not fire")
+	}
+	if channel != nil {
+		t.Error("Channel is not nil for a missing relay; the test push will call a nil receiver")
+	}
+}
+
+// TestRelayInterfacesPassThroughARealRelay is the other half: a configured relay must
+// actually reach the server, or native push is silently off.
+func TestRelayInterfacesPassThroughARealRelay(t *testing.T) {
+	relay := notify.NewRelayChannel(noDevices{}, "https://push.example", t.TempDir()+"/relay.json", "install-1", nil)
+	if relay == nil {
+		t.Fatal("NewRelayChannel returned nil for a valid configuration")
+	}
+	registrar, channel := relayInterfaces(relay)
+	if registrar == nil || channel == nil {
+		t.Fatalf("a configured relay must reach the server; got registrar=%v channel=%v", registrar, channel)
+	}
+}
+
+// noDevices is the smallest DeviceStore that satisfies NewRelayChannel's constructor
+// check. The test never delivers anything, so it never reads a device.
+type noDevices struct{}
+
+func (noDevices) ListNotificationDevices(context.Context, bool) ([]store.NotificationDevice, error) {
+	return nil, nil
+}
+
+func (noDevices) SetNotificationDeviceStatus(context.Context, string, string) error { return nil }

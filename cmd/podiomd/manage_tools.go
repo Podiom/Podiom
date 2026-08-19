@@ -30,6 +30,7 @@ func manageTools(c *manageClient, sessionID, agentName string) []mcpTool {
 	tools = append(tools, mcpServerTools(c)...)
 	tools = append(tools, goalTools(c, sessionID, agentName)...)
 	tools = append(tools, agentTools(c, agentName)...)
+	tools = append(tools, credentialTools(c, sessionID, agentName)...)
 	tools = append(tools, platformTools(c)...)
 	return tools
 }
@@ -787,6 +788,66 @@ func mcpServerTools(c *manageClient) []mcpTool {
 				}
 				body := bodyFrom(m, "agent_name", "server_name", "assigned")
 				return c.put(ctx, "/api/mcp/assignments", body)
+			},
+		},
+	}
+}
+
+// --- credentials -------------------------------------------------------------
+
+// credentialTools are the agent's two doors onto Podiom's credentials store:
+// look at what is held, and put something in. There is deliberately no third
+// door that reads a value back out — a stored credential reaches the agent as
+// an environment variable in its own process, so listing names is enough to
+// know what it already has. Deleting stays human-only.
+//
+// The store is the one place a secret belongs. Before this existed an agent
+// handed a token had nowhere sanctioned to put it and would improvise a .env or
+// a shell profile; the descriptions below are what turn that into a reflex, and
+// they are the primary documentation an agent reads.
+func credentialTools(c *manageClient, sessionID, agentName string) []mcpTool {
+	return []mcpTool{
+		{
+			Name:      "podiom_list_credentials",
+			APIRoutes: []string{"/api/credentials"},
+			Description: "List the credentials Podiom holds — names, what each is for, and who stored it. Never values. " +
+				"Call this before you tell the user you are blocked on missing auth, and before you ask them for a token: " +
+				"anything listed here is already set in your environment as that environment variable, so read it as $NAME and use it directly. " +
+				"Never echo a credential value into your reply, into a Podiom field, or into a shell command the user will see.",
+			InputSchema: objectSchema(nil, nil),
+			Handler: func(ctx context.Context, _ json.RawMessage) (string, error) {
+				return c.get(ctx, "/api/credentials")
+			},
+		},
+		{
+			Name:      "podiom_store_credential",
+			APIRoutes: []string{"/api/credentials"},
+			Description: "Store a secret in Podiom's credentials store — the only place a credential belongs. " +
+				"Use it whenever you receive or generate one: the user pastes a token in chat, a CLI mints an API key, a signup returns a secret. " +
+				"Store it here instead of writing it to a .env, a shell profile, your memory, or a note. " +
+				"It becomes an environment variable in every agent session from the next turn on, so you never have to ask for it again. " +
+				"Storing over a name that already exists requires overwrite=true — pass that only when the user asked you to replace that specific credential. " +
+				"If you do NOT have the value and need the user to supply it, use podiom_request_access with kind=env_var instead, and never invent a value. " +
+				"What you store is attributed to you and shown to the user on the Credentials page.",
+			InputSchema: objectSchema([]string{"name", "value"}, map[string]any{
+				"name":      strProp("Environment variable name the credential will be exposed as, e.g. GITHUB_TOKEN. A bare name — no '=' and no spaces."),
+				"value":     strProp("The secret itself. Sent once and never returned by any Podiom API."),
+				"purpose":   strProp("One short line on what this credential is for, shown to the user on the Credentials page."),
+				"overwrite": boolProp("Must be true to replace a credential that already exists. Only pass true after the user has asked you to replace that specific credential."),
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				if err := requireField(m, "name"); err != nil {
+					return "", err
+				}
+				if err := requireField(m, "value"); err != nil {
+					return "", err
+				}
+				body := bodyFrom(m, "name", "value", "purpose", "overwrite")
+				return c.post(ctx, "/api/credentials", stampCreator(body, sessionID, agentName))
 			},
 		},
 	}

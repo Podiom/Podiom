@@ -149,6 +149,7 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 		"@" + c.paths.BaseAgents + "\n" +
 		"@" + paths.Agents + "\n" +
 		"@" + paths.Soul + "\n" +
+		"@" + filepath.Join(paths.Workspace, ".podiom-credentials.md") + "\n" +
 		"@" + filepath.Join(paths.Workspace, ".podiom-workspace-file-sharing.md") + "\n"
 	if string(claudePayload.Bytes) != wantClaude {
 		t.Fatalf("unexpected claude payload:\n%s", claudePayload.Bytes)
@@ -160,6 +161,17 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	for _, want := range []string{"Never ask the user to locate or open a file", "podiom_attach_workspace_file", "user-visible response or Podiom prose field"} {
 		if !strings.Contains(string(sharing), want) {
 			t.Fatalf("workspace sharing instructions missing %q:\n%s", want, sharing)
+		}
+	}
+	// The credentials layer is composed per run rather than read from the base
+	// AGENTS.md, so an installation that already has that file still gets it.
+	credentials, err := os.ReadFile(filepath.Join(paths.Workspace, ".podiom-credentials.md"))
+	if err != nil {
+		t.Fatalf("read credentials instructions: %v", err)
+	}
+	for _, want := range []string{"podiom_list_credentials", "podiom_store_credential", "podiom_request_access", "Nowhere else, ever"} {
+		if !strings.Contains(string(credentials), want) {
+			t.Fatalf("credentials instructions missing %q:\n%s", want, credentials)
 		}
 	}
 	if claudePayload.Path != filepath.Join(paths.Workspace, "CLAUDE.md") {
@@ -183,6 +195,9 @@ func TestInstructionCompositionPayloads(t *testing.T) {
 	}
 	if !strings.Contains(got, "podiom_attach_workspace_file") {
 		t.Fatalf("codex payload is missing workspace sharing instructions:\n%s", got)
+	}
+	if !strings.Contains(got, "podiom_store_credential") {
+		t.Fatalf("codex payload is missing credentials instructions:\n%s", got)
 	}
 	if codexPayload.Path != filepath.Join(paths.Workspace, "AGENTS.md") {
 		t.Fatalf("unexpected codex payload path %q", codexPayload.Path)

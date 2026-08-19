@@ -76,6 +76,7 @@ import type {
   NotificationPreferencesResponse,
   NotificationPreferenceUpdate,
   NotificationStaleResult,
+  NotificationTestResult,
   NotificationView,
 } from "./types";
 
@@ -1139,6 +1140,17 @@ export async function deleteNotificationDevice(id: string): Promise<void> {
   );
 }
 
+// sendTestNotificationPush pushes a real notification to every registered device and
+// reports what the relay said about each one.
+//
+// Bypasses notification preferences on purpose: a muted preference would make the button
+// do nothing and say nothing. An empty results array means no device was eligible.
+export async function sendTestNotificationPush(): Promise<{
+  results: NotificationTestResult[];
+}> {
+  return asJSON(await request("/api/notification-devices/test", { method: "POST" }));
+}
+
 // --- Goals -------------------------------------------------------------------
 
 export async function listGoals(status = ""): Promise<Goal[]> {
@@ -1299,6 +1311,45 @@ export async function denyAccessRequest(id: string, note = ""): Promise<AccessRe
 // listCredentials returns stored credential metadata — names only, never values.
 export async function listCredentials(): Promise<CredentialInfo[]> {
   return asJSON(await request("/api/credentials"));
+}
+
+// CredentialExistsError is the overwrite guard coming back: the name is already
+// in the store and the caller did not ask to replace it. Callers confirm with
+// the user and retry with overwrite=true. The daemon's wording is matched in one
+// place here rather than at every call site.
+export class CredentialExistsError extends Error {
+  // Not called `name`: that is Error's own property, and shadowing it would
+  // make every thrown instance report the credential where the error kind goes.
+  readonly credentialName: string;
+  constructor(credentialName: string, message: string) {
+    super(message);
+    this.name = "CredentialExistsError";
+    this.credentialName = credentialName;
+  }
+}
+
+// storeCredential writes one secret to the daemon's credentials store. The value
+// is sent once and is never returned by any API — the response carries metadata
+// only. Both writers use this endpoint: this form, and an agent's
+// podiom_store_credential. Pass overwrite only after the user has confirmed
+// replacing that specific credential.
+export async function storeCredential(input: {
+  name: string;
+  value: string;
+  purpose?: string;
+  overwrite?: boolean;
+}): Promise<CredentialInfo> {
+  const res = await request("/api/credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.text()).trim();
+    if (body.includes("overwrite=true")) throw new CredentialExistsError(input.name, body);
+    throw new Error(body || `${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as CredentialInfo;
 }
 
 export async function deleteCredential(name: string): Promise<void> {

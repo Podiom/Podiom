@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
+	"github.com/google/uuid"
 )
 
 // notificationDeviceRegisterRequest is what a mobile app sends to register itself.
@@ -192,4 +194,88 @@ func notificationDeviceViewOf(d store.NotificationDevice) notificationDeviceView
 		UpdatedAt:  d.UpdatedAt,
 		LastSeenAt: d.LastSeenAt,
 	}
+}
+
+// notificationTestResult is one device's outcome from a test push.
+type notificationTestResult struct {
+	DeviceID string `json:"device_id"`
+	Label    string `json:"label"`
+	Platform string `json:"platform"`
+	// Status is "accepted" when the relay took the message for this device, and
+	// "failed" otherwise. It is not a claim that anyone saw the notification.
+	Status string `json:"status"`
+	// Error is the relay's reason, verbatim, when Status is not "accepted". This is
+	// the whole point of the endpoint: a push that no device accepts is otherwise
+	// indistinguishable from one that worked.
+	Error string `json:"error,omitempty"`
+}
+
+// handleNotificationTestPush sends a real push to every registered device and reports
+// what the relay said about each one.
+//
+// It deliberately bypasses notify.Engine. The engine filters by per-type preference and
+// dedupes, both of which are right for real notifications and wrong for a test the user
+// just asked for: a muted preference would make the button do nothing and say nothing.
+func (s *Server) handleNotificationTestPush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.core == nil {
+		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if s.nativePush == nil {
+		http.Error(w, "native push is not configured on this installation", http.StatusServiceUnavailable)
+		return
+	}
+
+	devices, err := s.core.Store().ListNotificationDevices(r.Context(), true)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	results, err := s.nativePush.Send(r.Context(), notify.Envelope{
+		// A fresh id every time. The relay uses the notification id as its idempotency
+		// key with a 24h TTL, so a fixed one would replay the first response and send
+		// nothing to FCM — a test button that reports success without testing anything.
+		ID:             uuid.NewString(),
+		InstallationID: s.installationID,
+		// No type: a test is not one of the registry's notification kinds, and the
+		// client only reads the type for routing, which this deliberately has none of.
+		// Time-sensitive, so a phone in Focus still shows it. A test the user is
+		// watching for is worth interrupting; being held silently would read as a
+		// delivery failure.
+		Importance: string(store.NotificationImportant),
+		Title:      "Podiom test notification",
+		Body:       "If you can see this, push notifications are working.",
+		// No action set and no nav target: tap-to-open, no buttons. There is no stored
+		// notification behind this, so there is nothing for a button to act on.
+	})
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+
+	labels := make(map[string]store.NotificationDevice, len(devices))
+	for _, device := range devices {
+		labels[device.ID] = device
+	}
+	views := make([]notificationTestResult, 0, len(results))
+	for _, result := range results {
+		view := notificationTestResult{DeviceID: result.Destination, Status: "accepted"}
+		if device, ok := labels[result.Destination]; ok {
+			view.Label = device.Label
+			view.Platform = device.Platform
+		}
+		if result.Err != nil {
+			view.Status = "failed"
+			view.Error = result.Err.Error()
+		}
+		views = append(views, view)
+	}
+	// An empty list means no device was eligible — none registered, all muted, or all
+	// marked invalid. Reported as itself rather than as a successful send.
+	writeJSON(w, map[string]any{"results": views}, nil)
 }

@@ -59,6 +59,7 @@ var notManageable = map[string]string{
 	"/api/notifications/read-all":    "reading the user's notifications is human-only",
 	"/api/notifications/preferences": "notification preferences are the user's own settings",
 	"/api/notification-devices":      "native push transport",
+	"/api/notification-devices/test": "buzzes the user's own phone; human-only by design",
 	"/api/notification-devices/":     "native push transport",
 	"/api/push/vapid":                "web push transport",
 	"/api/push/subscribe":            "web push transport",
@@ -68,8 +69,7 @@ var notManageable = map[string]string{
 	"/api/agent-questions/":          "answering a deferred agent question is human-only; the agent asks via podiom_ask_user",
 	"/api/goal-action-items/":        "responding to an action item is human-only; the agent hands work over via podiom_request_user_action",
 	"/api/user-profile":              "USER.md is human-authored via the interview UI; agents receive it as context",
-	"/api/credentials":               "secrets management, human-only",
-	"/api/credentials/":              "secrets management, human-only",
+	"/api/credentials/":              "deleting a stored secret is human-only; agents store one with podiom_store_credential and read the listing with podiom_list_credentials",
 }
 
 // coveredRoutes is the union of every route the manage tools declare they hit.

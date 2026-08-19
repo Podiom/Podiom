@@ -64,6 +64,10 @@ type Server struct {
 	notifications  *notify.Engine
 	installationID string
 	registrar      notify.DeviceRegistrar
+	// nativePush is the relay channel, used by the test push to reach the phone
+	// directly. Held separately from the engine because a test must not be filtered
+	// by a notification preference. Nil when no relay is configured.
+	nativePush notify.Channel
 	// vapidPublic is the VAPID public key served to browsers so they can create
 	// a Web Push subscription bound to this daemon. Empty disables push.
 	vapidPublic string
@@ -116,6 +120,10 @@ type Options struct {
 	// routing record before it can resolve a device id. Nil disables mirroring, which is
 	// the case when no relay is configured.
 	DeviceRegistrar notify.DeviceRegistrar
+	// NativePush is the same relay channel the engine delivers through, wired here so
+	// the test push can bypass the engine. Nil disables the test push, which is the
+	// case when no relay is configured.
+	NativePush notify.Channel
 	// InstallationID is this installation's stable identity, returned to registering
 	// devices so one app can tell several Podioms apart. Independent of address by
 	// design, so moving the daemon is not a new installation.
@@ -169,6 +177,7 @@ func New(opts Options) *Server {
 		notifications:  opts.Notifications,
 		installationID: opts.InstallationID,
 		registrar:      opts.DeviceRegistrar,
+		nativePush:     opts.NativePush,
 		vapidPublic:    opts.VAPIDPublicKey,
 		tokens:         opts.Tokens,
 		haMode:         opts.HAMode,

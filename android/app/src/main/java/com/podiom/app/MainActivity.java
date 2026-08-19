@@ -1,4 +1,4 @@
-package com.podiom.app;
+package org.podiom.app;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;

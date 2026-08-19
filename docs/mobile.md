@@ -256,15 +256,15 @@ native push with no setup step, and CI needs no secrets.
 They are client configuration rather than credentials — Google publishes them as such,
 and they ship inside every APK and IPA, so a released app already discloses them. What
 they permit is narrow: registering an app instance and obtaining an FCM token for
-`com.podiom.app`. They cannot send a notification to anyone; sending needs the FCM
+`org.podiom.app`. They cannot send a notification to anyone; sending needs the FCM
 service-account key, which belongs to the relay and never appears here. They also grant
 no access to Podiom itself, which is guarded by the gateway token.
 
 The control that matters is on the keys, not on the files. Both are restricted in the
 Google Cloud console:
 
-- **Application restriction** — Android key to the `com.podiom.app` package and its
-  signing certificate; iOS key to the `com.podiom.app` bundle id.
+- **Application restriction** — Android key to the `org.podiom.app` package and its
+  signing certificate; iOS key to the `org.podiom.app` bundle id.
 - **API restriction** — Firebase Cloud Messaging and Firebase Installations only.
 
 Without those restrictions a key can be used against any other Google API enabled on

@@ -906,6 +906,10 @@ export interface CredentialInfo {
   purpose?: string;
   goal_id?: string;
   created_at?: string;
+  // Provenance when an agent stored it. Empty means the user did — the same
+  // "empty means the human" rule roadmap tasks and schedules follow.
+  created_by_agent?: string;
+  created_by_session?: string;
 }
 
 export interface ActiveTurnSummary {
@@ -1418,6 +1422,20 @@ export interface NotificationDevice {
   created_at: string;
   updated_at: string;
   last_seen_at: string;
+}
+
+// NotificationTestResult is one device's outcome from a test push.
+//
+// status is 'accepted' when the relay took the message for that device and 'failed'
+// otherwise. error carries the relay's reason verbatim, which is the point of the whole
+// endpoint: a push that no device accepts is otherwise indistinguishable from one that
+// worked.
+export interface NotificationTestResult {
+  device_id: string;
+  label: string;
+  platform: string;
+  status: string;
+  error?: string;
 }
 
 // NotificationDeviceRegistration confirms a registration and names the installation, so

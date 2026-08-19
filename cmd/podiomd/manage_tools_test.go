@@ -69,9 +69,9 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// session 2 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + platform 4.
-	if len(tools) != 49 {
-		t.Fatalf("expected 49 tools, got %d", len(tools))
+	// session 2 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + credentials 2 + platform 4.
+	if len(tools) != 51 {
+		t.Fatalf("expected 51 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{
@@ -206,6 +206,66 @@ func TestStartTaskPostsUnattended(t *testing.T) {
 	}
 	if !unattended {
 		t.Fatalf("body should set unattended=true: %v", rec.body)
+	}
+}
+
+// TestStoreCredentialStampsAuthor pins the provenance: the agent and session
+// come from the helper's own launch flags, not from arguments the model chose,
+// so a stored secret can never be attributed to someone else.
+func TestStoreCredentialStampsAuthor(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	if _, err := callTool(t, c, "podiom_store_credential", map[string]any{
+		"name": "STRIPE_KEY", "value": "sk_live_x", "purpose": "billing probe",
+	}); err != nil {
+		t.Fatalf("store credential: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/api/credentials" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	var agent, session string
+	if err := json.Unmarshal(rec.body["created_by_agent"], &agent); err != nil {
+		t.Fatalf("decode created_by_agent from %v: %v", rec.body, err)
+	}
+	if err := json.Unmarshal(rec.body["created_by_session"], &session); err != nil {
+		t.Fatalf("decode created_by_session from %v: %v", rec.body, err)
+	}
+	if agent != "atlas" || session != "sess-1" {
+		t.Fatalf("stamped %q/%q, want atlas/sess-1", agent, session)
+	}
+	// overwrite is a guard, not a default: an unspecified one must not reach the
+	// server as false-that-looks-deliberate or, worse, as true.
+	if _, ok := rec.body["overwrite"]; ok {
+		t.Fatalf("body should omit unspecified overwrite: %v", rec.body)
+	}
+
+	if _, err := callTool(t, c, "podiom_store_credential", map[string]any{"name": "STRIPE_KEY"}); err == nil {
+		t.Fatal("storing without a value should be refused before the request is sent")
+	}
+}
+
+// TestCredentialToolsNeverReadValues is the standing check on the shape of this
+// surface: agents may see what Podiom holds and add to it, but no tool hands a
+// secret back and no tool deletes one.
+func TestCredentialToolsNeverReadValues(t *testing.T) {
+	c := newManageClient("127.0.0.1:8787")
+	list, ok := toolByName(c, "podiom_list_credentials")
+	if !ok {
+		t.Fatal("podiom_list_credentials missing")
+	}
+	if !strings.Contains(list.Description, "Never values") {
+		t.Errorf("listing tool must say it never returns values: %s", list.Description)
+	}
+	store, ok := toolByName(c, "podiom_store_credential")
+	if !ok {
+		t.Fatal("podiom_store_credential missing")
+	}
+	if !strings.Contains(store.Description, "overwrite=true") {
+		t.Errorf("store tool must document the overwrite guard: %s", store.Description)
+	}
+	for _, tl := range manageTools(c, "sess-1", "atlas") {
+		if strings.Contains(tl.Name, "credential") && (strings.Contains(tl.Name, "delete") || strings.Contains(tl.Name, "remove")) {
+			t.Errorf("deleting a credential must stay human-only, found tool %q", tl.Name)
+		}
 	}
 }
 

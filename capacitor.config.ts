@@ -5,7 +5,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // embeds via go:embed is copied into both native projects, and both talk to a
 // user-configured podiomd over its normal HTTP/WS API (R1, R2, R6).
 const config: CapacitorConfig = {
-  appId: "com.podiom.app",
+  appId: "org.podiom.app",
   appName: "Podiom",
   webDir: "web/dist",
   server: {

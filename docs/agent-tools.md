@@ -126,6 +126,35 @@ clear a MEMORY.md, or delete an agent. See below.
 `podiom_get_usage` reports how much of each provider plan's rate-limit windows is
 spent, so an agent can weigh the cost of work it is about to spawn.
 
+### Credentials
+`podiom_list_credentials`, `podiom_store_credential`.
+
+Podiom keeps one credentials store, and everything in it is set as an
+environment variable in every agent session. An agent has two doors onto it and
+deliberately not a third:
+
+- **Look.** `podiom_list_credentials` returns names, purposes, and who stored
+  each one — never values. Agents are told to check it before declaring
+  themselves blocked on missing auth or asking you for a token, because anything
+  listed is already sitting in their own environment.
+- **Add.** `podiom_store_credential` takes a name and a value. This is for a
+  secret the agent already holds — you pasted a token in chat, a CLI minted an
+  API key, a signup returned one — and it exists so that secret lands in the
+  store instead of in a `.env`, a shell profile, or an agent's memory. Replacing
+  an existing name needs `overwrite=true`, the same shape as `confirm=true` on
+  the destructive tools.
+- **Not read, not delete.** No tool hands a value back, and no tool removes a
+  credential. A value reaches an agent only as an environment variable in its own
+  process; taking one away is yours alone.
+
+A credential an agent stored shows *stored by \<agent\>* on the Credentials page
+and links to the conversation it came out of. Blank means you added it — the same
+rule the Roadmap and Schedules pages follow.
+
+When an agent needs a credential it does *not* have, the route is still
+`podiom_request_access` with `kind=env_var`: it names the variable and its
+purpose, you enter the value privately, and the request never carries a secret.
+
 ## What agents deliberately cannot do
 
 Every deletion tool requires `confirm=true`, which agents are told to pass only
@@ -136,7 +165,8 @@ human-only by construction:
 | --- | --- |
 | Approving or denying an access request | An agent must never grant its own request |
 | Answering its own question, or responding to its own action item | Those are your side of the conversation |
-| Signing in to a provider; auth profiles; credentials; token rotation | An agent must never authenticate on your behalf or touch secrets |
+| Signing in to a provider; auth profiles; token rotation | An agent must never authenticate on your behalf |
+| Reading a stored credential's value, or deleting one | An agent receives a value as an environment variable, never through an API; removing one is yours alone |
 | Creating or deleting sessions | Creating one spawns an unattended run of a colleague (`podiom_start_task` and `podiom_run_schedule` are the audited routes); deleting one destroys your conversation history |
 | Listing other sessions | Another agent's conversation with you is yours and theirs |
 | Editing an existing agent's SOUL, or any permission mode | Identity and privilege are yours to set |
@@ -160,6 +190,11 @@ documentation and they ship with the binary. Two shorter layers set the reflexes
   `podiom_attach_workspace_file` whenever the user needs to read, copy, review,
   or act on file content. Because it is composed per run, existing installations
   receive it without rewriting their `~/.podiom/AGENTS.md`.
+- A second runtime-composed layer carries the credentials rules: look in the
+  store before asking for a token, put any secret you are handed into it
+  immediately, and never write a value anywhere else — not a shell profile, not
+  memory, and never into a task, progress entry, or reply, all of which Podiom
+  stores and displays. It is composed per run for the same reason.
 - `~/.podiom/AGENTS.md` carries the other standing rules (act on the user's
   request, look before you change, destructive tools need consent, what you
   create is attributed). Podiom writes this file **only if it is absent**, so an

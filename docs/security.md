@@ -264,6 +264,52 @@ never logged, and is never echoed back in a response. `/api/provider-login`
 and `/api/provider-status` are human-only: no agent tool wraps them, so an agent
 cannot authenticate on the user's behalf.
 
+### The credentials store
+
+Secrets granted to agents live in `credentials.yaml` under the storage root
+(`0600`, atomic writes — the same trust model as `mcp.yaml`) and are injected
+into agent CLI subprocess environments at spawn. A value never leaves the daemon:
+`GET /api/credentials` serializes a view with no value field, log lines carry the
+name only, and there is no endpoint anywhere that reads a value back.
+
+There are three ways a value gets in, and all three land on the same validation:
+
+- **You add one** on Settings → Credentials.
+- **You approve an `env_var` access request** and type the value into the
+  approval dialog. The request itself is rejected outright if it carries a value
+  (`internal/core/goals.go`), so a secret never rides along in a stored request
+  row, the goal timeline, or the model's own request text.
+- **An agent stores one it already holds** with `podiom_store_credential`.
+
+That third route is a deliberate relaxation of an earlier rule that agents must
+never touch secrets. It is a net reduction in exposure rather than an increase:
+the value was already in the agent's context — the user pasted it, or a CLI the
+agent ran printed it — and before this existed the agent's only options were to
+improvise a `.env`, a shell profile, or a scratch note that nothing manages,
+rotates, or shows you. Four properties bound it:
+
+- **Values only flow inward.** No tool, and no API, returns a stored value. An
+  agent receives credentials the one way it always has: as environment variables
+  in its own process.
+- **Replacing needs an explicit flag.** Storing over an existing name is refused
+  unless the caller passes `overwrite=true`, so an agent cannot silently clobber
+  a token you entered. Rotation keeps the original purpose and goal link.
+- **Every agent write is attributed.** `created_by_agent` / `created_by_session`
+  are stamped by the MCP helper from its own launch flags, not from arguments the
+  model chose, so the provenance shown on the Credentials page cannot be forged.
+  Blank means you added it.
+- **Deletion stays human-only.** `/api/credentials/` (the item route) carries no
+  agent tool and stays on the `notManageable` list in
+  `cmd/podiomd/manage_coverage_test.go`.
+
+Standing instructions push agents toward the store and away from everywhere else:
+check it before asking you for a token, put any secret received or generated into
+it immediately, and never write a value into a shell profile, `MEMORY.md`, a
+note, or the text of a task, schedule, progress entry, action item, or reply —
+all of which Podiom stores and displays. Those rules are composed into every run
+rather than kept only in the base `AGENTS.md`, which is written once at scaffold
+time, so existing installations get them too.
+
 ### Voice-input OpenAI key
 
 The [voice input](voice-input.md) feature stores its OpenAI Whisper key as
@@ -369,12 +415,12 @@ push work out of a clone.
 
 They are not credentials. They ship inside every published APK and IPA, so a released app
 already exposes them, and what they permit is limited to registering an app instance and
-obtaining an FCM token for `com.podiom.app`. They cannot send a notification — that needs
+obtaining an FCM token for `org.podiom.app`. They cannot send a notification — that needs
 the FCM service-account key, which lives in the Push Relay — and they grant no access to
 a Podiom installation, which is guarded by the gateway token.
 
 The keys they contain are restricted in the Google Cloud console by application
-(`com.podiom.app`) and by API (Firebase Cloud Messaging and Firebase Installations only).
+(`org.podiom.app`) and by API (Firebase Cloud Messaging and Firebase Installations only).
 That restriction, not the files' location, is what makes a copied key useless.
 
 ## The push relay credential

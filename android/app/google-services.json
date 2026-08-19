@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:369381897613:android:337c67cad5f9258b2ab9c4",
+        "mobilesdk_app_id": "1:369381897613:android:3faebcea8870b0312ab9c4",
         "android_client_info": {
-          "package_name": "com.podiom.app"
+          "package_name": "org.podiom.app"
         }
       },
       "oauth_client": [],

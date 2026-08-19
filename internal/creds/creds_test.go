@@ -33,6 +33,35 @@ func TestSetGetRoundtrip(t *testing.T) {
 	}
 }
 
+func TestSetRoundtripsProvenance(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Set(Credential{
+		Name: "STRIPE_KEY", Value: "sk_live", Purpose: "billing probe",
+		CreatedByAgent: "atlas", CreatedBySession: "sess-1",
+	}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].CreatedByAgent != "atlas" || list[0].CreatedBySession != "sess-1" {
+		t.Fatalf("provenance not round-tripped: %+v", list)
+	}
+
+	// A credential the user entered carries no agent — empty is how the UI
+	// tells "the human did this" from "an agent did this".
+	if err := s.Set(Credential{Name: "USER_TOKEN", Value: "v"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	list, _ = s.List()
+	for _, c := range list {
+		if c.Name == "USER_TOKEN" && (c.CreatedByAgent != "" || c.CreatedBySession != "") {
+			t.Fatalf("user-entered credential should stay unattributed: %+v", c)
+		}
+	}
+}
+
 func TestSetUpsertsByName(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.Set(Credential{Name: "TOKEN", Value: "old"}); err != nil {
