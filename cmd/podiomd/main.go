@@ -27,6 +27,7 @@ import (
 	"github.com/Podiom/Podiom/internal/hamode"
 	podiomlog "github.com/Podiom/Podiom/internal/logging"
 	"github.com/Podiom/Podiom/internal/notify"
+	"github.com/Podiom/Podiom/internal/providercheck"
 	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/server"
 	"github.com/Podiom/Podiom/internal/skills"
@@ -273,11 +274,19 @@ func run() error {
 	usageTracker := usage.New(usage.Options{
 		Profiles: coreSvc.ListProfileDetails,
 		Logger:   log,
+		// An expired token is refreshed by the provider's own CLI: Podiom asks it
+		// to and then re-reads the result. It never performs the token exchange.
+		Renew: func(ctx context.Context, provider config.Provider, dir string) error {
+			return providercheck.RefreshCredentials(ctx, provider, providercheck.Options{ProfileDir: dir})
+		},
 	})
 	usageTracker.Start()
 	defer usageTracker.Stop()
 	// Passive enrichment: feed mid-turn provider rate data into the usage cache.
 	coreSvc.SetRateStatusHandler(usageTracker.IngestPassive)
+	// A completed turn has just refreshed the CLI's token; re-read the usage cache
+	// then instead of waiting out the poll interval.
+	coreSvc.SetTurnEndHandler(func(string, config.Provider) { usageTracker.Kick() })
 
 	// Token meter estimates each session/goal's share of the 5-hour and weekly
 	// limits by calibrating Podiom's token throughput against the tracker's

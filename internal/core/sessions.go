@@ -591,6 +591,12 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			"permission", string(current.PermissionMode),
 		)
 		startedAt := time.Now()
+		// The provider CLI refreshes its own OAuth token as a side effect of a
+		// run, so tell the usage tracker once this turn is over — current holds
+		// the target that actually ran, after any fallback.
+		if c.onTurnEnd != nil {
+			defer func() { c.onTurnEnd(current.Profile, current.Provider) }()
+		}
 		fallbacks := 0
 		for {
 			tried[targetKey(current.Provider, current.Profile)] = true

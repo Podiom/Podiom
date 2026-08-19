@@ -20,8 +20,10 @@ const (
 	StatusOK Status = "ok"
 	// StatusNoCredentials means the profile's credential file is absent.
 	StatusNoCredentials Status = "no_credentials"
-	// StatusStaleCredentials means the token expired; the next provider run
-	// (which Podiom performs constantly) refreshes it. Podiom never refreshes.
+	// StatusStaleCredentials means the token expired. The tracker asks the
+	// provider CLI to refresh it (see Options.Renew) and re-fetches; this status
+	// only survives a round when that refresh did not produce a usable token.
+	// Podiom never performs the token exchange itself.
 	StatusStaleCredentials Status = "stale_credentials"
 	// StatusUnauthorized means the provider returned 401 — re-auth needed.
 	StatusUnauthorized Status = "unauthorized"
@@ -87,6 +89,13 @@ type Snapshot struct {
 	FetchedAt   time.Time       `json:"fetched_at,omitzero"`
 	NextRetryAt time.Time       `json:"next_retry_at,omitzero"`
 	Source      string          `json:"source,omitempty"` // "oauth_api" | "passive"
+	// Stale marks Windows as carried over from an earlier successful fetch
+	// because this round could not produce fresh ones. Clients should render them
+	// dimmed rather than dropping to a status message.
+	Stale bool `json:"stale,omitempty"`
+	// WindowsFetchedAt is when Windows were actually fetched. It equals FetchedAt
+	// for a fresh snapshot and stays behind it while Stale is set.
+	WindowsFetchedAt time.Time `json:"windows_fetched_at,omitzero"`
 }
 
 // MaxUsedPercent returns the highest utilization across all windows, or 0.

@@ -989,6 +989,10 @@ export interface UsageSnapshot {
   fetched_at?: string;
   next_retry_at?: string;
   source?: string;
+  /** Windows are carried over from an earlier fetch; render them dimmed. */
+  stale?: boolean;
+  /** When the (possibly carried) windows were actually fetched. */
+  windows_fetched_at?: string;
 }
 
 export interface TurnState {

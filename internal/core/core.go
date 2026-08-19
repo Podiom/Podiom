@@ -77,6 +77,11 @@ type Core struct {
 	// (attributed to the session's profile/provider) so the token meter can
 	// calibrate its token→limit-% estimates. nil disables calibration feeding.
 	onTurnUsage func(profile string, provider config.Provider, delta int64)
+	// onTurnEnd, when set, is called once each turn's goroutine finishes,
+	// whatever its outcome. A provider run refreshes the CLI's own OAuth token as
+	// a side effect, so the usage tracker uses this to re-read its cache instead
+	// of waiting out its poll interval. nil disables the notification.
+	onTurnEnd func(profile string, provider config.Provider)
 	// onGoalEvent, when set, receives each goal timeline event appended during a
 	// turn (e.g. tool_use audit events) so the server can broadcast it live. nil
 	// disables live broadcast.
@@ -121,6 +126,13 @@ func (c *Core) SetRateStatusHandler(fn func(profile string, provider config.Prov
 // completed turn. Safe to call once during daemon wiring, before turns run.
 func (c *Core) SetTurnUsageHandler(fn func(profile string, provider config.Provider, delta int64)) {
 	c.onTurnUsage = fn
+}
+
+// SetTurnEndHandler registers a callback invoked when a turn's goroutine
+// finishes, regardless of outcome. Safe to call once during daemon wiring,
+// before turns run.
+func (c *Core) SetTurnEndHandler(fn func(profile string, provider config.Provider)) {
+	c.onTurnEnd = fn
 }
 
 // SetGoalEventHandler registers a callback invoked for each goal timeline event

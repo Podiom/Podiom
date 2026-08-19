@@ -187,6 +187,11 @@ func (s *Server) handleProviderLogin(w http.ResponseWriter, r *http.Request) {
 			// The profile's credentials just changed on disk; the cached
 			// fan-out would otherwise keep reporting it signed out.
 			s.providerStatus.invalidate()
+			// Same for usage: without this its snapshot keeps reporting the old
+			// expired token until the next poll.
+			if s.usage != nil {
+				s.usage.KickNow()
+			}
 		}
 		writeJSON(w, sess, nil)
 	case action == "" && r.Method == http.MethodDelete:

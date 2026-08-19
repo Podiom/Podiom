@@ -131,8 +131,11 @@
       case "no_credentials":
         return "Usage unavailable";
       case "stale_credentials":
+        // The token expired and the daemon is asking the provider CLI to refresh
+        // it; this resolves on its own.
+        return "Refreshing…";
       case "unauthorized":
-        return "Usage temporarily unavailable";
+        return "Sign-in required";
       case "rate_limited":
         return "Temporarily rate limited";
       case "unsupported":
@@ -142,6 +145,18 @@
       default:
         return "No usage data";
     }
+  }
+
+  // Age of carried-over windows, so dimmed numbers say how old they are.
+  function staleAge(row: UsageRow): string {
+    const iso = row.snapshot.windows_fetched_at;
+    if (!iso) return "Refreshing…";
+    const at = new Date(iso).getTime();
+    if (Number.isNaN(at)) return "Refreshing…";
+    const mins = Math.floor(Math.max(0, now - at) / 60_000);
+    if (mins < 1) return "Refreshing…";
+    if (mins < 60) return `Refreshing… ${mins}m old`;
+    return `Refreshing… ${Math.floor(mins / 60)}h old`;
   }
 
   function toggle(row: UsageRow) {
@@ -183,7 +198,7 @@
   {/if}
 {/snippet}
 
-{#snippet meter(window: UsageWindow, label: "5h" | "Weekly")}
+{#snippet meter(window: UsageWindow, label: "5h" | "Weekly", note = "")}
   {@const percent = clampPercent(window.used_percent)}
   <div class="meter-head">
     <span>{label}</span>
@@ -192,7 +207,9 @@
   <div class="meter-track" style={`background:${tone(percent).track}`}>
     <span class="meter-fill" style={`width:${percent}%;background:${tone(percent).fill}`}></span>
   </div>
-  {#if resetText(window.resets_at)}
+  {#if note}
+    <span class="reset-text">{note}</span>
+  {:else if resetText(window.resets_at)}
     <span class="reset-text" title={absoluteReset(window.resets_at)}>{resetText(window.resets_at)}</span>
   {/if}
 {/snippet}
@@ -203,7 +220,7 @@
   </span>
   {#if row.primaryWindow}
     <span class="meter">
-      {@render meter(row.primaryWindow, row.primaryLabel)}
+      {@render meter(row.primaryWindow, row.primaryLabel, row.snapshot.stale ? staleAge(row) : "")}
     </span>
   {/if}
 {/snippet}
@@ -229,10 +246,13 @@
       <div class="usage-list" id="sidebar-usage-list">
         {#each rows as row, index (row.key)}
           <div class="account-row">
-            {#if row.snapshot.status === "ok" && row.primaryWindow}
+            <!-- Real windows stay on screen even when this round failed: a stale
+                 snapshot carries the last known numbers, dimmed. -->
+            {#if row.primaryWindow}
               {#if row.expandable}
                 <button
                   class="account-summary interactive"
+                  class:stale={row.snapshot.stale}
                   type="button"
                   aria-expanded={expandedKey === row.key}
                   aria-controls={`sidebar-usage-${index}`}
@@ -241,7 +261,7 @@
                   {@render accountContent(row)}
                 </button>
               {:else}
-                <div class="account-summary">
+                <div class="account-summary" class:stale={row.snapshot.stale}>
                   {@render accountContent(row)}
                 </div>
               {/if}
@@ -361,6 +381,12 @@
 
   .account-summary.interactive {
     cursor: pointer;
+  }
+
+  /* Carried-over numbers: real, but no longer fresh. The meter keeps its
+     threshold colour so a near-limit account still reads as one. */
+  .account-summary.stale .meter {
+    opacity: 0.55;
   }
 
   .account-summary.interactive:hover {

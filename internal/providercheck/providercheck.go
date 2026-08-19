@@ -169,6 +169,40 @@ func looksLikeMissingSubcommand(out string) bool {
 		strings.Contains(lower, "usage:")
 }
 
+// refreshCommands holds the per-provider command that makes a CLI refresh its
+// own expired OAuth token. Both CLIs do it as a side effect of their doctor
+// command; their status commands do not — `claude auth status` is purely local
+// and reports loggedIn even for a long-expired token.
+var refreshCommands = map[config.Provider][]string{
+	config.ProviderClaude: {"doctor"},
+	config.ProviderCodex:  {"doctor"},
+}
+
+// RefreshCredentials asks the provider CLI to refresh its own OAuth token.
+// Podiom never performs the token exchange: the CLI owns it and writes its own
+// credential store (file or Keychain). A nil error means the command ran, not
+// that a token was refreshed — the caller re-reads credentials to learn that.
+//
+// The failure modes are the CLI's own, and match what a real turn already does:
+// a definitively rejected refresh token makes it clear its credentials, while an
+// unreachable network leaves them untouched.
+func RefreshCredentials(ctx context.Context, provider config.Provider, opts Options) error {
+	args, ok := refreshCommands[provider]
+	if !ok {
+		return fmt.Errorf("unknown provider %q", provider)
+	}
+	found, err := opts.Discovery.Find(string(provider))
+	if err != nil {
+		return err
+	}
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	_, err = runCapture(ctx, timeout, profileEnv(provider, opts.ProfileDir), found.Path, args...)
+	return err
+}
+
 // CheckAll inspects every registered provider's default (global) login.
 func CheckAll(ctx context.Context, opts Options) []Status {
 	ids := config.ProviderIDs()

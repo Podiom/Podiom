@@ -20,6 +20,19 @@ const (
 	backoffBase       = time.Minute
 	backoffCap        = 15 * time.Minute
 	rateGateFallback  = 5 * time.Minute
+	// staleRetry is the first re-check delay after a renewal failed to produce a
+	// usable token. It doubles per consecutive stale round, capped at the poll
+	// interval, so a token that cannot be renewed stops being hammered.
+	staleRetry = time.Minute
+	// renewCooldown is the minimum gap between renewal attempts for one
+	// credential path. Renewal spawns the provider CLI, so it stays rare.
+	renewCooldown = 2 * time.Minute
+	// staleCarryMax is how long a snapshot's windows may be carried over into a
+	// failed round before we stop showing them; utilization drifts.
+	staleCarryMax = time.Hour
+	// minWake floors the poll loop's sleep so a deadline already in the past
+	// cannot spin it.
+	minWake = 5 * time.Second
 )
 
 // Options configures a Tracker.
@@ -33,6 +46,10 @@ type Options struct {
 	Interval time.Duration
 	// MinGap is the minimum age before a non-forced Refresh re-fetches; 30s.
 	MinGap time.Duration
+	// Renew asks the provider CLI to refresh its own expired token, after which
+	// the tracker re-reads credentials and re-fetches. Podiom never performs the
+	// token exchange itself. Optional; nil disables auto-renewal.
+	Renew func(ctx context.Context, provider config.Provider, dir string) error
 }
 
 // Tracker owns the in-memory per-profile usage cache and its polling loop.
@@ -43,17 +60,21 @@ type Tracker struct {
 	interval   time.Duration
 	minGap     time.Duration
 	concurrent int
+	renew      func(ctx context.Context, provider config.Provider, dir string) error
 
 	mu    sync.Mutex
 	cache map[string]Snapshot // keyed by snapshot key (profile)
-	// rateGate/backoff/failStreak/threshold are keyed by resolved credential path.
+	// rateGate/backoff/failStreak/renewAt/threshold are keyed by resolved
+	// credential path.
 	rateGate  map[string]time.Time
 	backoff   map[string]time.Time
 	failure   map[string]int
-	threshold map[string]int // key "<profile>|<window>" -> highest crossed bucket
+	renewAt   map[string]time.Time // earliest next renewal attempt
+	threshold map[string]int       // key "<profile>|<window>" -> highest crossed bucket
 
-	stop chan struct{}
-	done chan struct{}
+	nudge chan bool // buffered; carries the force flag for an out-of-band refresh
+	stop  chan struct{}
+	done  chan struct{}
 }
 
 // target is one profile we track, resolved to its credential path.
@@ -90,11 +111,14 @@ func New(opts Options) *Tracker {
 		interval:   interval,
 		minGap:     minGap,
 		concurrent: defaultConcurrent,
+		renew:      opts.Renew,
 		cache:      map[string]Snapshot{},
 		rateGate:   map[string]time.Time{},
 		backoff:    map[string]time.Time{},
 		failure:    map[string]int{},
+		renewAt:    map[string]time.Time{},
 		threshold:  map[string]int{},
+		nudge:      make(chan bool, 1),
 	}
 }
 
@@ -130,16 +154,61 @@ func (t *Tracker) loop() {
 		cancel()
 	}()
 
-	t.Refresh(ctx, false)
-	ticker := time.NewTicker(t.interval)
-	defer ticker.Stop()
+	force := false
 	for {
+		snaps := t.Refresh(ctx, force)
+		force = false
+		timer := time.NewTimer(t.nextWake(snaps))
 		select {
 		case <-t.stop:
+			timer.Stop()
 			return
-		case <-ticker.C:
-			t.Refresh(ctx, false)
+		case f := <-t.nudge:
+			timer.Stop()
+			force = f
+		case <-timer.C:
 		}
+	}
+}
+
+// nextWake returns how long to sleep before the next poll: the poll interval,
+// shortened to the soonest pending retry deadline so a stale token or a lifted
+// rate gate is re-checked promptly instead of waiting out a full interval.
+//
+// Deadlines already in the past are ignored. They mean the gate has lifted and
+// the path was re-fetched (or is about to be) — honouring them would shorten
+// every wake to the floor and spin the loop.
+func (t *Tracker) nextWake(snaps []Snapshot) time.Duration {
+	wake := t.interval
+	now := time.Now()
+	for _, s := range snaps {
+		if s.NextRetryAt.IsZero() {
+			continue
+		}
+		d := s.NextRetryAt.Sub(now)
+		if d > 0 && d < wake {
+			wake = d
+		}
+	}
+	if wake < minWake {
+		wake = minWake
+	}
+	return wake
+}
+
+// Kick asks the poll loop to refresh now instead of waiting for its next wake.
+// It never blocks; a kick arriving while one is already queued is dropped.
+func (t *Tracker) Kick() { t.kick(false) }
+
+// KickNow is Kick for events that just changed credentials on disk (a completed
+// sign-in): it also bypasses cache freshness and error backoff so the new state
+// lands immediately rather than after the next minimum gap.
+func (t *Tracker) KickNow() { t.kick(true) }
+
+func (t *Tracker) kick(force bool) {
+	select {
+	case t.nudge <- force:
+	default:
 	}
 }
 
@@ -227,6 +296,9 @@ func (t *Tracker) Refresh(ctx context.Context, force bool) []Snapshot {
 			defer func() { <-sem }()
 			started := time.Now()
 			snap := t.fetch(ctx, tg.provider, tg.dir)
+			if t.claimRenew(path, snap) {
+				snap = t.renewAndRefetch(ctx, tg, snap)
+			}
 			t.logFetch(tg, snap, force, time.Since(started))
 			results <- result{path: path, snap: snap}
 		}(path, primary)
@@ -235,9 +307,12 @@ func (t *Tracker) Refresh(ctx context.Context, force bool) []Snapshot {
 	go func() { wg.Wait(); close(results) }()
 
 	fetched := map[string]Snapshot{}
+	gates := map[string]time.Time{}
 	for r := range results {
 		fetched[r.path] = r.snap
-		t.recordBackoff(r.path, r.snap)
+		if gate := t.recordBackoff(r.path, r.snap); !gate.IsZero() {
+			gates[r.path] = gate
+		}
 	}
 
 	// Rebuild the cache from the current target set (prunes removed profiles),
@@ -252,6 +327,10 @@ func (t *Tracker) Refresh(ctx context.Context, force bool) []Snapshot {
 		}
 		snap.Profile = tg.key
 		snap.Default = tg.isDefault
+		if gate, ok := gates[tg.path]; ok && snap.NextRetryAt.IsZero() {
+			snap.NextRetryAt = gate
+		}
+		snap = carryWindows(t.cache[tg.key], snap)
 		next[tg.key] = snap
 		t.auditThreshold(tg.key, snap)
 	}
@@ -288,6 +367,9 @@ func (t *Tracker) gateCheck(path string, force bool) (Snapshot, bool) {
 		t.log.Debug("usage fetch skipped", "event", "usage", "stage", "skip",
 			"reason", "backoff", "next_retry_at", bo)
 		if hasLast {
+			// Publish the live deadline, not the one this snapshot was stamped
+			// with: clients render it, and the poll loop wakes on it.
+			last.NextRetryAt = bo
 			return last, true
 		}
 	}
@@ -316,14 +398,33 @@ func (t *Tracker) lastForPathLocked(path string) (Snapshot, bool) {
 	return best, found
 }
 
-func (t *Tracker) recordBackoff(path string, snap Snapshot) {
+// recordBackoff updates the per-path gates for a fetch result and returns the
+// deadline the caller should publish as NextRetryAt, or the zero time when the
+// path is not gated.
+func (t *Tracker) recordBackoff(path string, snap Snapshot) time.Time {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	switch snap.Status {
-	case StatusOK, StatusNoCredentials, StatusStaleCredentials, StatusUnsupported:
+	case StatusOK, StatusNoCredentials, StatusUnsupported:
 		delete(t.rateGate, path)
 		delete(t.backoff, path)
 		delete(t.failure, path)
+		return time.Time{}
+	case StatusStaleCredentials:
+		// A renewal has already run this round (or is on cooldown) and the token
+		// is still unusable. Re-check sooner than a full interval — the check is
+		// local and cheap — but back off so an unrenewable token stops being
+		// hammered.
+		delete(t.rateGate, path)
+		n := t.failure[path] + 1
+		t.failure[path] = n
+		wait := staleRetry << (n - 1)
+		if wait > t.interval || wait <= 0 {
+			wait = t.interval
+		}
+		gate := time.Now().Add(wait)
+		t.backoff[path] = gate
+		return gate
 	case StatusRateLimited:
 		gate := snap.NextRetryAt
 		if gate.IsZero() {
@@ -332,6 +433,7 @@ func (t *Tracker) recordBackoff(path string, snap Snapshot) {
 		t.rateGate[path] = gate
 		delete(t.backoff, path)
 		delete(t.failure, path)
+		return gate
 	default: // StatusError, StatusUnauthorized
 		n := t.failure[path] + 1
 		t.failure[path] = n
@@ -339,7 +441,104 @@ func (t *Tracker) recordBackoff(path string, snap Snapshot) {
 		if wait > backoffCap || wait <= 0 {
 			wait = backoffCap
 		}
-		t.backoff[path] = time.Now().Add(wait)
+		gate := time.Now().Add(wait)
+		t.backoff[path] = gate
+		return gate
+	}
+}
+
+// claimRenew reports whether this round should ask the provider CLI to renew
+// path's token, and claims the cooldown when it does so concurrent rounds cannot
+// both spawn a CLI for the same credentials.
+func (t *Tracker) claimRenew(path string, snap Snapshot) bool {
+	if t.renew == nil {
+		return false
+	}
+	// Only a token that exists but no longer works can be renewed. Absent or
+	// plan-less credentials need the user, not a refresh.
+	if snap.Status != StatusStaleCredentials && snap.Status != StatusUnauthorized {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	if until, ok := t.renewAt[path]; ok && now.Before(until) {
+		return false
+	}
+	t.renewAt[path] = now.Add(renewCooldown)
+	return true
+}
+
+// renewAndRefetch asks the provider CLI to refresh its own token and re-fetches
+// once. The CLI owns the token exchange and its own credential store; Podiom
+// only re-reads the result, whatever it turns out to be — a renewal that is
+// definitively rejected clears the credentials and surfaces as no_credentials,
+// which is the honest state and the one the UI already offers a sign-in for.
+func (t *Tracker) renewAndRefetch(ctx context.Context, tg target, prev Snapshot) Snapshot {
+	started := time.Now()
+	err := t.renew(ctx, tg.provider, tg.dir)
+	next := t.fetch(ctx, tg.provider, tg.dir)
+	fields := []any{"event", "usage", "stage", "renew", "profile", tg.key,
+		"provider", string(tg.provider), "before", string(prev.Status),
+		"after", string(next.Status), podiomlog.DurationMS("duration_ms", time.Since(started))}
+	if err != nil {
+		fields = append(fields, "error", podiomlog.Redact(err.Error()))
+	}
+	if next.Status == StatusOK {
+		t.log.Info("usage credentials renewed", fields...)
+	} else {
+		t.log.Warn("usage credential renewal did not help", fields...)
+	}
+	return next
+}
+
+// carryWindows keeps the last known windows visible while a round fails, so the
+// UI dims real numbers instead of dropping to a bare status line. prev is the
+// snapshot being replaced.
+func carryWindows(prev, next Snapshot) Snapshot {
+	if next.Status == StatusOK && len(next.Windows) > 0 {
+		next.Stale = false
+		next.WindowsFetchedAt = next.FetchedAt
+		return next
+	}
+	if len(next.Windows) > 0 {
+		// A gate-skipped round republishes its own earlier windows; they are real
+		// but no longer fresh.
+		next.Stale = true
+		if next.WindowsFetchedAt.IsZero() {
+			next.WindowsFetchedAt = next.FetchedAt
+		}
+		return next
+	}
+	if !carryableStatus(next.Status) || len(prev.Windows) == 0 {
+		return next
+	}
+	at := prev.WindowsFetchedAt
+	if at.IsZero() {
+		at = prev.FetchedAt
+	}
+	if time.Since(at) > staleCarryMax {
+		return next
+	}
+	next.Windows = prev.Windows
+	next.Credits = prev.Credits
+	next.Stale = true
+	next.WindowsFetchedAt = at
+	if next.Plan == "" {
+		next.Plan = prev.Plan
+	}
+	return next
+}
+
+// carryableStatus reports whether a failure is transient enough that the
+// previous windows are still worth showing. Absent credentials or an account
+// without plan windows are not: there is nothing to come back to.
+func carryableStatus(s Status) bool {
+	switch s {
+	case StatusStaleCredentials, StatusUnauthorized, StatusRateLimited, StatusError:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -420,6 +619,9 @@ func (t *Tracker) IngestPassive(profile string, provider config.Provider, rs ada
 	snap.Source = SourcePassive
 	snap.Windows = windows
 	snap.FetchedAt = time.Now()
+	snap.Stale = false
+	snap.WindowsFetchedAt = snap.FetchedAt
+	snap.NextRetryAt = time.Time{}
 	t.cache[profile] = snap
 	t.auditThreshold(profile, snap)
 	t.log.Debug("usage passive update", "event", "usage", "stage", "ingest_passive",

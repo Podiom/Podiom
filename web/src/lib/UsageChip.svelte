@@ -42,8 +42,10 @@
   const sessionWin = $derived(pick(sessionKeys));
   const weeklyWin = $derived(pick(weeklyKeys));
 
-  const isOK = $derived(snapshot?.status === "ok");
-  const sessionPct = $derived(isOK && sessionWin ? sessionWin.used_percent : 0);
+  // Windows are worth rendering whenever we have them: a stale snapshot carries
+  // the last known numbers rather than dropping to a bare status line.
+  const hasWindows = $derived(Boolean(snapshot?.windows?.length));
+  const sessionPct = $derived(hasWindows && sessionWin ? sessionWin.used_percent : 0);
 
   // Threshold palette: bar fill, track, and percent ink.
   function tone(pct: number): { fill: string; track: string; ink: string } {
@@ -51,7 +53,7 @@
     if (pct >= 60) return { fill: "#C6912F", track: "#F1E6CE", ink: "#8A6E22" };
     return { fill: "#4F9E78", track: "#DBEAE0", ink: "#3E7E5F" };
   }
-  const ringColor = $derived(isOK ? tone(sessionPct).fill : "#C9BFAF");
+  const ringColor = $derived(hasWindows ? tone(sessionPct).fill : "#C9BFAF");
   const ringStyle = $derived(
     `background: conic-gradient(${ringColor} ${sessionPct * 3.6}deg, #EFE6D8 0);`,
   );
@@ -61,7 +63,8 @@
       case "no_credentials":
         return "No credentials for this profile.";
       case "stale_credentials":
-        return "Stale credentials — run a turn to refresh.";
+        // The daemon is asking the provider CLI to refresh the expired token.
+        return "Token expired — refreshing it now.";
       case "unauthorized":
         return "Sign-in expired — re-authenticate the provider.";
       case "rate_limited":
@@ -109,7 +112,7 @@
   <button class="usage-chip" class:open onclick={onToggle} title="Provider usage limits">
     <span class="usage-ring" style={ringStyle}><span class="usage-ring-center"></span></span>
     <span class="usage-word">usage</span>
-    {#if isOK}
+    {#if hasWindows}
       <span class="usage-pct mono" style={`color:${tone(sessionPct).ink}`}>{Math.round(sessionPct)}%</span>
     {:else}
       <span class="usage-pct mono muted">—</span>
@@ -150,7 +153,11 @@
         <div class="usage-refresh-error">{refreshError}</div>
       {/if}
 
-      {#if isOK}
+      {#if snapshot?.stale}
+        <div class="usage-status">{statusMessage(snapshot)}</div>
+      {/if}
+
+      {#if hasWindows}
         {#if sessionWin}
           <div class="usage-row">
             <div class="usage-row-top">
