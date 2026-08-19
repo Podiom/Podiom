@@ -149,7 +149,7 @@
 
             <!-- Actions come from the server per read, so a notification that has been
                  handled elsewhere already shows only its way in. -->
-            {#if item.actions.length > 1 && !item.ResolvedAt}
+            {#if (item.actions?.length ?? 0) > 1 && !item.ResolvedAt}
               <div class="row-actions">
                 {#each item.actions as action (action.id)}
                   {#if action.id !== "open" && action.id !== "review"}

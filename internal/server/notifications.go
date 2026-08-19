@@ -279,8 +279,18 @@ func (s *Server) resolveNotificationsFor(r *http.Request, kind notify.ResourceKi
 func (s *Server) notificationView(r *http.Request, row store.Notification) notificationView {
 	return notificationView{
 		Notification: row,
-		Actions:      s.notifications.LiveActions(r.Context(), row),
+		Actions:      s.liveActions(r, row),
 	}
+}
+
+// liveActions returns the actions valid for a row right now, never nil: the client
+// contract is a list, and a nil slice marshals as null, which a client reading
+// actions.length sees as a missing field rather than "no actions".
+func (s *Server) liveActions(r *http.Request, row store.Notification) []notify.Action {
+	if actions := s.notifications.LiveActions(r.Context(), row); actions != nil {
+		return actions
+	}
+	return []notify.Action{}
 }
 
 // atoiDefault parses a query integer, falling back when it is absent or unusable.

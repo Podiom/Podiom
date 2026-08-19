@@ -167,10 +167,13 @@ class NotificationStore {
   // dismiss records that the user has dealt with an actionable notification without
   // performing its operation. It does not touch the domain object.
   async dismiss(id: string): Promise<void> {
+    this.busy = id;
     try {
       this.replace(await resolveNotification(id));
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      this.busy = null;
     }
   }
 

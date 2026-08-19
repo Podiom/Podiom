@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/notify"
@@ -359,5 +360,39 @@ func TestNotificationViewNarrowsActionsToLiveState(t *testing.T) {
 	view = srv.notificationView(httptest.NewRequest(http.MethodGet, "/api/notifications", nil), n)
 	if len(view.Actions) != 1 || view.Actions[0].ID != notify.ActionOpen {
 		t.Errorf("answered item offers %+v, want navigation only", view.Actions)
+	}
+}
+
+// TestNotificationActionsSerialiseAsEmptyList guards the shape of the actions field
+// for a notification type that declares none.
+//
+// A nil Go slice marshals as null, and the Notification Center reads actions.length
+// to decide whether to draw the action row — so a null there is not "no actions", it
+// is a crash that takes the whole list down with it.
+func TestNotificationActionsSerialiseAsEmptyList(t *testing.T) {
+	srv, db, _ := newNotifyTestServer(t)
+
+	info, ok := notify.Lookup(notify.TypeSystemWarning)
+	if !ok {
+		t.Fatalf("%q is not registered", notify.TypeSystemWarning)
+	}
+	if len(info.Actions) != 0 {
+		t.Skipf("%q now declares actions; this test needs a type that declares none", notify.TypeSystemWarning)
+	}
+	seedNotification(t, db, store.Notification{
+		Type: notify.TypeSystemWarning, Category: string(info.Category), Title: "Disk is nearly full",
+	})
+
+	rr := httptest.NewRecorder()
+	srv.handleNotifications(rr, httptest.NewRequest(http.MethodGet, "/api/notifications", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `"actions":null`) {
+		t.Errorf("actions serialised as null; body=%s", body)
+	}
+	if !strings.Contains(body, `"actions":[]`) {
+		t.Errorf("actions did not serialise as an empty list; body=%s", body)
 	}
 }

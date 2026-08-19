@@ -957,7 +957,6 @@
 
   <!-- ============ TOASTS (global, top-right) ============ -->
   <div class="toasts" aria-live="polite">
-    <NotificationCenter onNavigate={openTarget} />
     {#each live.toasts as t (t.id)}
       <button
         class="toast"
@@ -994,6 +993,10 @@
   </div>
   <WorkspaceFileViewer />
 </div>
+<!-- Outside the toast stack on purpose: .toasts is pointer-events: none so toasts do
+     not swallow clicks meant for the app behind them, and the panel would inherit
+     that and render perfectly while ignoring every click. -->
+<NotificationCenter onNavigate={openTarget} />
 {#if reachability.visible}
   <OfflineGate />
 {/if}
