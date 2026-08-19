@@ -13,6 +13,7 @@ import { FirebaseMessaging } from "@capacitor-firebase/messaging";
 
 import { deleteNotificationDevice, registerNotificationDevice } from "./api";
 import { targetFromNotification, type Target } from "./deeplink";
+import { deviceLabel } from "./devicelabel";
 import { randomID } from "./id";
 import { isNative, platform, secureForget, secureGet, secureSet } from "./native";
 import { pushPayloadAsNotification } from "./pushpayload";
@@ -115,7 +116,7 @@ export async function registerWithDaemon(): Promise<void> {
   const registration = await registerNotificationDevice({
     device_id: await deviceID(),
     platform: platform === "ios" ? "ios" : "android",
-    label: deviceLabel(),
+    label: await deviceLabel(platform, navigator),
     push_token: token,
   });
   await secureSet(INSTALLATION_KEY, registration.installation_id);
@@ -227,12 +228,4 @@ async function addressesTheSameInstallation(data: Record<string, unknown>): Prom
   const registered = await secureGet(INSTALLATION_KEY);
   if (!registered) return true;
   return sending === registered;
-}
-
-// deviceLabel names the device in Podiom's own device list, so a user with several can
-// tell which is which.
-function deviceLabel(): string {
-  if (platform === "ios") return "iPhone or iPad";
-  if (platform === "android") return "Android device";
-  return "Mobile device";
 }

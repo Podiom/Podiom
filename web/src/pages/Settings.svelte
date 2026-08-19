@@ -601,6 +601,25 @@
   let devices = $state<NotificationDevice[]>([]);
   let devicesBusy = $state<string | null>(null);
 
+  // addedOn renders a device's registration date as "12 Aug", carrying the year only when
+  // it is not the current one. Absolute rather than relative: a phone registered last
+  // winter is "243d ago", which tells a user nothing they can place.
+  //
+  // The timestamp is SQLite `datetime('now')` output — "2026-08-19 09:12:33", with no zone
+  // marker — which every JS engine reads as local time. Without the Z it would be wrong by
+  // the UTC offset, which is enough to date a device registered this morning to yesterday.
+  function addedOn(raw: string): string {
+    if (!raw) return "";
+    const at = new Date(raw.includes("Z") ? raw : raw.replace(" ", "T") + "Z");
+    if (Number.isNaN(at.getTime())) return "";
+    const sameYear = at.getFullYear() === new Date().getFullYear();
+    return at.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: sameYear ? undefined : "numeric",
+    });
+  }
+
   async function loadDevices() {
     try {
       devices = (await listNotificationDevices()).devices;
@@ -1266,18 +1285,25 @@
         </div>
         <div class="pref-group">
           {#each devices as device (device.id)}
-            <div class="pref-row">
+            <div class="pref-row device-row">
               <input
                 type="checkbox"
                 checked={device.enabled}
                 disabled={devicesBusy === device.id}
                 onchange={() => toggleDevice(device.id, !device.enabled)} />
-              <span class="pref-label">{device.label || device.platform}</span>
-              <span class="pref-type mono">
-                {device.status === "invalid" ? "needs re-registering" : device.platform}
-              </span>
+              <div class="device-info">
+                <div class="pref-label device-name">{device.label || device.platform}</div>
+                <div class="device-meta">
+                  {#if device.status === "invalid"}
+                    <span class="device-warn">needs re-registering</span>
+                  {/if}
+                  {#if addedOn(device.created_at)}
+                    <span>Added {addedOn(device.created_at)}</span>
+                  {/if}
+                </div>
+              </div>
               <button
-                class="link"
+                class="device-forget"
                 disabled={devicesBusy === device.id}
                 onclick={() => forgetDevice(device.id)}>Forget</button>
             </div>
@@ -2297,6 +2323,75 @@
     font-size: 0.68rem;
     color: var(--ink-soft, #6b625a);
     opacity: 0.6;
+  }
+
+  /* A registered device carries more than a preference row does — a name, when it was
+     added, and an action — so it gets two lines. The base .pref-row is shared with the
+     preference and test-result lists, hence a modifier rather than a change to it.
+
+     No pointer: unlike the preference rows this is a div, not a label, so most of its
+     width does nothing when clicked. */
+  .device-row {
+    align-items: flex-start;
+    padding: 0.45rem 0;
+    cursor: default;
+  }
+
+  .device-row input[type="checkbox"] {
+    margin-top: 0.15rem;
+  }
+
+  .device-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* A device may name itself something long. Truncating keeps the button on the row. */
+  .device-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .device-meta {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.1rem;
+    font-size: 0.68rem;
+    color: var(--ink-soft, #6b625a);
+    opacity: 0.7;
+  }
+
+  .device-meta > span + span::before {
+    content: "·";
+    margin-right: 0.4rem;
+  }
+
+  /* A device the relay has rejected receives nothing until the app re-registers it, which
+     is a state to notice rather than a detail to skim. */
+  .device-warn {
+    color: #c2705e;
+    opacity: 1;
+  }
+
+  /* Neutral at rest, destructive on hover — the same reading Projects gives "Disconnect"
+     and Skills gives "Remove". Forgetting a device is undone by opening the app on it,
+     so it does not warrant a permanently red control. */
+  .device-forget {
+    flex: none;
+    border: 1px solid var(--field-line);
+    border-radius: 11px;
+    padding: 5px 12px;
+    background: rgba(255, 255, 255, 0.85);
+    color: var(--muted);
+    font: 600 12px "Hanken Grotesk";
+    cursor: pointer;
+  }
+
+  .device-forget:hover:not(:disabled) {
+    border-color: #e6cabd;
+    background: #fdf2ee;
+    color: #c2705e;
   }
 
   .notification-panel {
