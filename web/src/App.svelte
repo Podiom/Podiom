@@ -28,7 +28,9 @@
   import { deployment } from "./lib/base";
   import { keyboard, watchKeyboard } from "./lib/keyboard.svelte";
   import { live } from "./lib/live.svelte";
-  import { initChrome, onBackButton } from "./lib/native";
+  import { initChrome, isNative, onBackButton } from "./lib/native";
+  import { reachability } from "./lib/reachability.svelte";
+  import OfflineGate from "./pages/OfflineGate.svelte";
   import TokenGate from "./pages/TokenGate.svelte";
   import HAOnboarding from "./pages/HAOnboarding.svelte";
   import ProviderLogo from "./lib/ProviderLogo.svelte";
@@ -226,6 +228,16 @@
     }
     booted = true;
     void boot();
+  });
+
+  // The native apps can outlive the gateway they are a client of, so an offline
+  // socket has to become a real screen rather than a stale page. The store reads
+  // live.status as its trigger — an open socket is proof of reachability, so it
+  // stays dormant until this fires with something else. Inert in a browser,
+  // where the daemon served the page in the first place.
+  $effect(() => {
+    if (!isNative) return;
+    reachability.observe(live.status);
   });
 
   async function bootstrapHA() {
@@ -982,6 +994,9 @@
   </div>
   <WorkspaceFileViewer />
 </div>
+{#if reachability.visible}
+  <OfflineGate />
+{/if}
 {/if}
 
 <style>

@@ -7,12 +7,10 @@
   import type { DiscoveredInstance } from "../lib/discovery";
   import { verifyToken } from "../lib/http";
   import { isNative } from "../lib/native";
+  import { WAVE_ACCENTS, WAVE_HEIGHTS } from "../lib/waveform";
 
   type Status = "idle" | "validating" | "error" | "success";
   type VisualStatus = Status | "offline";
-
-  const heights = [16, 24, 20, 32, 26, 40, 30, 22, 36, 28, 46, 34, 24, 42, 52, 38, 58, 44, 60, 44, 58, 38, 52, 42, 24, 34, 46, 28, 36, 22, 30, 40, 26, 32, 20, 24, 16];
-  const accents = new Set([6, 14, 18, 22, 30]);
 
   let value = $state("");
   let status = $state<Status>("idle");
@@ -204,7 +202,7 @@
 
   function barStyle(h: number, i: number, s: VisualStatus): string {
     const cfg = waveConfig(s);
-    const isAccent = accents.has(i);
+    const isAccent = WAVE_ACCENTS.has(i);
     const dur = (2.5 + ((i * 7) % 12) / 10) * cfg.dMul;
     return [
       `width:${isAccent ? 3 : 2.5}px`,
@@ -229,7 +227,7 @@
 
   <div class="wave-block" aria-hidden="true">
     <div class="waveform">
-      {#each heights as h, i}
+      {#each WAVE_HEIGHTS as h, i}
         <span style={barStyle(h, i, visualStatus)}></span>
       {/each}
     </div>
