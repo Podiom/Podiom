@@ -116,6 +116,10 @@
 
   const SETTINGS_NAV: NavItem = { key: "settings", label: "Settings", icon: SETTINGS_ICON };
   const MORE_ICON = '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>';
+  // Bell for the Notification Center, which is reachable from the sidebar footer and
+  // from the mobile More sheet.
+  const BELL_ICON =
+    '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>';
   const MOBILE_PRIMARY_ROUTES = new Set<Route>(["chat", "roadmap", "goals", "schedules"]);
 
   let route = $state<Route>("chat");
@@ -617,6 +621,11 @@
     ...(mode === "ha" ? [TERMINAL_NAV] : []),
   ]);
   const mobileMoreActive = $derived(moreOpen || mobileMoreNav.some((item) => item.key === route));
+  // Two tiers on purpose: a count for what actually needs the user, a plain dot for
+  // "there is something new". The daemon reports unread and attention separately so
+  // the number can keep meaning something — routine run and progress activity would
+  // otherwise leave it permanently non-zero.
+  const unreadOnly = $derived(notifications.attention === 0 && notifications.unread > 0);
 
   const daemonLabel = $derived(daemonStatus === "live" ? "podiomd live" : `podiomd ${daemonStatus}`);
   const daemonAddr = $derived(health ? `${health.version} · ${health.commit}` : "127.0.0.1:8787");
@@ -726,9 +735,16 @@
         aria-haspopup="dialog"
         aria-expanded={moreOpen}
         aria-controls="mobile-more-navigation"
+        aria-label={notifications.unread > 0 ? "More, unread notifications" : undefined}
         onclick={() => (moreOpen = !moreOpen)}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">{@html MORE_ICON}</svg>
         More
+        <!-- The bell lives in the sidebar footer, which the phone layout hides, so this
+             is the only place unread notifications can show up on a phone. Unlike the
+             bell it lights for anything unread: the count is inside the sheet. -->
+        {#if notifications.unread > 0}
+          <span class="more-dot" aria-hidden="true"></span>
+        {/if}
       </button>
     </nav>
 
@@ -795,18 +811,20 @@
       {/if}
       <button
         class="bell-btn"
-        class:has-unread={notifications.attention > 0}
+        class:has-unread={notifications.unread > 0}
         title="Notifications"
         aria-label={notifications.attention > 0
           ? `Notifications, ${notifications.attention} needing attention`
-          : "Notifications"}
+          : unreadOnly
+            ? `Notifications, ${notifications.unread} unread`
+            : "Notifications"}
         onclick={() => notifications.toggle()}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
-        </svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html BELL_ICON}</svg>
         <span>Notifications</span>
         {#if notifications.attention > 0}
           <span class="bell-count mono">{notifications.attention > 99 ? "99+" : notifications.attention}</span>
+        {:else if unreadOnly}
+          <span class="bell-dot" aria-hidden="true"></span>
         {/if}
       </button>
       <button class="hire-btn" onclick={openHire}><span class="hire-plus">+</span> Hire agent</button>
@@ -822,6 +840,22 @@
           <button class="mobile-more-close" aria-label="Close more navigation" onclick={() => (moreOpen = false)}>×</button>
         </div>
         <nav class="mobile-more-links" aria-label="More navigation">
+          <!-- Not part of mobileMoreNav: that list routes, and the Notification Center
+               is a panel rather than a destination. -->
+          <button
+            class="mobile-more-link"
+            onclick={() => {
+              moreOpen = false;
+              notifications.toggle();
+            }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html BELL_ICON}</svg>
+            Notifications
+            {#if notifications.attention > 0}
+              <span class="bell-count mono">{notifications.attention > 99 ? "99+" : notifications.attention}</span>
+            {:else if notifications.unread > 0}
+              <span class="bell-dot" aria-hidden="true"></span>
+            {/if}
+          </button>
           {#each mobileMoreNav as item}
             <button class="mobile-more-link" class:active={route === item.key} onclick={() => openRoute(item.key)}>
               <svg
@@ -1389,6 +1423,17 @@
     color: #fff;
   }
 
+  /* Shown instead of the count when there is something unread but nothing urgent.
+     Same 7px teal mark the panel puts against an unread row, so the bell and the list
+     say the same thing the same way. */
+  .bell-dot {
+    margin-left: auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--teal-deep, #2f7f6f);
+  }
+
   .hire-btn {
     display: flex;
     align-items: center;
@@ -1601,6 +1646,18 @@
       height: 16px;
       padding: 0 4px;
       font-size: 9px;
+    }
+
+    /* Anchored like .nav-badge, since it marks the same corner of the same button. */
+    .more-dot {
+      position: absolute;
+      top: 4px;
+      left: calc(50% + 7px);
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--teal-deep);
+      box-shadow: 0 0 0 2px var(--surface);
     }
 
     .mobile-more-layer {
