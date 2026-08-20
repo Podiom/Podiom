@@ -26,11 +26,7 @@ jobs:
   bump-formula:
     name: Update Homebrew tap formula
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       (github.event.workflow_run.event == 'push' ||
-        github.event.workflow_run.event == 'workflow_dispatch'))
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Compute release version
