@@ -98,6 +98,13 @@ The Roadmap holds assignable tasks, while the embedded scheduler handles
 recurring routines and timed pickups. Agent-created work keeps its provenance,
 so you can trace it back to the decision that created it.
 
+### Start from working examples
+
+The [examples cookbook](examples/README.md) has copyable schedules, a runnable
+goal-creation script, a shared project ledger entry, agent defaults, and a
+no-credential MCP server example. Use it after onboarding when you want a real
+first workflow instead of a blank config file.
+
 ### Keep the control plane local
 
 Podiom stores its state under one configurable local root and ships the web UI

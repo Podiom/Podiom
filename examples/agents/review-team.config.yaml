@@ -1,0 +1,38 @@
+# Example: minimal config.yaml for two agents working as a small review team.
+# Needs: either Claude Code or Codex authenticated in their normal CLI locations.
+# What it does when used as $PODIOM_HOME/config.yaml: defines global defaults,
+# two durable agents, and assigns the "project-files" MCP server to the scout.
+# Create that server with examples/mcp/filesystem.mcp.yaml, or remove the
+# mcp_servers line.
+
+global:
+  provider: codex
+  permission_mode: approve
+  permission_timeout: 2m
+  fallback:
+    - claude
+
+agents:
+  - name: scout
+    provider: codex
+    effort: low
+    permission_mode: approve
+    fallback:
+      - claude
+    mcp_servers:
+      - project-files
+
+  - name: implementer
+    provider: claude
+    model: sonnet
+    permission_mode: auto
+    fallback:
+      - codex
+
+server:
+  bind: 127.0.0.1
+  port: 8787
+
+logging:
+  level: info
+  retention_days: 7
