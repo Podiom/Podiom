@@ -245,14 +245,15 @@ jobs:
       # the layer cache that the release build consumes, and a fork PR's read-only
       # GITHUB_TOKEN could not write it anyway. ghcr.io/podiom/podiom-ha is a public
       # package, so the read needs no login step and no change to `permissions`.
-      # ha-addon.yml is what populates this ref.
+      # ha-addon.yml populates the architecture-specific ref. The old shared ref
+      # remains as a migration fallback until every release cache is warm.
       #
       # --no-cache on the weekly schedule instead: neither `apt-get install` nor
       # `pipx install mcp-proxy` pins what it resolves, so a permanently warm cache
       # would quietly stop verifying both. See the `schedule` trigger above.
       - name: Build amd64 add-on image
         env:
-          CACHE_ARGS: ${{ github.event_name == 'schedule' && '--no-cache' || '--cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache' }}
+          CACHE_ARGS: ${{ github.event_name == 'schedule' && '--no-cache' || '--cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache-amd64 --cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache' }}
         run: |
           set -euo pipefail
           set -a; . ha/versions.env; set +a

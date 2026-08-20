@@ -29,10 +29,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish Home Assistant add-on
+  prepare:
+    name: Prepare Home Assistant add-on binaries
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      addon_version: ${{ steps.metadata.outputs.addon_version }}
 
     steps:
       - name: Check out repository
@@ -56,8 +59,66 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Resolve build metadata
+        id: metadata
+        env:
+          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
+        run: |
+          set -euo pipefail
+          target_sha="$(git rev-parse HEAD)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "addon_version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=${target_sha::7}" >> "$GITHUB_OUTPUT"
+
+      # CROSS_OS=linux because ha/Dockerfile COPYs only from bin/linux-${TARGETARCH}
+      # and ha/Dockerfile.dockerignore excludes everything else from the build
+      # context. The default matrix would also cross-compile darwin and windows —
+      # eight binaries that are discarded here and that release.yml already
+      # published minutes earlier. CROSS_ARCH keeps its default: the image needs
+      # both amd64 and arm64.
+      - name: Build web and Linux binaries
+        run: |
+          make web
+          make cross CROSS_OS=linux \
+            VERSION="${{ steps.metadata.outputs.version }}" \
+            COMMIT="${{ steps.metadata.outputs.commit }}"
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-linux-binaries
+          path: |
+            bin/linux-amd64/podiom
+            bin/linux-amd64/podiomd
+            bin/linux-arm64/podiom
+            bin/linux-arm64/podiomd
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build Home Assistant add-on (${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: ha-linux-binaries
+          path: bin
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -69,23 +130,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # CROSS_OS=linux because ha/Dockerfile COPYs only from bin/linux-${TARGETARCH}
-      # and ha/Dockerfile.dockerignore excludes everything else from the build
-      # context. The default matrix would also cross-compile darwin and windows —
-      # eight binaries that are discarded here and that release.yml already
-      # published minutes earlier. CROSS_ARCH keeps its default: the image needs
-      # both amd64 and arm64.
-      - name: Build web and Linux binaries
+      # Only amd64 is loaded into Docker because it is the architecture exercised
+      # by the smoke test. Its layers remain in this job's BuildKit instance, so
+      # the digest push after the test does not rebuild them.
+      - name: Build amd64 smoke image
+        if: matrix.arch == 'amd64'
         env:
-          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
-        run: |
-          make web
-          target_sha="$(git rev-parse HEAD)"
-          make cross CROSS_OS=linux VERSION="$VERSION" COMMIT="${target_sha::7}"
-
-      - name: Build amd64 add-on image
-        env:
-          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
+          ADDON_VERSION: ${{ needs.prepare.outputs.addon_version }}
         run: |
           set -euo pipefail
           set -a; . ha/versions.env; set +a
@@ -94,53 +145,124 @@ jobs:
             --platform linux/amd64 \
             -f ha/Dockerfile \
             $build_args \
+            --cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache-amd64 \
             --cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache \
-            --build-arg PODIOM_VERSION="${VERSION#v}" \
+            --build-arg PODIOM_VERSION="$ADDON_VERSION" \
             -t "ghcr.io/podiom/podiom-ha:smoke" .
 
-      - name: Smoke test add-on image
+      - name: Smoke test amd64 image
+        if: matrix.arch == 'amd64'
         run: bash ha/test/smoke.sh ghcr.io/podiom/podiom-ha:smoke
 
-      # This is the one step that writes the layer cache, and it has to be this one:
-      # a single --cache-to on a multi-platform build stores an index covering both
-      # platforms, so one ref serves amd64 and arm64 without either clobbering the
-      # other. mode=max is required — this is a single-stage Dockerfile whose whole
-      # value is its intermediate layers, which mode=min would discard.
-      #
-      # Without this the arm64 half re-ran apt, NodeSource, `npm install -g` and
-      # pipx under QEMU on every release: 523s. Every one of those layers depends
-      # only on ha/versions.env, which changes a handful of times a year.
+      # One cache ref per architecture is required: exporting a multi-platform
+      # registry cache to one image manifest repeatedly restored only amd64 in
+      # practice, leaving every arm64 dependency layer to run under QEMU. These
+      # builds run natively and write independent manifests instead. The old ref
+      # is read only as a migration fallback.
       #
       # Registry rather than type=gha deliberately: these layers are ~1 GB across
-      # both arches and would evict the Go, npm and Gradle entries from the repo's
-      # shared 10 GB Actions cache budget. A registry cache does not count against
-      # it, and the ghcr login above already grants the write.
-      #
-      # image-manifest/oci-mediatypes are not optional on GHCR: it rejects
-      # buildx's default cache manifest media type, and the export fails without
-      # them. The cache is a tag on the image's own package, so its blobs are the
-      # ones just pushed and the export is mostly manifest writes.
-      - name: Push multi-arch add-on image
+      # both architectures and would compete with the repository's Go, npm and
+      # Gradle entries for the shared Actions cache allowance. mode=max retains
+      # this single-stage Dockerfile's intermediate dependency layers.
+      - name: Build and push image by digest
         env:
-          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
+          ADDON_VERSION: ${{ needs.prepare.outputs.addon_version }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           set -a; . ha/versions.env; set +a
           build_args=$(sed -n 's/^\([A-Z_][A-Z0-9_]*\)=.*/--build-arg \1/p' ha/versions.env)
-          addon_version="${VERSION#v}"
-          docker buildx build --push \
-            --platform linux/amd64,linux/arm64 \
+          metadata_file="${RUNNER_TEMP}/image-metadata.json"
+          docker buildx build \
+            --platform "linux/${ARCH}" \
             -f ha/Dockerfile \
             $build_args \
+            --cache-from "type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache-${ARCH}" \
             --cache-from type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache \
-            --cache-to type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache,mode=max,image-manifest=true,oci-mediatypes=true \
-            --build-arg PODIOM_VERSION="${addon_version}" \
-            -t "ghcr.io/podiom/podiom-ha:${addon_version}" \
-            -t "ghcr.io/podiom/podiom-ha:latest" .
+            --cache-to "type=registry,ref=ghcr.io/podiom/podiom-ha:buildcache-${ARCH},mode=max,image-manifest=true,oci-mediatypes=true" \
+            --build-arg PODIOM_VERSION="$ADDON_VERSION" \
+            --output type=image,name=ghcr.io/podiom/podiom-ha,push-by-digest=true,name-canonical=true,push=true \
+            --metadata-file "$metadata_file" .
+
+          digest="$(jq -er '."containerimage.digest"' "$metadata_file")"
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: ha-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish Home Assistant add-on
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref }}
+
+      - name: Download image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ha-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-arch add-on image
+        env:
+          ADDON_VERSION: ${{ needs.prepare.outputs.addon_version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/podiom/podiom-ha"
+          mapfile -t digests < <(find "${RUNNER_TEMP}/digests" -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [ "${#digests[@]}" -ne 2 ]; then
+            echo "expected two image digests, found ${#digests[@]}" >&2
+            exit 1
+          fi
+
+          sources=()
+          for digest in "${digests[@]}"; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo "invalid image digest: $digest" >&2; exit 1; }
+            sources+=("${image}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create \
+            -t "${image}:${ADDON_VERSION}" \
+            -t "${image}:latest" \
+            "${sources[@]}"
+
+          platforms="$(docker buildx imagetools inspect --raw "${image}:${ADDON_VERSION}" | \
+            jq -r '.manifests[] | select(.platform.os == "linux") | "\(.platform.os)/\(.platform.architecture)"' | \
+            sort -u)"
+          expected_platforms="$(printf 'linux/amd64\nlinux/arm64')"
+          if [ "$platforms" != "$expected_platforms" ]; then
+            echo "unexpected image platforms:" >&2
+            printf '%s\n' "$platforms" >&2
+            exit 1
+          fi
 
       - name: Publish add-on to Podiom/homeassistant-addons
         env:
-          VERSION: ${{ github.event_name == 'workflow_run' && format('v0.1.{0}', github.event.workflow_run.run_number) || inputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           ADDON_REPO_TOKEN: ${{ secrets.ADDON_REPO_TOKEN }}
         run: |
           set -euo pipefail
