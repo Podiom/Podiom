@@ -81,11 +81,11 @@ RUN set -eu; \
       [ -n "$v" ] || { echo "missing build-arg; source ha/versions.env" >&2; exit 1; }; \
     done
 
-# Node from NodeSource (per-arch debs) + pipx for mcp-proxy. git is needed by
-# the coding CLIs and by Podiom's project source control; openssh-client is a
-# Recommends of git, so --no-install-recommends would otherwise drop it and
-# every SSH remote (git@github.com:…) would fail. procps gives the terminal
-# shell ps/top.
+# Node from NodeSource (per-arch debs) + pipx for mcp-proxy. git and GitHub's
+# gh CLI are needed by the coding CLIs and by Podiom's project source control;
+# openssh-client is a Recommends of git, so --no-install-recommends would
+# otherwise drop it and every SSH remote (git@github.com:…) would fail. procps
+# gives the terminal shell ps/top.
 #
 # The second group is what the optional language toolchains need in order to
 # LINK. They have to be baked in: /usr is not writable by uid 1000 at runtime
@@ -99,7 +99,7 @@ RUN set -eu; \
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      ca-certificates git openssh-client gnupg pipx procps python3; \
+      ca-certificates git gh openssh-client gnupg pipx procps python3; \
     apt-get install -y --no-install-recommends \
       binutils binutils-gold gcc g++ libc6-dev pkg-config tzdata uuid-dev \
       libcurl4-openssl-dev libedit-dev libicu-dev libncurses-dev \

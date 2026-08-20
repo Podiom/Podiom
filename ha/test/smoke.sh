@@ -9,7 +9,7 @@
 #   - podiomd serves /healthz on 8099
 #   - the HA-only mobile listener on 8100 is API-only and token-protected
 #   - legacy root-owned /data is safely migrated to the non-root podiom account
-#   - claude / codex / mcp-proxy / uvx / ttyd are present at their pinned versions
+#   - gh is available, and claude / codex / mcp-proxy / uvx / ttyd are pinned
 #   - yq is absent (profile login dispatch no longer needs it)
 #   - migrated SSH keys load, Git can commit, and podiomd sees the public key
 #   - Claude bypassPermissions starts as non-root instead of hitting its root guard
@@ -164,10 +164,11 @@ pass "services are non-root; legacy data migrated without following symlinks or 
 echo "== bundled tool versions"
 docker exec --user podiom "${cid}" claude --version || fail "claude --version"
 docker exec --user podiom "${cid}" codex --version || fail "codex --version"
+docker exec --user podiom "${cid}" gh --version || fail "gh --version"
 docker exec --user podiom "${cid}" mcp-proxy --help >/dev/null || fail "mcp-proxy --help"
 docker exec --user podiom "${cid}" uvx --version || fail "uvx --version"
 docker exec --user podiom "${cid}" ttyd --version || fail "ttyd --version"
-pass "claude / codex / mcp-proxy / uvx / ttyd all run"
+pass "claude / codex / gh / mcp-proxy / uvx / ttyd all run"
 
 if docker exec "${cid}" bash -lc 'command -v yq' >/dev/null 2>&1; then
     fail "yq should not be bundled in the HA image"
