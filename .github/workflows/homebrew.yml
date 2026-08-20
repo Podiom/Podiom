@@ -26,7 +26,11 @@ jobs:
   bump-formula:
     name: Update Homebrew tap formula
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch'))
 
     steps:
       - name: Compute release version
@@ -74,47 +78,47 @@ jobs:
 
           formula_path="${RUNNER_TEMP}/homebrew-podiom/Formula/podiom.rb"
           cat > "$formula_path" <<EOF
-class Podiom < Formula
-  desc "Thin orchestration layer for local LLM agents"
-  homepage "https://github.com/${REPO}"
-  version "${plain_version}"
-  license "MIT"
+          class Podiom < Formula
+            desc "Thin orchestration layer for local LLM agents"
+            homepage "https://github.com/${REPO}"
+            version "${plain_version}"
+            license "MIT"
 
-  on_macos do
-    on_arm do
-      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_darwin_arm64.tar.gz"
-      sha256 "${darwin_arm64_sha}"
-    end
+            on_macos do
+              on_arm do
+                url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${darwin_arm64_sha}"
+              end
 
-    on_intel do
-      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_darwin_amd64.tar.gz"
-      sha256 "${darwin_amd64_sha}"
-    end
-  end
+              on_intel do
+                url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_darwin_amd64.tar.gz"
+                sha256 "${darwin_amd64_sha}"
+              end
+            end
 
-  on_linux do
-    on_arm do
-      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_linux_arm64.tar.gz"
-      sha256 "${linux_arm64_sha}"
-    end
+            on_linux do
+              on_arm do
+                url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_linux_arm64.tar.gz"
+                sha256 "${linux_arm64_sha}"
+              end
 
-    on_intel do
-      url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_linux_amd64.tar.gz"
-      sha256 "${linux_amd64_sha}"
-    end
-  end
+              on_intel do
+                url "https://github.com/${REPO}/releases/download/${VERSION}/podiom_${VERSION}_linux_amd64.tar.gz"
+                sha256 "${linux_amd64_sha}"
+              end
+            end
 
-  def install
-    bin.install "podiom"
-    bin.install "podiomd"
-  end
+            def install
+              bin.install "podiom"
+              bin.install "podiomd"
+            end
 
-  test do
-    assert_match "v#{version}", shell_output("#{bin}/podiom --version")
-    assert_match "v#{version}", shell_output("#{bin}/podiomd --version")
-  end
-end
-EOF
+            test do
+              assert_match "v#{version}", shell_output("#{bin}/podiom --version")
+              assert_match "v#{version}", shell_output("#{bin}/podiomd --version")
+            end
+          end
+          EOF
 
       - name: Validate formula syntax
         run: ruby -c "${RUNNER_TEMP}/homebrew-podiom/Formula/podiom.rb"
