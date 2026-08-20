@@ -819,6 +819,7 @@
     {#if loading}
       <div class="empty-note">Loading providers…</div>
     {:else}
+      <div class="settings-grid">
       {#each PROVIDERS as p (p.id)}
         {@const isDefault = provider === p.id}
         <section class="prov-card" class:is-default={isDefault}>
@@ -957,6 +958,7 @@
           {/if}
         </section>
       {/each}
+      </div>
 
       {#if authError}
         <div class="error-banner" style="margin-top:16px">{authError}</div>
@@ -974,6 +976,7 @@
     {/if}
 
     {:else if tab === "general"}
+    <div class="settings-grid">
     <!-- ===== CHAT DISPLAY ===== -->
     <section class="card">
       <div class="card-head">
@@ -1031,6 +1034,7 @@
         </div>
       </section>
     {/if}
+    </div>
 
     {:else if tab === "agents"}
     <!-- ===== AGENTS ===== -->
@@ -1038,9 +1042,12 @@
 
     {:else if tab === "about-you"}
     <!-- ===== ABOUT YOU (USER.md) ===== -->
-    <AboutYou {agents} onSaved={onUserProfileSaved} />
+    <div class="settings-prose">
+      <AboutYou {agents} onSaved={onUserProfileSaved} />
+    </div>
 
     {:else if tab === "credentials"}
+    <div class="settings-grid">
     <!-- ===== GIT ===== -->
     <section class="card">
       <div class="card-head">
@@ -1168,6 +1175,7 @@
         {/if}
       </div>
     </section>
+    </div>
 
     <!-- ===== AGENT-GRANTED SECRETS ===== -->
     <Credentials {onOpenChat} />
@@ -1238,6 +1246,7 @@
     </section>
 
     {:else if tab === "notifications"}
+    <div class="settings-grid">
     <!-- ===== NOTIFICATIONS ===== -->
     <section class="card">
       <div class="card-head">
@@ -1401,6 +1410,7 @@
         {/each}
       {/if}
     </section>
+    </div>
 
     {:else}
     <!-- ===== LOGS ===== -->
@@ -1424,8 +1434,31 @@
 
 <style>
   .settings-inner {
-    max-width: 740px;
+    max-width: 1180px;
     margin: 0 auto;
+  }
+
+  /* Peer cards flow into columns once there is room for them. The
+     min(100%, …) floor keeps the track from overflowing a narrow container,
+     so this collapses to one column on its own — no breakpoint needed. */
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr));
+    gap: 18px;
+    align-items: start;
+    /* Stand in for the card margin the children give up below, so whatever
+       follows the grid keeps the same rhythm. */
+    margin-bottom: 18px;
+  }
+
+  .settings-grid > .card,
+  .settings-grid > .prov-card {
+    margin-bottom: 0;
+  }
+
+  /* Prose, an interview and a tall textarea: hold a reading width. */
+  .settings-prose {
+    max-width: 860px;
   }
 
   .settings-head {
