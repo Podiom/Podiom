@@ -121,6 +121,8 @@ the [mobile](docs/mobile.md) and [Home Assistant](docs/home-assistant.md) guides
 
 Install the latest release on macOS or Linux:
 
+Homebrew users can install Podiom with `brew install Podiom/podiom/podiom`.
+
 ```sh
 curl -fsSL https://github.com/Podiom/Podiom/releases/latest/download/install.sh | bash
 ```
