@@ -24,8 +24,12 @@ Exact bundled versions are listed in the changelog for every release.
 
 1. Add the repository to your add-on store:
    **Settings → Add-ons → Add-on store → ⋮ → Repositories** and add
-   `https://github.com/Podiom/homeassistant-addons`.
+   `https://github.com/Podiom/ha-app`.
 2. Install **Podiom** and start it. It appears in the sidebar.
+
+Existing installs that already use `https://github.com/Podiom/homeassistant-addons`
+continue through GitHub's repository redirect. Do not add a new repository at
+the old name.
 
 ## First run, step by step
 

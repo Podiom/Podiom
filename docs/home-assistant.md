@@ -14,8 +14,12 @@ MFA!). Podiom itself opens no ports to the internet.
 ## Install
 
 1. In Home Assistant: **Settings → Add-ons → Add-on store → ⋮ → Repositories**,
-   add `https://github.com/Podiom/homeassistant-addons`.
+   add `https://github.com/Podiom/ha-app`.
 2. Install **Podiom** and start it. It appears in the HA sidebar.
+
+Existing installs that already use `https://github.com/Podiom/homeassistant-addons`
+continue through GitHub's repository redirect. Do not add a new repository at
+the old name.
 
 Images are published for `amd64` and `aarch64` (Raspberry Pi–class hardware
 works — the LLM compute is cloud-side; see the resource note below).
@@ -177,7 +181,7 @@ RAM. On small boards, keep the number of simultaneously active agents modest.
 The add-on is built from this repository (`ha/` — Dockerfile, s6 services,
 manifest sources); release CI publishes multi-arch images to
 `ghcr.io/podiom/podiom-ha` and renders the manifest into
-[`Podiom/homeassistant-addons`](https://github.com/Podiom/homeassistant-addons),
+[`Podiom/ha-app`](https://github.com/Podiom/ha-app),
 the repository users add to their store. The in-store user guide is the
 add-on's `DOCS.md` (from `ha/addon/DOCS.md`); this page is the canonical
 long-form documentation.

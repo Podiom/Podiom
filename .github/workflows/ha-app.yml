@@ -1,4 +1,4 @@
-name: ha-addon
+name: ha-app
 
 on:
   workflow_run:
@@ -25,7 +25,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: ha-addon-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.version }}
+  group: ha-app-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.version }}
   cancel-in-progress: false
 
 jobs:
@@ -260,18 +260,18 @@ jobs:
             exit 1
           fi
 
-      - name: Publish add-on to Podiom/homeassistant-addons
+      - name: Publish add-on to Podiom/ha-app
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           ADDON_REPO_TOKEN: ${{ secrets.ADDON_REPO_TOKEN }}
         run: |
           set -euo pipefail
           addon_version="${VERSION#v}"
-          repo_dir="${RUNNER_TEMP}/homeassistant-addons"
+          repo_dir="${RUNNER_TEMP}/ha-app"
           target_sha="$(git rev-parse HEAD)"
 
           git clone --depth 1 \
-            "https://x-access-token:${ADDON_REPO_TOKEN}@github.com/Podiom/homeassistant-addons.git" \
+            "https://x-access-token:${ADDON_REPO_TOKEN}@github.com/Podiom/ha-app.git" \
             "$repo_dir"
 
           old_changelog="${RUNNER_TEMP}/old-changelog.md"

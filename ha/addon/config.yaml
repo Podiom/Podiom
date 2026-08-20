@@ -1,11 +1,11 @@
 # Podiom add-on manifest. This directory is rendered into
-# Podiom/homeassistant-addons/podiom/ by release CI, which replaces `version`
+# Podiom/ha-app/podiom/ by release CI, which replaces `version`
 # with the release number.
 name: Podiom
 version: "0.0.0"
 slug: podiom
 description: Agentic AI colleagues (claude & codex) with a web UI, safely exposed through Home Assistant
-url: https://github.com/Podiom/homeassistant-addons
+url: https://github.com/Podiom/ha-app
 arch:
   - amd64
   - aarch64

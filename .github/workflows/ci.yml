@@ -245,7 +245,7 @@ jobs:
       # the layer cache that the release build consumes, and a fork PR's read-only
       # GITHUB_TOKEN could not write it anyway. ghcr.io/podiom/podiom-ha is a public
       # package, so the read needs no login step and no change to `permissions`.
-      # ha-addon.yml populates the architecture-specific ref. The old shared ref
+      # ha-app.yml populates the architecture-specific ref. The old shared ref
       # remains as a migration fallback until every release cache is warm.
       #
       # --no-cache on the weekly schedule instead: neither `apt-get install` nor
