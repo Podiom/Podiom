@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSessionProjectOverrideMigrationBackfillsLinkedProjects(t *testing.T) {
@@ -317,6 +318,105 @@ func TestAppendMessagesStoresMessageKind(t *testing.T) {
 		if history[i].Kind != want {
 			t.Fatalf("history[%d] kind = %q, want %q", i, history[i].Kind, want)
 		}
+	}
+}
+
+func TestAppendMessagesWaitsForConcurrentGoalWriter(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.CreateAgent(ctx, Agent{Name: "jared", Provider: "claude", PermissionMode: "approve"}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	goal, err := db.CreateGoal(ctx, Goal{Title: "Ship", LeadAgent: "jared"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	sess, err := db.CreateSession(ctx, Session{
+		AgentName:      "jared",
+		Provider:       "claude",
+		PermissionMode: "approve",
+		Origin:         OriginRoadmap,
+		GoalID:         goal.ID,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	locker, err := db.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open locker connection: %v", err)
+	}
+	defer locker.Close()
+	if _, err := locker.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin goal writer: %v", err)
+	}
+	locked := true
+	defer func() {
+		if locked {
+			_, _ = locker.ExecContext(context.Background(), `ROLLBACK`)
+		}
+	}()
+	if _, err := locker.ExecContext(ctx, `INSERT INTO goal_events
+		(goal_id, session_id, kind, body, payload_json)
+		VALUES (?, ?, ?, ?, '{}')`, goal.ID, sess.ID, GoalEventToolUse, "working"); err != nil {
+		t.Fatalf("append uncommitted goal event: %v", err)
+	}
+
+	type appendResult struct {
+		messages []Message
+		err      error
+	}
+	result := make(chan appendResult, 1)
+	go func() {
+		messages, err := db.AppendMessages(ctx, sess.ID, []Message{{Role: RoleUser, Content: "hello"}})
+		result <- appendResult{messages: messages, err: err}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for db.db.Stats().InUse < 2 {
+		select {
+		case got := <-result:
+			t.Fatalf("append returned before waiting for goal writer: %v", got.err)
+		case <-time.After(time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("append did not acquire a second database connection")
+		}
+	}
+	select {
+	case got := <-result:
+		t.Fatalf("append returned while goal writer held the lock: %v", got.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if _, err := locker.ExecContext(ctx, `COMMIT`); err != nil {
+		t.Fatalf("commit goal writer: %v", err)
+	}
+	locked = false
+
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("append after goal writer committed: %v", got.err)
+		}
+		if len(got.messages) != 1 || got.messages[0].Seq != 1 {
+			t.Fatalf("appended messages = %+v, want one message at seq 1", got.messages)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("append did not finish after goal writer committed")
+	}
+
+	history, err := db.ListMessages(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(history) != 1 || history[0].Seq != 1 || history[0].Content != "hello" {
+		t.Fatalf("history = %+v, want exactly the appended message", history)
 	}
 }
 

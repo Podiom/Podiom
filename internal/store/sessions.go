@@ -502,6 +502,16 @@ func (s *Store) appendMessages(ctx context.Context, sessionID string, messages [
 	}
 	defer tx.Rollback()
 
+	// Acquire the write lock before reading the next sequence number. Starting a
+	// deferred transaction with the SELECT below would make a concurrent writer
+	// turn the later INSERT into an immediate SQLITE_BUSY lock upgrade failure.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`,
+		sessionID,
+	); err != nil {
+		return nil, fmt.Errorf("touch session %q: %w", sessionID, err)
+	}
+
 	var next int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE session_id = ?`,
@@ -555,12 +565,6 @@ func (s *Store) appendMessages(ctx context.Context, sessionID string, messages [
 				return nil, fmt.Errorf("bind attachment %q: %w", id, err)
 			}
 		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE sessions SET updated_at = datetime('now') WHERE id = ?`,
-		sessionID,
-	); err != nil {
-		return nil, fmt.Errorf("touch session %q: %w", sessionID, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit append messages: %w", err)
