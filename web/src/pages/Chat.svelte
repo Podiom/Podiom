@@ -72,6 +72,9 @@
     sessionId?: string;
     agentName?: string;
     seed?: string;
+    // Set by a "needs approval" deep link, so the tap lands on the approval itself
+    // rather than merely on the session it belongs to.
+    permission?: boolean;
   }
 
   type ApprovalRisk = "safe" | "caution" | "danger";
@@ -502,6 +505,27 @@
       pendingSeed = t.seed;
       flushSeed();
     }
+    if (t.permission) revealPendingPermission();
+  }
+
+  // revealPendingPermission brings a pending approval forward after a deep link into it.
+  //
+  // A permission that arrives while the session is already open scrolls itself into view
+  // (see the permission_request case above), but one restored on attach does not: it
+  // comes back asynchronously in the turn state, after this runs. So retry briefly rather
+  // than assuming it is already here, and give up quietly — it may well have been
+  // answered somewhere else before the tap landed.
+  function revealPendingPermission() {
+    let attempts = 0;
+    const tick = () => {
+      if (pendingPermission) {
+        approvalDockOpen = true;
+        forceScrollToBottom();
+        return;
+      }
+      if (++attempts < 20) window.setTimeout(tick, 100);
+    };
+    tick();
   }
 
   function flushSeed() {

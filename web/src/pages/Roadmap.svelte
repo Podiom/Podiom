@@ -19,6 +19,7 @@
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
   import VoiceButton from "../lib/VoiceButton.svelte";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
+  import { live } from "../lib/live.svelte";
   import { appendTranscript } from "../lib/voice";
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { projectColor } from "../lib/theme";
@@ -102,7 +103,17 @@
   let etPlanRequired = $state(false);
   let savingEdit = $state(false);
 
-  onMount(load);
+  onMount(() => {
+    void load();
+    // The board has no push channel of its own: the daemon moves a task to review when
+    // its turn ends, and that transition reaches the client only as a notification.
+    // Without this the card sits in "In Progress" until the page is visited again.
+    return live.subscribe((msg) => {
+      if (msg.type !== "notification") return;
+      if (msg.notification?.Category !== "tasks") return;
+      void load();
+    });
+  });
 
   async function load() {
     try {

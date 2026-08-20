@@ -26,6 +26,7 @@
   import { auth } from "./lib/auth.svelte";
   import { avatars } from "./lib/avatars.svelte";
   import { deployment } from "./lib/base";
+  import { carryChatTarget, type ChatTarget } from "./lib/chattarget";
   import { keyboard, watchKeyboard } from "./lib/keyboard.svelte";
   import { live } from "./lib/live.svelte";
   import { initChrome, isNative, onBackButton } from "./lib/native";
@@ -53,12 +54,6 @@
   // the route, so nothing here has to be kept in step by hand.
   type Route = DeepLinkRoute;
   type SettingsTab = "providers" | "general" | "agents" | "about-you" | "updates" | "notifications" | "logs";
-
-  interface ChatTarget {
-    sessionId?: string;
-    agentName?: string;
-    seed?: string;
-  }
 
   interface SettingsAccountTarget {
     provider: Provider;
@@ -513,7 +508,10 @@
         route = target.route;
         break;
       case "chat":
-        chatTarget = { sessionId: target.sessionId };
+        // openChat may have just parked transient state for this session (a roadmap
+        // start hands over the task prompt), and the hash cannot carry it. Keep it
+        // rather than overwriting it with what the URL alone knows.
+        chatTarget = carryChatTarget(chatTarget, target.sessionId, target.permission);
         route = "chat";
         break;
       case "goal":
