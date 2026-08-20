@@ -36,8 +36,8 @@ func TestStartTaskCreatesRoadmapSessionWithProvenance(t *testing.T) {
 	if sess.Origin != store.OriginRoadmap || sess.TaskID != task.ID {
 		t.Fatalf("session provenance wrong: %+v", sess)
 	}
-	if sess.ProjectID != "mission-control" {
-		t.Fatalf("session project id = %q, want mission-control", sess.ProjectID)
+	if sess.ProjectID != "mission-control" || sess.InheritedProjectID != "mission-control" {
+		t.Fatalf("session project binding = project %q inherited %q, want mission-control", sess.ProjectID, sess.InheritedProjectID)
 	}
 
 	moved, err := c.GetTask(ctx, task.ID)

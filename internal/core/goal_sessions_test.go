@@ -66,6 +66,9 @@ func TestGoalPlanningSessionUsesProjectInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start goal planning: %v", err)
 	}
+	if sess.ProjectID != "mission-control" || sess.InheritedProjectID != "mission-control" {
+		t.Fatalf("session project binding = project %q inherited %q, want mission-control", sess.ProjectID, sess.InheritedProjectID)
+	}
 	req := startRequestFor(t, fake, sess.ID)
 	if !strings.Contains(string(req.Instructions), ".podiom-project-instructions.md") {
 		t.Fatalf("goal planning session missing project instruction path:\n%s", req.Instructions)

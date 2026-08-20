@@ -52,12 +52,16 @@ func TestRunNowCreatesScheduleSessionAndRunRecord(t *testing.T) {
 	ctx := context.Background()
 	s, c, paths, cleanup := newTestScheduler(t)
 	defer cleanup()
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "mission-control", Name: "Mission Control"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
 
 	writeSchedule(t, paths.SchedulesDir, "morning.md", `---
 agent: jared
 cron: "0 7 * * *"
 run_permission: preapproved
 enabled: true
+project: mission-control
 ---
 Summarise the calendar.
 `)
@@ -79,6 +83,9 @@ Summarise the calendar.
 	}
 	if sess.Origin != store.OriginSchedule || sess.ScheduleID != "morning" || sess.RunID != run.ID {
 		t.Fatalf("session provenance wrong: %+v", sess)
+	}
+	if sess.ProjectID != "mission-control" || sess.InheritedProjectID != "mission-control" {
+		t.Fatalf("session project binding = project %q inherited %q, want mission-control", sess.ProjectID, sess.InheritedProjectID)
 	}
 
 	runs, err := c.Store().ListScheduleRuns(ctx, "morning", 10)
