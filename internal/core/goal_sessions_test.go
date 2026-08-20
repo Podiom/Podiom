@@ -313,6 +313,56 @@ func TestGoalFeedbackIsUserOnlyContextForGoalRuns(t *testing.T) {
 	}
 }
 
+func TestGoalProjectChangePreservesAndThenRestoresSessionOverride(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newScheduledTestCore(t)
+	defer cleanup()
+	fake.Responses = []string{"planned", "reviewed"}
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "lead", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	for _, id := range []string{"alpha", "beta", "gamma"} {
+		if _, err := c.CreateProject(ctx, projects.Project{ID: id, Name: id}); err != nil {
+			t.Fatalf("create project %s: %v", id, err)
+		}
+	}
+	goal, err := c.CreateGoal(ctx, store.Goal{Title: "Ship it", LeadAgent: "lead", ProjectID: "alpha"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	session, err := c.StartGoalPlanning(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("start planning: %v", err)
+	}
+	if _, err := c.UpdateSessionProject(ctx, session.ID, "beta"); err != nil {
+		t.Fatalf("override session project: %v", err)
+	}
+
+	gamma := "gamma"
+	if _, err := c.UpdateGoal(ctx, goal.ID, GoalPatch{ProjectID: &gamma}); err != nil {
+		t.Fatalf("update goal project: %v", err)
+	}
+	if _, err := c.RunGoalReview(ctx, goal.ID); err != nil {
+		t.Fatalf("run review: %v", err)
+	}
+	overridden, err := c.store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get overridden session: %v", err)
+	}
+	if overridden.ProjectID != "beta" || overridden.InheritedProjectID != "gamma" || !overridden.ProjectOverridden {
+		t.Fatalf("goal refresh overwrote session override: %+v", overridden)
+	}
+
+	restored, err := c.UpdateSessionProject(ctx, session.ID, "")
+	if err != nil {
+		t.Fatalf("clear session override: %v", err)
+	}
+	if restored.ProjectID != "gamma" || restored.ProjectOverridden {
+		t.Fatalf("cleared override did not restore latest goal project: %+v", restored)
+	}
+}
+
 func TestGoalPlanningRateLimitCreatesRecoverableBlock(t *testing.T) {
 	ctx := context.Background()
 	c, fake, cleanup := newScheduledTestCore(t)

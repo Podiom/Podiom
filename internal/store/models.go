@@ -120,6 +120,12 @@ type Session struct {
 	CreatedAt      string
 	UpdatedAt      string
 	ProjectID      string
+	// InheritedProjectID is the project supplied by the task, schedule, or goal
+	// that created this session. ProjectOverridden keeps an agent-selected
+	// project in front of that value until the override is cleared.
+	InheritedProjectID     string `json:"-"`
+	ProjectOverridden      bool   `json:"-"`
+	ProjectBindingRevision int64  `json:"-"`
 	// SourceControlWarning records a non-fatal checkout/update problem observed
 	// while this session was created so both the UI and resumed agent context can
 	// explain why the working copy may not be current.

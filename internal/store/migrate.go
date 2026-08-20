@@ -1512,6 +1512,22 @@ var migrations = []migration{
 		sql: `ALTER TABLE notification_devices
 			ADD COLUMN status TEXT NOT NULL DEFAULT 'active';`,
 	},
+	{
+		version: 40,
+		name:    "session_project_overrides",
+		sql: `ALTER TABLE sessions ADD COLUMN inherited_project_id TEXT NOT NULL DEFAULT '';
+		ALTER TABLE sessions ADD COLUMN project_overridden INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE sessions ADD COLUMN project_binding_revision INTEGER NOT NULL DEFAULT 0;
+
+		UPDATE sessions
+		SET inherited_project_id = CASE
+			WHEN project_id <> '' THEN project_id
+			WHEN task_id IS NOT NULL THEN COALESCE((SELECT project_id FROM tasks WHERE tasks.id = sessions.task_id), '')
+			WHEN goal_id IS NOT NULL THEN COALESCE((SELECT project_id FROM goals WHERE goals.id = sessions.goal_id), '')
+			ELSE ''
+		END
+		WHERE origin IN ('schedule', 'roadmap', 'goal');`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

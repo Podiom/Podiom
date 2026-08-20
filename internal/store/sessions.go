@@ -18,10 +18,13 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 	if sess.PlanState == "" {
 		sess.PlanState = PlanNone
 	}
+	if sess.InheritedProjectID == "" && inheritedProjectOrigin(sess.Origin) {
+		sess.InheritedProjectID = sess.ProjectID
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions
-		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, goal_id, project_id, rolling_summary, provider_handle,
+		(id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin, schedule_id, run_id, task_id, goal_id, project_id, inherited_project_id, project_overridden, project_binding_revision, rolling_summary, provider_handle,
 		 source_control_warning, plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
 		sess.AgentName,
 		sess.Name,
@@ -38,6 +41,9 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 		sess.TaskID,
 		sess.GoalID,
 		sess.ProjectID,
+		sess.InheritedProjectID,
+		boolInt(sess.ProjectOverridden),
+		sess.ProjectBindingRevision,
 		sess.RollingSummary,
 		sess.ProviderHandle,
 		sess.SourceControlWarning,
@@ -58,7 +64,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) (Session, error
 func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, inherited_project_id, project_overridden, project_binding_revision, rolling_summary, provider_handle,
 		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), archived_at, COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
@@ -78,7 +84,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, inherited_project_id, project_overridden, project_binding_revision, rolling_summary, provider_handle,
 		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), archived_at, COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
@@ -105,7 +111,7 @@ func (s *Store) ListSessions(ctx context.Context) ([]Session, error) {
 func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, inherited_project_id, project_overridden, project_binding_revision, rolling_summary, provider_handle,
 		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), archived_at, COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
@@ -132,7 +138,7 @@ func (s *Store) ListSessionsByAgent(ctx context.Context, agentName string) ([]Se
 func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, inherited_project_id, project_overridden, project_binding_revision, rolling_summary, provider_handle,
 		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), archived_at, COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
@@ -158,7 +164,7 @@ func (s *Store) ListSessionsBySchedule(ctx context.Context, scheduleName string)
 func (s *Store) ListSessionsByTask(ctx context.Context, taskID string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		id, agent_name, name, description, auto_named, provider, profile, model, effort, permission_mode, origin,
-		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, rolling_summary, provider_handle,
+		COALESCE(schedule_id, ''), COALESCE(run_id, ''), COALESCE(task_id, ''), COALESCE(goal_id, ''), project_id, inherited_project_id, project_overridden, project_binding_revision, rolling_summary, provider_handle,
 		COALESCE(source_control_warning, ''), plan_state, plan_explicit, plan_file_path, plan_markdown, plan_submitted_at, plan_updated_at,
 		COALESCE(dreamed_at, ''), archived_at, COALESCE(context_tokens, 0), COALESCE(context_limit, 0),
 		COALESCE(usage_input_tokens, 0), COALESCE(usage_output_tokens, 0), COALESCE(usage_cache_read_tokens, 0), COALESCE(usage_cache_write_tokens, 0),
@@ -193,6 +199,28 @@ func (s *Store) UpdateSessionSettings(ctx context.Context, id, model, effort str
 		return Session{}, fmt.Errorf("update session %q rows affected: %w", id, err)
 	}
 	if changed == 0 {
+		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
+	}
+	return s.GetSession(ctx, id)
+}
+
+// UpdateSessionProject changes the effective project binding. A changed
+// binding invalidates provider-owned context so the next turn starts in the
+// correct workspace and replays Podiom's canonical history.
+func (s *Store) UpdateSessionProject(ctx context.Context, id, projectID string, overridden bool) (Session, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET project_id = ?, project_overridden = ?,
+			provider_handle = CASE WHEN project_id <> ? THEN '' ELSE provider_handle END,
+			context_tokens = CASE WHEN project_id <> ? THEN 0 ELSE context_tokens END,
+			context_limit = CASE WHEN project_id <> ? THEN 0 ELSE context_limit END,
+			source_control_warning = CASE WHEN project_id <> ? THEN '' ELSE source_control_warning END,
+			project_binding_revision = project_binding_revision + CASE WHEN project_id <> ? THEN 1 ELSE 0 END,
+			updated_at = datetime('now')
+		WHERE id = ?`, projectID, boolInt(overridden), projectID, projectID, projectID, projectID, projectID, id)
+	if err != nil {
+		return Session{}, fmt.Errorf("update session %q project: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
 		return Session{}, fmt.Errorf("session %q: %w", id, ErrNotFound)
 	}
 	return s.GetSession(ctx, id)
@@ -275,8 +303,15 @@ func (s *Store) SetSessionArchived(ctx context.Context, id, at string) (Session,
 // workspace. Existing canonical messages remain intact.
 func (s *Store) UpdateSessionGoalBinding(ctx context.Context, id, agentName, projectID string) (Session, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE sessions
-		SET agent_name = ?, project_id = ?, provider_handle = '', context_tokens = 0, updated_at = datetime('now')
-		WHERE id = ?`, agentName, projectID, id)
+		SET agent_name = ?1, inherited_project_id = ?2,
+			project_id = CASE WHEN project_overridden THEN project_id ELSE ?2 END,
+			provider_handle = CASE WHEN agent_name <> ?1 OR (NOT project_overridden AND project_id <> ?2) THEN '' ELSE provider_handle END,
+			context_tokens = CASE WHEN agent_name <> ?1 OR (NOT project_overridden AND project_id <> ?2) THEN 0 ELSE context_tokens END,
+			context_limit = CASE WHEN agent_name <> ?1 OR (NOT project_overridden AND project_id <> ?2) THEN 0 ELSE context_limit END,
+			source_control_warning = CASE WHEN agent_name <> ?1 OR (NOT project_overridden AND project_id <> ?2) THEN '' ELSE source_control_warning END,
+			project_binding_revision = project_binding_revision + CASE WHEN agent_name <> ?1 OR (NOT project_overridden AND project_id <> ?2) THEN 1 ELSE 0 END,
+			updated_at = datetime('now')
+		WHERE id = ?3`, agentName, projectID, id)
 	if err != nil {
 		return Session{}, fmt.Errorf("update session %q goal binding: %w", id, err)
 	}
@@ -304,6 +339,25 @@ func (s *Store) UpdateSessionProviderHandle(ctx context.Context, id, handle stri
 	return s.GetSession(ctx, id)
 }
 
+// UpdateSessionProviderHandleForProjectRevision stores a handle only while the
+// turn's project binding is still current. A false result means a project
+// change fenced off this stale provider event.
+func (s *Store) UpdateSessionProviderHandleForProjectRevision(ctx context.Context, id, handle string, projectRevision int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET provider_handle = ?, updated_at = datetime('now')
+		WHERE id = ? AND project_binding_revision = ?`, handle, id, projectRevision)
+	if err != nil {
+		return false, fmt.Errorf("update session %q provider handle: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
 // UpdateSessionContext stores the latest context-window utilization observed for
 // a session. Called once per turn from the provider stream; it avoids a re-fetch
 // (returns error only) since callers just persist the numbers for later reads.
@@ -322,6 +376,24 @@ func (s *Store) UpdateSessionContext(ctx context.Context, id string, tokens, lim
 		return fmt.Errorf("session %q: %w", id, ErrNotFound)
 	}
 	return nil
+}
+
+// UpdateSessionContextForProjectRevision applies a context snapshot only if it
+// belongs to the session's current project binding.
+func (s *Store) UpdateSessionContextForProjectRevision(ctx context.Context, id string, tokens, limit, projectRevision int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET context_tokens = ?, context_limit = ?, updated_at = datetime('now')
+		WHERE id = ? AND project_binding_revision = ?`, tokens, limit, id, projectRevision)
+	if err != nil {
+		return false, fmt.Errorf("update session %q context: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // AddSessionUsage increments a session's cumulative billed-token totals by one
@@ -610,6 +682,9 @@ func scanSession(row scanner) (Session, error) {
 		&sess.TaskID,
 		&sess.GoalID,
 		&sess.ProjectID,
+		&sess.InheritedProjectID,
+		&sess.ProjectOverridden,
+		&sess.ProjectBindingRevision,
 		&sess.RollingSummary,
 		&sess.ProviderHandle,
 		&sess.SourceControlWarning,
@@ -633,6 +708,10 @@ func scanSession(row scanner) (Session, error) {
 		return Session{}, err
 	}
 	return sess, nil
+}
+
+func inheritedProjectOrigin(origin SessionOrigin) bool {
+	return origin == OriginSchedule || origin == OriginRoadmap || origin == OriginGoal
 }
 
 func boolInt(v bool) int {

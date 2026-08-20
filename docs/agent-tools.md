@@ -59,6 +59,13 @@ whether the run is **unattended**, what the session is linked to (project, task,
 goal, schedule), what it has created, and how much context is left. It never
 returns message history.
 
+`podiom_update_session_project` changes only that same session. An existing
+project id creates an explicit override; an empty id clears it. Ordinary
+sessions then become unassigned, while task, schedule, and goal sessions return
+to the project they inherited. The record and dashboard update immediately,
+but the provider process already running the current turn stays in its existing
+workspace. The new workspace and project instructions apply from the next turn.
+
 ### Workspace file snapshots
 
 `podiom_attach_workspace_file` takes one UTF-8 text file path relative to the

@@ -36,6 +36,11 @@ a record of something that no longer exists. See
 Agents read their own side of this with `podiom_session_context`, which reports
 the session's origin, whether the run is unattended, its links in both
 directions, and its context usage — without replaying the transcript.
+They can use `podiom_update_session_project` to override the project for their
+own session. Clearing that override restores a linked session's inherited
+project, or leaves an ordinary session unassigned. A changed project starts a
+fresh provider thread in the new workspace on the next turn; SQLite history
+remains canonical and is replayed into it.
 
 ## Archive
 

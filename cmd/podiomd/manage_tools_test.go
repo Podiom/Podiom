@@ -69,9 +69,9 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// session 2 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + credentials 2 + platform 4.
-	if len(tools) != 51 {
-		t.Fatalf("expected 51 tools, got %d", len(tools))
+	// session 3 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + credentials 2 + platform 4.
+	if len(tools) != 52 {
+		t.Fatalf("expected 52 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{
@@ -142,6 +142,30 @@ func TestAttachWorkspaceFileStampsSessionAndForwardsSchema(t *testing.T) {
 	}
 	if _, ok := rec.body["path"]; !ok {
 		t.Fatalf("body missing path: %v", rec.body)
+	}
+}
+
+func TestUpdateSessionProjectUsesInjectedSessionAndForwardsEmptyProject(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	tool, ok := toolByName(c, "podiom_update_session_project")
+	if !ok {
+		t.Fatal("update session project tool not found")
+	}
+	properties, _ := tool.InputSchema["properties"].(map[string]any)
+	if _, ok := properties["session_id"]; ok {
+		t.Fatal("session_id must not be model-controlled")
+	}
+	if _, err := callTool(t, c, "podiom_update_session_project", map[string]any{"project_id": ""}); err != nil {
+		t.Fatalf("clear session project: %v", err)
+	}
+	if rec.method != http.MethodPatch || rec.path != "/api/session-context/sess-1" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	if got, ok := rec.body["project_id"]; !ok || string(got) != `""` {
+		t.Fatalf("project_id body = %s, present %v", got, ok)
+	}
+	if _, err := callTool(t, c, "podiom_update_session_project", map[string]any{}); err == nil {
+		t.Fatal("missing project_id should fail before HTTP")
 	}
 }
 

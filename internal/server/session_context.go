@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -79,13 +80,40 @@ func (s *Server) handleSessionContext(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "core unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	sessionID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/session-context/"), "/")
 	if sessionID == "" {
 		http.Error(w, "session id is required", http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodPatch {
+		var req struct {
+			ProjectID *string `json:"project_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.ProjectID == nil {
+			http.Error(w, "project_id is required", http.StatusBadRequest)
+			return
+		}
+		session, err := s.core.UpdateSessionProject(r.Context(), sessionID, *req.ProjectID)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		// The MCP call does not travel through the browser socket, so every open
+		// client needs the durable update pushed explicitly.
+		s.broadcastWS(ServerMessage{Type: "session", SessionID: session.ID, Session: &session})
+		s.broadcastWS(ServerMessage{Type: "context", SessionID: session.ID, Context: &ContextUsage{Used: 0, Max: session.ContextLimit}})
+		writeJSON(w, map[string]any{
+			"session": session,
+			"message": "Project updated. The current turn remains in its existing workspace; the new project context applies from the next turn.",
+		}, nil)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	session, err := s.core.GetSession(r.Context(), sessionID)

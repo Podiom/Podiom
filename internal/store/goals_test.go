@@ -544,7 +544,7 @@ func TestGoalsMigrationPreservesSessions(t *testing.T) {
 		// Migrations after v14 that ALTER the sessions table must be re-applied
 		// after this isolated v14 replay so GetSession (which selects their columns)
 		// still works — mirroring the real forward order where they run after v14.
-		if m.version == 16 || m.version == 32 || m.version == 36 {
+		if m.version == 16 || m.version == 32 || m.version == 36 || m.version == 40 {
 			postRebuild = append(postRebuild, m.sql)
 		}
 	}

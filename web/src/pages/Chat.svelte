@@ -570,7 +570,7 @@
           }
           selectedAgent = msg.session.AgentName;
           rememberSession(msg.session.ID);
-          if (!msg.session.ProjectID) projectName = "";
+          projectName = msg.session.ProjectID ? projectLabel(msg.session.ProjectID) : "";
           if (msg.session.PlanState !== "awaiting_approval") resetPlanReview();
           resetDraftSettings();
         }

@@ -328,7 +328,7 @@ func (c *Core) ensureGoalLeadSession(ctx context.Context, goal store.Goal) (stor
 		}
 		goal = updated
 	}
-	if sess.ProjectID != goal.ProjectID {
+	if sess.InheritedProjectID != goal.ProjectID {
 		updated, err := c.store.UpdateSessionGoalBinding(ctx, sess.ID, sess.AgentName, goal.ProjectID)
 		if err != nil {
 			return store.Session{}, goal, err

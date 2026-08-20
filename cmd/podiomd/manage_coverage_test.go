@@ -26,7 +26,7 @@ var notManageable = map[string]string{
 	"/api/provider-login":            "signing in to an account is human-only; an agent must never authenticate on the user's behalf",
 	"/api/provider-login/":           "signing in to an account is human-only; an agent must never authenticate on the user's behalf",
 	"/api/sessions":                  "creating a session spawns an unattended run of a colleague (podiom_start_task / podiom_run_schedule are the audited ways to cause work) and listing every session exposes the user's private chats with other agents",
-	"/api/sessions/":                 "deleting a session destroys the user's own conversation history, and the full detail replays the whole transcript; an agent reads its own session via podiom_session_context (/api/session-context/)",
+	"/api/sessions/":                 "deleting a session destroys the user's own conversation history, and the full detail replays the whole transcript; an agent reads and updates the safe subset of its own session via /api/session-context/",
 	"/api/attachments/":              "browser photo transport, human-only",
 	"/api/workspace-files/":          "immutable snapshot content is read by the authenticated dashboard; agents create links through podiom_attach_workspace_file",
 	"/api/plans/":                    "plan submission handled by plan-mcp, not manage-mcp",

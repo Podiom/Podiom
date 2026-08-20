@@ -10,6 +10,7 @@ import (
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -83,5 +84,48 @@ func TestSessionContextRejectsBadRequests(t *testing.T) {
 	srv.handleSessionContext(rr, httptest.NewRequest(http.MethodPost, "/api/session-context/abc", nil))
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST: status = %d, want 405", rr.Code)
+	}
+}
+
+func TestSessionContextPatchUpdatesProject(t *testing.T) {
+	ctx := context.Background()
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	if _, err := srv.core.CreateAgent(ctx, core.CreateAgentRequest{Name: "atlas", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if _, err := srv.core.CreateProject(ctx, projects.Project{ID: "demo", Name: "Demo"}); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	session, err := srv.core.CreateSession(ctx, core.CreateSessionRequest{AgentName: "atlas", Origin: store.OriginWeb})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/session-context/"+session.ID, strings.NewReader(`{"project_id":"demo"}`))
+	srv.handleSessionContext(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Session store.Session `json:"session"`
+		Message string        `json:"message"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Session.ID != session.ID || got.Session.ProjectID != "demo" || got.Session.ProviderHandle != "" {
+		t.Fatalf("updated session = %+v", got.Session)
+	}
+	if !strings.Contains(got.Message, "next turn") {
+		t.Fatalf("response message = %q", got.Message)
+	}
+
+	rr = httptest.NewRecorder()
+	srv.handleSessionContext(rr, httptest.NewRequest(http.MethodPatch, "/api/session-context/"+session.ID, strings.NewReader(`{}`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing project_id status = %d, want 400", rr.Code)
 	}
 }

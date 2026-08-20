@@ -8,6 +8,57 @@ import (
 	"testing"
 )
 
+func TestSessionProjectOverrideMigrationBackfillsLinkedProjects(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL DEFAULT '');
+		CREATE TABLE goals (id TEXT PRIMARY KEY, project_id TEXT NOT NULL DEFAULT '');
+		CREATE TABLE sessions (
+			id TEXT PRIMARY KEY, origin TEXT NOT NULL, task_id TEXT, goal_id TEXT,
+			project_id TEXT NOT NULL DEFAULT ''
+		);
+		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'task-project');
+		INSERT INTO goals (id, project_id) VALUES ('goal-1', 'goal-project');
+		INSERT INTO sessions (id, origin, task_id) VALUES ('roadmap', 'roadmap', 'task-1');
+		INSERT INTO sessions (id, origin, goal_id) VALUES ('goal', 'goal', 'goal-1');
+		INSERT INTO sessions (id, origin, project_id) VALUES ('schedule', 'schedule', 'schedule-project');
+		INSERT INTO sessions (id, origin, project_id) VALUES ('web', 'web', 'web-project');
+	`); err != nil {
+		t.Fatalf("seed old schema: %v", err)
+	}
+	var migrationSQL string
+	for _, migration := range migrations {
+		if migration.version == 40 {
+			migrationSQL = migration.sql
+		}
+	}
+	if migrationSQL == "" {
+		t.Fatal("missing session project override migration")
+	}
+	if _, err := db.Exec(migrationSQL); err != nil {
+		t.Fatalf("apply migration: %v", err)
+	}
+	wants := map[string]string{
+		"roadmap":  "task-project",
+		"goal":     "goal-project",
+		"schedule": "schedule-project",
+		"web":      "",
+	}
+	for id, want := range wants {
+		var got string
+		if err := db.QueryRow(`SELECT inherited_project_id FROM sessions WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("%s inherited project = %q, want %q", id, got, want)
+		}
+	}
+}
+
 func TestCreateSessionStoresProjectID(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
@@ -38,6 +89,62 @@ func TestCreateSessionStoresProjectID(t *testing.T) {
 	}
 	if got.ProjectID != "mission-control" {
 		t.Fatalf("stored project id = %q, want mission-control", got.ProjectID)
+	}
+}
+
+func TestSessionProjectOverrideRestoresInheritedProjectAndFencesOldTurn(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.CreateAgent(ctx, Agent{Name: "jared", Provider: "claude", PermissionMode: "approve"}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	created, err := db.CreateSession(ctx, Session{
+		AgentName:      "jared",
+		Provider:       "claude",
+		PermissionMode: "approve",
+		Origin:         OriginRoadmap,
+		ProjectID:      "alpha",
+		ProviderHandle: "old-handle",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if created.InheritedProjectID != "alpha" {
+		t.Fatalf("inherited project = %q, want alpha", created.InheritedProjectID)
+	}
+	if err := db.UpdateSessionContext(ctx, created.ID, 100, 200); err != nil {
+		t.Fatalf("seed context: %v", err)
+	}
+
+	overridden, err := db.UpdateSessionProject(ctx, created.ID, "beta", true)
+	if err != nil {
+		t.Fatalf("override project: %v", err)
+	}
+	if overridden.ProjectID != "beta" || !overridden.ProjectOverridden || overridden.InheritedProjectID != "alpha" {
+		t.Fatalf("overridden session = %+v", overridden)
+	}
+	if overridden.ProviderHandle != "" || overridden.ContextTokens != 0 || overridden.ContextLimit != 0 || overridden.ProjectBindingRevision != 1 {
+		t.Fatalf("override did not reset runtime: %+v", overridden)
+	}
+
+	if stored, err := db.UpdateSessionProviderHandleForProjectRevision(ctx, created.ID, "stale", 0); err != nil || stored {
+		t.Fatalf("stale handle update = stored %v err %v, want fenced", stored, err)
+	}
+	if stored, err := db.UpdateSessionContextForProjectRevision(ctx, created.ID, 150, 200, 0); err != nil || stored {
+		t.Fatalf("stale context update = stored %v err %v, want fenced", stored, err)
+	}
+
+	restored, err := db.UpdateSessionProject(ctx, created.ID, created.InheritedProjectID, false)
+	if err != nil {
+		t.Fatalf("clear override: %v", err)
+	}
+	if restored.ProjectID != "alpha" || restored.ProjectOverridden || restored.ProjectBindingRevision != 2 {
+		t.Fatalf("restored session = %+v", restored)
 	}
 }
 

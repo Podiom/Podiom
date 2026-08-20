@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
+	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
 
@@ -110,6 +112,65 @@ func TestUpdatedPermissionAppliesToNextTurnWithoutResettingHandle(t *testing.T) 
 	}
 	if len(fake.StartRequests) != 1 {
 		t.Fatalf("permission update restarted provider: start requests = %d, want 1", len(fake.StartRequests))
+	}
+}
+
+func TestUpdatedSessionProjectAppliesToNextTurn(t *testing.T) {
+	ctx := context.Background()
+	c, fake, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "operator", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	for _, id := range []string{"alpha", "beta"} {
+		if _, err := c.CreateProject(ctx, projects.Project{ID: id, Name: id}); err != nil {
+			t.Fatalf("create project %s: %v", id, err)
+		}
+	}
+	session, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "operator", Origin: store.OriginWeb, ProjectID: "alpha"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := c.UpdateSessionProject(ctx, session.ID, "missing"); err == nil {
+		t.Fatal("unknown project should fail")
+	}
+	unchanged, err := c.GetSession(ctx, session.ID)
+	if err != nil || unchanged.ProjectID != "alpha" || unchanged.ProviderHandle == "" {
+		t.Fatalf("failed update mutated session: %+v err=%v", unchanged, err)
+	}
+
+	updated, err := c.UpdateSessionProject(ctx, session.ID, "beta")
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+	if updated.ProjectID != "beta" || !updated.ProjectOverridden || updated.ProviderHandle != "" {
+		t.Fatalf("updated session = %+v", updated)
+	}
+	events, err := c.StreamTurn(ctx, session.ID, "continue", TurnOptions{})
+	if err != nil {
+		t.Fatalf("stream turn: %v", err)
+	}
+	for range events {
+	}
+	if len(fake.Requests) != 1 {
+		t.Fatalf("turn requests = %d, want 1", len(fake.Requests))
+	}
+	req := fake.Requests[0]
+	if req.Handle.ID != "" {
+		t.Fatalf("next turn resumed old handle %q", req.Handle.ID)
+	}
+	wantWorkspace := filepath.Join(c.paths.ProjectsDir, "beta")
+	if req.Settings.WorkspaceDir != wantWorkspace {
+		t.Fatalf("next turn workspace = %q, want %q", req.Settings.WorkspaceDir, wantWorkspace)
+	}
+
+	cleared, err := c.UpdateSessionProject(ctx, session.ID, "")
+	if err != nil {
+		t.Fatalf("clear project: %v", err)
+	}
+	if cleared.ProjectID != "" || cleared.ProjectOverridden {
+		t.Fatalf("cleared web session = %+v", cleared)
 	}
 }
 

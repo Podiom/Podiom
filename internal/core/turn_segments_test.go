@@ -57,7 +57,7 @@ func (f segmentFixture) consume(t *testing.T, events ...adapter.Event) (turnOutp
 			}
 		}
 	}()
-	output, rateLimited, ok := f.core.consumeAdapterEvents(ctx, out, f.sessionID, "", "", config.ProviderClaude, "", "", in)
+	output, rateLimited, ok := f.core.consumeAdapterEvents(ctx, out, f.sessionID, "", "", config.ProviderClaude, "", "", 0, in)
 	close(out)
 	<-drained
 	if rateLimited || !ok {

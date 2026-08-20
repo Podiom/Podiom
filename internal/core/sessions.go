@@ -379,6 +379,39 @@ func (c *Core) UpdateSessionSettings(ctx context.Context, id, model, effort stri
 	return updated, nil
 }
 
+// UpdateSessionProject sets or clears an agent-selected project override. An
+// empty project id restores the project inherited from the task, schedule, or
+// goal that created the session; ordinary sessions become unassigned.
+func (c *Core) UpdateSessionProject(ctx context.Context, id, projectID string) (store.Session, error) {
+	sess, err := c.store.GetSession(ctx, id)
+	if err != nil {
+		return store.Session{}, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	overridden := projectID != ""
+	if overridden {
+		if _, err := c.ledger.Get(projectID); err != nil {
+			return store.Session{}, err
+		}
+	} else {
+		projectID = sess.InheritedProjectID
+	}
+	updated, err := c.store.UpdateSessionProject(ctx, id, projectID, overridden)
+	if err != nil {
+		return store.Session{}, err
+	}
+	c.log.Info("session project updated",
+		"event", "run",
+		"session", updated.ID,
+		"agent", updated.AgentName,
+		"project", updated.ProjectID,
+		"inherited_project", updated.InheritedProjectID,
+		"overridden", updated.ProjectOverridden,
+		"changed", sess.ProjectID != updated.ProjectID,
+	)
+	return updated, nil
+}
+
 // TurnOptions configures one live adapter turn.
 type TurnOptions struct {
 	AttachmentIDs    []string
@@ -655,7 +688,7 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 				_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 				return
 			}
-			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.GoalID, goalRun.ID, current.Provider, current.Profile, current.ProviderHandle, events)
+			output, rateLimited, ok := c.consumeAdapterEvents(ctx, streamOut, sessionID, current.GoalID, goalRun.ID, current.Provider, current.Profile, current.ProviderHandle, current.ProjectBindingRevision, events)
 			if !ok {
 				runLog.Info("turn aborted", "provider", string(current.Provider))
 				return
@@ -1086,7 +1119,7 @@ func (c *Core) agentMCPServers(agent store.Agent) ([]podiommcp.Server, []podiomm
 	return assigned, cat.Servers, nil
 }
 
-func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID, goalRunID string, provider config.Provider, profile, providerHandle string, events <-chan adapter.Event) (turnOutput, bool, bool) {
+func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEvent, sessionID, goalID, goalRunID string, provider config.Provider, profile, providerHandle string, projectRevision int64, events <-chan adapter.Event) (turnOutput, bool, bool) {
 	// segments accumulates the turn's output in arrival order. Pointers, not
 	// values: appending would copy each strings.Builder along with its internal
 	// self-pointer, and the next write to a copy panics.
@@ -1275,9 +1308,13 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 				if event.Handle.ID == currentProviderHandle {
 					continue
 				}
-				if _, err := c.store.UpdateSessionProviderHandle(ctx, sessionID, event.Handle.ID); err != nil {
+				stored, err := c.store.UpdateSessionProviderHandleForProjectRevision(ctx, sessionID, event.Handle.ID, projectRevision)
+				if err != nil {
 					_ = c.sendPersistedTurnError(ctx, streamOut, sessionID, err.Error())
 					return result(), false, false
+				}
+				if !stored {
+					continue
 				}
 				currentProviderHandle = event.Handle.ID
 				c.log.Info("provider handle stored",
@@ -1304,8 +1341,12 @@ func (c *Core) consumeAdapterEvents(ctx context.Context, streamOut chan<- TurnEv
 			if event.ContextStatus != nil {
 				// Persist the latest utilization so the composer ring restores on
 				// reload; a failed write is non-fatal to the turn (best effort).
-				if err := c.store.UpdateSessionContext(ctx, sessionID, event.ContextStatus.UsedTokens, event.ContextStatus.MaxTokens); err != nil {
+				stored, err := c.store.UpdateSessionContextForProjectRevision(ctx, sessionID, event.ContextStatus.UsedTokens, event.ContextStatus.MaxTokens, projectRevision)
+				if err != nil {
 					c.log.Warn("persist session context failed", "event", "provider", "session", sessionID, "error", err)
+				}
+				if !stored {
+					continue
 				}
 				if !sendTurnEvent(ctx, streamOut, TurnEvent{Kind: event.Kind, ContextStatus: event.ContextStatus}) {
 					return result(), false, false
