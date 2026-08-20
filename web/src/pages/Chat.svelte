@@ -377,8 +377,7 @@
     localStorage.setItem(ARCHIVE_OPEN_KEY, String(archiveOpen));
   }
 
-  async function toggleArchiveActive() {
-    const sess = activeSession;
+  async function toggleSessionArchived(sess: Session | null) {
     if (!sess) return;
     try {
       // The updated session arrives over the WebSocket as a "session" message,
@@ -559,6 +558,10 @@
         break;
       case "session":
         if (msg.session) {
+          // Global archive broadcasts keep the shared list current, but must not
+          // navigate this page to the session whose row changed. A session frame
+          // without session_id is the direct reply that establishes a new chat.
+          if (activeSession?.ID !== msg.session.ID && (activeSession || msg.session_id)) break;
           const previousID = activeSession?.ID;
           activeSession = msg.session;
           if (previousID && previousID !== msg.session.ID) {
@@ -2008,6 +2011,7 @@
       </div>
 
       {#snippet sessionRow(s: Session)}
+        {@const archived = !!s.ArchivedAt}
         <div class="sess-row-wrap">
           <button class="sess-row" class:sel={activeSession?.ID === s.ID} onclick={() => loadHistory(s)}>
             <span class="sess-avatar-wrap">
@@ -2036,9 +2040,23 @@
               {/if}
             </span>
           </button>
-          <button class="sess-x" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          <div class="sess-row-actions">
+            <button
+              class="sess-row-action sess-archive-action"
+              title={archived ? "Unarchive session" : "Archive session"}
+              aria-label={archived ? "Unarchive session" : "Archive session"}
+              onclick={() => toggleSessionArchived(s)}
+            >
+              {#if archived}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M12 17v-6" /><path d="M9.5 13.5 12 11l2.5 2.5" /></svg>
+              {:else}
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M12 11v6" /><path d="M9.5 14.5 12 17l2.5-2.5" /></svg>
+              {/if}
+            </button>
+            <button class="sess-row-action sess-delete-action" title="Delete session" aria-label="Delete session" onclick={() => (pendingDelete = s)}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
         </div>
       {/snippet}
 
@@ -2130,7 +2148,7 @@
         {@const archived = !!activeSession.ArchivedAt}
         <button
           class="sq-btn"
-          onclick={toggleArchiveActive}
+          onclick={() => toggleSessionArchived(activeSession)}
           title={archived ? "Unarchive session" : "Archive session"}
           aria-label={archived ? "Unarchive session" : "Archive session"}
         >
@@ -3251,7 +3269,7 @@
     align-items: center;
     gap: 11px;
     width: 100%;
-    padding: 11px 12px;
+    padding: 11px 58px 11px 12px;
     border-radius: 13px;
     cursor: pointer;
     margin-bottom: 2px;
@@ -3260,10 +3278,17 @@
     text-align: left;
   }
 
-  .sess-x {
+  .sess-row-actions {
     position: absolute;
     top: 5px;
     right: 6px;
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  .sess-row-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3272,19 +3297,36 @@
     border: none;
     border-radius: 7px;
     background: transparent;
-    color: #b98b7c;
     cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.12s ease;
   }
 
-  .sess-row-wrap:hover .sess-x {
+  .sess-row-wrap:hover .sess-row-actions,
+  .sess-row-wrap:focus-within .sess-row-actions {
     opacity: 1;
   }
 
-  .sess-x:hover {
+  .sess-archive-action {
+    color: #6f958a;
+  }
+
+  .sess-archive-action:hover {
+    background: #eaf5f0;
+    color: var(--teal-deep);
+  }
+
+  .sess-delete-action {
+    color: #b98b7c;
+  }
+
+  .sess-delete-action:hover {
     background: #fbeeea;
     color: #a23e22;
+  }
+
+  @media (hover: none) {
+    .sess-row-actions {
+      opacity: 1;
+    }
   }
 
   .sess-row:hover {
