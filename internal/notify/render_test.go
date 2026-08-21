@@ -59,3 +59,57 @@ func TestShortTitlesAreUntouched(t *testing.T) {
 		t.Errorf("title = %q", title)
 	}
 }
+
+// TestCompletionBodiesCarryTheAgentsClosingWords checks the completion types get the
+// wider cap: their body is the agent's own summary of what it did, which is the point
+// of the notification rather than a detail hanging off it.
+func TestCompletionBodiesCarryTheAgentsClosingWords(t *testing.T) {
+	answer := strings.Repeat("shipped the thing ", 40)
+
+	for _, notifType := range []string{
+		TypeTaskReviewRequired, TypeGoalRunSucceeded, TypeScheduleSucceeded,
+	} {
+		t.Run(notifType, func(t *testing.T) {
+			_, body := render(Event{Type: notifType, Detail: answer}, displayNames{Agent: "alice"})
+			if got := utf8.RuneCountInString(body); got != answerBodyLimit {
+				t.Errorf("body is %d runes, want the answer cap of %d", got, answerBodyLimit)
+			}
+			if !strings.HasPrefix(body, "shipped the thing") {
+				t.Errorf("body did not keep the agent's words: %q", body)
+			}
+		})
+	}
+}
+
+// TestOtherBodiesKeepTheGeneralCap checks the wider cap is confined to the completion
+// types, so an error message or a goal title still gets the tighter one.
+func TestOtherBodiesKeepTheGeneralCap(t *testing.T) {
+	for _, notifType := range []string{
+		TypeGoalRunFailed, TypeScheduleFailed, TypeTaskFailed, TypeSessionExecutionFailed,
+	} {
+		t.Run(notifType, func(t *testing.T) {
+			_, body := render(Event{
+				Type: notifType, Detail: strings.Repeat("boom ", 200),
+			}, displayNames{Agent: "alice"})
+			if got := utf8.RuneCountInString(body); got != bodyLimit {
+				t.Errorf("body is %d runes, want the general cap of %d", got, bodyLimit)
+			}
+		})
+	}
+}
+
+// TestCompletionBodiesAreNeverBlank checks a turn that produced no answer still reads
+// as something. An empty Detail is normal — the agent may have ended a turn without a
+// closing message — and a blank body would render as a title with nothing under it.
+func TestCompletionBodiesAreNeverBlank(t *testing.T) {
+	for _, notifType := range []string{
+		TypeTaskReviewRequired, TypeGoalRunSucceeded, TypeScheduleSucceeded,
+	} {
+		t.Run(notifType, func(t *testing.T) {
+			_, body := render(Event{Type: notifType, GoalID: "goal-1"}, displayNames{Agent: "alice"})
+			if strings.TrimSpace(body) == "" {
+				t.Error("body is empty with no detail to render")
+			}
+		})
+	}
+}

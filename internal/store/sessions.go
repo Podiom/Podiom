@@ -622,6 +622,32 @@ func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]Message, 
 	return messages, nil
 }
 
+// LatestTurnAnswer returns the final assistant message of a session's most recent
+// turn: the answer row that follows the last user message.
+//
+// The result is bounded by that last user message rather than simply taking the newest
+// answer row, because a turn that produces only reasoning writes no answer at all —
+// unbounded, this would return the previous turn's answer and report it as the outcome
+// of the turn that just ended. Returns ErrNotFound when the latest turn produced no
+// answer.
+func (s *Store) LatestTurnAnswer(ctx context.Context, sessionID string) (string, error) {
+	var content string
+	// seq starts at 1, so 0 is the correct floor for a session with no user message.
+	err := s.db.QueryRowContext(ctx, `SELECT content FROM messages
+		WHERE session_id = ? AND role = ? AND kind = ?
+			AND seq > COALESCE((SELECT MAX(seq) FROM messages WHERE session_id = ? AND role = ?), 0)
+		ORDER BY seq DESC LIMIT 1`,
+		sessionID, RoleAssistant, KindMessage, sessionID, RoleUser,
+	).Scan(&content)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("latest turn answer for session %q: %w", sessionID, ErrNotFound)
+		}
+		return "", fmt.Errorf("latest turn answer for session %q: %w", sessionID, err)
+	}
+	return content, nil
+}
+
 // DeleteSession removes a single session. Its message history is removed by the
 // messages.session_id ON DELETE CASCADE foreign key.
 func (s *Store) DeleteSession(ctx context.Context, id string) error {

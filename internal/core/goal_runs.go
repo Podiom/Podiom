@@ -65,9 +65,14 @@ func (c *Core) finishGoalRun(ctx context.Context, id string, status store.GoalRu
 		return run, err
 	}
 	var notifType string
+	// A failed run's detail is why it failed. A successful one has no error to report,
+	// so it carries the agent's closing words instead — the notification then says what
+	// the run achieved rather than only that it ended.
+	detail := runErr
 	switch status {
 	case store.GoalRunSucceeded:
 		notifType = notify.TypeGoalRunSucceeded
+		detail = c.TurnAnswer(ctx, run.SessionID)
 	case store.GoalRunFailed:
 		notifType = notify.TypeGoalRunFailed
 	default:
@@ -80,7 +85,7 @@ func (c *Core) finishGoalRun(ctx context.Context, id string, status store.GoalRu
 		AgentName:  run.AgentName,
 		Resource:   notify.ResourceGoalRun,
 		ResourceID: run.ID,
-		Detail:     runErr,
+		Detail:     detail,
 	})
 	return run, nil
 }

@@ -8,10 +8,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
+	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
@@ -692,5 +694,89 @@ func TestUpdateRejectsBadPatchWithoutTouchingTheFile(t *testing.T) {
 	armed := true
 	if _, err := s.Update(ctx, "nope", UpdateParams{Enabled: &armed}); err == nil {
 		t.Error("expected an unknown schedule to error")
+	}
+}
+
+// TestScheduleSuccessNotifiesWithTheAgentsAnswer drives a scheduled run end to end and
+// checks the notification reports what the agent did rather than only that the run
+// finished. The scheduler reads the answer after RunScheduled has drained the turn's
+// events, so this covers the third of the three completion producers.
+func TestScheduleSuccessNotifiesWithTheAgentsAnswer(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	paths := config.NewPaths(home)
+	if _, err := config.Scaffold(paths); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	if err := os.WriteFile(paths.BaseAgents, []byte("base layer\n"), 0o644); err != nil {
+		t.Fatalf("write base agents: %v", err)
+	}
+	db, err := store.Open(paths.DB)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	engine := notify.New(notify.Options{Store: db})
+	defer engine.Close()
+
+	fake := adapter.NewFake()
+	fake.Responses = []string{"## Summary\nSummarised eleven events; two need a decision."}
+	coreSvc, err := core.New(core.Options{
+		Paths: paths, Store: db, Adapter: fake,
+		DisableBackgroundWork: true, Notifications: engine,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	if _, err := coreSvc.CreateAgent(ctx, core.CreateAgentRequest{Name: "jared", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	s := New(Options{Dir: paths.SchedulesDir, Core: coreSvc, Store: db, Notifications: engine})
+	defer s.Stop()
+
+	writeSchedule(t, paths.SchedulesDir, "morning.md", `---
+agent: jared
+cron: "0 7 * * *"
+run_permission: preapproved
+enabled: true
+---
+Summarise the calendar.
+`)
+
+	run, err := s.RunNow(ctx, "morning")
+	if err != nil {
+		t.Fatalf("run now: %v", err)
+	}
+	if run.Status != store.RunSuccess {
+		t.Fatalf("run status = %q, want success (%q)", run.Status, run.Error)
+	}
+
+	row := waitForScheduleNotification(t, db, notify.TypeScheduleSucceeded)
+	want := "Summary Summarised eleven events; two need a decision."
+	if row.Body != want {
+		t.Errorf("body = %q, want the agent's closing words %q", row.Body, want)
+	}
+}
+
+// waitForScheduleNotification polls for a stored notification of a type. The engine's
+// worker is asynchronous, so the test waits on the effect rather than the publish.
+func waitForScheduleNotification(t *testing.T, db *store.Store, notifType string) store.Notification {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		list, err := db.ListNotifications(context.Background(), store.NotificationFilter{Limit: 200})
+		if err != nil {
+			t.Fatalf("list notifications: %v", err)
+		}
+		for _, row := range list {
+			if row.Type == notifType {
+				return row
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no %s notification was stored", notifType)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
