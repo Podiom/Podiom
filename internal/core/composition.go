@@ -326,7 +326,6 @@ func agentPaths(paths config.Paths, name string) AgentPaths {
 		Agents:    filepath.Join(dir, "AGENTS.md"),
 		Memory:    filepath.Join(dir, "MEMORY.md"),
 		Workspace: filepath.Join(dir, "workspace"),
-		Tools:     filepath.Join(dir, "tools"),
 		Avatar:    filepath.Join(dir, "avatar.png"),
 	}
 }

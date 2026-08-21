@@ -176,11 +176,10 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:      "podiom_request_access",
 			APIRoutes: []string{"/api/access-requests"},
-			Description: "File an access request when you are missing a capability you genuinely cannot provision yourself. Goal runs already have full autonomous access (yolo), so you rarely need this: you can install CLI tools and change files directly — do NOT request cli_tool or permission_mode for goal work. Reserve it for things Podiom must wire for you: assigning an MCP server, installing a marketplace skill, or an env var / credential. The user is notified and approves or denies; their decision (and note) reaches you at your next review. Kinds and payload fields: " +
-				"mcp_server{server_name}, skill{registry,id,url}, cli_tool{tool, + installer fields below}, env_var{var_name,purpose,target}, permission_mode{mode}. " +
-				"cli_tool requests are INSTALLABLE when you add installer fields — on approval Podiom installs the tool into YOUR workspace and puts it on your PATH: " +
-				"installer=npm{package,version?}, installer=uv{package,version?}, installer=go{package (module path)}, installer=binary{url (https),sha256}. " +
-				"Omit installer only for host-wide tools (e.g. brew) the user must install manually; install_hint is display-only context. " +
+			Description: "File an access request when you are missing a capability you genuinely cannot provision yourself. Goal runs already have full autonomous access (yolo), so you rarely need this: you can change files directly — do NOT request permission_mode for goal work, and do NOT request a CLI tool you could install yourself with podiom_install_tool. Reserve it for things Podiom must wire for you: assigning an MCP server, installing a marketplace skill, or an env var / credential. The user is notified and approves or denies; their decision (and note) reaches you at your next review. Kinds and payload fields: " +
+				"mcp_server{server_name}, skill{registry,id,url}, cli_tool{tool}, env_var{var_name,purpose,target}, permission_mode{mode}. " +
+				"cli_tool is only for a tool the USER must install host-wide (a system package, brew, apt) — approving it acknowledges the request and shows them the suggested command; Podiom installs nothing. " +
+				"For anything you can install yourself, use podiom_install_tool instead: it needs no approval and puts the tool on every agent's PATH. install_hint is display-only context. " +
 				"env_var requests a credential/API token by NAME (e.g. GITHUB_TOKEN for gh/GitHub API access when you are blocked on missing auth). " +
 				"NEVER put the secret value in the request — name the variable and its purpose only; on approval the user enters the value privately in the Podiom UI and it is injected into your process environment for future runs. " +
 				"A request shown as executed means the variable is already set: use it directly, and never print or echo its value." + workspaceFileProseGuidance,
@@ -296,28 +295,6 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 					path += "?" + q.Encode()
 				}
 				return c.get(ctx, path)
-			},
-		},
-		{
-			Name:        "podiom_list_workspace_tools",
-			APIRoutes:   []string{"/api/agents/"},
-			Description: "List the tools installed in an agent's workspace (via approved cli_tool access requests). Check here before re-requesting a tool. Defaults to your own workspace.",
-			InputSchema: objectSchema(nil, map[string]any{
-				"agent": strProp("Agent name; defaults to you."),
-			}),
-			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
-				m, err := argMap(args)
-				if err != nil {
-					return "", err
-				}
-				agent := strings.TrimSpace(argString(m, "agent"))
-				if agent == "" {
-					agent = strings.TrimSpace(agentName)
-				}
-				if agent == "" {
-					return "", requireField(m, "agent")
-				}
-				return c.get(ctx, "/api/agents/"+url.PathEscape(agent)+"/tools")
 			},
 		},
 	}

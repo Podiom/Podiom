@@ -110,8 +110,8 @@ not something an edit should do quietly. See [scheduling.md](scheduling.md).
 `podiom_list_goals`, `podiom_get_goal`, `podiom_update_goal`,
 `podiom_record_goal_progress`, `podiom_list_goal_events`,
 `podiom_propose_goal_completion`, `podiom_request_access`, `podiom_ask_user`,
-`podiom_request_user_action`, `podiom_list_access_requests`,
-`podiom_list_workspace_tools`. See [goals.md](goals.md).
+`podiom_request_user_action`, `podiom_list_access_requests`.
+See [goals.md](goals.md).
 
 ### Agents
 `podiom_list_agents`, `podiom_get_agent`, `podiom_create_agent`,
@@ -161,6 +161,28 @@ rule the Roadmap and Schedules pages follow.
 When an agent needs a credential it does *not* have, the route is still
 `podiom_request_access` with `kind=env_var`: it names the variable and its
 purpose, you enter the value privately, and the request never carries a secret.
+
+### Toolset
+`podiom_list_toolset`, `podiom_install_tool`, `podiom_remove_tool`.
+
+Agents install the command-line tools they need themselves, into one shared
+directory under `$PODIOM_HOME` that is on every agent session's `PATH` — no
+approval, and in the Home Assistant app it survives app updates, which a
+`npm install -g` in a shell does not.
+
+What keeps that safe is the shape of the call, not a prompt in front of it: the
+agent supplies an installer name and its fields (`npm`, `uv`, `go`, `cargo`,
+`binary`, `archive`) and Podiom builds the command. An agent never writes a
+string Podiom executes, downloads must be https with a matching sha256, and
+names that would shadow the host's own tools — `node`, `git`, `python`, the
+provider CLIs — are refused, because that `PATH` entry is shared by everyone.
+
+Every install is attributed to the agent and session that made it and is listed
+under **Settings → Toolset**, where you can remove any of it.
+`podiom_remove_tool` needs `confirm=true`, since other agents may be using the
+tool. When something genuinely must be installed host-wide, the agent is back
+to asking: `podiom_request_access` with `kind=cli_tool`. See
+[toolset.md](toolset.md).
 
 ## What agents deliberately cannot do
 

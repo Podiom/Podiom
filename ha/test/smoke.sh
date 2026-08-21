@@ -279,6 +279,24 @@ if echo "${out}" | grep -qF "${STUB_TOKEN}"; then
 fi
 pass "token-sync no-ops quietly without a Supervisor"
 
+echo "== the shared toolset is on PATH, ahead of the toolchains"
+# Tools agents install with podiom_install_tool live here. The entries exist
+# before anything is installed, for the same exec-time reason as the toolchains
+# below, and they come first: a toolset entry is a tool someone specifically
+# asked for, so on a name collision it is the one meant to win.
+ts_path="$(docker exec --user podiom "${cid}" printenv PATH)"
+case "${ts_path}" in
+    /data/podiom/toolset/bin:/data/podiom/toolset/npm/bin:*) ;;
+    *) fail "toolset bin dirs do not lead PATH: ${ts_path}" ;;
+esac
+# The terminal is a login shell, which re-runs /etc/profile and rewrites PATH.
+# It is started by s6 rather than podiomd, so profile.d is the only thing that
+# puts these back — an agent and the user must see the same tools.
+docker exec --user podiom "${cid}" bash -lc \
+    'case ":$PATH:" in *":/data/podiom/toolset/bin:"*) exit 0 ;; *) exit 1 ;; esac' \
+    || fail "login shell lost the toolset PATH entries"
+pass "toolset bin dirs lead PATH for services and login shells alike"
+
 echo "== toolchain bin dirs are on PATH even when nothing is installed"
 # PATH entries for absent directories are harmless, and lookup happens at exec
 # time — that is what lets a background install become usable without a second

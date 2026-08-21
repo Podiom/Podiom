@@ -37,7 +37,11 @@ type ClaudeOptions struct {
 	// environment (user-granted credentials). Called at spawn time so values
 	// stored mid-session reach the next turn. Nil means none.
 	ExtraEnv func() []string
-	Logger   *slog.Logger
+	// ToolsetPathDirs are the shared toolset directories prepended to the
+	// subprocess PATH so agent-installed tools resolve. Fixed for the life of
+	// the daemon, which is why it belongs here rather than on each request.
+	ToolsetPathDirs []string
+	Logger          *slog.Logger
 }
 
 // Claude drives Claude Code as a per-turn process.
@@ -48,6 +52,7 @@ type Claude struct {
 	permissionTimeout time.Duration
 	mcpCommand        string
 	extraEnv          func() []string
+	toolsetPathDirs   []string
 	log               *slog.Logger
 }
 
@@ -74,6 +79,7 @@ func NewClaude(opts ClaudeOptions) (*Claude, error) {
 		permissionTimeout: timeout,
 		mcpCommand:        mcpCommand,
 		extraEnv:          opts.ExtraEnv,
+		toolsetPathDirs:   opts.ToolsetPathDirs,
 		log:               loggerOrDefault(opts.Logger),
 	}, nil
 }
@@ -152,7 +158,7 @@ func (c *Claude) startProcess(ctx context.Context, req TurnRequest, allowNative 
 	}
 	cmd := podiomexec.Command(ctx, c.bin, args...)
 	cmd.Dir = req.Settings.WorkspaceDir
-	cmd.Env = c.env(req.Settings.ProfileDir, req.Settings.ToolPathDirs)
+	cmd.Env = c.env(req.Settings.ProfileDir)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		cleanup()
@@ -430,7 +436,7 @@ func (c *Claude) Capabilities(ctx context.Context, req capabilities.Request) (ca
 	helpCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := podiomexec.Command(helpCtx, c.bin, "--help")
-	cmd.Env = c.env(req.ProfileDir, nil)
+	cmd.Env = c.env(req.ProfileDir)
 	raw, err := cmd.CombinedOutput()
 	if helpCtx.Err() != nil {
 		err = helpCtx.Err()
@@ -637,8 +643,8 @@ func (c *Claude) writeMCPConfig(req TurnRequest) (string, error) {
 	return path, nil
 }
 
-func (c *Claude) env(profileDir string, toolPathDirs []string) []string {
-	env := prependPath(os.Environ(), toolPathDirs)
+func (c *Claude) env(profileDir string) []string {
+	env := prependPath(os.Environ(), c.toolsetPathDirs)
 	env = applyExtraEnv(env, c.extraEnv)
 	info, _ := config.ProviderInfoFor(config.ProviderClaude)
 	return podiomexec.ProfileEnv(env, info.ProfileEnvVar, profileDir)
@@ -661,9 +667,10 @@ func applyExtraEnv(env []string, supplier func() []string) []string {
 	return env
 }
 
-// prependPath puts the agent's tool directories ahead of the inherited PATH so
-// a workspace-installed tool wins over a same-named host tool for this agent
-// only. No-op without dirs.
+// prependPath puts the shared toolset directories ahead of the inherited PATH
+// so an agent-installed tool wins over a same-named host tool. Reserved names
+// (tools.reservedTools) are what stop that from shadowing anything Podiom or
+// the host depends on. No-op without dirs.
 func prependPath(env, dirs []string) []string {
 	if len(dirs) == 0 {
 		return env

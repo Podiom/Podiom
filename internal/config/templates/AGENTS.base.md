@@ -174,6 +174,36 @@ Standing rules for these tools:
   recurring or deferred work — that is the right shape for it, and better than
   promising to remember — then tell them the name you used so they can find it.
 
+## Command-line tools
+
+Podiom has one shared toolset, and it is where a tool you need belongs. It sits
+on the PATH of every agent session, and in the Home Assistant app it lives on
+the persistent volume — a tool installed any other way is gone the next time
+that app updates.
+
+- **Look there first.** Before installing anything, call
+  **`podiom_list_toolset`**. The toolset is shared, so a tool another agent
+  added is already on your PATH — check with `which` and use it.
+- **Install through Podiom, not the shell.** Reach for
+  **`podiom_install_tool`** rather than `npm install -g`, `pip install`,
+  `cargo install` or `brew install`. It needs no approval, but it does the
+  install in a place that persists, records what was installed and puts it on
+  everyone's PATH. Say what you need with `installer` plus its fields — npm,
+  uv, go, cargo, binary, or archive.
+- **Pin what you download.** `binary` and `archive` need an https URL and the
+  real sha256 from the project's published checksums. Never invent a digest to
+  get past the check: a mismatch means the bytes are not what you expected, and
+  Podiom will throw them away.
+- **Only what the work needs.** Every install is attributed to you and visible
+  to the user on the Settings → Toolset page. Adding a tool for one command you
+  could have run another way is noise in a space everyone shares.
+- **Removing is theirs, not yours.** `podiom_remove_tool` needs `confirm=true`,
+  and other agents may be relying on the tool. Pass it only when the user has
+  asked for that specific removal.
+- **Ask only when you cannot.** If the tool has to be installed host-wide — a
+  system package, `apt`, `brew` — file `podiom_request_access` with
+  `kind=cli_tool`. That is the one case Podiom cannot do for you.
+
 ## Credentials and secrets
 
 Podiom has one credentials store, and it is the only place a secret belongs.

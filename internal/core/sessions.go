@@ -13,7 +13,6 @@ import (
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
-	podiomtools "github.com/Podiom/Podiom/internal/tools"
 )
 
 // CreateSessionRequest creates a durable session bound to an agent. Empty
@@ -153,7 +152,6 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		PermissionMode:     created.PermissionMode,
 		WorkspaceDir:       workspaceDir,
 		ExtraWorkspaceDirs: extraWorkspaceDirs,
-		ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(agent.Name).Tools),
 		InstructionPath:    payload.Path,
 		Instructions:       instructions,
 		NativeAgentName:    nativeAgentName,
@@ -974,7 +972,6 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			PlanMode:           PlanGateActive(sess) && NativePlanMode(sess.Provider),
 			WorkspaceDir:       workspaceDir,
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
-			ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(sess.AgentName).Tools),
 			InstructionPath:    instructionPath,
 			Instructions:       instructions,
 			NativeAgentName:    nativeAgentName,
