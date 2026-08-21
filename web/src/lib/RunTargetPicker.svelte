@@ -25,6 +25,8 @@
     onChange = (_value: RunTargetValue) => {},
     readonlyAccount = false,
     variant = "inline",
+    openMenu = null,
+    onOpenMenu,
   }: {
     agent?: Agent | null;
     profiles?: ProfileInfo[];
@@ -32,9 +34,16 @@
     onChange?: (value: RunTargetValue) => void;
     readonlyAccount?: boolean;
     variant?: "inline" | "stacked" | "toolbar";
+    openMenu?: string | null;
+    onOpenMenu?: (menu: string | null) => void;
   } = $props();
 
-  let open = $state<string | null>(null);
+  // Which menu is open is normally ours to keep. The composer chip row is the
+  // exception: on a phone every chip menu there renders in the same full-bleed
+  // slot, so one of them covering another is only avoidable if a single owner
+  // decides which is open — the parent passes onOpenMenu to take that over.
+  let localOpen = $state<string | null>(null);
+  const open = $derived(onOpenMenu ? openMenu ?? null : localOpen);
   let customModel = $state("");
   let capabilitiesByKey = $state<Record<string, ProviderCapabilities>>({});
   let loading = new Set<string>();
@@ -126,7 +135,7 @@
   }
 
   function reset() {
-    open = null;
+    setOpen(null);
     onChange({ provider: "", profile: "", model: "", effort: "" });
   }
 
@@ -141,17 +150,17 @@
       model: value.model || effectiveModel,
       effort: value.effort || effectiveEffort,
     });
-    open = null;
+    setOpen(null);
   }
 
   function chooseModel(model: string) {
     emit({ model, effort: value.effort || effectiveEffort });
-    open = null;
+    setOpen(null);
   }
 
   function chooseEffort(effort: string) {
     emit({ model: value.model || effectiveModel, effort });
-    open = null;
+    setOpen(null);
   }
 
   function applyCustomModel() {
@@ -159,9 +168,15 @@
     if (model) chooseModel(model);
   }
 
+  function setOpen(next: string | null) {
+    if (onOpenMenu) onOpenMenu(next);
+    else localOpen = next;
+  }
+
   function toggle(which: string) {
-    open = open === which ? null : which;
-    if (open === "model") customModel = effectiveModel;
+    const next = open === which ? null : which;
+    setOpen(next);
+    if (next === "model") customModel = effectiveModel;
   }
 
   function buildAccountChoices(agent: Agent | null, profiles: ProfileInfo[]) {

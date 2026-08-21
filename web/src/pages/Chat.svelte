@@ -1136,6 +1136,12 @@
     if (stick) void scrollMessagesToBottom("auto");
   });
 
+  // .composer-meta folds away with the keyboard up, taking any open chip menu
+  // with it. Close it rather than leave it to reappear when focus leaves.
+  $effect(() => {
+    if (keyboard.open && composerDropdownOpen(openDropdown)) openDropdown = null;
+  });
+
   // Errors and notices render at the bottom; make their appearance visible.
   $effect(() => {
     if (error || notice) forceScrollToBottom();
@@ -1835,6 +1841,13 @@
     openDropdown = openDropdown === key ? null : key;
   }
 
+  // The composer chips share one openDropdown slot with RunTargetPicker's menus
+  // (prefixed "rt:"). The sidebar filters and the new-session modal use the same
+  // variable but dismiss themselves, so only these keys answer to a stray tap.
+  function composerDropdownOpen(key: string | null): boolean {
+    return key === "project" || key === "perm" || key === "usage" || !!key?.startsWith("rt:");
+  }
+
   function closeMobilePanels() {
     if (!isPhone) return;
     sessOpen = false;
@@ -1952,6 +1965,17 @@
     return new Date(record.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 </script>
+
+<svelte:window
+  onpointerdown={(event) => {
+    if (!composerDropdownOpen(openDropdown)) return;
+    if ((event.target as Element | null)?.closest(".composer-meta")) return;
+    openDropdown = null;
+  }}
+  onkeydown={(event) => {
+    if (event.key === "Escape" && composerDropdownOpen(openDropdown)) openDropdown = null;
+  }}
+/>
 
 <div class="chat" class:kbd-open={keyboard.open} bind:this={chatEl} style="flex:1;display:flex;min-height:0">
   {#if isPhone && (sessOpen || ctxOpen || (planAwaiting && mobilePlanPanelOpen))}
@@ -2729,6 +2753,8 @@
             effort: activeSession ? activeSession.Effort : draftEffort,
           }}
           onChange={applyRunTarget}
+          openMenu={openDropdown?.startsWith("rt:") ? openDropdown.slice(3) : null}
+          onOpenMenu={(menu) => (openDropdown = menu ? `rt:${menu}` : null)}
         />
         <span class="chip-divider"></span>
 
@@ -5564,7 +5590,7 @@
       left: calc(12px + env(safe-area-inset-left));
       width: auto;
       min-width: 0;
-      max-height: min(280px, calc(100vh - 90px));
+      max-height: min(280px, calc(100dvh - 130px));
       overflow-y: auto;
     }
 
