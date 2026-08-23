@@ -474,3 +474,102 @@ func TestSetSessionArchivedRoundTrips(t *testing.T) {
 		t.Fatalf("archive missing session err = %v, want ErrNotFound", err)
 	}
 }
+
+// newAnswerTestSession opens a store with one session ready to take messages.
+func newAnswerTestSession(t *testing.T) (*Store, string) {
+	t.Helper()
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.CreateAgent(ctx, Agent{Name: "jared", Provider: "claude", PermissionMode: "approve"}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := db.CreateSession(ctx, Session{
+		AgentName:      "jared",
+		Provider:       "claude",
+		PermissionMode: "approve",
+		Origin:         OriginWeb,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	return db, sess.ID
+}
+
+// TestLatestTurnAnswerReturnsTheCurrentTurnsAnswer checks the query picks the answer
+// belonging to the turn that just ended, past the narration and reasoning around it.
+func TestLatestTurnAnswerReturnsTheCurrentTurnsAnswer(t *testing.T) {
+	ctx := context.Background()
+	db, sessionID := newAnswerTestSession(t)
+
+	if _, err := db.AppendMessages(ctx, sessionID, []Message{
+		{Role: RoleUser, Content: "first ask"},
+		{Role: RoleAssistant, Content: "the first answer"},
+		{Role: RoleUser, Content: "second ask"},
+		{Role: RoleAssistant, Kind: KindReasoning, Content: "thinking privately"},
+		{Role: RoleAssistant, Kind: KindNarration, Content: "let me check the config"},
+		{Role: RoleAssistant, Content: "the second answer"},
+	}); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+
+	answer, err := db.LatestTurnAnswer(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("latest turn answer: %v", err)
+	}
+	if answer != "the second answer" {
+		t.Errorf("answer = %q, want the latest turn's answer", answer)
+	}
+}
+
+// TestLatestTurnAnswerIgnoresAnEarlierTurn is the reason the query is bounded by the
+// last user message. A turn that only thought has no answer of its own, and reporting
+// the previous turn's answer would describe work that already finished.
+func TestLatestTurnAnswerIgnoresAnEarlierTurn(t *testing.T) {
+	ctx := context.Background()
+	db, sessionID := newAnswerTestSession(t)
+
+	if _, err := db.AppendMessages(ctx, sessionID, []Message{
+		{Role: RoleUser, Content: "first ask"},
+		{Role: RoleAssistant, Content: "the first answer"},
+		{Role: RoleUser, Content: "second ask"},
+		{Role: RoleAssistant, Kind: KindReasoning, Content: "thinking privately"},
+	}); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+
+	if _, err := db.LatestTurnAnswer(ctx, sessionID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound for a turn that produced no answer", err)
+	}
+}
+
+// TestLatestTurnAnswerSkipsNonAnswerKinds covers a turn whose only rows are narration
+// and a durable error: neither is the agent's answer.
+func TestLatestTurnAnswerSkipsNonAnswerKinds(t *testing.T) {
+	ctx := context.Background()
+	db, sessionID := newAnswerTestSession(t)
+
+	if _, err := db.AppendMessages(ctx, sessionID, []Message{
+		{Role: RoleUser, Content: "ask"},
+		{Role: RoleAssistant, Kind: KindNarration, Content: "working on it"},
+		{Role: RoleAssistant, Kind: KindError, Content: "boom"},
+	}); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+
+	if _, err := db.LatestTurnAnswer(ctx, sessionID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestLatestTurnAnswerForAnUnknownSession checks a deleted or bogus session is a
+// not-found rather than an empty success, so callers can tell the two apart.
+func TestLatestTurnAnswerForAnUnknownSession(t *testing.T) {
+	db, _ := newAnswerTestSession(t)
+	if _, err := db.LatestTurnAnswer(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+}

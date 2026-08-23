@@ -51,16 +51,22 @@ ENV PODIOM_TOOLCHAINS_DIR=/data/podiom/toolchains \
     SWIFTLY_BIN_DIR=/data/podiom/toolchains/swiftly/bin \
     SWIFTLY_TOOLCHAINS_DIR=/data/podiom/toolchains/swiftly/toolchains
 
-# Toolchain bin dirs go on PATH unconditionally, whether or not the user ticked
-# the toolchain: a missing PATH entry is harmless, and PATH is resolved at exec
-# time, so a toolchain that finishes installing mid-session becomes usable with
-# no second restart. Every service and terminal inherits this, which is why
-# Codex-backed turns see these tools even though per-agent PATH injection can't
-# reach the long-lived app-server.
+# Toolchain and toolset bin dirs go on PATH unconditionally, whether or not
+# anything is installed in them: a missing PATH entry is harmless, and PATH is
+# resolved at exec time, so a toolchain or tool that finishes installing
+# mid-session becomes usable with no second restart. Every service and terminal
+# inherits this.
+#
+# The toolset comes first: it holds the specific tools agents asked for, so when
+# a name collides it is the one meant to win. podiomd injects these same two
+# entries into every process it spawns, which is what puts them on the PATH of
+# the long-lived Codex app-server; setting them here is what additionally
+# reaches ttyd and any login shell, which s6 starts rather than podiomd.
+#
 # python/bin deliberately precedes /usr/bin: the /data interpreter shadows the
 # image's python3 for user code, while mcp-proxy and uv keep working because
 # pipx venvs record their interpreter by absolute path.
-ENV PATH=/data/podiom/toolchains/python/bin:/data/podiom/toolchains/go/bin:/data/podiom/toolchains/cargo/bin:/data/podiom/toolchains/swiftly/bin:${PATH}
+ENV PATH=/data/podiom/toolset/bin:/data/podiom/toolset/npm/bin:/data/podiom/toolchains/python/bin:/data/podiom/toolchains/go/bin:/data/podiom/toolchains/cargo/bin:/data/podiom/toolchains/swiftly/bin:${PATH}
 
 # Claude refuses bypassPermissions while running as root. Run every Podiom
 # service and terminal as this fixed account; s6 itself remains root so the
@@ -81,11 +87,11 @@ RUN set -eu; \
       [ -n "$v" ] || { echo "missing build-arg; source ha/versions.env" >&2; exit 1; }; \
     done
 
-# Node from NodeSource (per-arch debs) + pipx for mcp-proxy. git is needed by
-# the coding CLIs and by Podiom's project source control; openssh-client is a
-# Recommends of git, so --no-install-recommends would otherwise drop it and
-# every SSH remote (git@github.com:…) would fail. procps gives the terminal
-# shell ps/top.
+# Node from NodeSource (per-arch debs) + pipx for mcp-proxy. git and GitHub's
+# gh CLI are needed by the coding CLIs and by Podiom's project source control;
+# openssh-client is a Recommends of git, so --no-install-recommends would
+# otherwise drop it and every SSH remote (git@github.com:…) would fail. procps
+# gives the terminal shell ps/top.
 #
 # The second group is what the optional language toolchains need in order to
 # LINK. They have to be baked in: /usr is not writable by uid 1000 at runtime
@@ -99,7 +105,7 @@ RUN set -eu; \
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      ca-certificates git openssh-client gnupg pipx procps python3; \
+      ca-certificates git gh openssh-client gnupg pipx procps python3; \
     apt-get install -y --no-install-recommends \
       binutils binutils-gold gcc g++ libc6-dev pkg-config tzdata uuid-dev \
       libcurl4-openssl-dev libedit-dev libicu-dev libncurses-dev \

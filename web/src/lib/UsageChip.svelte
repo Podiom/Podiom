@@ -413,7 +413,7 @@
       bottom: 47px;
       left: calc(12px + env(safe-area-inset-left));
       width: auto;
-      max-height: calc(100vh - 90px);
+      max-height: min(320px, calc(100dvh - 130px));
       overflow-y: auto;
     }
   }

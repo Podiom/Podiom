@@ -22,7 +22,8 @@ import type {
   GoalActionItem,
   GoalActionItemStatus,
   CredentialInfo,
-  WorkspaceTool,
+  ToolsetEntry,
+  ToolsetInstaller,
   WorkspaceFileSnapshot,
   DreamResult,
   GitHubDevicePoll,
@@ -1356,16 +1357,32 @@ export async function deleteCredential(name: string): Promise<void> {
   await request(`/api/credentials/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
 
-// --- Workspace tools -----------------------------------------------------------
+// --- Toolset -------------------------------------------------------------------
 
-export async function listAgentTools(name: string): Promise<WorkspaceTool[]> {
-  return asJSON(await request(`/api/agents/${encodeURIComponent(name)}/tools`));
+export async function listToolset(): Promise<ToolsetEntry[]> {
+  return asJSON(await request("/api/toolset"));
 }
 
-export async function removeAgentTool(name: string, tool: string): Promise<void> {
+// installToolsetTool runs to completion server-side, so this resolves only once
+// the tool is installed and verified — or rejects with why it failed.
+export async function installToolsetTool(spec: {
+  tool: string;
+  installer: ToolsetInstaller;
+  package?: string;
+  version?: string;
+  url?: string;
+  sha256?: string;
+  path?: string;
+}): Promise<void> {
   await asJSON(
-    await request(`/api/agents/${encodeURIComponent(name)}/tools/${encodeURIComponent(tool)}`, {
-      method: "DELETE",
+    await request("/api/toolset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(spec),
     }),
   );
+}
+
+export async function removeToolsetTool(tool: string): Promise<void> {
+  await asJSON(await request(`/api/toolset/${encodeURIComponent(tool)}`, { method: "DELETE" }));
 }

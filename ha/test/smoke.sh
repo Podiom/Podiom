@@ -9,7 +9,7 @@
 #   - podiomd serves /healthz on 8099
 #   - the HA-only mobile listener on 8100 is API-only and token-protected
 #   - legacy root-owned /data is safely migrated to the non-root podiom account
-#   - claude / codex / mcp-proxy / uvx / ttyd are present at their pinned versions
+#   - gh is available, and claude / codex / mcp-proxy / uvx / ttyd are pinned
 #   - yq is absent (profile login dispatch no longer needs it)
 #   - migrated SSH keys load, Git can commit, and podiomd sees the public key
 #   - Claude bypassPermissions starts as non-root instead of hitting its root guard
@@ -31,6 +31,28 @@ trap cleanup EXIT
 
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok: $*"; }
+
+# path_index <path> <entry> — 1-based position of <entry> in a colon-separated
+# PATH, or 0 when it is absent.
+#
+# The PATH assertions below are about precedence — which directory wins when
+# two hold the same executable name — so they compare positions rather than
+# anchoring a prefix match on whoever happens to be first. Anchoring made an
+# earlier assertion break the moment a new entry was legitimately prepended,
+# reporting a failure about ordering that was never what it meant to check.
+path_index() {
+    local want="$2" i=0 entry
+    local -a parts
+    IFS=: read -ra parts <<< "$1"
+    for entry in "${parts[@]}"; do
+        i=$((i + 1))
+        if [ "${entry}" = "${want}" ]; then
+            echo "${i}"
+            return 0
+        fi
+    done
+    echo 0
+}
 
 # run_toolchains <ticked-list> [extra docker -e flags…]
 # Drives podiom-toolchains with a given `toolchains` selection. There is no
@@ -164,10 +186,11 @@ pass "services are non-root; legacy data migrated without following symlinks or 
 echo "== bundled tool versions"
 docker exec --user podiom "${cid}" claude --version || fail "claude --version"
 docker exec --user podiom "${cid}" codex --version || fail "codex --version"
+docker exec --user podiom "${cid}" gh --version || fail "gh --version"
 docker exec --user podiom "${cid}" mcp-proxy --help >/dev/null || fail "mcp-proxy --help"
 docker exec --user podiom "${cid}" uvx --version || fail "uvx --version"
 docker exec --user podiom "${cid}" ttyd --version || fail "ttyd --version"
-pass "claude / codex / mcp-proxy / uvx / ttyd all run"
+pass "claude / codex / gh / mcp-proxy / uvx / ttyd all run"
 
 if docker exec "${cid}" bash -lc 'command -v yq' >/dev/null 2>&1; then
     fail "yq should not be bundled in the HA image"
@@ -278,6 +301,34 @@ if echo "${out}" | grep -qF "${STUB_TOKEN}"; then
 fi
 pass "token-sync no-ops quietly without a Supervisor"
 
+echo "== the shared toolset is on PATH, ahead of the toolchains"
+# Tools agents install with podiom_install_tool live here. The entries exist
+# before anything is installed, for the same exec-time reason as the toolchains
+# below, and they come first: a toolset entry is a tool someone specifically
+# asked for, so on a name collision it is the one meant to win.
+ts_path="$(docker exec --user podiom "${cid}" printenv PATH)"
+ts_bin="$(path_index "${ts_path}" /data/podiom/toolset/bin)"
+ts_npm="$(path_index "${ts_path}" /data/podiom/toolset/npm/bin)"
+[ "${ts_bin}" -ne 0 ] || fail "/data/podiom/toolset/bin missing from PATH: ${ts_path}"
+[ "${ts_npm}" -ne 0 ] || fail "/data/podiom/toolset/npm/bin missing from PATH: ${ts_path}"
+# A toolset entry is a tool someone specifically asked for, so it must beat
+# both the toolchains and the image's own binaries on a name collision.
+ts_usr="$(path_index "${ts_path}" /usr/bin)"
+ts_tc="$(path_index "${ts_path}" /data/podiom/toolchains/python/bin)"
+# Checked before the comparisons so an absent entry (index 0) reports itself
+# rather than surfacing as a bogus ordering failure.
+[ "${ts_usr}" -ne 0 ] || fail "/usr/bin missing from PATH: ${ts_path}"
+[ "${ts_tc}" -ne 0 ] || fail "toolchains/python/bin missing from PATH: ${ts_path}"
+[ "${ts_bin}" -lt "${ts_usr}" ] || fail "toolset/bin does not precede /usr/bin: ${ts_path}"
+[ "${ts_bin}" -lt "${ts_tc}" ] || fail "toolset/bin does not precede the toolchains: ${ts_path}"
+# The terminal is a login shell, which re-runs /etc/profile and rewrites PATH.
+# It is started by s6 rather than podiomd, so profile.d is the only thing that
+# puts these back — an agent and the user must see the same tools.
+docker exec --user podiom "${cid}" bash -lc \
+    'case ":$PATH:" in *":/data/podiom/toolset/bin:"*) exit 0 ;; *) exit 1 ;; esac' \
+    || fail "login shell lost the toolset PATH entries"
+pass "toolset bin dirs lead PATH for services and login shells alike"
+
 echo "== toolchain bin dirs are on PATH even when nothing is installed"
 # PATH entries for absent directories are harmless, and lookup happens at exec
 # time — that is what lets a background install become usable without a second
@@ -290,11 +341,15 @@ for d in python go cargo swiftly; do
     esac
 done
 # The /data Python must win over the image's, or ticking `python` does nothing.
-case "${tc_path}" in
-    /data/podiom/toolchains/python/bin:*) ;;
-    *) fail "toolchains/python/bin does not precede the rest of PATH: ${tc_path}" ;;
-esac
-pass "all four toolchain bin dirs on PATH, python first"
+# What matters is that it beats /usr/bin, not that it leads PATH — the toolset
+# sits ahead of it by design, and cannot hold a `python3` to fight over anyway
+# (a reserved name, precisely so this stays true).
+tc_py="$(path_index "${tc_path}" /data/podiom/toolchains/python/bin)"
+tc_usr="$(path_index "${tc_path}" /usr/bin)"
+[ "${tc_py}" -ne 0 ] || fail "toolchains/python/bin missing from PATH: ${tc_path}"
+[ "${tc_usr}" -ne 0 ] || fail "/usr/bin missing from PATH: ${tc_path}"
+[ "${tc_py}" -lt "${tc_usr}" ] || fail "toolchains/python/bin does not precede /usr/bin: ${tc_path}"
+pass "all four toolchain bin dirs on PATH, python ahead of the image interpreter"
 
 echo "== cargo/swift shims can find their toolchain at runtime"
 # These are runtime settings, not just install-time: without them the shims

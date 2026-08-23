@@ -152,6 +152,24 @@ point your agent at a Mac (SSH, or a macOS CI runner).
 Approving it acknowledges the request — Podiom cannot install a system-wide
 toolchain on your behalf — then you tick the box here and save.
 
+## The toolset — individual tools, no setting to change
+
+Language toolchains are the runtimes you choose. Individual command-line tools
+are the agents' own business: when one needs `rg`, `jq`, or a linter, it
+installs it into `/data/podiom/toolset/` itself. No approval, and nothing for
+you to tick.
+
+That directory is on `/data`, so those tools survive restarts and add-on
+updates just like the toolchains do — which is the point, since anything an
+agent installed with `npm install -g` or `apt` would not. They are on the
+`PATH` of every agent session and of the **Terminal** tab, so what your agents
+can run, you can run too.
+
+You can see everything installed, who installed it, and remove any of it, under
+**Settings → Toolset** in Podiom. Note that a tool needing a compiler still
+needs the matching toolchain ticked above: an agent asking to install a Go or
+Rust program will be told to ask you for the toolchain first.
+
 ## Backups — free, and worth protecting
 
 Everything Podiom knows lives on `/data`: sessions and history, agent

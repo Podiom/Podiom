@@ -28,6 +28,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"/api/onboarding/token", s.handleOnboardingToken},
 		{"/api/agents", s.handleAgents},
 		{"/api/agents/", s.handleAgent},
+		{"/api/toolset", s.handleToolset},
+		{"/api/toolset/", s.handleToolset},
 		{"/api/memory/status", s.handleMemoryStatus},
 		{"/api/profiles", s.handleProfiles},
 		{"/api/profiles/", s.handleProfile},

@@ -53,7 +53,7 @@
   // knows what a URL looks like — notifications name a logical target and it decides
   // the route, so nothing here has to be kept in step by hand.
   type Route = DeepLinkRoute;
-  type SettingsTab = "providers" | "general" | "agents" | "about-you" | "updates" | "notifications" | "logs";
+  type SettingsTab = "providers" | "general" | "agents" | "about-you" | "credentials" | "toolset" | "updates" | "notifications" | "logs";
 
   interface SettingsAccountTarget {
     provider: Provider;

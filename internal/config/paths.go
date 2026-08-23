@@ -27,6 +27,7 @@ type Paths struct {
 	UserMD          string // USER.md (user profile injected into every agent's context)
 	DB              string // podiom.db (SQLite)
 	AgentsDir       string // agents/
+	ToolsetDir      string // toolset/ (shared, agent-provisioned CLI tools)
 	ProjectsDir     string // projects/
 	ProjectsYAML    string // projects/projects.yaml
 	SchedulesDir    string // schedules/
@@ -75,6 +76,7 @@ func NewPaths(home string) Paths {
 		UserMD:          filepath.Join(home, "USER.md"),
 		DB:              filepath.Join(home, "podiom.db"),
 		AgentsDir:       filepath.Join(home, "agents"),
+		ToolsetDir:      filepath.Join(home, "toolset"),
 		ProjectsDir:     filepath.Join(home, "projects"),
 		ProjectsYAML:    filepath.Join(home, "projects", "projects.yaml"),
 		SchedulesDir:    filepath.Join(home, "schedules"),

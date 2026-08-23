@@ -31,6 +31,7 @@ func manageTools(c *manageClient, sessionID, agentName string) []mcpTool {
 	tools = append(tools, goalTools(c, sessionID, agentName)...)
 	tools = append(tools, agentTools(c, agentName)...)
 	tools = append(tools, credentialTools(c, sessionID, agentName)...)
+	tools = append(tools, toolsetTools(c, sessionID, agentName)...)
 	tools = append(tools, platformTools(c)...)
 	return tools
 }
@@ -851,6 +852,99 @@ func credentialTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			},
 		},
 	}
+}
+
+// --- the shared toolset -----------------------------------------------------
+
+func toolsetTools(c *manageClient, sessionID, agentName string) []mcpTool {
+	return []mcpTool{
+		{
+			Name:      "podiom_list_toolset",
+			APIRoutes: []string{"/api/toolset"},
+			Description: "List the command-line tools installed in Podiom's shared toolset — what each one is, how it was installed, and its version. " +
+				"Check here before installing anything: the toolset is shared with every agent, so a tool another agent added is already on your PATH. " +
+				"An entry marked needs_reinstall was carried over from an older per-agent layout and has no files yet — install it again with the same fields to restore it. " +
+				"An entry marked broken is one whose executable has since gone missing.",
+			InputSchema: objectSchema(nil, nil),
+			Handler: func(ctx context.Context, _ json.RawMessage) (string, error) {
+				return c.get(ctx, "/api/toolset")
+			},
+		},
+		{
+			Name:      "podiom_install_tool",
+			APIRoutes: []string{"/api/toolset"},
+			Description: "Install a command-line tool you are missing into Podiom's shared toolset. This is the durable place for tools: it lives under $PODIOM_HOME, it is on the PATH of every agent session, and in the Home Assistant app it survives app updates — `npm install -g`, `pip install` and `brew install` do not, because everything outside /data is wiped. " +
+				"Prefer this over installing by hand in the shell. It needs no approval, but it is recorded against you and the user can see and remove anything you add, so install what the work needs and nothing else. " +
+				"Installers and their fields: " +
+				"installer=npm{package,version?}; installer=uv{package,version?} for Python tools; installer=go{package (module path)}; installer=cargo{package,version?} for Rust crates; " +
+				"installer=binary{url,sha256} for a single executable; installer=archive{url,sha256,path?} for a .tar.gz or .zip release, where path names the executable inside it. " +
+				"Downloads must be https and are checked against the sha256 you pin — get it from the project's published checksums, never guess it, and a mismatch discards the download. " +
+				"The call returns once the install has finished and the executable has been verified, so a success means you can use the tool on your next command. " +
+				"Names that would shadow the host's own tools (node, npm, git, python, go, uv, claude, codex, …) are refused: the toolset sits ahead of the system PATH for everyone.",
+			InputSchema: objectSchema([]string{"tool", "installer"}, map[string]any{
+				"tool":      strProp("The executable name you will invoke, e.g. `rg`. A bare name — no path, no spaces."),
+				"installer": strProp("One of: npm, uv, go, cargo, binary, archive."),
+				"package":   strProp("Package name (npm/uv/cargo) or Go module path. Required for npm, uv, go and cargo."),
+				"version":   strProp("Version to pin. Omit for the latest at install time."),
+				"url":       strProp("https URL of the executable (binary) or the release archive (archive)."),
+				"sha256":    strProp("64 hex characters. The pinned digest of the download; a mismatch is discarded."),
+				"path":      strProp("For archive: the path of the executable inside the archive, e.g. `ripgrep-14.1.0-x86_64-unknown-linux-musl/rg`. Omit to search the extracted files for one named after the tool."),
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				for _, field := range []string{"tool", "installer"} {
+					if err := requireField(m, field); err != nil {
+						return "", err
+					}
+				}
+				body := bodyFrom(m, "tool", "installer", "package", "version", "url", "sha256", "path")
+				return c.post(ctx, "/api/toolset", stampInstaller(body, sessionID, agentName))
+			},
+		},
+		{
+			Name:      "podiom_remove_tool",
+			APIRoutes: []string{"/api/toolset/"},
+			Description: "Remove a tool from the shared toolset: uninstall it and drop its manifest entry. Destructive: requires confirm=true. " +
+				"Every agent shares this toolset, so removing something you no longer need may break work someone else is relying on — only pass confirm=true when the user has asked for that specific removal.",
+			InputSchema: objectSchema([]string{"tool", "confirm"}, map[string]any{
+				"tool":    strProp("Name of the installed tool to remove."),
+				"confirm": confirmProp,
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				if err := requireField(m, "tool"); err != nil {
+					return "", err
+				}
+				if !argBool(m, "confirm") {
+					return "", fmt.Errorf("removing %q needs confirm=true; the toolset is shared with every agent", argString(m, "tool"))
+				}
+				return c.del(ctx, "/api/toolset/"+url.PathEscape(argString(m, "tool")))
+			},
+		},
+	}
+}
+
+// stampInstaller records who asked for an install. Stamped here from the MCP
+// helper's own launch flags rather than from the model, so provenance never
+// depends on the model reporting its own identity — same rule as
+// stampCreator.
+func stampInstaller(body map[string]json.RawMessage, sessionID, agentName string) map[string]json.RawMessage {
+	if body == nil {
+		body = map[string]json.RawMessage{}
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		body["session_id"], _ = json.Marshal(sessionID)
+	}
+	if strings.TrimSpace(agentName) != "" {
+		body["installed_by"], _ = json.Marshal(agentName)
+	}
+	return body
 }
 
 // --- config / logs / usage ---------------------------------------------------

@@ -75,6 +75,10 @@ func (s *Server) markRoadmapSessionFinished(ctx context.Context, sessionID strin
 	// those would announce "ready for review" for work that is still running and
 	// then immediately un-announce it. Reaching review because the agent's turn
 	// finished is the one case that means what it says.
+	//
+	// Detail is the agent's own closing words, so the notification says what the agent
+	// concluded rather than only that it stopped. Empty when the turn produced no
+	// answer, which rendering covers with its static sentence.
 	s.notifications.Publish(notify.Event{
 		Type:       notify.TypeTaskReviewRequired,
 		SessionID:  sessionID,
@@ -83,5 +87,6 @@ func (s *Server) markRoadmapSessionFinished(ctx context.Context, sessionID strin
 		AgentName:  sess.AgentName,
 		Resource:   notify.ResourceTask,
 		ResourceID: sess.TaskID,
+		Detail:     s.core.TurnAnswer(ctx, sessionID),
 	})
 }

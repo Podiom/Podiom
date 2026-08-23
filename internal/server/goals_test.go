@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -743,147 +741,48 @@ func TestGoalDetailAndDelete(t *testing.T) {
 	}
 }
 
-// installRedirect sends every download to the local test server regardless of
-// the https URL in the request payload.
-type installRedirect struct{ base string }
+// TestCLIToolStaysAcknowledgeOnly guards the rule that a cli_tool approval
+// never installs anything. Agents provision their own tools through the shared
+// toolset, so a cli_tool request means only "the user must install this
+// host-wide" — including when it carries the installer fields the old
+// per-agent grant used to act on, which are now inert.
+func TestCLIToolStaysAcknowledgeOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{
+		{"host-only", `{"tool":"lychee","install_hint":"brew install lychee"}`},
+		{"legacy installer fields", `{"tool":"lychee","installer":"npm","package":"lychee"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, srv, cleanup := newGoalTestServer(t)
+			defer cleanup()
+			goal := createGoalViaCore(t, srv, store.Goal{})
 
-func (t installRedirect) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.URL.Scheme = "http"
-	req.URL.Host = strings.TrimPrefix(t.base, "http://")
-	return http.DefaultTransport.RoundTrip(req)
-}
+			body := `{"goal_id":"` + goal.ID + `","kind":"cli_tool","agent_name":"atlas","reason":"needs a tool",` +
+				`"payload":` + tc.payload + `}`
+			req := httptest.NewRequest(http.MethodPost, "/api/access-requests", bytes.NewBufferString(body))
+			rr := httptest.NewRecorder()
+			srv.handleAccessRequests(rr, req)
+			var filed store.AccessRequest
+			_ = json.NewDecoder(rr.Body).Decode(&filed)
 
-// TestInstallableCLIToolGrant exercises the async workspace-tool grant end to
-// end with the binary installer: approve returns `approved` (the installing
-// state), the background install lands `executed`, the manifest records the
-// tool, and the goal timeline carries the evidence.
-func TestInstallableCLIToolGrant(t *testing.T) {
-	_, srv, cleanup := newGoalTestServer(t)
-	defer cleanup()
-	goal := createGoalViaCore(t, srv, store.Goal{})
-
-	payload := []byte("#!/bin/sh\necho toolbin 1.0\n")
-	sum := sha256.Sum256(payload)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(payload)
-	}))
-	defer up.Close()
-	restore := podiomtools.SetHTTPClientForTest(&http.Client{Transport: installRedirect{base: up.URL}})
-	defer restore()
-
-	body := `{"goal_id":"` + goal.ID + `","kind":"cli_tool","agent_name":"atlas","session_id":"s1","reason":"link checks",` +
-		`"payload":{"tool":"toolbin","installer":"binary","url":"https://example.test/toolbin","sha256":"` + hex.EncodeToString(sum[:]) + `"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/access-requests", bytes.NewBufferString(body))
-	rr := httptest.NewRecorder()
-	srv.handleAccessRequests(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("file request: %d %s", rr.Code, rr.Body.String())
-	}
-	var filed store.AccessRequest
-	if err := json.NewDecoder(rr.Body).Decode(&filed); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/api/access-requests/"+filed.ID+"/approve", bytes.NewBufferString(`{}`))
-	rr = httptest.NewRecorder()
-	srv.handleAccessRequest(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("approve: %d %s", rr.Code, rr.Body.String())
-	}
-	var approved store.AccessRequest
-	_ = json.NewDecoder(rr.Body).Decode(&approved)
-	if approved.Status != store.AccessApproved {
-		t.Fatalf("approve returned %q, want approved (installing)", approved.Status)
-	}
-
-	// The install runs async; poll until it lands.
-	deadline := time.Now().Add(10 * time.Second)
-	var final store.AccessRequest
-	for time.Now().Before(deadline) {
-		got, err := srv.core.GetAccessRequest(context.Background(), filed.ID)
-		if err != nil {
-			t.Fatalf("get request: %v", err)
-		}
-		if got.Status == store.AccessExecuted || got.Status == store.AccessFailed {
-			final = got
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if final.Status != store.AccessExecuted {
-		t.Fatalf("final status = %q (err %q), want executed", final.Status, final.ExecutionError)
-	}
-
-	// Manifest + executable landed in the agent's tool dirs.
-	root := srv.core.AgentPaths("atlas").Tools
-	list, err := podiomtools.List(root)
-	if err != nil || len(list) != 1 || list[0].Tool != "toolbin" || list[0].Broken {
-		t.Fatalf("manifest = %+v (err %v)", list, err)
-	}
-	if list[0].RequestID != filed.ID || list[0].GoalID != goal.ID {
-		t.Fatalf("manifest provenance = %+v", list[0])
-	}
-
-	// Timeline carries the install evidence.
-	events, _ := srv.core.ListGoalEvents(context.Background(), goal.ID, 0, 0)
-	foundEvidence := false
-	for _, ev := range events {
-		if ev.Kind == store.GoalEventAccessDecided && strings.Contains(ev.Body, "Installed toolbin") {
-			foundEvidence = true
-		}
-	}
-	if !foundEvidence {
-		t.Fatalf("no install evidence on the timeline: %+v", events)
-	}
-
-	// REST surface: list + remove.
-	req = httptest.NewRequest(http.MethodGet, "/api/agents/atlas/tools", nil)
-	rr = httptest.NewRecorder()
-	srv.handleAgent(rr, req)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "toolbin") {
-		t.Fatalf("list tools: %d %s", rr.Code, rr.Body.String())
-	}
-	req = httptest.NewRequest(http.MethodDelete, "/api/agents/atlas/tools/toolbin", nil)
-	rr = httptest.NewRecorder()
-	srv.handleAgent(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("remove tool: %d %s", rr.Code, rr.Body.String())
-	}
-	if list, _ := podiomtools.List(root); len(list) != 0 {
-		t.Fatalf("manifest after remove = %+v", list)
-	}
-}
-
-// TestHostOnlyCLIToolStaysAcknowledgeOnly guards the goals-v1 behavior: no
-// installer fields → approval is terminal, nothing executes.
-func TestHostOnlyCLIToolStaysAcknowledgeOnly(t *testing.T) {
-	_, srv, cleanup := newGoalTestServer(t)
-	defer cleanup()
-	goal := createGoalViaCore(t, srv, store.Goal{})
-
-	body := `{"goal_id":"` + goal.ID + `","kind":"cli_tool","agent_name":"atlas","reason":"needs brew tool",` +
-		`"payload":{"tool":"lychee","install_hint":"brew install lychee"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/access-requests", bytes.NewBufferString(body))
-	rr := httptest.NewRecorder()
-	srv.handleAccessRequests(rr, req)
-	var filed store.AccessRequest
-	_ = json.NewDecoder(rr.Body).Decode(&filed)
-
-	req = httptest.NewRequest(http.MethodPost, "/api/access-requests/"+filed.ID+"/approve", bytes.NewBufferString(`{"note":"done"}`))
-	rr = httptest.NewRecorder()
-	srv.handleAccessRequest(rr, req)
-	var decided store.AccessRequest
-	_ = json.NewDecoder(rr.Body).Decode(&decided)
-	if decided.Status != store.AccessApproved {
-		t.Fatalf("host-only decided = %+v, want approved terminal", decided)
-	}
-	time.Sleep(100 * time.Millisecond)
-	if got, _ := srv.core.GetAccessRequest(context.Background(), filed.ID); got.Status != store.AccessApproved {
-		t.Fatalf("host-only request moved to %q; must stay approved", got.Status)
-	}
-	if list, _ := podiomtools.List(srv.core.AgentPaths("atlas").Tools); len(list) != 0 {
-		t.Fatalf("host-only request must not install anything: %+v", list)
+			req = httptest.NewRequest(http.MethodPost, "/api/access-requests/"+filed.ID+"/approve", bytes.NewBufferString(`{"note":"done"}`))
+			rr = httptest.NewRecorder()
+			srv.handleAccessRequest(rr, req)
+			var decided store.AccessRequest
+			_ = json.NewDecoder(rr.Body).Decode(&decided)
+			if decided.Status != store.AccessApproved {
+				t.Fatalf("decided = %+v, want approved terminal", decided)
+			}
+			time.Sleep(100 * time.Millisecond)
+			if got, _ := srv.core.GetAccessRequest(context.Background(), filed.ID); got.Status != store.AccessApproved {
+				t.Fatalf("request moved to %q; must stay approved", got.Status)
+			}
+			if list, _ := podiomtools.List(srv.paths.ToolsetDir); len(list) != 0 {
+				t.Fatalf("a cli_tool approval must not install anything: %+v", list)
+			}
+		})
 	}
 }
 

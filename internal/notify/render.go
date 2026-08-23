@@ -12,6 +12,14 @@ import (
 // the full context instead of carrying it.
 const bodyLimit = 200
 
+// answerBodyLimit caps a body carrying the agent's own closing words. The completion
+// types are the one place a body is the agent's summary of what it did rather than a
+// domain field, and a verdict plus its qualification runs past the general cap. iOS
+// shows roughly four lines collapsed and more on long-press, so the extra text is
+// reachable rather than wasted. Still a summary, not a transcript: the producer reads
+// only the turn's final answer and bounds it before it reaches an Event.
+const answerBodyLimit = 400
+
 // titleLimit caps a notification title in bytes.
 //
 // The push relay rejects a longer title outright, which would lose the push entirely
@@ -45,7 +53,7 @@ func renderText(ev Event, names displayNames) (title, body string) {
 	if agent == "" {
 		agent = subjectFallback
 	}
-	detail := truncate(ev.Detail, bodyLimit)
+	detail := truncate(ev.Detail, bodyLimitFor(ev.Type))
 	goal := firstNonEmpty(names.Goal, ev.GoalID)
 	// A schedule is identified by its name, so there is no id to fall back on if
 	// it was renamed or deleted between the run and the notification.
@@ -77,7 +85,7 @@ func renderText(ev Event, names displayNames) (title, body string) {
 	case TypeGoalRunStarted:
 		return agent + " is working on " + quoted(goal, "a goal"), detail
 	case TypeGoalRunSucceeded:
-		return quoted(goal, "a goal") + " run finished", detail
+		return quoted(goal, "a goal") + " run finished", firstNonEmpty(detail, "The goal run finished.")
 	case TypeGoalRunFailed:
 		return quoted(goal, "a goal") + " run failed", firstNonEmpty(detail, "The goal run did not finish.")
 	case TypeGoalProgress:
@@ -142,6 +150,17 @@ func truncate(s string, limit int) string {
 	}
 	runes := []rune(s)
 	return strings.TrimSpace(string(runes[:limit-1])) + "…"
+}
+
+// bodyLimitFor returns the body cap for a notification type. The completion types
+// carry the agent's closing words and get more room than a body assembled from domain
+// fields; see answerBodyLimit.
+func bodyLimitFor(notifType string) int {
+	switch notifType {
+	case TypeTaskReviewRequired, TypeGoalRunSucceeded, TypeScheduleSucceeded:
+		return answerBodyLimit
+	}
+	return bodyLimit
 }
 
 // truncateBytes shortens s to at most limit bytes without splitting a character.

@@ -722,21 +722,33 @@ export interface GoalPatchRequest {
   status_note?: string;
 }
 
-// WorkspaceTool mirrors tools.ToolStatus: one workspace-installed tool with
+// ToolsetEntry mirrors tools.ToolStatus: one tool in the shared toolset with
 // its manifest provenance and live on-disk health.
-export interface WorkspaceTool {
+export interface ToolsetEntry {
   tool: string;
-  installer: "npm" | "uv" | "go" | "binary";
+  installer: ToolsetInstaller;
   package?: string;
   version?: string;
   url?: string;
   sha256?: string;
+  // path names the executable inside an archive.
+  path?: string;
+  installed_by?: string;
+  session_id?: string;
+  // request_id/goal_id survive on entries migrated from the older per-agent
+  // layout, where an install came from an approved access request.
   request_id?: string;
   goal_id?: string;
   installed_at: string;
   version_output?: string;
+  // broken: the manifest claims the tool but its executable is gone.
   broken: boolean;
+  // needs_reinstall: carried over from the per-agent layout, so Podiom knows
+  // the spec but has no files for it yet.
+  needs_reinstall?: boolean;
 }
+
+export type ToolsetInstaller = "npm" | "uv" | "go" | "cargo" | "binary" | "archive";
 
 // SessionDetail is the GET /api/sessions/<id> response, including roadmap
 // provenance when the session was started from a task.

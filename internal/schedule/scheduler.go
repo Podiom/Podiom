@@ -547,9 +547,15 @@ func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, ru
 		"event", "schedule", "schedule", name, "run", run.ID, "trigger", trigger, "status", status, "session", sess.ID, podiomlog.DurationMS("duration_ms", time.Since(started)))
 	// The finished row carries the durable session the run created, which is what
 	// the notification navigates to.
+	// A failed run's detail is why it failed. A successful one has no error to report,
+	// so it carries the agent's closing words instead, and the notification says what
+	// the run did rather than only that it ran.
 	notifType := notify.TypeScheduleSucceeded
+	detail := errMsg
 	if status == store.RunError {
 		notifType = notify.TypeScheduleFailed
+	} else {
+		detail = s.core.TurnAnswer(ctx, finished.SessionID)
 	}
 	s.notifications.Publish(notify.Event{
 		Type:         notifType,
@@ -559,7 +565,7 @@ func (s *Scheduler) execute(ctx context.Context, name string, sched Schedule, ru
 		AgentName:    sched.Agent,
 		Resource:     notify.ResourceScheduleRun,
 		ResourceID:   run.ID,
-		Detail:       errMsg,
+		Detail:       detail,
 	})
 	return finished, runErr
 }

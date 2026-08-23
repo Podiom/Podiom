@@ -224,7 +224,7 @@ Runtime state lives under `$PODIOM_HOME`, which defaults to `~/.podiom/`.
 - [Projects and Roadmap](docs/projects.md)
 - [Goals](docs/goals.md), outcomes an agent plans, reviews, and reports back on
 - [Agent tools](docs/agent-tools.md), what agents can do with Podiom itself
-- [Workspace tools](docs/workspace-tools.md), approved per-agent CLI installs
+- [Toolset](docs/toolset.md), CLI tools agents install for themselves
 - [Voice input](docs/voice-input.md), prompts spoken through OpenAI Whisper
 - [Photo attachments](docs/photo-attachments.md), retained photos for agents to inspect
 - [Security and logging](docs/security.md), permission modes, tokens, redaction, and run logs
