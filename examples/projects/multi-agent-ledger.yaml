@@ -1,0 +1,34 @@
+# Example: projects.yaml with one shared project for multiple agents.
+# Needs: a local repository at ~/.podiom/projects/launch-kit/repo or an updated
+# path/repo block matching your project. The roadmap list is maintained by
+# Podiom; leave it empty when creating a project by hand.
+# What it does when used as $PODIOM_HOME/projects/projects.yaml: gives every
+# session bound to "launch-kit" the same working directory and standing
+# instructions, regardless of which agent is assigned.
+
+projects:
+  - id: launch-kit
+    name: Launch Kit
+    description: Public launch materials and maintenance tasks for a small open-source project.
+    path: launch-kit
+    status: active
+    stack:
+      - Markdown
+      - Go
+      - TypeScript
+    repo:
+      provider: github
+      mode: checkout
+      full_name: example/launch-kit
+      local_path: ~/.podiom/projects/launch-kit/repo
+      default_branch: main
+      ref: main
+    roadmap: []
+    notes: >
+      Scout owns research, issue triage, and read-only repo checks. Implementer
+      owns code and documentation changes after a plan is accepted. Both agents
+      should update roadmap task status instead of duplicating work in chat.
+    instructions: >
+      Work in the repo directory. Before editing, inspect the current branch and
+      existing task context. Keep changes narrow, cite evidence in progress
+      updates, and leave unrelated cleanup for a separate task.

@@ -1,0 +1,16 @@
+# Example: no-credential MCP catalogue entry.
+# Needs: Node/npm available so `npx` can run the published filesystem MCP
+# server. Change the final path argument to the narrowest directory the assigned
+# agent should see.
+# What it does when merged into $PODIOM_HOME/mcp.yaml: registers one MCP server
+# named "project-files". Assign it to an agent with `mcp_servers:
+# [project-files]` in config.yaml or through Settings.
+
+mcp_servers:
+  - name: project-files
+    transport: stdio
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - ~/.podiom/projects
