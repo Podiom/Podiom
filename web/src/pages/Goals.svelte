@@ -471,29 +471,6 @@
     }
   }
 
-  function isInstallable(req: AccessRequest): boolean {
-    return req.Kind === "cli_tool" && !!payloadOf(req).installer;
-  }
-
-  // installCommand renders the exact command shape Podiom will run on approval
-  // (workspace-tool-installs spec §3); <tools> stands for the agent's tool dir.
-  function installCommand(req: AccessRequest): string {
-    const p = payloadOf(req);
-    const ver = p.version ?? "";
-    switch (p.installer) {
-      case "npm":
-        return `npm install -g --prefix <tools>/npm ${p.package}${ver ? `@${ver}` : ""}`;
-      case "uv":
-        return `UV_TOOL_DIR=<tools>/uv UV_TOOL_BIN_DIR=<tools>/bin uv tool install ${p.package}${ver ? `==${ver}` : ""}`;
-      case "go":
-        return `GOBIN=<tools>/bin go install ${p.package}${p.package?.includes("@") ? "" : `@${ver || "latest"}`}`;
-      case "binary":
-        return `download ${p.url} → verify sha256 → <tools>/bin/${p.tool}`;
-      default:
-        return "";
-    }
-  }
-
   function payloadEntries(req: AccessRequest): [string, string][] {
     try {
       const obj = JSON.parse(req.Payload) as Record<string, string>;
@@ -672,14 +649,12 @@
     detail !== null && (reviewBusy === detail.goal.ID || detail.running_run?.Kind === "review"),
   );
 
-  // Open = needs the user (pending/failed) or is mid-install (approved
-  // installable cli_tool — the async grant hasn't landed executed/failed yet).
+  // Open = needs the user. Nothing sits in an intermediate state: every grant
+  // Podiom performs resolves during the approve call.
   const detailOpenReqs = $derived(
     detail === null
       ? []
-      : detail.access_requests.filter(
-          (r) => r.Status === "pending" || r.Status === "failed" || (r.Status === "approved" && isInstallable(r)),
-        ),
+      : detail.access_requests.filter((r) => r.Status === "pending" || r.Status === "failed"),
   );
 
   function scrollTop() {
@@ -814,10 +789,7 @@
       case "permission_mode":
         return { title: "Grant autonomous mode", body: `Autonomous (yolo) mode lets ${agent} run tools, edit files, and execute commands without asking for each step — everywhere, not just on this goal. Only grant this if you trust it to act unattended. You can revoke it anytime.`, warn: true, confirmLabel: "Grant autonomous mode" };
       case "cli_tool":
-        if (isInstallable(req)) {
-          return { title: "Approve — install workspace tool", body: `Approving installs this tool into ${agent}'s own workspace now — the exact command is shown below, and only ${agent} sees the tool on its PATH. The result lands on the goal timeline when the install finishes.`, warn: false, confirmLabel: "Approve & install" };
-        }
-        return { title: "Acknowledge — host tool", body: `Podiom can't install host-wide tools. Approving marks this acknowledged and shows you the command to run yourself; ${agent} resumes once it detects the tool.`, warn: false, confirmLabel: "Acknowledge" };
+        return { title: "Acknowledge — host tool", body: `Podiom can't install host-wide tools. Approving marks this acknowledged and shows you the command to run yourself; ${agent} resumes once it detects the tool. Tools ${agent} can install on its own go into the shared toolset without asking you — see Settings → Toolset.`, warn: false, confirmLabel: "Acknowledge" };
       case "env_var":
         return { title: `Grant credential — ${payloadOf(req).var_name || "env var"}`, body: `Enter the value below and Podiom stores it on this machine (readable only by your user) and injects it into ${agent}'s environment on future runs — the value is never shown again. Leave it empty to just acknowledge; you can instead set the variable yourself where podiomd runs.`, warn: false, confirmLabel: "Grant" };
     }
@@ -1322,7 +1294,6 @@
               {#each detailOpenReqs as r (r.ID)}
                 {@const rk = RK[r.Kind]}
                 {@const [sbg, sbd, stc, rawLbl] = reqStatusChip[r.Status] ?? reqStatusChip.pending}
-                {@const slbl = r.Status === "approved" && isInstallable(r) ? "installing…" : rawLbl}
                 <!-- The id is the deep-link anchor for a notification about this request. -->
                 <div class="req-card" class:failed={r.Status === "failed"} id={`goal-access-${r.ID}`}>
                   <span class="req-icon" style="background:{rk.t};border-color:{rk.b}">
@@ -1331,7 +1302,7 @@
                   <div class="req-main">
                     <div class="req-top">
                       <span class="req-kind">{rk.label}</span>
-                      <span class="pill mono sm" style="background:{sbg};border-color:{sbd};color:{stc}">{slbl}</span>
+                      <span class="pill mono sm" style="background:{sbg};border-color:{sbd};color:{stc}">{rawLbl}</span>
                     </div>
                     <div class="req-reason"><AgentMarkdown content={r.Reason} /></div>
                     <div class="req-payload">
@@ -1339,9 +1310,6 @@
                         <span class="kv mono"><span class="k">{k}</span><span class="v">{v}</span></span>
                       {/each}
                     </div>
-                    {#if installCommand(r)}
-                      <div class="req-cmd mono" title="The exact command Podiom runs on approval">$ {installCommand(r)}</div>
-                    {/if}
                     {#if r.ExecutionError}
                       <div class="req-error">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.3 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/></svg>
@@ -1838,9 +1806,6 @@
             <span class="kv mono"><span class="k">{k}</span><span class="v">{v}</span></span>
           {/each}
         </div>
-        {#if installCommand(dialog.req)}
-          <div class="req-cmd mono">$ {installCommand(dialog.req)}</div>
-        {/if}
         {#if dialog.req.Kind === "env_var" && dialog.action === "approve"}
           <div class="field-label mono">Value for {payloadOf(dialog.req).var_name || "the variable"} <span class="opt">· optional · stored on this machine, never shown again</span></div>
           <input class="field" type="password" autocomplete="off" bind:value={dialog.secret} placeholder="Paste the token / secret value" />
@@ -3158,16 +3123,6 @@
   .kv .v {
     color: #5a5048;
     font-weight: 600;
-  }
-  .req-cmd {
-    margin-top: 10px;
-    padding: 9px 12px;
-    border-radius: 10px;
-    background: #2b2520;
-    color: #e8e0d5;
-    font-size: 11.5px;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
   }
   .req-error {
     display: flex;

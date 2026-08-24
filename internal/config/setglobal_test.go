@@ -33,6 +33,7 @@ server:
 		PermissionMode:    PermissionYolo,
 		PermissionTimeout: "5m",
 		Fallback:          []string{"claude"},
+		AutoArchiveDays:   30,
 	}
 	if err := SetGlobal(path, g); err != nil {
 		t.Fatalf("set global: %v", err)
@@ -60,6 +61,9 @@ server:
 	}
 	if len(cfg.Global.Fallback) != 1 || cfg.Global.Fallback[0] != "claude" {
 		t.Fatalf("fallback = %+v, want [claude]", cfg.Global.Fallback)
+	}
+	if cfg.Global.AutoArchiveDays != 30 {
+		t.Fatalf("auto_archive_days = %d, want 30", cfg.Global.AutoArchiveDays)
 	}
 }
 

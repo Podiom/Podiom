@@ -36,7 +36,12 @@ type CodexOptions struct {
 	// subprocess environment (user-granted credentials). Read at app-server
 	// spawn time. Nil means none.
 	ExtraEnv func() []string
-	Logger   *slog.Logger
+	// ToolsetPathDirs are the shared toolset directories prepended to the
+	// app-server's PATH. The app-server is one long-lived process serving
+	// every agent, so this only works because the toolset is shared: the
+	// per-agent tool directories it replaced could never be injected here.
+	ToolsetPathDirs []string
+	Logger          *slog.Logger
 }
 
 // Codex drives a long-lived `codex app-server --listen stdio://` process.
@@ -48,6 +53,7 @@ type Codex struct {
 	bin               string
 	permissionTimeout time.Duration
 	extraEnv          func() []string
+	toolsetPathDirs   []string
 
 	mu      sync.Mutex
 	clients map[string]*codexClient
@@ -68,6 +74,7 @@ func NewCodex(opts CodexOptions) (*Codex, error) {
 		bin:               found.Path,
 		permissionTimeout: timeout,
 		extraEnv:          opts.ExtraEnv,
+		toolsetPathDirs:   opts.ToolsetPathDirs,
 		clients:           map[string]*codexClient{},
 		log:               loggerOrDefault(opts.Logger),
 	}, nil
@@ -310,7 +317,7 @@ func (c *Codex) client(profileDir, profileName, profileHash, profileConfig strin
 	key := profileDir + "|" + profileName + "|" + profileHash
 	client := c.clients[key]
 	if client == nil {
-		client = newCodexClient(c.bin, profileDir, profileName, profileHash, profileConfig, c.extraEnv, c.log)
+		client = newCodexClient(c.bin, profileDir, profileName, profileHash, profileConfig, c.extraEnv, c.toolsetPathDirs, c.log)
 		c.clients[key] = client
 	}
 	return client
@@ -430,6 +437,7 @@ type codexClient struct {
 	profileHash   string
 	profileConfig string
 	extraEnv      func() []string
+	toolsetDirs   []string
 	log           *slog.Logger
 
 	initMu   sync.Mutex
@@ -510,7 +518,7 @@ type codexNativeAgentTrack struct {
 	nativeAgentTasks map[string]NativeAgentActivity
 }
 
-func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig string, extraEnv func() []string, log *slog.Logger) *codexClient {
+func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig string, extraEnv func() []string, toolsetDirs []string, log *slog.Logger) *codexClient {
 	return &codexClient{
 		bin:           bin,
 		profileDir:    profileDir,
@@ -518,6 +526,7 @@ func newCodexClient(bin, profileDir, profileName, profileHash, profileConfig str
 		profileHash:   profileHash,
 		profileConfig: profileConfig,
 		extraEnv:      extraEnv,
+		toolsetDirs:   toolsetDirs,
 		log: loggerOrDefault(log).With(
 			"provider", string(config.ProviderCodex),
 			"profile_dir_set", profileDir != "",
@@ -613,7 +622,7 @@ func (c *codexClient) startLocked() error {
 	}
 	args = append(args, "--listen", "stdio://")
 	cmd := podiomexec.Command(context.Background(), c.bin, args...)
-	cmd.Env = applyExtraEnv(codexEnv(c.profileDir), c.extraEnv)
+	cmd.Env = applyExtraEnv(codexEnv(c.profileDir, c.toolsetDirs), c.extraEnv)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("codex stdin: %w", err)
@@ -2672,16 +2681,23 @@ func codexIDKey(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// codexEnv builds the app-server environment. Note: the server is one
-// long-lived process per profile, so per-agent ToolPathDirs (workspace tool
-// installs §2.2) cannot be injected here — a documented v1 limitation; tools
-// are on disk but not on PATH for Codex-backed turns. User-granted credentials
-// (ExtraEnv) are read at app-server spawn, but RefreshCredentials respawns the
-// server at the next turn boundary (or immediately when idle) after a credential
-// is stored, so it reaches Codex-backed turns without a daemon restart.
-func codexEnv(profileDir string) []string {
+// codexEnv builds the app-server environment.
+//
+// The toolset directories go on PATH here even though the server is one
+// long-lived process per profile: the toolset is shared by every agent, so a
+// single PATH serves them all. This is what the earlier per-agent tool
+// directories could not do — their path depended on which agent was running,
+// and the app-server's environment is fixed at spawn.
+//
+// User-granted credentials (ExtraEnv) are read at app-server spawn, but
+// RefreshCredentials respawns the server at the next turn boundary (or
+// immediately when idle) after a credential is stored, so it reaches
+// Codex-backed turns without a daemon restart. A tool installed mid-session
+// needs no respawn at all: PATH is resolved at exec time.
+func codexEnv(profileDir string, toolsetDirs []string) []string {
 	info, _ := config.ProviderInfoFor(config.ProviderCodex)
-	return podiomexec.ProfileEnv(os.Environ(), info.ProfileEnvVar, profileDir)
+	env := prependPath(os.Environ(), toolsetDirs)
+	return podiomexec.ProfileEnv(env, info.ProfileEnvVar, profileDir)
 }
 
 func firstNonEmptyString(values ...string) string {

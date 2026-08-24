@@ -33,6 +33,7 @@ import (
 	"github.com/Podiom/Podiom/internal/skills"
 	"github.com/Podiom/Podiom/internal/store"
 	"github.com/Podiom/Podiom/internal/tokenmeter"
+	podiomtools "github.com/Podiom/Podiom/internal/tools"
 	"github.com/Podiom/Podiom/internal/usage"
 	"github.com/spf13/cobra"
 )
@@ -161,12 +162,17 @@ func run() error {
 		return err
 	}
 	credsStore := creds.New(paths.CredentialsYAML)
+	// One shared PATH prefix for every provider process: the toolset is not
+	// agent-scoped, so both the per-turn Claude process and the long-lived
+	// Codex app-server can carry it.
+	toolsetPathDirs := podiomtools.PathDirs(paths.ToolsetDir)
 	adapters := map[config.Provider]adapter.Adapter{}
 	claude, err := adapter.NewClaude(adapter.ClaudeOptions{
 		DaemonAddr:        callbackAddr,
 		PodiomHome:        paths.Home,
 		PermissionTimeout: permissionTimeout,
 		ExtraEnv:          credsStore.EnvPairs,
+		ToolsetPathDirs:   toolsetPathDirs,
 		Logger:            log,
 	})
 	if err != nil {
@@ -178,6 +184,7 @@ func run() error {
 	codex, err := adapter.NewCodex(adapter.CodexOptions{
 		PermissionTimeout: permissionTimeout,
 		ExtraEnv:          credsStore.EnvPairs,
+		ToolsetPathDirs:   toolsetPathDirs,
 		Logger:            log,
 	})
 	if err != nil {

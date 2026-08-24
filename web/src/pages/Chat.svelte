@@ -201,7 +201,6 @@
   // scrolls up to read history, back on when they return near the bottom.
   let stick = true;
   const LAST_SESSION_KEY = "podiom:last-chat-session";
-  const ARCHIVE_OPEN_KEY = "podiom:sessions-archive-open";
   const PLAN_PANEL_WIDTH_KEY = "podiom:plan-panel-width";
   const PLAN_PANEL_DEFAULT_WIDTH = 372;
   const PLAN_PANEL_MIN_WIDTH = 320;
@@ -374,7 +373,6 @@
 
   function toggleArchive() {
     archiveOpen = !archiveOpen;
-    localStorage.setItem(ARCHIVE_OPEN_KEY, String(archiveOpen));
   }
 
   async function toggleSessionArchived(sess: Session | null) {
@@ -414,7 +412,6 @@
       }
     };
     restorePlanPanelWidth();
-    archiveOpen = localStorage.getItem(ARCHIVE_OPEN_KEY) === "true";
     syncPhone();
     mq.addEventListener("change", syncPhone);
     window.addEventListener("resize", clampCurrentPlanPanelWidth);
@@ -453,17 +450,6 @@
     void openTarget(t);
   });
 
-  // Navigating to an archived session must not leave its row hidden inside a
-  // collapsed archive, so reveal it — both the section and its goal group.
-  $effect(() => {
-    const sess = activeSession;
-    if (!sess?.ArchivedAt) return;
-    archiveOpen = true;
-    if (sess.GoalID && !archiveGroupOpen(sess.GoalID)) {
-      archiveGroupsOpen = { ...archiveGroupsOpen, [sess.GoalID]: true };
-    }
-  });
-
   $effect(() => {
     void sessOpen;
     void planAwaiting;
@@ -495,7 +481,7 @@
   async function openTarget(t: ChatTarget) {
     if (t.sessionId) {
       const session = sessions.find((s) => s.ID === t.sessionId) ?? ({ ID: t.sessionId } as Session);
-	  await loadHistory(session, true);
+	  await loadHistory(session, true, true);
     } else if (t.agentName) {
       selectedAgent = t.agentName;
       newSession();
@@ -1226,7 +1212,7 @@
     }
   }
 
-  async function loadHistory(session: Session, explicit = false) {
+  async function loadHistory(session: Session, explicit = false, revealArchive = false) {
 	const loadToken = ++historyLoadToken;
     void discardPendingPhotos();
     error = null;
@@ -1242,6 +1228,12 @@
       const detail = await getSession(session.ID);
 	  if (loadToken !== historyLoadToken) return;
       activeSession = detail.session;
+      if (revealArchive && detail.session.ArchivedAt) {
+        archiveOpen = true;
+        if (detail.session.GoalID) {
+          archiveGroupsOpen = { ...archiveGroupsOpen, [detail.session.GoalID]: true };
+        }
+      }
       selectedAgent = detail.session.AgentName;
       live.setSessionUsage(detail.session.ID, detail.usage);
       rememberSession(detail.session.ID);

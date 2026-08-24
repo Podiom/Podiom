@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
-	podiomtools "github.com/Podiom/Podiom/internal/tools"
 )
 
 // CreateSessionRequest creates a durable session bound to an agent. Empty
@@ -153,7 +153,6 @@ func (c *Core) CreateSession(ctx context.Context, req CreateSessionRequest) (sto
 		PermissionMode:     created.PermissionMode,
 		WorkspaceDir:       workspaceDir,
 		ExtraWorkspaceDirs: extraWorkspaceDirs,
-		ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(agent.Name).Tools),
 		InstructionPath:    payload.Path,
 		Instructions:       instructions,
 		NativeAgentName:    nativeAgentName,
@@ -282,6 +281,39 @@ func (c *Core) SetSessionArchived(ctx context.Context, id string, archived bool)
 		at = time.Now().UTC().Format(time.RFC3339)
 	}
 	return c.store.SetSessionArchived(ctx, id, at)
+}
+
+// AutoArchiveInactiveSessions applies the live global inactivity policy and
+// returns the rows whose archive markers changed. The store rechecks the cutoff
+// at write time; active turns are excluded here because that state is in memory.
+func (c *Core) AutoArchiveInactiveSessions(ctx context.Context, now time.Time) ([]store.Session, error) {
+	days := c.GetGlobal().AutoArchiveDays
+	if days <= 0 {
+		days = config.DefaultAutoArchiveDays
+	}
+	cutoff := now.UTC().Add(-time.Duration(days) * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	ids, err := c.store.ListAutoArchiveCandidateIDs(ctx, cutoff)
+	if err != nil {
+		return nil, err
+	}
+
+	at := now.UTC().Format(time.RFC3339)
+	archived := make([]store.Session, 0, len(ids))
+	var errs []error
+	for _, id := range ids {
+		if c.activeTurn != nil && c.activeTurn(id) {
+			continue
+		}
+		sess, changed, err := c.store.AutoArchiveSession(ctx, id, cutoff, at)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if changed {
+			archived = append(archived, sess)
+		}
+	}
+	return archived, errors.Join(errs...)
 }
 
 // archiveFinishedRun archives a session whose unattended run has ended and
@@ -974,7 +1006,6 @@ func (c *Core) turnRequest(sess store.Session, history []store.Message, userMess
 			PlanMode:           PlanGateActive(sess) && NativePlanMode(sess.Provider),
 			WorkspaceDir:       workspaceDir,
 			ExtraWorkspaceDirs: extraWorkspaceDirs,
-			ToolPathDirs:       podiomtools.PathDirs(c.AgentPaths(sess.AgentName).Tools),
 			InstructionPath:    instructionPath,
 			Instructions:       instructions,
 			NativeAgentName:    nativeAgentName,

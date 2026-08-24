@@ -69,15 +69,15 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// session 3 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + credentials 2 + platform 4.
-	if len(tools) != 52 {
-		t.Fatalf("expected 52 tools, got %d", len(tools))
+	// session 3 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 10 + agents 6 + credentials 2 + toolset 3 + platform 4.
+	if len(tools) != 54 {
+		t.Fatalf("expected 54 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{
 		"podiom_delete_task": true, "podiom_delete_project": true,
 		"podiom_delete_schedule": true, "podiom_uninstall_skill": true,
-		"podiom_remove_mcp_server": true,
+		"podiom_remove_mcp_server": true, "podiom_remove_tool": true,
 	}
 	for _, tl := range tools {
 		if !strings.HasPrefix(tl.Name, "podiom_") {

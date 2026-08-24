@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -143,6 +144,29 @@ func TestLoadRejectsExplicitZeroLogRetention(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected explicit zero retention to be rejected")
+	}
+}
+
+func TestLoadDefaultsAndValidatesAutoArchiveDays(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	base := "global:\n  provider: claude\n  permission_mode: approve\nserver:\n  bind: 127.0.0.1\n  port: 8787\n"
+	if err := os.WriteFile(path, []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load default: %v", err)
+	}
+	if cfg.Global.AutoArchiveDays != DefaultAutoArchiveDays {
+		t.Fatalf("auto archive days = %d, want %d", cfg.Global.AutoArchiveDays, DefaultAutoArchiveDays)
+	}
+
+	invalid := strings.Replace(base, "  permission_mode: approve\n", "  permission_mode: approve\n  auto_archive_days: 0\n", 1)
+	if err := os.WriteFile(path, []byte(invalid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "auto_archive_days must be greater than 0") {
+		t.Fatalf("load explicit zero err = %v", err)
 	}
 }
 

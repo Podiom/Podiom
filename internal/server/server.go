@@ -91,6 +91,13 @@ type Server struct {
 	// broadcast to every open dashboard.
 	wsMu    sync.Mutex
 	wsConns map[*websocket.Conn]*wsWriter
+
+	// The inactivity archiver shares the server lifecycle because each changed
+	// session must be broadcast to every connected dashboard.
+	autoArchiveCtx    context.Context
+	autoArchiveCancel context.CancelFunc
+	autoArchiveKick   chan struct{}
+	autoArchiveStart  sync.Once
 }
 
 // Options configures the server.
@@ -157,6 +164,7 @@ func New(opts Options) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
+	autoArchiveCtx, autoArchiveCancel := context.WithCancel(context.Background())
 	s := &Server{
 		addr:           addr,
 		build:          opts.Build,
@@ -183,9 +191,12 @@ func New(opts Options) *Server {
 		haMode:         opts.HAMode,
 		// HA's opt-in LAN endpoint uses a Supervisor-selected host port that the
 		// container cannot advertise correctly.
-		advertise: opts.Advertise && !opts.HAMode,
-		bind:      opts.Bind,
-		port:      opts.Port,
+		advertise:         opts.Advertise && !opts.HAMode,
+		bind:              opts.Bind,
+		port:              opts.Port,
+		autoArchiveCtx:    autoArchiveCtx,
+		autoArchiveCancel: autoArchiveCancel,
+		autoArchiveKick:   make(chan struct{}, 1),
 	}
 	// Skill marketplace (Spec 07). Construction can fail only if the skills root
 	// can't be resolved; degrade to a nil service (handlers return 503) rather
@@ -316,6 +327,7 @@ func (s *Server) Start() error {
 	if s.advertise {
 		s.mdns = discovery.Advertise(s.bind, s.port, s.build.Version, s.log)
 	}
+	s.autoArchiveStart.Do(func() { go s.autoArchiveLoop() })
 	errCh := make(chan error, len(listeners))
 	for _, listener := range listeners {
 		go func() {
@@ -343,6 +355,7 @@ func (s *Server) Start() error {
 
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.autoArchiveCancel()
 	// In-flight logins hold a child CLI open; they must not outlive the daemon.
 	if s.logins != nil {
 		s.logins.Shutdown()

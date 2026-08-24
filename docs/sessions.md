@@ -60,14 +60,22 @@ The daemon stamps it on its own when unattended work ends:
 
 The user can also archive or unarchive any session by hand from the conversation
 header (`POST /api/sessions/<id>/archive`), including their own `web` and `cli`
-conversations, which the daemon never archives on its own.
+conversations, which are not covered by the run and goal lifecycle rules above.
+
+The daemon also archives inactive sessions according to
+`global.auto_archive_days`, which defaults to 7. Inactivity is measured from the
+session's last update; a new session with no messages is measured from its
+creation. The daemon checks at startup, after the setting changes, and hourly.
+Sessions with a running turn or a plan waiting to be submitted or approved stay
+in the active list regardless of age.
 
 A turn the user sends into an archived session clears the marker: writing in a
 conversation is saying it is live again. Unattended turns deliberately do not,
 since that traffic is what the archive exists to keep out of the way.
 
-The web sidebar groups the archive by goal exactly as it groups the main list,
-but its goal groups start collapsed. Sessions started by an agent rather than by
+The web sidebar groups the archive by goal exactly as it groups the main list.
+The Archive panel and its goal groups start collapsed on each visit; navigating
+directly to an archived session reveals its row once. Sessions started by an agent rather than by
 the user — origin `schedule`, `roadmap`, or `goal` — also carry an `agent` chip
 under their origin chip in the list.
 

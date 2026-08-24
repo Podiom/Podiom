@@ -37,13 +37,8 @@ type StartRequest struct {
 	PermissionMode     config.PermissionMode
 	WorkspaceDir       string
 	ExtraWorkspaceDirs []string
-	// ToolPathDirs are per-agent directories prepended to the subprocess PATH
-	// so workspace-installed tools resolve (workspace-tool-installs spec §2.2).
-	// Per-turn providers (Claude) honor this; the long-lived Codex app-server
-	// cannot (its env is fixed at process start).
-	ToolPathDirs    []string
-	InstructionPath string
-	Instructions    []byte
+	InstructionPath    string
+	Instructions       []byte
 	// NativeAgentName/NativeAgents are best-effort provider-native projections of
 	// Podiom agents. They are hints only; adapters must be able to drop them and
 	// continue with the normal Podiom instruction path.
@@ -123,14 +118,12 @@ type TurnSettings struct {
 	PermissionMode     config.PermissionMode
 	WorkspaceDir       string
 	ExtraWorkspaceDirs []string
-	// ToolPathDirs: see StartRequest.ToolPathDirs.
-	ToolPathDirs      []string
-	InstructionPath   string
-	Instructions      []byte
-	NativeAgentName   string
-	NativeAgents      []NativeAgent
-	PermissionTurnID  string
-	PermissionTimeout time.Duration
+	InstructionPath    string
+	Instructions       []byte
+	NativeAgentName    string
+	NativeAgents       []NativeAgent
+	PermissionTurnID   string
+	PermissionTimeout  time.Duration
 	// Unattended marks a run with no human at the keyboard (a scheduled run).
 	// In approve mode this selects the "preapproved" policy (§7.7): permission
 	// requests are resolved without a human — via AllowedTools natively on

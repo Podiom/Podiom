@@ -20,6 +20,10 @@ func TestSpecValidation(t *testing.T) {
 		ok      bool
 	}{
 		{"host-only needs just a tool", map[string]string{"tool": "brew-thing"}, true},
+		{"reserved name", map[string]string{"tool": "node", "installer": "npm", "package": "node"}, false},
+		{"reserved name, any case", map[string]string{"tool": "Git", "installer": "npm", "package": "git"}, false},
+		{"reserved provider CLI", map[string]string{"tool": "claude", "installer": "npm", "package": "x"}, false},
+		{"reserved name is fine host-only", map[string]string{"tool": "node"}, true},
 		{"missing tool", map[string]string{"installer": "npm", "package": "lychee"}, false},
 		{"tool with a path", map[string]string{"tool": "../evil", "installer": "npm", "package": "x"}, false},
 		{"tool with spaces", map[string]string{"tool": "rm -rf", "installer": "npm", "package": "x"}, false},
@@ -31,6 +35,12 @@ func TestSpecValidation(t *testing.T) {
 		{"binary ok", map[string]string{"tool": "jq", "installer": "binary", "url": "https://example.com/jq", "sha256": strings.Repeat("ab", 32)}, true},
 		{"binary http", map[string]string{"tool": "jq", "installer": "binary", "url": "http://example.com/jq", "sha256": strings.Repeat("ab", 32)}, false},
 		{"binary bad sha", map[string]string{"tool": "jq", "installer": "binary", "url": "https://example.com/jq", "sha256": "short"}, false},
+		{"cargo ok", map[string]string{"tool": "rg", "installer": "cargo", "package": "ripgrep", "version": "14.1.0"}, true},
+		{"cargo missing package", map[string]string{"tool": "rg", "installer": "cargo"}, false},
+		{"archive ok", map[string]string{"tool": "rg", "installer": "archive", "url": "https://example.com/rg.tar.gz", "sha256": strings.Repeat("ab", 32)}, true},
+		{"archive with path", map[string]string{"tool": "rg", "installer": "archive", "url": "https://example.com/rg.tar.gz", "sha256": strings.Repeat("ab", 32), "path": "rg-14/rg"}, true},
+		{"archive escaping path", map[string]string{"tool": "rg", "installer": "archive", "url": "https://example.com/rg.tar.gz", "sha256": strings.Repeat("ab", 32), "path": "../../etc/passwd"}, false},
+		{"archive absolute path", map[string]string{"tool": "rg", "installer": "archive", "url": "https://example.com/rg.tar.gz", "sha256": strings.Repeat("ab", 32), "path": "/etc/passwd"}, false},
 		{"unknown installer", map[string]string{"tool": "x", "installer": "brew", "package": "x"}, false},
 	}
 	for _, tc := range cases {
@@ -59,7 +69,13 @@ func TestCommandConstruction(t *testing.T) {
 			"uv tool install ruff", "UV_TOOL_DIR=/root/tools/uv UV_TOOL_BIN_DIR=/root/tools/bin"},
 		{Spec{Tool: "gopls", Installer: InstallerGo, Package: "golang.org/x/tools/gopls"},
 			"go install golang.org/x/tools/gopls@latest", "GOBIN=/root/tools/bin"},
+		{Spec{Tool: "rg", Installer: InstallerCargo, Package: "ripgrep"},
+			"cargo install --root /root/tools ripgrep", ""},
+		{Spec{Tool: "rg", Installer: InstallerCargo, Package: "ripgrep", Version: "14.1.0"},
+			"cargo install --root /root/tools --version 14.1.0 ripgrep", ""},
 		{Spec{Tool: "jq", Installer: InstallerBinary, URL: "https://x/jq", SHA256: strings.Repeat("00", 32)},
+			"", ""},
+		{Spec{Tool: "rg", Installer: InstallerArchive, URL: "https://x/rg.tgz", SHA256: strings.Repeat("00", 32)},
 			"", ""},
 	}
 	for _, tc := range cases {

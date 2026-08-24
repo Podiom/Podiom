@@ -10,20 +10,47 @@ import (
 	"time"
 )
 
-// ManifestEntry records one tool Podiom installed for an agent, with
-// provenance back to the approval that authorized it. Podiom never touches
-// the tool directory without updating the manifest and vice versa.
+// ManifestEntry records one tool Podiom installed into the toolset, with
+// provenance back to the agent and session that asked for it. Podiom never
+// touches the toolset directory without updating the manifest and vice versa.
 type ManifestEntry struct {
-	Tool          string `json:"tool"`
-	Installer     string `json:"installer"`
-	Package       string `json:"package,omitempty"`
-	Version       string `json:"version,omitempty"`
-	URL           string `json:"url,omitempty"`
-	SHA256        string `json:"sha256,omitempty"`
+	Tool      string `json:"tool"`
+	Installer string `json:"installer"`
+	Package   string `json:"package,omitempty"`
+	Version   string `json:"version,omitempty"`
+	URL       string `json:"url,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	// Path names the executable inside an archive, kept so a reinstall
+	// reproduces the original install exactly.
+	Path string `json:"path,omitempty"`
+	// InstalledBy and SessionID are the self-service provenance: who asked
+	// for this and in which session. Nothing in the toolset is anonymous.
+	InstalledBy string `json:"installed_by,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	// RequestID and GoalID survive from the approval-gated per-agent era so
+	// migrated entries keep their history (see Migrate).
 	RequestID     string `json:"request_id,omitempty"`
 	GoalID        string `json:"goal_id,omitempty"`
 	InstalledAt   string `json:"installed_at"`
 	VersionOutput string `json:"version_output,omitempty"`
+	// NeedsReinstall marks an entry Podiom knows about but has no files for —
+	// a per-agent install folded in by Migrate. The spec is intact, so one
+	// install call restores it.
+	NeedsReinstall bool `json:"needs_reinstall,omitempty"`
+}
+
+// Spec reconstructs the install description from a manifest entry, so a
+// reinstall runs exactly what the original install ran.
+func (e ManifestEntry) Spec() Spec {
+	return Spec{
+		Tool:      e.Tool,
+		Installer: Installer(e.Installer),
+		Package:   e.Package,
+		Version:   e.Version,
+		URL:       e.URL,
+		SHA256:    e.SHA256,
+		Path:      e.Path,
+	}
 }
 
 // ToolStatus is a manifest entry plus its live on-disk health: Broken means
@@ -117,7 +144,10 @@ func List(root string) ([]ToolStatus, error) {
 	out := make([]ToolStatus, 0, len(entries))
 	for _, e := range entries {
 		_, found := findExecutable(root, e.Tool)
-		out = append(out, ToolStatus{ManifestEntry: e, Broken: !found})
+		// A migrated entry has no files here yet, which is expected rather
+		// than broken — NeedsReinstall already says so, and reporting both
+		// would read as two problems instead of one pending action.
+		out = append(out, ToolStatus{ManifestEntry: e, Broken: !found && !e.NeedsReinstall})
 	}
 	return out, nil
 }

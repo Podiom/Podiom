@@ -95,7 +95,7 @@ func TestCodexParamsCarryDeveloperInstructions(t *testing.T) {
 }
 
 func TestCodexLoadedThreadTracksInstructionHash(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	first := instructionHash([]byte("first"))
 	second := instructionHash([]byte("second"))
 	client.markLoaded("thread-1", first)
@@ -214,7 +214,7 @@ func TestCodexReasoningPhaseClassification(t *testing.T) {
 }
 
 func TestCodexFileChangeApprovalUsesPatchSummary(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	params := json.RawMessage(`{
 		"threadId": "thread-1",
 		"turnId": "turn-1",
@@ -241,7 +241,7 @@ func TestCodexFileChangeApprovalUsesPatchSummary(t *testing.T) {
 }
 
 func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	req := client.codexPermissionRequest(
 		"item/fileChange/requestApproval",
 		json.RawMessage("8"),
@@ -254,7 +254,7 @@ func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
 }
 
 func TestCodexToolUsesFromItems(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	key := codexTurnKey{threadID: "thread-1", turnID: "turn-1"}
 
 	// commandExecution is recorded when it starts, with the command as summary.
@@ -522,7 +522,7 @@ func (refreshWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
 func (refreshWriteCloser) Close() error                { return nil }
 
 func TestCodexRefreshCredentialsRespawnsWhenIdle(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	client.stdin = refreshWriteCloser{} // simulate a running app-server, no active turn
 
 	client.refreshCredentials()
@@ -536,7 +536,7 @@ func TestCodexRefreshCredentialsRespawnsWhenIdle(t *testing.T) {
 }
 
 func TestCodexRefreshCredentialsDefersDuringActiveTurn(t *testing.T) {
-	client := newCodexClient("codex", "", "", "", "", nil, slogDiscard())
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	client.stdin = refreshWriteCloser{}
 	key := codexTurnKey{threadID: "t1", turnID: "turn-1"}
 	client.active[key] = codexActiveTurn{}
@@ -1522,4 +1522,36 @@ func writeFakeCompleted(enc *json.Encoder, threadID, turnID, text string) {
 			},
 		},
 	})
+}
+
+// TestCodexEnvPutsToolsetOnPath is the regression this whole change exists
+// for. The app-server is one long-lived process shared by every agent, so the
+// per-agent tool directories that preceded the toolset could never be injected
+// here and Codex-backed turns never saw an installed tool. A single shared
+// path can be, and must stay, injected.
+func TestCodexEnvPutsToolsetOnPath(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	dirs := []string{"/data/podiom/toolset/bin", "/data/podiom/toolset/npm/bin"}
+
+	var path string
+	for _, kv := range codexEnv("/profile", dirs) {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = v
+		}
+	}
+	want := "/data/podiom/toolset/bin:/data/podiom/toolset/npm/bin:/usr/bin:/bin"
+	if path != want {
+		t.Fatalf("PATH = %q, want %q", path, want)
+	}
+}
+
+// TestCodexClientCarriesToolsetDirs checks the wiring between the adapter and
+// the app-server client, which is where the dirs would silently go missing.
+func TestCodexClientCarriesToolsetDirs(t *testing.T) {
+	dirs := []string{"/data/podiom/toolset/bin"}
+	c := &Codex{bin: "codex", toolsetPathDirs: dirs, log: slogDiscard()}
+	client := c.client("/profile", "p", "hash", "")
+	if len(client.toolsetDirs) != 1 || client.toolsetDirs[0] != dirs[0] {
+		t.Fatalf("client toolsetDirs = %v, want %v", client.toolsetDirs, dirs)
+	}
 }

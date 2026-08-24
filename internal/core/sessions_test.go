@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
@@ -14,6 +15,62 @@ import (
 	"github.com/Podiom/Podiom/internal/projects"
 	"github.com/Podiom/Podiom/internal/store"
 )
+
+func TestAutoArchiveInactiveSessionsProtectsActiveAndPlanGatedSessions(t *testing.T) {
+	ctx := context.Background()
+	c, _, cleanup := newTestCoreAdapter(t)
+	defer cleanup()
+	if _, err := c.CreateAgent(ctx, CreateAgentRequest{Name: "operator", Provider: config.ProviderClaude}); err != nil {
+		t.Fatal(err)
+	}
+	create := func() store.Session {
+		t.Helper()
+		sess, err := c.CreateSession(ctx, CreateSessionRequest{AgentName: "operator", Origin: store.OriginWeb})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sess
+	}
+	ordinary := create()
+	active := create()
+	pending := create()
+	awaiting := create()
+	alreadyArchived := create()
+	if _, err := c.store.UpdateSessionPlanState(ctx, pending.ID, store.PlanPendingSubmission, true, store.PlanInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.store.UpdateSessionPlanState(ctx, awaiting.ID, store.PlanAwaitingApproval, true, store.PlanInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SetSessionArchived(ctx, alreadyArchived.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	g := c.GetGlobal()
+	g.AutoArchiveDays = 7
+	c.SetGlobal(g)
+	c.SetActiveTurnChecker(func(id string) bool { return id == active.ID })
+
+	base := time.Now().UTC()
+	if archived, err := c.AutoArchiveInactiveSessions(ctx, base.Add(6*24*time.Hour)); err != nil || len(archived) != 0 {
+		t.Fatalf("early sweep archived=%v err=%v", archived, err)
+	}
+	archived, err := c.AutoArchiveInactiveSessions(ctx, base.Add(8*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived) != 1 || archived[0].ID != ordinary.ID {
+		t.Fatalf("archived = %+v, want ordinary session only", archived)
+	}
+	for _, protected := range []store.Session{active, pending, awaiting} {
+		got, err := c.GetSession(ctx, protected.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ArchivedAt != "" {
+			t.Errorf("protected session %s archived at %q", got.ID, got.ArchivedAt)
+		}
+	}
+}
 
 // newTestCoreAdapter mirrors newTestCore but exposes the fake adapter so tests
 // can inspect the StartRequest delivered to a provider on session start.

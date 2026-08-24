@@ -754,9 +754,11 @@ func validateAccessPayload(kind store.AccessRequestKind, payload map[string]stri
 		}
 		return nil
 	case store.AccessCLITool:
-		// Installable requests (installer field present) carry a declarative
-		// spec that the workspace-tool installer validates; host-only requests
-		// just need the tool name (workspace-tool-installs spec §3).
+		// A cli_tool request only ever names a tool the user must install
+		// host-wide; agents install their own through the toolset. Validation
+		// still runs through the toolset spec so an agent that sends the old
+		// installer fields gets the same field rules rather than silence —
+		// the fields themselves are inert on approval.
 		return podiomtools.SpecFromPayload(payload).Validate()
 	case store.AccessEnvVar:
 		if err := need("var_name"); err != nil {
