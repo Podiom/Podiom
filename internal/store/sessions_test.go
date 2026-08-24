@@ -475,6 +475,53 @@ func TestSetSessionArchivedRoundTrips(t *testing.T) {
 	}
 }
 
+func TestAutoArchiveSessionRechecksEligibilityAtWriteTime(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "podiom.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.CreateAgent(ctx, Agent{Name: "jared", Provider: "claude", PermissionMode: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := db.CreateSession(ctx, Session{AgentName: "jared", Provider: "claude", PermissionMode: "approve", Origin: OriginWeb})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := db.CreateSession(ctx, Session{AgentName: "jared", Provider: "claude", PermissionMode: "approve", Origin: OriginWeb})
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := db.CreateSession(ctx, Session{AgentName: "jared", Provider: "claude", PermissionMode: "approve", Origin: OriginWeb, PlanState: PlanAwaitingApproval})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	if _, err := db.db.ExecContext(ctx, `UPDATE sessions SET updated_at = ? WHERE id IN (?, ?, ?)`, cutoff, stale.ID, boundary.ID, protected.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := db.ListAutoArchiveCandidateIDs(ctx, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("candidate ids = %v, want stale and boundary only", ids)
+	}
+	// Fresh activity after the scan must win over the pending archive write.
+	if _, err := db.UpdateSessionSettings(ctx, stale.ID, "opus", "high", "approve"); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := db.AutoArchiveSession(ctx, stale.ID, cutoff, "2026-08-24T12:00:00Z"); err != nil || changed {
+		t.Fatalf("fresh session archive changed=%v err=%v", changed, err)
+	}
+	archived, changed, err := db.AutoArchiveSession(ctx, boundary.ID, cutoff, "2026-08-24T12:00:00Z")
+	if err != nil || !changed || archived.ArchivedAt == "" {
+		t.Fatalf("boundary session archive = %+v changed=%v err=%v", archived, changed, err)
+	}
+}
+
 // newAnswerTestSession opens a store with one session ready to take messages.
 func newAnswerTestSession(t *testing.T) (*Store, string) {
 	t.Helper()

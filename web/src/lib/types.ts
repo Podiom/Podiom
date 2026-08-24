@@ -94,6 +94,7 @@ export interface GlobalConfig {
   permission_timeout: string;
   fallback: string[];
   collapse_reasoning: boolean;
+  auto_archive_days: number;
   voice: VoiceConfig;
 }
 
@@ -115,6 +116,7 @@ export interface GlobalConfigPatch {
   permission_timeout?: string;
   fallback?: string[];
   collapse_reasoning?: boolean;
+  auto_archive_days?: number;
   voice?: { openai_api_key?: string };
 }
 export type SessionOrigin = "web" | "cli" | "onboarding" | "interview" | "schedule" | "roadmap" | "goal";

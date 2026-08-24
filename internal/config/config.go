@@ -69,6 +69,7 @@ const (
 	DefaultGitHubAppSlug     = "podiom"
 	DefaultGitHubClientID    = "Iv23liIKvhvRj9FdIaPD"
 	DefaultPermissionTimeout = "3m"
+	DefaultAutoArchiveDays   = 7
 	// DefaultDreamTime is the local time the nightly memory dream runs by default.
 	DefaultDreamTime = "03:00"
 )
@@ -139,6 +140,9 @@ type Global struct {
 	// a single clickable line once the turn's answer arrives. Default false:
 	// notes stay expanded.
 	CollapseReasoning bool `yaml:"collapse_reasoning,omitempty"`
+	// AutoArchiveDays moves inactive sessions out of the main chat list after
+	// this many days. It is presentation-only: history remains intact.
+	AutoArchiveDays int `yaml:"auto_archive_days,omitempty"`
 }
 
 // GitHub is optional. Omitted, it defaults to Podiom's official GitHub App
@@ -248,7 +252,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	if err := rejectExplicitInvalidLogging(raw); err != nil {
+	if err := rejectExplicitInvalidPositiveDays(raw); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	cfg.applyDefaults()
@@ -278,6 +282,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Global.DreamTime == "" {
 		c.Global.DreamTime = DefaultDreamTime
+	}
+	if c.Global.AutoArchiveDays == 0 {
+		c.Global.AutoArchiveDays = DefaultAutoArchiveDays
 	}
 	if c.GitHub.AppSlug == "" {
 		c.GitHub.AppSlug = DefaultGitHubAppSlug
@@ -351,6 +358,9 @@ func (c *Config) Validate() error {
 	}
 	if err := ValidateDreamTime(c.Global.DreamTime); err != nil {
 		return fmt.Errorf("global.dream_time: %w", err)
+	}
+	if c.Global.AutoArchiveDays < 0 {
+		return fmt.Errorf("global.auto_archive_days must be greater than 0")
 	}
 
 	profileNames := map[string]Provider{}
@@ -459,7 +469,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func rejectExplicitInvalidLogging(raw []byte) error {
+func rejectExplicitInvalidPositiveDays(raw []byte) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal(raw, &root); err != nil {
 		return err
@@ -469,6 +479,21 @@ func rejectExplicitInvalidLogging(raw []byte) error {
 	}
 	doc := root.Content[0]
 	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value == "global" && doc.Content[i+1].Kind == yaml.MappingNode {
+			global := doc.Content[i+1]
+			for j := 0; j+1 < len(global.Content); j += 2 {
+				if global.Content[j].Value != "auto_archive_days" {
+					continue
+				}
+				var days int
+				if err := global.Content[j+1].Decode(&days); err != nil {
+					return fmt.Errorf("global.auto_archive_days: %w", err)
+				}
+				if days <= 0 {
+					return fmt.Errorf("global.auto_archive_days must be greater than 0")
+				}
+			}
+		}
 		if doc.Content[i].Value != "logging" || doc.Content[i+1].Kind != yaml.MappingNode {
 			continue
 		}
@@ -503,6 +528,9 @@ func ValidateGlobal(g Global, profileNames map[string]Provider) error {
 	}
 	if err := validatePermissionTimeout(g.PermissionTimeout); err != nil {
 		return fmt.Errorf("permission_timeout: %w", err)
+	}
+	if g.AutoArchiveDays < 0 {
+		return fmt.Errorf("auto_archive_days must be greater than 0")
 	}
 	if g.Profile != "" {
 		prov, ok := profileNames[g.Profile]

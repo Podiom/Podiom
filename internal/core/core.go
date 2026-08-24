@@ -164,6 +164,9 @@ func New(opts Options) (*Core, error) {
 	if global.PermissionTimeout == "" {
 		global.PermissionTimeout = config.DefaultPermissionTimeout
 	}
+	if global.AutoArchiveDays == 0 {
+		global.AutoArchiveDays = config.DefaultAutoArchiveDays
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
