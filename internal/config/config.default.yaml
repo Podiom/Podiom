@@ -17,6 +17,7 @@ global:
   effort: medium              # default provider-supported reasoning effort
   permission_mode: approve    # approve (relay each side-effect to you) | yolo (auto-approve, whole-machine)
   permission_timeout: 3m       # approve-mode prompt timeout before auto-deny (Go duration, e.g. 30s, 3m)
+  auto_archive_days: 7         # archive inactive sessions after this many days
   # Optional global fallback chain used when an agent declares none of its own.
   # Each entry is a profile name, a bare provider ("claude"/"codex", no profile),
   # or "default" (the agent's own provider with the CLI's global login).

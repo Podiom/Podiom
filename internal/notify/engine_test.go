@@ -216,6 +216,12 @@ func TestEnginePersistsAndBroadcastsNotification(t *testing.T) {
 	}
 
 	waitFor(t, "the in-app broadcast", func() bool { return rec.count() == 1 })
+	// Wait on the channel separately: handle() broadcasts in-app before it
+	// delivers, so the broadcast landing says nothing about the channel having
+	// been written yet. Between the two the worker still has to read
+	// preferences and insert a delivery row, which is enough of a gap for a
+	// loaded machine to run the assertions below first.
+	waitFor(t, "the channel delivery", func() bool { return len(ch.received()) == 1 })
 
 	envs := ch.received()
 	if len(envs) != 1 {

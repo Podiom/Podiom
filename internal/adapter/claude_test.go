@@ -800,7 +800,7 @@ func TestClaudeEnvAppliesExtraEnv(t *testing.T) {
 
 	// Nil supplier is a no-op.
 	c := &Claude{}
-	for _, kv := range c.env("", nil) {
+	for _, kv := range c.env("") {
 		if kv == "PODIOM_TEST_TOKEN=stored" {
 			t.Fatal("nil supplier must not inject values")
 		}
@@ -811,7 +811,7 @@ func TestClaudeEnvAppliesExtraEnv(t *testing.T) {
 	c = &Claude{extraEnv: func() []string {
 		return []string{"PODIOM_TEST_TOKEN=stored", "GITHUB_TOKEN=tok_123", "malformed"}
 	}}
-	env := c.env("/profile", nil)
+	env := c.env("/profile")
 	var sawStored, sawInherited, sawNew, sawProfile bool
 	for _, kv := range env {
 		switch kv {
@@ -895,4 +895,22 @@ func parseClaudeLineForTest(t *testing.T, line string) []Event {
 		events = append(events, event)
 	}
 	return events
+}
+
+// TestClaudeEnvPutsToolsetOnPath pins the PATH contract: toolset directories
+// lead PATH, so an agent-installed tool wins over a same-named host tool.
+func TestClaudeEnvPutsToolsetOnPath(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	c := &Claude{toolsetPathDirs: []string{"/data/podiom/toolset/bin", "/data/podiom/toolset/npm/bin"}}
+
+	var path string
+	for _, kv := range c.env("") {
+		if v, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = v
+		}
+	}
+	want := "/data/podiom/toolset/bin:/data/podiom/toolset/npm/bin:/usr/bin:/bin"
+	if path != want {
+		t.Fatalf("PATH = %q, want %q", path, want)
+	}
 }

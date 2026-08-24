@@ -129,13 +129,17 @@ provides: `go`, `node`, `python`, `rust`, `swift`.
 
 Ticked toolchains install into `/data/podiom/toolchains/` in the background at
 start and are on `PATH` for every agent process, Claude- and Codex-backed
-alike — unlike per-agent [workspace tools](workspace-tools.md), these come from
-the container environment, which the long-lived Codex app-server inherits.
+alike. Unlike the [toolset](toolset.md) — individual CLI tools agents install
+for themselves — these are whole language runtimes, and you choose them.
 Unticking one deletes it. `node` is listed but fixed, because the bundled
 `claude` and `codex` run on it.
 
 This is HA-only by design. On a standalone install you already own the host —
 install what you need there.
+
+Individual command-line tools are a separate matter and need nothing from you:
+agents install those themselves into `/data/podiom/toolset/`, which is also on
+`/data` and so also survives app updates. See [toolset.md](toolset.md).
 
 Note on Swift: this is the open-source toolchain (SwiftPM, `swift build`,
 `swift test`). `xcodebuild`, the iOS Simulator and code signing need Xcode,

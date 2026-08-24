@@ -38,11 +38,12 @@
   } from "../lib/types";
   import AboutYou from "./AboutYou.svelte";
   import Credentials from "./Credentials.svelte";
+  import Toolset from "./Toolset.svelte";
   import Agents from "./Agents.svelte";
   import Logs from "./Logs.svelte";
 
   type UpdateState = "idle" | "checking" | "available" | "current" | "updating" | "restarting" | "failed";
-  type SettingsTab = "providers" | "general" | "agents" | "about-you" | "credentials" | "updates" | "notifications" | "logs";
+  type SettingsTab = "providers" | "general" | "agents" | "about-you" | "credentials" | "toolset" | "updates" | "notifications" | "logs";
 
   // One row in a provider card's account list. The unnamed account (name "")
   // is the provider CLI's own login directory — Podiom did not create it, so it
@@ -205,6 +206,14 @@
   let collapseReasoning = $state(false);
   let collapseSaving = $state(false);
   let collapseError = $state<string | null>(null);
+
+  // Inactive-session archive policy. Kept separate from the provider defaults
+  // form so it can be saved directly from General without touching that draft.
+  let autoArchiveDays = $state(7);
+  let autoArchiveDraft = $state("7");
+  let autoArchiveSaving = $state(false);
+  let autoArchiveError = $state<string | null>(null);
+  let autoArchiveSaved = $state(false);
 
   // Canonical JSON snapshot of the last-saved state, for dirty tracking.
   let baseline = $state("");
@@ -446,6 +455,8 @@
   function applyConfig(cfg: GlobalConfig) {
     voiceKeySet = cfg.voice?.openai_api_key_set ?? false;
     collapseReasoning = cfg.collapse_reasoning ?? false;
+    autoArchiveDays = cfg.auto_archive_days ?? 7;
+    autoArchiveDraft = String(autoArchiveDays);
     provider = cfg.provider;
     profile = cfg.profile ?? "";
     const fb = cfg.fallback ?? [];
@@ -569,6 +580,29 @@
       collapseError = e instanceof Error ? e.message : String(e);
     } finally {
       collapseSaving = false;
+    }
+  }
+
+  async function saveAutoArchiveDays() {
+    const value = Number(autoArchiveDraft);
+    autoArchiveError = null;
+    autoArchiveSaved = false;
+    if (!Number.isInteger(value) || value <= 0) {
+      autoArchiveError = "Enter a whole number greater than 0.";
+      return;
+    }
+    if (value === autoArchiveDays) {
+      autoArchiveSaved = true;
+      return;
+    }
+    autoArchiveSaving = true;
+    try {
+      applyConfig(await updateConfig({ auto_archive_days: value }));
+      autoArchiveSaved = true;
+    } catch (e) {
+      autoArchiveError = e instanceof Error ? e.message : String(e);
+    } finally {
+      autoArchiveSaving = false;
     }
   }
 
@@ -809,6 +843,7 @@
       <button class:active={tab === "agents"} onclick={() => (tab = "agents")}>Agents</button>
       <button class:active={tab === "about-you"} onclick={() => (tab = "about-you")}>About you</button>
       <button class:active={tab === "credentials"} onclick={() => (tab = "credentials")}>Credentials</button>
+      <button class:active={tab === "toolset"} onclick={() => (tab = "toolset")}>Toolset</button>
       <button class:active={tab === "updates"} onclick={() => (tab = "updates")}>Version &amp; Updates</button>
       <button class:active={tab === "notifications"} onclick={() => (tab = "notifications")}>Notifications</button>
       <button class:active={tab === "logs"} onclick={() => (tab = "logs")}>Logs</button>
@@ -1009,6 +1044,51 @@
       </div>
     </section>
 
+    <!-- ===== SESSION ARCHIVE ===== -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-icon gold">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><path d="M9 12h6" /></svg>
+        </div>
+        <div class="grow">
+          <div class="card-title">Session archive</div>
+          <div class="card-sub">Keep the active conversation list focused by filing away sessions you have stopped using.</div>
+        </div>
+      </div>
+
+      <div class="rows">
+        <div class="row top">
+          <label class="row-key" for="auto-archive-days">after</label>
+          <div class="chips-col">
+            <div class="archive-days-control">
+              <input
+                id="auto-archive-days"
+                class="timeout-input"
+                type="number"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                value={autoArchiveDraft}
+                disabled={autoArchiveSaving}
+                oninput={(event) => {
+                  autoArchiveDraft = event.currentTarget.value;
+                  autoArchiveSaved = false;
+                  autoArchiveError = null;
+                }}
+              />
+              <span class="mono">days inactive</span>
+              <button class="btn-save sm" disabled={autoArchiveSaving || !autoArchiveDraft.trim()} onclick={saveAutoArchiveDays}>
+                {autoArchiveSaving ? "Saving…" : "Save"}
+              </button>
+              {#if autoArchiveSaved}<span class="save-ok">Saved</span>{/if}
+            </div>
+            <div class="hint">Activity includes messages and session changes. Running conversations and sessions waiting at a plan gate stay active.</div>
+            {#if autoArchiveError}<div class="field-error">{autoArchiveError}</div>{/if}
+          </div>
+        </div>
+      </div>
+    </section>
+
     {#if isNative}
       <!-- ===== CONNECTION (native only) ===== -->
       <section class="card">
@@ -1179,6 +1259,10 @@
 
     <!-- ===== AGENT-GRANTED SECRETS ===== -->
     <Credentials {onOpenChat} />
+
+    {:else if tab === "toolset"}
+    <!-- ===== AGENT-INSTALLED TOOLS ===== -->
+    <Toolset {onOpenChat} />
 
     {:else if tab === "updates"}
     <!-- ===== VERSION & UPDATES ===== -->
@@ -1635,6 +1719,17 @@
   .timeout-input:focus {
     border-color: #9ecdc0;
     box-shadow: 0 0 0 3px rgba(63, 143, 126, 0.12);
+  }
+
+  .archive-days-control {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 9px;
+  }
+
+  .archive-days-control .timeout-input {
+    width: 88px;
   }
 
   .field-error {

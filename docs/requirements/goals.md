@@ -292,7 +292,7 @@ floor.
 | `mcp_server` | `{"server_name"}` | **yes** | Assign the catalogue server to the lead agent — same validated path as the manual per-agent MCP assignment (see MCP spec §2: assignment is deliberately per-agent). |
 | `skill` | `{"registry","id","url"}` | **yes** | Install from the skills marketplace via the existing install path. |
 | `permission_mode` | `{"mode"}` | **yes** | Set the agent's permission mode. Approving `yolo` is security-sensitive: the UI must show explicit warning copy. |
-| `cli_tool` | `{"tool","install_hint"}` (+ optional installer fields) | **yes, when installer fields are present** | With `installer` (`npm\|uv\|go\|binary`) the tool is installed into the requesting agent's own workspace and exposed on its PATH — see the workspace-tool-installs spec. Without `installer` (host-wide tools): approval acknowledges and the UI surfaces `install_hint` for the user to run manually. |
+| `cli_tool` | `{"tool","install_hint"}` | no | Host-wide tools only: approval acknowledges and the UI surfaces `install_hint` for the user to run manually. Podiom installs nothing from an approval — agents provision their own tools without approval through the shared toolset (`podiom_install_tool`; see the toolset spec), so any installer fields on the request are inert. |
 | `env_var` | `{"var_name","purpose","target"}` | **yes, when the user enters the value at approval** | The value (supplied once in the approval dialog, human-only) is stored in `credentials.yaml` and injected into agent subprocess environments on later runs. Approving without a value acknowledges only; the user sets the variable themselves. The *request* never carries the value. |
 
 Both approve and deny accept an optional `decision_note`, relayed verbatim to

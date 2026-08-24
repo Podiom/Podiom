@@ -164,6 +164,9 @@ func New(opts Options) (*Core, error) {
 	if global.PermissionTimeout == "" {
 		global.PermissionTimeout = config.DefaultPermissionTimeout
 	}
+	if global.AutoArchiveDays == 0 {
+		global.AutoArchiveDays = config.DefaultAutoArchiveDays
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -194,6 +197,7 @@ func New(opts Options) (*Core, error) {
 	if err := os.MkdirAll(c.paths.AttachmentsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create attachments dir: %w", err)
 	}
+	c.migrateAgentTools()
 	if err := c.CleanupAttachments(context.Background(), time.Now().UTC()); err != nil {
 		c.log.Warn("attachment cleanup failed", "error", err)
 	}
@@ -218,9 +222,6 @@ type AgentPaths struct {
 	Agents    string
 	Memory    string
 	Workspace string
-	// Tools is the per-agent workspace-tool directory (installs, manifest);
-	// see docs/requirements/workspace-tool-installs.md.
-	Tools string
 	// Avatar is the agent's uploaded profile picture (always normalized to PNG),
 	// or the path where one would live if none has been uploaded.
 	Avatar string
