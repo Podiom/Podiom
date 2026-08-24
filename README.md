@@ -218,11 +218,13 @@ Runtime state lives under `$PODIOM_HOME`, which defaults to `~/.podiom/`.
 - [Goals](docs/goals.md), outcomes an agent plans, reviews, and reports back on
 - [Agent tools](docs/agent-tools.md), what agents can do with Podiom itself
 - [Toolset](docs/toolset.md), CLI tools agents install for themselves
+- [Notifications](docs/notifications.md), how schedules, goals, and stuck agents reach you
 - [Voice input](docs/voice-input.md), prompts spoken through OpenAI Whisper
 - [Photo attachments](docs/photo-attachments.md), retained photos for agents to inspect
 - [Security and logging](docs/security.md), permission modes, tokens, redaction, and run logs
 - [Mobile apps](docs/mobile.md), the Capacitor iOS and Android clients
 - [Home Assistant app](docs/home-assistant.md), Podiom as a Home Assistant add-on
+- [WebSocket contract](docs/websocket.md), the browser-native `/api/ws` endpoint
 - [Integration contracts](docs/integrations/README.md)
 
 ## Contributing
