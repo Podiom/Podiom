@@ -298,6 +298,59 @@ func (s *Store) SetSessionArchived(ctx context.Context, id, at string) (Session,
 	return s.GetSession(ctx, id)
 }
 
+// ListAutoArchiveCandidateIDs returns inactive, unarchived sessions that are
+// old enough for the global archive policy. Plan-gated sessions remain visible
+// because they still need user attention. Callers must separately skip active
+// turns, which live in memory rather than SQLite.
+func (s *Store) ListAutoArchiveCandidateIDs(ctx context.Context, cutoff string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM sessions
+		WHERE archived_at = ''
+		  AND updated_at <= ?
+		  AND plan_state NOT IN (?, ?)
+		ORDER BY updated_at, id`, cutoff, PlanPendingSubmission, PlanAwaitingApproval)
+	if err != nil {
+		return nil, fmt.Errorf("list auto-archive candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan auto-archive candidate: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// AutoArchiveSession stamps a session only if it is still eligible at write
+// time. The repeated predicates prevent a sweep from archiving a session that
+// received activity or entered a plan gate after the candidate scan.
+func (s *Store) AutoArchiveSession(ctx context.Context, id, cutoff, at string) (Session, bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+		SET archived_at = ?, updated_at = datetime('now')
+		WHERE id = ?
+		  AND archived_at = ''
+		  AND updated_at <= ?
+		  AND plan_state NOT IN (?, ?)`, at, id, cutoff, PlanPendingSubmission, PlanAwaitingApproval)
+	if err != nil {
+		return Session{}, false, fmt.Errorf("auto-archive session %q: %w", id, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return Session{}, false, fmt.Errorf("auto-archive session %q rows affected: %w", id, err)
+	}
+	if changed == 0 {
+		return Session{}, false, nil
+	}
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return Session{}, false, err
+	}
+	return sess, true, nil
+}
+
 // UpdateSessionGoalBinding changes the lead conversation's agent/project
 // binding and clears its provider handle so the next turn starts in the right
 // workspace. Existing canonical messages remain intact.

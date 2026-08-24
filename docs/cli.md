@@ -184,6 +184,51 @@ Rotation requires a running daemon so its in-memory token flips atomically
 with the on-disk one. In the [Home Assistant app](home-assistant.md), use the
 `rotate_token` toggle on the Configuration page instead.
 
+### `podiom usage`
+
+Show provider plan-limit usage per profile. Reports Claude and Codex plan-limit
+utilization (5-hour and weekly windows) for each configured auth profile.
+
+```
+podiom usage
+podiom usage --json
+podiom usage --refresh
+```
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Print machine-readable JSON. |
+| `--refresh` | Force a live re-fetch instead of cached data. |
+
+### `podiom usage tokens`
+
+Show token usage across sessions. Aggregates and displays token usage (input,
+output, cache) from all sessions, optionally filtered by agent.
+
+```
+podiom usage tokens
+podiom usage tokens --agent jared
+podiom usage tokens --json
+```
+
+| Flag | Description |
+| --- | --- |
+| `--agent` | Filter by agent name. |
+| `--json` | Output as JSON. |
+
+Without `--agent`, displays a summary table of all agents:
+
+```
+AGENT     SESSIONS  INPUT    OUTPUT   CACHE_R  CACHE_W  TOTAL
+jared     47        1.9M     449.2K   50.0K    10.0K    2.4M
+builder   12        523.1K   98.2K    0        0        621.3K
+────────  ────────  ──────── ──────── ──────── ──────── ────────
+TOTAL     59        2.4M     547.4K   50.0K    10.0K    3.0M
+```
+
+With `--agent`, displays detailed breakdown for that agent including per-model
+usage.
+
 ### `podiom onboard` / `podiom setup`
 
 Run the first-use wizard.
@@ -336,6 +381,26 @@ Slash commands can be sent as the message body:
 | `/compact` | Summarize older history to free the context window; the next turn replays the summary plus recent turns into a fresh backing session/thread. |
 | `/help` | Print command help. |
 
+### `podiom sessions`
+
+Inspect and delete durable sessions — the chat threads Podiom keeps for each
+agent, whether they were started from the web UI, the CLI, a schedule, or a
+roadmap task. See [sessions.md](sessions.md) for the concept.
+
+```
+podiom sessions list
+podiom sessions delete <id>
+podiom sessions delete <id> --yes
+```
+
+`podiom sessions list` prints one line per session with its id, agent, origin,
+and name (`-` when the session has not been named). An empty store prints
+`no sessions yet`.
+
+`podiom sessions delete <id>` permanently removes the session and its message
+history; this cannot be undone. It asks `Delete session <id> and its chat
+history?` first, and `-y`/`--yes` skips that prompt.
+
 ### `podiom schedules list`
 
 List every schedule file with its timing, agent, permission policy, next-run
@@ -366,6 +431,22 @@ podiom schedules run morning-calendar
 A disabled schedule can still be run manually; only automatic firing is
 suppressed while it is disabled.
 
+### `podiom schedules delete`
+
+Delete a schedule through `podiomd`.
+
+```
+podiom schedules delete morning-calendar
+podiom schedules delete morning-calendar --yes
+```
+
+Removes the schedule's markdown file and its run history. Sessions produced by
+past runs of the schedule are preserved — deleting the schedule does not delete
+the work it did.
+
+The command asks `Delete schedule "<name>" and its run history?` before acting;
+`-y`/`--yes` skips the prompt.
+
 ### `podiom projects list`
 
 List the shared project ledger (`~/.podiom/projects/projects.yaml`). See
@@ -385,6 +466,21 @@ podiom tasks list
 
 Tasks are created, assigned, moved, and started from the **Roadmap** page in the
 web UI.
+
+### `podiom tasks delete`
+
+Delete a roadmap task through `podiomd`.
+
+```
+podiom tasks delete <id>
+podiom tasks delete <id> --yes
+```
+
+Any session started from the task is preserved. A task that is `in_progress`
+must be moved out of that status first.
+
+The command asks `Delete task <id>? Its session (if any) is kept.` before
+acting; `-y`/`--yes` skips the prompt.
 
 ### podiom mcp
 

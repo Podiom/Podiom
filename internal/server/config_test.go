@@ -95,6 +95,49 @@ func TestPatchConfigTogglesCollapseReasoning(t *testing.T) {
 	}
 }
 
+func TestPatchConfigUpdatesAutoArchiveDays(t *testing.T) {
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	patch := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", bytes.NewBufferString(body))
+		req.RemoteAddr = "127.0.0.1:1234"
+		rr := httptest.NewRecorder()
+		srv.handleConfig(rr, req)
+		return rr
+	}
+
+	rr := patch(`{"auto_archive_days":30}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got globalConfigDTO
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.AutoArchiveDays != 30 || srv.core.GetGlobal().AutoArchiveDays != 30 {
+		t.Fatalf("auto archive response/live = %d/%d, want 30", got.AutoArchiveDays, srv.core.GetGlobal().AutoArchiveDays)
+	}
+
+	if unrelated := patch(`{"model":"opus"}`); unrelated.Code != http.StatusOK {
+		t.Fatalf("unrelated patch status = %d; body=%s", unrelated.Code, unrelated.Body.String())
+	}
+	cfg, err := config.Load(paths.ConfigYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Global.AutoArchiveDays != 30 {
+		t.Fatalf("persisted auto archive days = %d, want 30", cfg.Global.AutoArchiveDays)
+	}
+
+	for _, body := range []string{`{"auto_archive_days":0}`, `{"auto_archive_days":-1}`, `{"auto_archive_days":1.5}`} {
+		if invalid := patch(body); invalid.Code != http.StatusBadRequest {
+			t.Errorf("patch %s status = %d, want 400; body=%s", body, invalid.Code, invalid.Body.String())
+		}
+	}
+}
+
 func TestConfigVoiceKeySetClearAndMasking(t *testing.T) {
 	paths, srv, cleanup := newAgentAPITestServer(t)
 	defer cleanup()

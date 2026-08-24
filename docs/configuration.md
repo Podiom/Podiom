@@ -21,8 +21,10 @@ Defaults applied across all agents unless overridden per agent.
 | `permission_timeout` | duration | Approve-mode prompt timeout before auto-deny, e.g. `30s` or `3m`. |
 | `fallback` | list of profile names or `default` | Optional default fallback chain used when an agent declares none. |
 | `collapse_reasoning` | bool | Fold a finished thinking/working note in chat down to one clickable line once the turn's answer arrives. Default `false` (notes stay expanded). Editable from Settings → General. |
+| `auto_archive_days` | positive integer | Archive sessions after this many days without activity. Default `7`. Editable from Settings → General. |
 
 `provider`, `profile` and `fallback` are editable from **Settings → Providers**.
+`collapse_reasoning` and `auto_archive_days` are editable from **Settings → General**.
 `model`, `effort`, `permission_mode` and `permission_timeout` are set in this
 file only — the web UI does not edit them, and per-agent overrides still apply.
 

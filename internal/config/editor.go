@@ -36,7 +36,7 @@ func RemoveProfile(path, name string) error {
 // mapping in config.yaml. It edits the YAML syntax tree so user comments and
 // unrelated settings survive. Only the fields Podiom's Settings page owns are
 // touched: provider, profile, model, effort, permission_mode,
-// permission_timeout, and fallback. Empty model/effort keys are removed so the
+// permission_timeout, fallback, and auto-archive preference. Empty model/effort keys are removed so the
 // file falls back to applyDefaults; an empty fallback drops the key entirely.
 func SetGlobal(path string, g Global) error {
 	return editFile(path, func(root *yaml.Node) (bool, error) {
@@ -45,6 +45,9 @@ func SetGlobal(path string, g Global) error {
 }
 
 func setGlobal(root *yaml.Node, g Global) bool {
+	if g.AutoArchiveDays == 0 {
+		g.AutoArchiveDays = DefaultAutoArchiveDays
+	}
 	doc := root
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		doc = root.Content[0]
@@ -69,6 +72,7 @@ func setGlobal(root *yaml.Node, g Global) bool {
 	changed = setScalarChild(global, "permission_mode", string(g.PermissionMode)) || changed
 	changed = setScalarChild(global, "permission_timeout", g.PermissionTimeout) || changed
 	changed = setSequenceChild(global, "fallback", g.Fallback) || changed
+	changed = setScalarChild(global, "auto_archive_days", fmt.Sprintf("%d", g.AutoArchiveDays)) || changed
 	// setScalarChild drops empty values, so "off" leaves no key behind and the
 	// zero value from applyDefaults stands.
 	collapse := ""

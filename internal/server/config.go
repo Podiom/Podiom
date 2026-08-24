@@ -21,6 +21,7 @@ type globalConfigDTO struct {
 	PermissionTimeout string                `json:"permission_timeout"`
 	Fallback          []string              `json:"fallback"`
 	CollapseReasoning bool                  `json:"collapse_reasoning"`
+	AutoArchiveDays   int                   `json:"auto_archive_days"`
 	Voice             voiceConfigDTO        `json:"voice"`
 }
 
@@ -43,6 +44,7 @@ func globalToDTO(g config.Global, v config.Voice) globalConfigDTO {
 		PermissionTimeout: g.PermissionTimeout,
 		Fallback:          g.Fallback,
 		CollapseReasoning: g.CollapseReasoning,
+		AutoArchiveDays:   g.AutoArchiveDays,
 		Voice:             voiceConfigDTO{OpenAIAPIKeySet: v.OpenAIAPIKey != ""},
 	}
 }
@@ -58,6 +60,7 @@ type globalConfigPatch struct {
 	PermissionTimeout *string                `json:"permission_timeout,omitempty"`
 	Fallback          *[]string              `json:"fallback,omitempty"`
 	CollapseReasoning *bool                  `json:"collapse_reasoning,omitempty"`
+	AutoArchiveDays   *int                   `json:"auto_archive_days,omitempty"`
 	Voice             *voiceConfigPatch      `json:"voice,omitempty"`
 }
 
@@ -122,6 +125,13 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	if patch.CollapseReasoning != nil {
 		g.CollapseReasoning = *patch.CollapseReasoning
 	}
+	if patch.AutoArchiveDays != nil {
+		if *patch.AutoArchiveDays <= 0 {
+			http.Error(w, "auto_archive_days must be greater than 0", http.StatusBadRequest)
+			return
+		}
+		g.AutoArchiveDays = *patch.AutoArchiveDays
+	}
 	voiceBefore := s.core.GetVoice()
 	v := voiceBefore
 	if patch.Voice != nil && patch.Voice.OpenAIAPIKey != nil {
@@ -161,7 +171,11 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		"permission", string(g.PermissionMode),
 		"permission_timeout", g.PermissionTimeout,
 		"fallback_count", len(g.Fallback),
+		"auto_archive_days", g.AutoArchiveDays,
 	)
+	if patch.AutoArchiveDays != nil {
+		s.kickAutoArchive()
+	}
 	writeJSON(w, globalToDTO(s.core.GetGlobal(), s.core.GetVoice()), nil)
 }
 
@@ -175,6 +189,7 @@ func globalLogFields(g config.Global, v config.Voice) map[string]string {
 		"permission_timeout": g.PermissionTimeout,
 		"fallback_count":     fmt.Sprintf("%d", len(g.Fallback)),
 		"collapse_reasoning": fmt.Sprintf("%t", g.CollapseReasoning),
+		"auto_archive_days":  fmt.Sprintf("%d", g.AutoArchiveDays),
 		// presence only — the key itself must never reach a log line
 		"openai_api_key_set": fmt.Sprintf("%t", v.OpenAIAPIKey != ""),
 	}

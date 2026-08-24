@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -280,6 +281,39 @@ func (c *Core) SetSessionArchived(ctx context.Context, id string, archived bool)
 		at = time.Now().UTC().Format(time.RFC3339)
 	}
 	return c.store.SetSessionArchived(ctx, id, at)
+}
+
+// AutoArchiveInactiveSessions applies the live global inactivity policy and
+// returns the rows whose archive markers changed. The store rechecks the cutoff
+// at write time; active turns are excluded here because that state is in memory.
+func (c *Core) AutoArchiveInactiveSessions(ctx context.Context, now time.Time) ([]store.Session, error) {
+	days := c.GetGlobal().AutoArchiveDays
+	if days <= 0 {
+		days = config.DefaultAutoArchiveDays
+	}
+	cutoff := now.UTC().Add(-time.Duration(days) * 24 * time.Hour).Format("2006-01-02 15:04:05")
+	ids, err := c.store.ListAutoArchiveCandidateIDs(ctx, cutoff)
+	if err != nil {
+		return nil, err
+	}
+
+	at := now.UTC().Format(time.RFC3339)
+	archived := make([]store.Session, 0, len(ids))
+	var errs []error
+	for _, id := range ids {
+		if c.activeTurn != nil && c.activeTurn(id) {
+			continue
+		}
+		sess, changed, err := c.store.AutoArchiveSession(ctx, id, cutoff, at)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if changed {
+			archived = append(archived, sess)
+		}
+	}
+	return archived, errors.Join(errs...)
 }
 
 // archiveFinishedRun archives a session whose unattended run has ended and
