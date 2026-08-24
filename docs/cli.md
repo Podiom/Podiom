@@ -184,6 +184,51 @@ Rotation requires a running daemon so its in-memory token flips atomically
 with the on-disk one. In the [Home Assistant app](home-assistant.md), use the
 `rotate_token` toggle on the Configuration page instead.
 
+### `podiom usage`
+
+Show provider plan-limit usage per profile. Reports Claude and Codex plan-limit
+utilization (5-hour and weekly windows) for each configured auth profile.
+
+```
+podiom usage
+podiom usage --json
+podiom usage --refresh
+```
+
+| Flag | Description |
+| --- | --- |
+| `--json` | Print machine-readable JSON. |
+| `--refresh` | Force a live re-fetch instead of cached data. |
+
+### `podiom usage tokens`
+
+Show token usage across sessions. Aggregates and displays token usage (input,
+output, cache) from all sessions, optionally filtered by agent.
+
+```
+podiom usage tokens
+podiom usage tokens --agent jared
+podiom usage tokens --json
+```
+
+| Flag | Description |
+| --- | --- |
+| `--agent` | Filter by agent name. |
+| `--json` | Output as JSON. |
+
+Without `--agent`, displays a summary table of all agents:
+
+```
+AGENT     SESSIONS  INPUT    OUTPUT   CACHE_R  CACHE_W  TOTAL
+jared     47        1.9M     449.2K   50.0K    10.0K    2.4M
+builder   12        523.1K   98.2K    0        0        621.3K
+────────  ────────  ──────── ──────── ──────── ──────── ────────
+TOTAL     59        2.4M     547.4K   50.0K    10.0K    3.0M
+```
+
+With `--agent`, displays detailed breakdown for that agent including per-model
+usage.
+
 ### `podiom onboard` / `podiom setup`
 
 Run the first-use wizard.
