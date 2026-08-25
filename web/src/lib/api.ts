@@ -638,6 +638,31 @@ export async function createSchedule(req: NewScheduleRequest): Promise<ScheduleS
   );
 }
 
+export interface ScheduleUpdateRequest {
+  agent?: string;
+  provider?: Provider | "";
+  profile?: string;
+  model?: string;
+  effort?: string;
+  cron?: string;
+  every?: string;
+  webhook?: boolean;
+  run_permission?: string;
+  enabled?: boolean;
+  project?: string;
+  body?: string;
+}
+
+export async function updateSchedule(name: string, patch: ScheduleUpdateRequest): Promise<ScheduleStatus> {
+  return asJSON(
+    await request(`/api/schedules/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  );
+}
+
 export async function listProjects(): Promise<Project[]> {
   return (await asJSON<Project[] | null>(await request("/api/projects"))) ?? [];
 }

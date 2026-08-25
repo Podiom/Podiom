@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { answerAgentQuestion, createSchedule, deleteSchedule, listGoals, listProfiles, listProjects, listSchedules, runSchedule } from "../lib/api";
+  import { answerAgentQuestion, createSchedule, deleteSchedule, listGoals, listProfiles, listProjects, listSchedules, runSchedule, updateSchedule } from "../lib/api";
+  import type { ScheduleUpdateRequest } from "../lib/api";
   import AgentAvatar from "../lib/AgentAvatar.svelte";
   import AgentMarkdown from "../lib/AgentMarkdown.svelte";
   import RunTargetPicker from "../lib/RunTargetPicker.svelte";
@@ -17,6 +18,8 @@
     agentName?: string;
     seed?: string;
   }
+
+  type CadenceKind = "cron" | "every" | "none";
 
   let {
     agents = [],
@@ -75,10 +78,13 @@
   let deleteBusy = $state(false);
   let deleteError = $state<string | null>(null);
 
-  // New-schedule modal.
+  // Shared create/edit schedule modal.
   let creating = $state(false);
+  let editingSchedule = $state<ScheduleStatus | null>(null);
   let nsName = $state("");
+  let nsCadence = $state<CadenceKind>("cron");
   let nsCron = $state("0 7 * * *");
+  let nsEvery = $state("");
   let nsAgent = $state("");
   let nsProvider = $state<RunTargetValue["provider"]>("");
   let nsProfile = $state("");
@@ -86,6 +92,7 @@
   let nsEffort = $state("");
   let nsMode = $state("preapproved");
   let nsWebhook = $state(false);
+  let nsEnabled = $state(true);
   let nsProject = $state("");
   let nsBody = $state("");
   let nsBusy = $state(false);
@@ -99,6 +106,12 @@
   ];
   const selectedScheduleAgent = $derived(agents.find((a) => a.Name === nsAgent) ?? null);
   const scheduleEntries = $derived(goalGroupedEntries(schedules, (s) => s.goal_id, goals));
+  const nsHasCadence = $derived(
+    nsCadence === "cron" ? Boolean(nsCron.trim()) : nsCadence === "every" ? Boolean(nsEvery.trim()) : false,
+  );
+  const nsReady = $derived(
+    Boolean(nsName.trim() && nsAgent && nsBody.trim() && (nsHasCadence || nsWebhook)),
+  );
 
   const nsSlug = $derived(
     (nsName.trim() || "untitled-job").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
@@ -110,7 +123,8 @@
       (nsModel ? `model: ${nsModel}\n` : "") +
       (nsEffort ? `effort: ${nsEffort}\n` : "") +
       (nsProject ? `project: ${nsProject}\n` : "") +
-      (nsCron.trim() ? `cron: ${nsCron.trim()}\n` : "") +
+      (nsCadence === "cron" && nsCron.trim() ? `cron: ${nsCron.trim()}\n` : "") +
+      (nsCadence === "every" && nsEvery.trim() ? `every: ${nsEvery.trim()}\n` : "") +
       (nsWebhook ? "webhook: true\nwebhook_secret: <generated>\n" : "") +
       `run_permission: ${nsMode}\nenabled: true\n---\n\n` +
       (nsBody.trim() || "<your prompt here>"),
@@ -119,38 +133,77 @@
   onMount(load);
 
   function openNew() {
+    editingSchedule = null;
     nsName = "";
+    nsCadence = "cron";
     nsCron = "0 7 * * *";
+    nsEvery = "";
     nsAgent = agents.length ? agents[0].Name : "";
     nsProvider = "";
     nsProfile = "";
     nsModel = nsEffort = "";
     nsMode = "preapproved";
     nsWebhook = false;
+    nsEnabled = true;
     nsProject = "";
     nsBody = "";
     error = null;
     creating = true;
   }
 
+  function openEdit(s: ScheduleStatus) {
+    editingSchedule = s;
+    nsName = s.name;
+    nsCadence = s.every ? "every" : s.cron ? "cron" : "none";
+    nsCron = s.cron || "0 7 * * *";
+    nsEvery = s.every || "";
+    nsAgent = s.agent;
+    nsProvider = s.provider || "";
+    nsProfile = s.profile;
+    nsModel = s.model;
+    nsEffort = s.effort;
+    nsMode = s.run_permission;
+    nsWebhook = s.webhook;
+    nsEnabled = s.enabled;
+    nsProject = s.project || "";
+    nsBody = s.body;
+    error = null;
+    inspectingSchedule = null;
+    creating = true;
+  }
+
+  function closeScheduleForm() {
+    if (nsBusy) return;
+    creating = false;
+    editingSchedule = null;
+  }
+
   async function submitSchedule() {
+    if (!nsReady) return;
     nsBusy = true;
     error = null;
     try {
-      await createSchedule({
-        name: nsName.trim(),
+      const fields = {
         agent: nsAgent,
         provider: nsProvider,
         profile: nsProfile,
         model: nsModel,
         effort: nsEffort,
-        cron: nsCron.trim(),
+        cron: nsCadence === "cron" ? nsCron.trim() : "",
+        every: nsCadence === "every" ? nsEvery.trim() : "",
         webhook: nsWebhook,
-        run_permission: nsMode,
         project: nsProject,
         body: nsBody.trim(),
-      });
+      };
+      if (editingSchedule) {
+        const patch: ScheduleUpdateRequest = { ...fields, enabled: nsEnabled };
+        if (!editingSchedule.goal_id) patch.run_permission = nsMode;
+        await updateSchedule(editingSchedule.name, patch);
+      } else {
+        await createSchedule({ name: nsName.trim(), ...fields, run_permission: nsMode });
+      }
       creating = false;
+      editingSchedule = null;
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -325,6 +378,9 @@
       <span style={modeChip(s.run_permission === "yolo" ? "yolo" : "approve")}>{s.run_permission}</span>
       <span class="sched-next">next {nextLabel(s)}</span>
       <button class="sched-run" disabled={busy === s.name} onclick={() => runNow(s.name)}>{busy === s.name ? "Running…" : "Run now"}</button>
+      <button class="sched-edit" title="Edit schedule" aria-label={`Edit schedule ${s.name}`} onclick={() => openEdit(s)}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+      </button>
     {/if}
     <button class="sched-x" title="Delete schedule" aria-label="Delete schedule" onclick={() => (pendingDelete = s)}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -486,28 +542,43 @@
 </div>
 
 {#if creating}
-  <div class="modal-backdrop" role="presentation" onclick={() => (creating = false)}>
-    <div class="modal-card ns-modal" role="dialog" aria-modal="true" aria-label="New schedule" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+  <div class="modal-backdrop" role="presentation" onclick={closeScheduleForm}>
+    <div class="modal-card ns-modal" role="dialog" aria-modal="true" aria-label={editingSchedule ? `Edit schedule ${editingSchedule.name}` : "New schedule"} tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <div class="modal-head">
-        <div class="modal-title">New schedule</div>
-        <div class="modal-sub">Creates a markdown file under <span class="mono">~/.podiom/schedules</span>. The frontmatter sets the engine; the body is the prompt the agent runs on each tick.</div>
+        <div class="modal-title">{editingSchedule ? `Edit ${editingSchedule.name}` : "New schedule"}</div>
+        <div class="modal-sub">
+          {#if editingSchedule}
+            Updates <span class="mono">{editingSchedule.path}</span> in place. Its name, history, goal link, creator attribution, and advanced fields are preserved.
+          {:else}
+            Creates a markdown file under <span class="mono">~/.podiom/schedules</span>. The frontmatter sets the engine; the body is the prompt the agent runs on each tick.
+          {/if}
+        </div>
       </div>
       <div class="modal-body">
         {#if error}<div class="error-banner" style="margin-bottom:14px">{error}</div>{/if}
 
         <div class="label-mono" style="margin-bottom:8px">name</div>
-        <input class="field-input" bind:value={nsName} placeholder="e.g. nightly-dependency-audit" />
+        <input class="field-input" class:ns-readonly={Boolean(editingSchedule)} bind:value={nsName} readonly={Boolean(editingSchedule)} placeholder="e.g. nightly-dependency-audit" />
 
-        <div class="label-mono" style="margin:18px 0 8px">schedule (cron)</div>
+        <div class="label-mono" style="margin:18px 0 8px">cadence</div>
         <div class="ns-chips" style="margin-bottom:8px">
-          {#each CRON_PRESETS as c}
-            <button style={chip(c.v === nsCron)} onclick={() => (nsCron = c.v)}>{c.label}</button>
-          {/each}
-          {#if nsWebhook}
-            <button style={chip(nsCron === "")} onclick={() => (nsCron = "")}>No cron</button>
-          {/if}
+          <button style={chip(nsCadence === "cron")} onclick={() => (nsCadence = "cron")}>Cron</button>
+          <button style={chip(nsCadence === "every")} onclick={() => (nsCadence = "every")}>Interval</button>
+          <button style={chip(nsCadence === "none")} onclick={() => (nsCadence = "none")}>No cadence</button>
         </div>
-        <input class="field-input mono" bind:value={nsCron} placeholder="0 7 * * *" style="font:500 13px 'JetBrains Mono',monospace" />
+        {#if nsCadence === "cron"}
+          <div class="ns-chips" style="margin-bottom:8px">
+            {#each CRON_PRESETS as c}
+              <button style={chip(c.v === nsCron)} onclick={() => (nsCron = c.v)}>{c.label}</button>
+            {/each}
+          </div>
+          <input class="field-input mono" bind:value={nsCron} placeholder="0 7 * * *" style="font:500 13px 'JetBrains Mono',monospace" />
+        {:else if nsCadence === "every"}
+          <input class="field-input mono" bind:value={nsEvery} placeholder="e.g. 6h or 30m" style="font:500 13px 'JetBrains Mono',monospace" />
+          <div class="ns-hint" style="margin-top:6px">Intervals use durations such as <span class="mono">6h</span>, <span class="mono">30m</span>, or <span class="mono">90s</span>.</div>
+        {:else}
+          <div class="ns-hint">With no clock cadence, webhook must be on so the schedule still has a trigger.</div>
+        {/if}
 
         <div class="ns-row">
           <span class="ns-key">webhook</span>
@@ -515,7 +586,7 @@
             <button style={chip(nsWebhook)} onclick={() => (nsWebhook = !nsWebhook)}>{nsWebhook ? "on" : "off"}</button>
             <span class="ns-hint">
               {#if nsWebhook}
-                Also fires when an outside service POSTs to this schedule's URL. Podiom generates the secret; copy the URL from the card after creating. Leave the cron blank for a webhook-only job.
+                Also fires when an outside service POSTs to this schedule's URL. Podiom manages the secret; copy the URL from the card after saving.
               {:else}
                 Let an outside service fire this schedule by calling a URL.
               {/if}
@@ -550,9 +621,19 @@
         <div class="ns-row">
           <span class="ns-key">mode</span>
           <div class="ns-chips">
-            {#each ["preapproved", "yolo"] as m}<button style={chip(m === nsMode)} onclick={() => (nsMode = m)}>{m}</button>{/each}
+            {#each ["preapproved", "yolo"] as m}<button style={chip(m === nsMode)} disabled={Boolean(editingSchedule?.goal_id)} onclick={() => (nsMode = m)}>{m}</button>{/each}
+            {#if editingSchedule?.goal_id}<span class="ns-hint">Goal schedules always run with full autonomy.</span>{/if}
           </div>
         </div>
+        {#if editingSchedule}
+          <div class="ns-row">
+            <span class="ns-key">status</span>
+            <div class="ns-chips">
+              <button style={chip(nsEnabled)} onclick={() => (nsEnabled = !nsEnabled)}>{nsEnabled ? "enabled" : "parked"}</button>
+              <span class="ns-hint">{nsEnabled ? "This schedule fires automatically." : "The file and run history stay, but automatic triggers stop."}</span>
+            </div>
+          </div>
+        {/if}
         {#if projects.length}
           <div class="ns-row">
             <span class="ns-key">project</span>
@@ -569,13 +650,17 @@
         <textarea class="field-area" rows="4" bind:value={nsBody} placeholder="What should the agent do on every run? This becomes the body of the markdown file." style="min-height:96px"></textarea>
         <WorkspaceFileLinks content={nsBody} />
 
-        <div style="display:flex;align-items:center;gap:8px;margin:18px 0 7px">
-          <span class="label-mono" style="flex:1">file preview</span>
-          <span class="mono" style="font-size:11px;color:#8A7560">~/.podiom/schedules/{nsSlug}.md</span>
-        </div>
-        <pre class="ns-preview mono">{nsPreview}</pre>
+        {#if !editingSchedule}
+          <div style="display:flex;align-items:center;gap:8px;margin:18px 0 7px">
+            <span class="label-mono" style="flex:1">file preview</span>
+            <span class="mono" style="font-size:11px;color:#8A7560">~/.podiom/schedules/{nsSlug}.md</span>
+          </div>
+          <pre class="ns-preview mono">{nsPreview}</pre>
+        {/if}
 
-        <button class="modal-cta" disabled={nsBusy || !nsName.trim() || !nsAgent || !nsBody.trim() || (!nsCron.trim() && !nsWebhook)} onclick={submitSchedule}>{nsBusy ? "Creating…" : "Create schedule file"}</button>
+        <button class="modal-cta" disabled={nsBusy || !nsReady} onclick={submitSchedule}>
+          {nsBusy ? (editingSchedule ? "Saving…" : "Creating…") : editingSchedule ? "Save changes" : "Create schedule file"}
+        </button>
       </div>
     </div>
   </div>
@@ -620,6 +705,16 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  .ns-chips button:disabled {
+    cursor: not-allowed !important;
+    opacity: 0.62;
+  }
+
+  .ns-readonly {
+    background: var(--surface-3);
+    color: #7d7165;
   }
 
   .ns-row {
@@ -819,6 +914,25 @@
     color: var(--teal-deep);
     font: 600 12.5px "Hanken Grotesk";
     cursor: pointer;
+  }
+
+  .sched-edit {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--field-line);
+    border-radius: 9px;
+    background: #fff;
+    color: #6f6459;
+    cursor: pointer;
+  }
+
+  .sched-edit:hover {
+    background: var(--surface-3);
+    color: var(--teal-deep);
   }
 
   .sched-x {
