@@ -12,6 +12,11 @@ token Podiom holds is used only for listing repositories, downloading archive
 snapshots, and marketplace rate limits; it is deliberately not reused as a git
 credential.
 
+A remote you type is checked before git ever sees it. Git reads a leading `-` as
+one of its own options and `<helper>::<arg>` as a remote helper it will execute,
+so both forms are refused — the same class of problem as a shell injection, one
+level down.
+
 Two consequences worth stating plainly:
 
 - Podiom can only reach the repositories *you* can reach. If a clone or push
@@ -49,6 +54,31 @@ Three postures, expressed by two fields:
 A project with no `git:` block at all reads back as undeclared, which is treated
 as disabled. Projects created before this existed keep working exactly as they
 did until you opt in.
+
+### Turning Git on for a project that does not have it
+
+The **source control** panel on a project card is where you opt in, and the
+remote is editable there — you are not limited to a local repository, and the
+remote does not have to be a GitHub one. What happens when you save depends on
+what is already on disk rather than on what the form says:
+
+- **No repository and no remote** — `git init` in the project's code directory.
+- **No repository, a remote, an empty code directory** — Podiom clones it.
+- **No repository, a remote, a code directory that already holds files** — this
+  needs your confirmation, because the clone replaces them. Nothing is deleted:
+  the existing files move to `.podiom-backups/<UTC timestamp>/` beside the
+  checkout first. Podiom stages the clone next to the target, so a clone that
+  fails against a bad URL or missing credentials leaves the project untouched.
+- **An existing checkout** — Podiom adopts it and repoints `origin` at the
+  remote you gave. It never re-clones over a real history; discarding one is a
+  bigger decision than a checkbox, so do it deliberately from a terminal.
+
+After a clone, `default_branch` is set to the branch the clone actually landed
+on — whatever the remote advertises as `HEAD` — rather than the value in the
+form, which can only ever be a guess before the remote has been contacted.
+
+Turning Git **off** never removes `.git`. The checkout stays exactly as it is
+and Podiom simply stops acting on it.
 
 `branching: direct` commits to the default branch. `branching: branch-per-task`
 puts each piece of work on its own branch, named `<prefix><slug>`.

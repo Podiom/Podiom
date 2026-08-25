@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -52,6 +53,14 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// projectGitRequest carries the whole source-control block plus the one field
+// that is not policy: Force is the user's answer to the confirmation prompt, so
+// it must not live on projects.Git, which is persisted to projects.yaml.
+type projectGitRequest struct {
+	Git   projects.Git `json:"git"`
+	Force bool         `json:"force"`
 }
 
 type projectUpdateRequest struct {
@@ -160,6 +169,34 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if action == "git" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req projectGitRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.log.Info("project git configure requested",
+			"event", "project",
+			"project", id,
+			"enabled", req.Git.Enabled,
+			"remote_set", strings.TrimSpace(req.Git.Remote) != "",
+			"force", req.Force,
+		)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		updated, err := s.core.ConfigureProjectGit(ctx, id, req.Git, req.Force)
+		if errors.Is(err, core.ErrGitConfirmationRequired) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		writeJSON(w, updated, err)
+		return
+	}
+
 	if action == "repo" || strings.HasPrefix(action, "repo/") {
 		s.handleProjectRepo(w, r, id)
 		return
@@ -174,14 +211,6 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
-		}
-		if req.Git != nil && req.Git.Enabled {
-			prepared, err := s.core.PrepareProjectGit(r.Context(), id, *req.Git)
-			if err != nil {
-				writeJSON(w, nil, err)
-				return
-			}
-			req.Git = &prepared
 		}
 		updated, err := s.core.UpdateProject(r.Context(), id, projects.ProjectPatch{
 			Name:        req.Name,

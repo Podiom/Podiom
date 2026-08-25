@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -380,4 +381,248 @@ func TestSnapshotFallbackPullContinuesWithWarning(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); !os.IsNotExist(err) {
 		t.Fatalf("snapshot fallback was converted unexpectedly: %v", err)
 	}
+}
+
+// seedOrigin builds a bare repository whose HEAD is master, so a test can tell
+// the branch the clone actually landed on apart from the "main" default the
+// caller guessed.
+func seedOrigin(t *testing.T) string {
+	t.Helper()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	seed := filepath.Join(t.TempDir(), "seed")
+	runGit(t, "init", "--bare", origin)
+	runGit(t, "init", "--initial-branch=master", seed)
+	commitFile(t, seed, "README.md", "from the remote\n", "initial")
+	runGit(t, "-C", seed, "remote", "add", "origin", origin)
+	runGit(t, "-C", seed, "push", "-u", "origin", "master")
+	runGit(t, "-C", origin, "symbolic-ref", "HEAD", "refs/heads/master")
+	return origin
+}
+
+// Enabling git with a remote on an empty project clones it. This is the whole
+// point of the feature: before, it ran git init and the remote's content never
+// arrived.
+func TestEnableGitClonesTheRemoteIntoAnEmptyProject(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "app", Name: "App"}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := c.ConfigureProjectGit(ctx, "app", projects.Git{
+		Enabled: true, Remote: origin, DefaultBranch: "main",
+	}, false)
+	if err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if updated.Git == nil || !updated.Git.Enabled || updated.Git.Remote != origin {
+		t.Fatalf("git = %#v", updated.Git)
+	}
+	// The clone knows the remote's HEAD; the caller's "main" was only a guess.
+	if updated.Git.DefaultBranch != "master" {
+		t.Fatalf("default branch = %q, want master", updated.Git.DefaultBranch)
+	}
+	if updated.GitState == nil || !updated.GitState.Detected {
+		t.Fatalf("git state = %#v", updated.GitState)
+	}
+	if _, err := os.Stat(filepath.Join(c.paths.ProjectsDir, "app", "README.md")); err != nil {
+		t.Fatalf("cloned file: %v", err)
+	}
+}
+
+// Cloning over a project that already holds files destroys nothing without the
+// user's word for it, and when they give it the old files are kept.
+func TestEnableGitOnANonEmptyProjectNeedsConfirmationThenBacksUpAndClones(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "app", Name: "App"}); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(c.paths.ProjectsDir, "app")
+	if err := os.WriteFile(filepath.Join(projectDir, "notes.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	requested := projects.Git{Enabled: true, Remote: origin, DefaultBranch: "main"}
+	if _, err := c.ConfigureProjectGit(ctx, "app", requested, false); !errors.Is(err, ErrGitConfirmationRequired) {
+		t.Fatalf("err = %v, want ErrGitConfirmationRequired", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "notes.md")); err != nil {
+		t.Fatalf("refused clone touched the project: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".git")); !os.IsNotExist(err) {
+		t.Fatal("refused clone left a repository behind")
+	}
+
+	if _, err := c.ConfigureProjectGit(ctx, "app", requested, true); err != nil {
+		t.Fatalf("forced configure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "README.md")); err != nil {
+		t.Fatalf("cloned file: %v", err)
+	}
+	if findBackedUp(t, projectDir, "notes.md") == "" {
+		t.Fatal("notes.md was not backed up")
+	}
+	// The staging directory is a sibling of the target here, so a replace pass
+	// that did not skip it would have moved the clone into the backup.
+	for _, entry := range readDirNames(t, projectDir) {
+		if strings.HasPrefix(entry, ".podiom-clone-") {
+			t.Fatalf("staging directory %q left behind", entry)
+		}
+	}
+}
+
+// A snapshot project becomes a real checkout, and the ledger says so rather
+// than continuing to claim it is an archive.
+func TestEnableGitOnASnapshotProjectUpgradesTheRepoToACheckout(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	repo := projects.SnapshotRepo("acme", "app", "https://github.example/acme/app", "master", "master")
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "app", Name: "App", Repo: &repo}); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(c.paths.ProjectsDir, "app")
+	codeDir := filepath.Join(projectDir, "repo")
+	if err := os.MkdirAll(codeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codeDir, "stale.txt"), []byte("archive\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := c.ConfigureProjectGit(ctx, "app", projects.Git{
+		Enabled: true, Remote: origin, DefaultBranch: "main",
+	}, true)
+	if err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if updated.Repo == nil || updated.Repo.Mode != "git" || updated.Repo.SourceKind != "clone" {
+		t.Fatalf("repo = %#v", updated.Repo)
+	}
+	if _, err := os.Stat(filepath.Join(codeDir, "README.md")); err != nil {
+		t.Fatalf("cloned file: %v", err)
+	}
+	// The backup belongs beside the checkout, not inside it.
+	if findBackedUp(t, projectDir, "stale.txt") == "" {
+		t.Fatal("stale.txt was not backed up beside the checkout")
+	}
+	if _, err := os.Stat(filepath.Join(codeDir, ".podiom-backups")); !os.IsNotExist(err) {
+		t.Fatal("backup landed inside the new checkout")
+	}
+}
+
+// An existing checkout keeps its history: the remote is repointed, not recloned.
+// The follow-up read matters because reconcileProjectGit rewrites the persisted
+// remote from disk, and would revert an edit that never reached the checkout.
+func TestEnableGitOnADetectedRepoRepointsOriginWithoutCloning(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "app", Name: "App"}); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(c.paths.ProjectsDir, "app")
+	runGit(t, "init", "--initial-branch=main", projectDir)
+	commitFile(t, projectDir, "local.txt", "kept\n", "local work")
+
+	updated, err := c.ConfigureProjectGit(ctx, "app", projects.Git{Enabled: true, Remote: origin}, false)
+	if err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if updated.Git.Remote != origin {
+		t.Fatalf("remote = %q, want %q", updated.Git.Remote, origin)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "local.txt")); err != nil {
+		t.Fatalf("existing history was replaced: %v", err)
+	}
+	if got := runGit(t, "-C", projectDir, "remote", "get-url", "origin"); got != origin {
+		t.Fatalf("origin = %q, want %q", got, origin)
+	}
+	reread, err := c.GetProject(ctx, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reread.Git.Remote != origin {
+		t.Fatalf("remote reverted to %q on reconcile", reread.Git.Remote)
+	}
+}
+
+// No remote still means a plain local repository, which is a posture in its own
+// right rather than an incomplete one.
+func TestEnableGitWithoutARemoteInitializesInPlace(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "app", Name: "App"}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := c.ConfigureProjectGit(ctx, "app", projects.Git{Enabled: true, DefaultBranch: "trunk"}, false)
+	if err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if updated.Git.Remote != "" {
+		t.Fatalf("remote = %q, want empty", updated.Git.Remote)
+	}
+	if updated.GitState == nil || !updated.GitState.Detected {
+		t.Fatalf("git state = %#v", updated.GitState)
+	}
+	if got := runGit(t, "-C", filepath.Join(c.paths.ProjectsDir, "app"), "branch", "--show-current"); got != "trunk" {
+		t.Fatalf("branch = %q, want trunk", got)
+	}
+}
+
+// A remote git would read as one of its own options never reaches git, and the
+// refusal happens before anything on disk moves.
+func TestConfigureProjectGitRejectsAnUnsafeRemote(t *testing.T) {
+	ctx := context.Background()
+	c, cleanup := newTestCore(t)
+	defer cleanup()
+	if _, err := c.CreateProject(ctx, projects.Project{ID: "app", Name: "App"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ConfigureProjectGit(ctx, "app", projects.Git{
+		Enabled: true, Remote: "ext::sh -c 'touch /tmp/podiom-pwned'",
+	}, true); err == nil {
+		t.Fatal("configure accepted a remote helper URL")
+	}
+	if _, err := os.Stat(filepath.Join(c.paths.ProjectsDir, "app", ".git")); !os.IsNotExist(err) {
+		t.Fatal("rejected remote still created a repository")
+	}
+}
+
+func readDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+// findBackedUp locates a file under <projectDir>/.podiom-backups/<stamp>/,
+// returning "" when it is not there.
+func findBackedUp(t *testing.T, projectDir, name string) string {
+	t.Helper()
+	root := filepath.Join(projectDir, ".podiom-backups")
+	stamps, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, stamp := range stamps {
+		candidate := filepath.Join(root, stamp.Name(), name)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
 }

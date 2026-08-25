@@ -264,3 +264,58 @@ func TestNoTokenBasedCredentialPlumbing(t *testing.T) {
 		}
 	}
 }
+
+// Podiom passes argv arrays, so a remote cannot become a shell command — but
+// git reads a leading "-" as its own option and "<helper>::<arg>" as a helper it
+// executes. These are the forms that must not reach git.
+func TestValidateRemoteRejectsWhatGitWouldExecute(t *testing.T) {
+	local := filepath.Join(t.TempDir(), "origin.git")
+	for _, remote := range []string{
+		"git@github.com:owner/repo.git",
+		"https://github.com/owner/repo.git",
+		"http://git.internal/owner/repo",
+		"ssh://git@host:22/owner/repo.git",
+		"git://host/owner/repo.git",
+		"file:///srv/git/repo.git",
+		local,
+	} {
+		if err := ValidateRemote(remote); err != nil {
+			t.Errorf("ValidateRemote(%q) = %v, want accepted", remote, err)
+		}
+	}
+	for _, remote := range []string{
+		"",
+		"   ",
+		"--upload-pack=touch /tmp/pwned",
+		"-oProxyCommand=x",
+		"ext::sh -c 'id'",
+		"ssh://-oProxyCommand=x/y",
+		"ftp://host/repo.git",
+		"git@host:",
+		"github.com/owner/repo",
+		"https://host/a b",
+		"git@host:owner\nrepo",
+	} {
+		if err := ValidateRemote(remote); err == nil {
+			t.Errorf("ValidateRemote(%q) = nil, want rejected", remote)
+		}
+	}
+}
+
+// The validator is a backstop inside the runner, not only a check at the HTTP
+// edge: Clone is reached with whatever an agent wrote into projects.yaml.
+func TestCloneAndSetRemoteRejectAnUnsafeRemote(t *testing.T) {
+	r := testRunner(t)
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "checkout")
+	if err := r.Clone(ctx, "ext::sh -c 'touch /tmp/podiom-pwned'", dir); err == nil {
+		t.Fatal("Clone accepted a remote helper URL")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("Clone created %s despite rejecting the remote", dir)
+	}
+	repo := newRepo(t, r)
+	if err := r.SetRemote(ctx, repo, "origin", "--upload-pack=touch /tmp/podiom-pwned"); err == nil {
+		t.Fatal("SetRemote accepted a remote git would read as an option")
+	}
+}

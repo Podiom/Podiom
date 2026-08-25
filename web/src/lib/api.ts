@@ -816,6 +816,21 @@ export async function createProjectFromGitHub(req: ConnectProjectRepoRequest): P
   return asJSON(res);
 }
 
+// configureProjectGit is the only call that touches a project's working copy.
+// A 409 means the code directory already holds files and the user has not yet
+// agreed to have them moved aside; re-send with force once they have.
+export async function configureProjectGit(id: string, git: ProjectGit, force = false): Promise<Project> {
+  const res = await request(`/api/projects/${encodeURIComponent(id)}/git`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ git, force }),
+  });
+  if (res.status === 409) {
+    throw new Error("CONFIRM_REPLACE");
+  }
+  return asJSON(res);
+}
+
 export async function analyzeProject(id: string, agent?: string): Promise<Project> {
   return asJSON(
     await request(`/api/projects/${encodeURIComponent(id)}/analyze`, {

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -186,7 +188,7 @@ func TestProjectGitPatchPersistsToLedger(t *testing.T) {
 	}
 }
 
-func TestProjectGitEnableInitializesImmediately(t *testing.T) {
+func TestProjectGitEndpointInitializesALocalRepo(t *testing.T) {
 	ctx := context.Background()
 	paths, srv, cleanup := newAgentAPITestServer(t)
 	defer cleanup()
@@ -194,7 +196,7 @@ func TestProjectGitEnableInitializesImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/projects/plain", bytes.NewBufferString(`{
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/plain/git", bytes.NewBufferString(`{
 		"git": {
 			"enabled": true,
 			"default_branch": "trunk",
@@ -206,10 +208,10 @@ func TestProjectGitEnableInitializesImmediately(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.handleProject(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("PATCH status = %d, body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("POST status = %d, body=%s", rr.Code, rr.Body.String())
 	}
 	if _, err := os.Stat(filepath.Join(paths.ProjectsDir, "plain", ".git")); err != nil {
-		t.Fatalf("Git was not initialized immediately: %v", err)
+		t.Fatalf("Git was not initialized: %v", err)
 	}
 	project, err := srv.core.GetProject(ctx, "plain")
 	if err != nil {
@@ -221,6 +223,101 @@ func TestProjectGitEnableInitializesImmediately(t *testing.T) {
 	if project.GitState == nil || !project.GitState.Detected {
 		t.Fatalf("git state = %#v", project.GitState)
 	}
+}
+
+// Replacing a project's files is the user's call, so the endpoint refuses until
+// they have said yes and answers 409 rather than an opaque error.
+func TestProjectGitEndpointNeedsConfirmationBeforeReplacing(t *testing.T) {
+	ctx := context.Background()
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+	if _, err := srv.core.CreateProject(ctx, projects.Project{ID: "plain", Name: "Plain"}); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(paths.ProjectsDir, "plain")
+	if err := os.WriteFile(filepath.Join(projectDir, "notes.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	origin := seedServerOrigin(t)
+
+	body := `{"git":{"enabled":true,"remote":"` + origin + `","default_branch":"main"},"force":%s}`
+	rr := httptest.NewRecorder()
+	srv.handleProject(rr, httptest.NewRequest(http.MethodPost, "/api/projects/plain/git",
+		bytes.NewBufferString(fmt.Sprintf(body, "false"))))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	srv.handleProject(rr, httptest.NewRequest(http.MethodPost, "/api/projects/plain/git",
+		bytes.NewBufferString(fmt.Sprintf(body, "true"))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("confirmed status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "README.md")); err != nil {
+		t.Fatalf("cloned file: %v", err)
+	}
+	project, err := srv.core.GetProject(ctx, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The clone landed on the remote's HEAD, not the branch the caller guessed.
+	if project.Git == nil || project.Git.DefaultBranch != "master" {
+		t.Fatalf("git = %#v", project.Git)
+	}
+}
+
+// PATCH records policy and nothing else. It is what the page uses for colour and
+// description, so it must never be able to move a user's files.
+func TestProjectPatchDoesNotTouchTheWorkingCopy(t *testing.T) {
+	ctx := context.Background()
+	paths, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+	if _, err := srv.core.CreateProject(ctx, projects.Project{ID: "plain", Name: "Plain"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	srv.handleProject(rr, httptest.NewRequest(http.MethodPatch, "/api/projects/plain",
+		bytes.NewBufferString(`{"git":{"enabled":true,"default_branch":"trunk"}}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	project, err := srv.core.GetProject(ctx, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Git == nil || !project.Git.Enabled {
+		t.Fatalf("policy was not persisted: %#v", project.Git)
+	}
+	if _, err := os.Stat(filepath.Join(paths.ProjectsDir, "plain", ".git")); !os.IsNotExist(err) {
+		t.Fatal("PATCH created a repository; only the git endpoint may touch the disk")
+	}
+}
+
+// seedServerOrigin builds a bare repository whose HEAD is master, so a test can
+// tell the cloned branch apart from the caller's guess.
+func seedServerOrigin(t *testing.T) string {
+	t.Helper()
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	seed := filepath.Join(t.TempDir(), "seed")
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	run("init", "--bare", origin)
+	run("init", "--initial-branch=master", seed)
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("from the remote\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("-C", seed, "add", "README.md")
+	run("-C", seed, "-c", "user.name=Podiom Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial")
+	run("-C", seed, "remote", "add", "origin", origin)
+	run("-C", seed, "push", "-u", "origin", "master")
+	run("-C", origin, "symbolic-ref", "HEAD", "refs/heads/master")
+	return origin
 }
 
 // startTaskTestFixture creates an agent, a project, and one task with a body, so

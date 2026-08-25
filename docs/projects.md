@@ -63,6 +63,11 @@ Archive snapshots write `.podiom-source.json` in the project directory. Syncing
 a snapshot replaces it through the existing backup flow; syncing a real checkout
 fetches and fast-forwards its default branch without rewriting local work.
 
+A snapshot can be promoted to a real checkout at any time by enabling Git on the
+project and giving it a remote: Podiom clones the remote and records the project
+as a checkout rather than an archive, backing the snapshot up first. See
+[git.md](git.md).
+
 For real source control, declare a `git:` block on the project instead — Podiom
 then materializes a working copy (cloned, or `git init`'d in place) that the
 agent operates on with plain `git`, and applies the project's branching policy

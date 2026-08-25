@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,45 +153,184 @@ func (c *Core) detectedDefaultBranch(ctx context.Context, proj projects.Project,
 	return "main"
 }
 
-// PrepareProjectGit performs the immediate, non-destructive side effect behind
-// the UI's Use Git checkbox. Existing files are initialized in place; an
-// existing checkout is adopted. Disabling is handled by the ordinary patch and
-// never removes .git.
-func (c *Core) PrepareProjectGit(ctx context.Context, projectID string, requested projects.Git) (projects.Git, error) {
+// ErrGitConfirmationRequired is returned when enabling a remote would replace
+// files that are already in the project's code directory. The caller re-sends
+// the request with force once the user has agreed.
+var ErrGitConfirmationRequired = errors.New("project code directory has existing files; confirmation required")
+
+// ConfigureProjectGit persists a project's source-control policy and brings the
+// working copy into line with it in one locked step.
+//
+// Three outcomes, decided by what is on disk rather than by what the caller
+// believes: an existing checkout is adopted and its origin repointed, a remote
+// with no checkout is cloned, and neither means git init. Cloning over existing
+// files is destructive, so it needs force — Podiom moves them into
+// .podiom-backups rather than deleting them, and the clone is staged next to the
+// target so a failed clone leaves the project untouched.
+//
+// Disabling never removes .git; a checkout stays exactly as it is.
+func (c *Core) ConfigureProjectGit(ctx context.Context, projectID string, requested projects.Git, force bool) (projects.Project, error) {
 	lock := c.projectGitLock(projectID)
 	lock.Lock()
 	defer lock.Unlock()
 	proj, err := c.ledger.Get(projectID)
 	if err != nil {
-		return projects.Git{}, err
+		return projects.Project{}, err
 	}
-	state := c.inspectProjectGit(ctx, proj)
-	if requested.Remote == "" && state.Remote != "" {
-		requested.Remote = state.Remote
+	requested.Remote = strings.TrimSpace(requested.Remote)
+	if requested.Remote != "" {
+		if err := podiomgit.ValidateRemote(requested.Remote); err != nil {
+			return projects.Project{}, err
+		}
 	}
-	if requested.Remote == "" && proj.Repo != nil {
-		requested.Remote = strings.TrimSpace(proj.Repo.HTMLURL)
-	}
-	if requested.DefaultBranch == "" {
-		requested.DefaultBranch = c.detectedDefaultBranch(ctx, proj, state)
-	}
-	if !state.Detected {
+
+	cloned := false
+	if requested.Enabled {
+		state := c.inspectProjectGit(ctx, proj)
 		runner, err := c.gitRunner()
 		if err != nil {
-			return projects.Git{}, err
+			return projects.Project{}, err
 		}
 		dir := c.projectCodeDir(proj)
-		if err := runner.Init(ctx, dir, requested.DefaultBranch); err != nil {
-			return projects.Git{}, err
-		}
-		if requested.Remote != "" {
-			if err := runner.SetRemote(ctx, dir, "origin", requested.Remote); err != nil {
-				return projects.Git{}, err
+		switch {
+		case state.Detected:
+			// Repoint rather than re-clone: discarding a real history is a
+			// bigger decision than a checkbox, and reconcileProjectGit would
+			// revert an edited remote that was never written to the checkout.
+			if requested.Remote == "" {
+				requested.Remote = state.Remote
+			} else if requested.Remote != state.Remote {
+				if state.RemoteAmbiguous {
+					return projects.Project{}, fmt.Errorf("this checkout has several remotes and none is named origin; set one in the checkout first")
+				}
+				if err := runner.SetRemote(ctx, dir, "origin", requested.Remote); err != nil {
+					return projects.Project{}, err
+				}
 			}
+			if requested.DefaultBranch == "" {
+				requested.DefaultBranch = c.detectedDefaultBranch(ctx, proj, state)
+			}
+		case requested.Remote != "":
+			if !force && dirHasEntries(dir) {
+				return projects.Project{}, ErrGitConfirmationRequired
+			}
+			branch, backup, err := c.cloneProjectRemote(ctx, proj, requested.Remote, dir)
+			if err != nil {
+				return projects.Project{}, err
+			}
+			// The clone knows the remote's default branch; the request only guessed.
+			requested.DefaultBranch = branch
+			c.log.Info("project cloned", "event", "project", "project", proj.ID,
+				"remote", requested.Remote, "path", dir, "backup", backup)
+			cloned = true
+		default:
+			if err := runner.Init(ctx, dir, requested.DefaultBranch); err != nil {
+				return projects.Project{}, err
+			}
+			c.log.Info("project repository initialised", "event", "project", "project", proj.ID, "path", dir)
 		}
 	}
-	requested.Enabled = true
-	return requested, nil
+
+	patch := projects.ProjectPatch{Git: &requested}
+	if cloned && proj.Repo != nil {
+		repo := *proj.Repo
+		repo.Mode = "git"
+		repo.SourceKind = "clone"
+		repo.SyncedAt = time.Now().UTC().Format(time.RFC3339)
+		patch.Repo = &repo
+	}
+	// c.ledger.Update, not c.UpdateProject: that one reconciles, which takes
+	// this same non-reentrant lock.
+	updated, err := c.ledger.Update(projectID, patch)
+	if err != nil {
+		return projects.Project{}, err
+	}
+	state := c.inspectProjectGit(ctx, updated)
+	updated.GitState = &state
+	return updated, nil
+}
+
+// dirHasEntries reports whether a directory holds anything. A directory that is
+// not there yet counts as empty, which is the common case for <project>/repo.
+func dirHasEntries(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
+}
+
+// cloneProjectRemote clones remote into a staging directory beside the target
+// and moves it into place, so a clone that fails against a bad URL or missing
+// credentials leaves the project exactly as it was. It returns the branch the
+// clone landed on and the backup directory anything displaced was moved to.
+func (c *Core) cloneProjectRemote(ctx context.Context, proj projects.Project, remote, target string) (string, string, error) {
+	runner, err := c.gitRunner()
+	if err != nil {
+		return "", "", err
+	}
+	projectDir := filepath.Join(c.paths.ProjectsDir, proj.Path)
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		return "", "", err
+	}
+	stage, err := os.MkdirTemp(projectDir, ".podiom-clone-*")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.RemoveAll(stage)
+	checkout := filepath.Join(stage, "checkout")
+	if err := runner.Clone(ctx, remote, checkout); err != nil {
+		return "", "", err
+	}
+	// A fresh clone sits on whatever the remote advertises as HEAD. An empty
+	// remote advertises nothing, so fall back rather than persisting "".
+	branch, _ := runner.CurrentBranch(ctx, checkout)
+	branch = firstNonEmpty(branch, "main")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return "", "", err
+	}
+	backup, err := replaceDirContents(target, checkout, filepath.Join(projectDir, ".podiom-backups"))
+	if err != nil {
+		return "", "", err
+	}
+	return branch, backup, nil
+}
+
+// replaceDirContents moves everything already in root aside into a timestamped
+// backup, then moves the staged checkout in. It returns the backup directory, or
+// "" when root was empty.
+//
+// The staging directory is a sibling inside the project, so it is skipped along
+// with the backup root: for a project with no connected repo the code directory
+// is the project directory itself, and moving the clone we are about to install
+// into the backup would lose it.
+func replaceDirContents(root, stage, backupRoot string) (string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", err
+	}
+	backup := ""
+	for _, entry := range entries {
+		if entry.Name() == ".podiom-backups" || strings.HasPrefix(entry.Name(), ".podiom-clone-") {
+			continue
+		}
+		if backup == "" {
+			backup = filepath.Join(backupRoot, time.Now().UTC().Format("20060102T150405Z"))
+			if err := os.MkdirAll(backup, 0o755); err != nil {
+				return "", err
+			}
+		}
+		if err := os.Rename(filepath.Join(root, entry.Name()), filepath.Join(backup, entry.Name())); err != nil {
+			return "", err
+		}
+	}
+	staged, err := os.ReadDir(stage)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range staged {
+		if err := os.Rename(filepath.Join(stage, entry.Name()), filepath.Join(root, entry.Name())); err != nil {
+			return "", err
+		}
+	}
+	return backup, nil
 }
 
 // CloneGitHubProject tries the user's ordinary Git credentials against each

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import {
     analyzeProject,
+    configureProjectGit,
     connectProjectRepo,
     createProject,
     createProjectFromGitHub,
@@ -21,6 +22,7 @@
   } from "../lib/api";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
   import WorkspaceFileLinks from "../lib/WorkspaceFileLinks.svelte";
+  import { remoteError } from "../lib/gitremote";
   import { closeExternal, openExternal } from "../lib/native";
   import { PROJECT_COLORS, projectColor } from "../lib/theme";
   import type { Agent, GitHubDeviceStart, GitHubRepo, GitHubStatus, Project, ProjectGit, Task } from "../lib/types";
@@ -60,6 +62,9 @@
   let gitDrafts = $state<Record<string, GitDraft>>({});
   let savingGit = $state("");
   let gitErrors = $state<Record<string, string>>({});
+  // Set when the server answers 409: the code directory already holds files and
+  // the user has not yet agreed to have them moved aside.
+  let gitReplacePending = $state<Record<string, boolean>>({});
   let busyDescribe = $state<string>("");
   let savingDesc = $state<string>("");
   let savingInstructions = $state<string>("");
@@ -248,7 +253,7 @@
     }
     const kinds = draft.branch_prefixes.map(({ kind }) => kind.trim().toLowerCase());
     if (new Set(kinds).size !== kinds.length) return "Branch prefix kinds must be unique.";
-    return "";
+    return remoteError(draft.remote);
   }
 
   function updateGitDraft(id: string, patch: Partial<Omit<GitDraft, "branch_prefixes">>) {
@@ -256,6 +261,7 @@
     if (!current) return;
     gitDrafts = { ...gitDrafts, [id]: { ...current, ...patch } };
     gitErrors = { ...gitErrors, [id]: "" };
+    gitReplacePending = { ...gitReplacePending, [id]: false };
   }
 
   function updateGitPrefix(id: string, index: number, field: keyof GitPrefixDraft, value: string) {
@@ -289,9 +295,10 @@
   function resetGit(p: Project) {
     gitDrafts = { ...gitDrafts, [p.id]: gitDraftFor(p) };
     gitErrors = { ...gitErrors, [p.id]: "" };
+    gitReplacePending = { ...gitReplacePending, [p.id]: false };
   }
 
-  async function saveGit(p: Project) {
+  async function saveGit(p: Project, force = false) {
     const draft = gitDrafts[p.id];
     if (!draft) return;
     const validationError = gitDraftError(draft);
@@ -305,23 +312,28 @@
       const branchPrefixes = Object.fromEntries(
         draft.branch_prefixes.map(({ kind, prefix }) => [kind.trim(), prefix.trim()]),
       );
-      const updated = await updateProject(p.id, {
-        git: {
+      const updated = await configureProjectGit(
+        p.id,
+        {
           enabled: draft.enabled,
-          // The remote is intentionally read-only in the UI. Always use the
-          // latest saved project value rather than anything from form state.
-          remote: p.git?.remote ?? "",
+          remote: draft.remote.trim(),
           default_branch: draft.default_branch.trim(),
           branching: draft.branching,
           branch_prefixes: branchPrefixes,
           commit: draft.commit,
           pull_on_session_start: draft.pull_on_session_start,
         },
-      });
+        force,
+      );
       projects = projects.map((project) => (project.id === p.id ? updated : project));
       gitDrafts = { ...gitDrafts, [p.id]: gitDraftFor(updated) };
+      gitReplacePending = { ...gitReplacePending, [p.id]: false };
     } catch (e) {
-      gitErrors = { ...gitErrors, [p.id]: e instanceof Error ? e.message : String(e) };
+      if (e instanceof Error && e.message === "CONFIRM_REPLACE") {
+        gitReplacePending = { ...gitReplacePending, [p.id]: true };
+      } else {
+        gitErrors = { ...gitErrors, [p.id]: e instanceof Error ? e.message : String(e) };
+      }
     } finally {
       savingGit = "";
     }
@@ -802,9 +814,22 @@
             {/if}
 
             <div class="git-field">
-              <label class="label-mono" for="git-remote-{p.id}">remote (read-only)</label>
-              <div id="git-remote-{p.id}" class="git-readonly mono">
-                {gitDraft.remote || "No remote — local repository"}
+              <label class="label-mono" for="git-remote-{p.id}">remote</label>
+              <input
+                id="git-remote-{p.id}"
+                class="field-input mono"
+                value={gitDraft.remote}
+                disabled={p.git_state?.remote_ambiguous}
+                oninput={(e) => updateGitDraft(p.id, { remote: e.currentTarget.value })}
+                placeholder={p.git_state?.remote || p.repo?.html_url || "git@github.com:you/app.git"}
+              />
+              <div class="posture-hint">
+                Leave empty for a local repository. Podiom uses your own Git credentials.
+                {#if p.repo?.html_url && !gitDraft.remote.trim()}
+                  <button class="link-btn" type="button" onclick={() => updateGitDraft(p.id, { remote: p.repo?.html_url ?? "" })}>
+                    Use {p.repo.html_url}
+                  </button>
+                {/if}
               </div>
             </div>
 
@@ -889,15 +914,31 @@
             {#if gitErrors[p.id] || (gitDirty(p) && gitDraftError(gitDraft))}
               <div class="git-error">{gitErrors[p.id] || gitDraftError(gitDraft)}</div>
             {/if}
+            {#if gitReplacePending[p.id]}
+              <div class="git-error">
+                This project folder already has files. Podiom will move them into
+                <span class="mono">.podiom-backups/</span> and clone
+                <span class="mono">{gitDraft.remote}</span> in their place. Nothing is deleted.
+              </div>
+            {/if}
             {#if gitDirty(p)}
               <div class="pc-save-row">
                 <button class="pc-cancel" type="button" onclick={() => resetGit(p)}>Reset</button>
-                <button
-                  class="pc-save"
-                  type="button"
-                  disabled={savingGit === p.id || !!gitDraftError(gitDraft)}
-                  onclick={() => saveGit(p)}
-                >{savingGit === p.id ? "Saving…" : "Save Git settings"}</button>
+                {#if gitReplacePending[p.id]}
+                  <button
+                    class="pc-save"
+                    type="button"
+                    disabled={savingGit === p.id}
+                    onclick={() => saveGit(p, true)}
+                  >{savingGit === p.id ? "Cloning…" : "Back up and clone"}</button>
+                {:else}
+                  <button
+                    class="pc-save"
+                    type="button"
+                    disabled={savingGit === p.id || !!gitDraftError(gitDraft)}
+                    onclick={() => saveGit(p)}
+                  >{savingGit === p.id ? "Saving…" : "Save Git settings"}</button>
+                {/if}
               </div>
             {/if}
           </section>
@@ -1379,17 +1420,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 10px;
-  }
-
-  .git-readonly {
-    min-height: 38px;
-    padding: 9px 10px;
-    border: 1px solid #dce4df;
-    border-radius: 9px;
-    background: #eef3f0;
-    color: #6f7d76;
-    font-size: 11.5px;
-    overflow-wrap: anywhere;
   }
 
   .git-prefix-head {

@@ -127,8 +127,74 @@ func (r *Runner) Init(ctx context.Context, dir, defaultBranch string) error {
 	return err
 }
 
+// ValidateRemote rejects remotes git would read as something other than a place
+// to fetch from. Podiom passes argv arrays, so a remote can never be
+// reinterpreted as a shell string — but git itself treats a leading "-" as one
+// of its own options and "<helper>::<arg>" as a remote helper it will execute,
+// which is the same class of problem one level down. Callers must treat an empty
+// remote as "local repository" before calling; here it is an error.
+func ValidateRemote(remote string) error {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return fmt.Errorf("a remote URL is required")
+	}
+	if strings.HasPrefix(remote, "-") {
+		return fmt.Errorf("a remote URL cannot start with %q — git would read it as one of its own options", "-")
+	}
+	if strings.Contains(remote, "::") {
+		return fmt.Errorf("%q looks like a git remote helper, which git would execute; use an https:// or ssh:// URL", remote)
+	}
+	for _, ch := range remote {
+		if ch < 0x20 || ch == 0x7f || ch == ' ' {
+			return fmt.Errorf("a remote URL cannot contain spaces or control characters")
+		}
+	}
+	// An absolute path is a local repository — a bare repo on disk or a mount.
+	if filepath.IsAbs(remote) {
+		return nil
+	}
+	if scheme, rest, ok := strings.Cut(remote, "://"); ok {
+		switch scheme {
+		case "https", "http", "ssh", "git", "file":
+		default:
+			return fmt.Errorf("git cannot fetch over %q; use https, ssh, git or file", scheme)
+		}
+		host, _, _ := strings.Cut(rest, "/")
+		if _, after, found := strings.Cut(host, "@"); found {
+			host = after
+		}
+		if host == "" && scheme != "file" {
+			return fmt.Errorf("%q has no host", remote)
+		}
+		if strings.HasPrefix(host, "-") {
+			return fmt.Errorf("%q has a host git would read as an option", remote)
+		}
+		return nil
+	}
+	// Otherwise the scp-like form: [user@]host:path.
+	host, path, ok := strings.Cut(remote, ":")
+	if !ok {
+		return fmt.Errorf("%q is not a git remote; expected an https:// or ssh:// URL, or host:path", remote)
+	}
+	if _, after, found := strings.Cut(host, "@"); found {
+		host = after
+	}
+	if host == "" || strings.Contains(host, "/") || strings.HasPrefix(host, "-") {
+		return fmt.Errorf("%q is not a git remote; expected an https:// or ssh:// URL, or host:path", remote)
+	}
+	if path == "" {
+		return fmt.Errorf("%q names a host but no repository", remote)
+	}
+	return nil
+}
+
 // Clone copies remote into dir. dir must not already be a repository.
 func (r *Runner) Clone(ctx context.Context, remote, dir string) error {
+	// The backstop rather than the only check: this is reached with remotes an
+	// agent wrote straight into projects.yaml, not just with UI input.
+	if err := ValidateRemote(remote); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
@@ -204,6 +270,9 @@ func (r *Runner) SetRemote(ctx context.Context, dir, name, remote string) error 
 	name, remote = strings.TrimSpace(name), strings.TrimSpace(remote)
 	if name == "" || remote == "" {
 		return fmt.Errorf("remote name and URL are required")
+	}
+	if err := ValidateRemote(remote); err != nil {
+		return err
 	}
 	if _, err := r.RemoteURL(ctx, dir, name); err == nil {
 		_, err = r.capture(ctx, dir, "remote", "set-url", name, remote)
