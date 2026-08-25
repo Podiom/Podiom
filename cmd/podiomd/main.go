@@ -106,6 +106,9 @@ func run() error {
 	if res.CreatedConfig {
 		log.Info("wrote default config", "path", paths.ConfigYAML)
 	}
+	if res.RefreshedBaseAgents {
+		log.Info("refreshed base instructions", "path", paths.BaseAgents)
+	}
 	log.Info("config loaded",
 		"provider", cfg.Global.Provider,
 		"agents", len(cfg.Agents),

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -235,6 +236,51 @@ func TestScaffoldIsIdempotentAndPreservesEdits(t *testing.T) {
 	}
 	if cfg.Server.Port != 9001 || cfg.Global.Provider != ProviderCodex {
 		t.Errorf("user edits not preserved: got port=%d provider=%s", cfg.Server.Port, cfg.Global.Provider)
+	}
+}
+
+// The base AGENTS.md is the deliberate exception to the rule above: it is
+// Podiom-generated, not user-seeded, so every start restores the shipped copy.
+// Without this an install keeps whichever template version scaffolded its home,
+// and instruction fixes never reach anyone who is already running Podiom.
+func TestScaffoldRefreshesBaseAgents(t *testing.T) {
+	p := NewPaths(t.TempDir())
+
+	res, err := Scaffold(p)
+	if err != nil {
+		t.Fatalf("first scaffold: %v", err)
+	}
+	if !res.CreatedBaseAgents || res.RefreshedBaseAgents {
+		t.Fatalf("first scaffold should create, not refresh, got %+v", res)
+	}
+
+	// An install running a stale template, which is what an upgrade finds.
+	if err := os.WriteFile(p.BaseAgents, []byte("# Operating rules\n\nstale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res2, err := Scaffold(p)
+	if err != nil {
+		t.Fatalf("second scaffold: %v", err)
+	}
+	if res2.CreatedBaseAgents || !res2.RefreshedBaseAgents {
+		t.Errorf("stale base AGENTS.md should be refreshed, got %+v", res2)
+	}
+	got, err := os.ReadFile(p.BaseAgents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, baseAgentsMD) {
+		t.Errorf("base AGENTS.md is not the shipped copy:\n%s", got)
+	}
+
+	// Already current: no write, so mtime stays meaningful and the daemon does
+	// not log a refresh on every restart.
+	res3, err := Scaffold(p)
+	if err != nil {
+		t.Fatalf("third scaffold: %v", err)
+	}
+	if res3.CreatedBaseAgents || res3.RefreshedBaseAgents {
+		t.Errorf("unchanged base AGENTS.md should be left alone, got %+v", res3)
 	}
 }
 

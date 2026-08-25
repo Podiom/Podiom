@@ -368,6 +368,14 @@ There are three layers, composed in this fixed order:
   it always applies to every agent. The optional per-agent `AGENTS.md` is
   user-owned. The two never overwrite each other — they are separate files,
   combined only at compose time.
+- **R5.14a** Podiom-owned means Podiom keeps it current: on every start, the base
+  `AGENTS.md` is **rewritten from the embedded shipped copy** whenever the two
+  differ. An install therefore always runs the instructions its binary shipped
+  with, rather than freezing at whichever version scaffolded its storage root.
+  Edits to the base file do not survive; the per-agent `AGENTS.md` (R5.15) is the
+  supported place for standing instructions Podiom does not own. This is the one
+  scaffolded file that is regenerated — `config.yaml` and `projects.yaml` are
+  seeded once and then belong to the user (R9.1).
 - **R5.15** **Effective instruction = base `AGENTS.md` + per-agent `AGENTS.md`
   (if present) + `SOUL.md`**, in that order. This composition is **Podiom's
   responsibility**, not the CLI's — Podiom owns the canonical files and builds

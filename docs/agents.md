@@ -37,6 +37,12 @@ Podiom composes agent instructions in this fixed order:
 5. `$PODIOM_HOME/agents/<name>/MEMORY.md` when non-empty, capped to the
    current memory injection budget
 
+Layer 1 is Podiom-generated, not user-owned: `podiomd` rewrites
+`$PODIOM_HOME/AGENTS.md` from the copy embedded in the binary whenever the two
+differ, so an upgrade's instruction changes reach existing installs rather than
+only fresh ones. Edits to it are lost on the next start. Layers 2–5 are yours;
+per-agent standing instructions belong in layer 2.
+
 The delivery artifact depends on the provider:
 
 | Provider | Workspace artifact | Contents |
@@ -75,3 +81,12 @@ implementation. In those cases, agents write a Markdown plan under the active
 project's `$PODIOM_HOME/projects/<project>/plans/` directory (defaulting to
 `~/.podiom/projects/<project>/plans/`) and ask the user to approve it before
 making code changes.
+
+It also governs the voice of anything an agent publishes under the user's
+identity. Podiom never manufactures git credentials (see [Git](git.md)), so an
+issue, pull request, review, discussion reply, or commit goes out from the user's
+own account and reads as their own words. Agents are told to write it in the
+user's first person, never to mention an agent or Podiom in it, and never to tag
+the user or leave a decision to them inside a thread posted under their name — a
+decision goes back through the session, `podiom_ask_user`, or
+`podiom_request_user_action` instead.

@@ -19,7 +19,13 @@ All Podiom state lives under a single root:
 
 On first start, `podiomd` scaffolds the tree and writes a commented default
 `config.yaml`, the Podiom-owned base `AGENTS.md`, and an empty project ledger.
-Existing files are never overwritten.
+
+`config.yaml` and the project ledger are yours once written — they are seeded on
+first start and never overwritten afterwards. The base `AGENTS.md` is not a seed:
+Podiom rewrites it from the shipped copy on every start when the content differs,
+so an upgrade's instruction changes reach installs that already exist. Standing
+instructions of your own belong in `agents/<name>/AGENTS.md`, which Podiom never
+touches.
 
 ## `podiomd`
 

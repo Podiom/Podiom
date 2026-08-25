@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 	"os"
@@ -26,17 +27,28 @@ var (
 
 // ScaffoldResult reports what first-run scaffolding actually created, so the
 // daemon can log a useful "initialized fresh ~/.podiom" message.
+// RefreshedBaseAgents is the one "changed an existing file" signal: it reports
+// that an upgrade replaced the base AGENTS.md, which is otherwise invisible.
 type ScaffoldResult struct {
-	CreatedHome       bool
-	CreatedConfig     bool
-	CreatedBaseAgents bool
-	CreatedProjects   bool
+	CreatedHome         bool
+	CreatedConfig       bool
+	CreatedBaseAgents   bool
+	RefreshedBaseAgents bool
+	CreatedProjects     bool
 }
 
 // Scaffold ensures the storage root and its directory tree exist and writes the
-// Podiom-owned seed files (config.yaml, base AGENTS.md, empty projects.yaml) when
-// absent. It is idempotent and never overwrites existing user files — a fresh
-// install always ends up with a real, self-documenting config to edit (R9.1).
+// Podiom-owned seed files. It is idempotent, and it distinguishes two kinds of
+// file:
+//
+//   - config.yaml and projects.yaml are seeded once and then belong to the user;
+//     Scaffold never overwrites them, so a fresh install ends up with a real,
+//     self-documenting config to edit and an upgrade never discards edits (R9.1).
+//   - The base AGENTS.md is Podiom-generated, not a seed. It is rewritten from
+//     the embedded copy whenever it differs, so instruction changes reach existing
+//     installs instead of freezing at whichever version scaffolded the home
+//     (R5.14). User instructions belong in agents/<name>/AGENTS.md, which Scaffold
+//     never touches.
 func Scaffold(p Paths) (ScaffoldResult, error) {
 	var res ScaffoldResult
 
@@ -61,11 +73,12 @@ func Scaffold(p Paths) (ScaffoldResult, error) {
 	}
 	res.CreatedConfig = wrote
 
-	wrote, err = writeIfAbsent(p.BaseAgents, baseAgentsMD, 0o644)
+	created, refreshed, err := writeManaged(p.BaseAgents, baseAgentsMD, 0o644)
 	if err != nil {
 		return res, err
 	}
-	res.CreatedBaseAgents = wrote
+	res.CreatedBaseAgents = created
+	res.RefreshedBaseAgents = refreshed
 
 	wrote, err = writeIfAbsent(p.ProjectsYAML, emptyProjectsYAML, 0o644)
 	if err != nil {
@@ -74,6 +87,37 @@ func Scaffold(p Paths) (ScaffoldResult, error) {
 	res.CreatedProjects = wrote
 
 	return res, nil
+}
+
+// writeManaged writes data to path unless the file already holds exactly those
+// bytes, reporting whether it created the file and whether it replaced different
+// content. It is for files Podiom generates rather than seeds: the content is
+// always the embedded copy, so an upgrade carries its changes into every install.
+//
+// Comparing before writing matters because Scaffold runs on every daemon start.
+// The overwhelmingly common case is an unchanged file, and that case should cost
+// a read rather than a write — it keeps mtime meaningful (it marks the upgrade
+// that last changed the content) and leaves the refresh log line rare enough to
+// be worth reading.
+func writeManaged(path string, data []byte, perm os.FileMode) (created, refreshed bool, err error) {
+	switch existing, readErr := os.ReadFile(path); {
+	case readErr == nil:
+		if bytes.Equal(existing, data) {
+			return false, false, nil
+		}
+		refreshed = true
+	case os.IsNotExist(readErr):
+		created = true
+	default:
+		return false, false, fmt.Errorf("read %s: %w", path, readErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, false, fmt.Errorf("create parent of %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, data, perm); err != nil {
+		return false, false, fmt.Errorf("write %s: %w", path, err)
+	}
+	return created, refreshed, nil
 }
 
 // writeIfAbsent writes data to path only if no file is already there, reporting
