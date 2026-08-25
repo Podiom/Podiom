@@ -1226,12 +1226,12 @@ export async function listGoalEvents(id: string, limit = 50, before = 0): Promis
   return asJSON(await request(`/api/goals/${id}/events${q}`));
 }
 
-export async function addGoalFeedback(id: string, body: string): Promise<GoalEvent> {
+export async function addGoalFeedback(id: string, body: string, pinned = false): Promise<GoalEvent> {
   return asJSON(
     await request(`/api/goals/${id}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify(pinned ? { body, pinned } : { body }),
     }),
   );
 }
@@ -1242,6 +1242,18 @@ export async function updateGoalFeedback(id: string, eventId: number, body: stri
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ event_id: eventId, body }),
+    }),
+  );
+}
+
+// setGoalFeedbackPin promotes a feedback note to a standing directive, or
+// retires one. Pinning is human-only: no agent tool reaches this.
+export async function setGoalFeedbackPin(id: string, eventId: number, pinned: boolean): Promise<GoalEvent> {
+  return asJSON(
+    await request(`/api/goals/${id}/feedback`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_id: eventId, pinned }),
     }),
   );
 }

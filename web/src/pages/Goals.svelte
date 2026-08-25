@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import {
     addGoalFeedback,
+    setGoalFeedbackPin,
     answerAgentQuestion,
     approveAccessRequest,
     createGoal,
@@ -125,6 +126,8 @@
   let feedbackOpen = $state(false);
   let feedbackBody = $state("");
   let feedbackBusy = $state(false);
+  let feedbackPinned = $state(false);
+  let pinBusyID = $state(0);
   let editingFeedbackID = $state(0);
   let editingFeedbackBody = $state("");
   let editingFeedbackBusy = $state(false);
@@ -507,7 +510,29 @@
 
   function canEditFeedback(ev: GoalEvent): boolean {
     if (!detail || ev.Kind !== "user_feedback") return false;
+    // A standing directive stays editable for the goal's whole life — the user
+    // amends the rule. An ordinary note locks once a run has read it.
+    if (ev.Pinned) return true;
     return !detail.events.some((other) => other.ID > ev.ID && (other.Kind === "planning_started" || other.Kind === "review_started"));
+  }
+
+  // The goal's rulebook, oldest first, mirroring the order the agent is given.
+  // Served as its own field rather than filtered out of `events`, which only
+  // holds the newest page — an older directive still binds every run.
+  const directives = $derived(detail?.directives ?? []);
+
+  async function toggleFeedbackPin(goal: Goal, ev: GoalEvent) {
+    if (pinBusyID) return;
+    pinBusyID = ev.ID;
+    try {
+      await setGoalFeedbackPin(goal.ID, ev.ID, !ev.Pinned);
+      await refreshDetail();
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : "Couldn't change the directive.";
+    } finally {
+      pinBusyID = 0;
+    }
   }
 
   // ---- tool_use audit rendering ---------------------------------------------
@@ -703,8 +728,9 @@
     if (!body || feedbackBusy) return;
     feedbackBusy = true;
     try {
-      await addGoalFeedback(goal.ID, body);
+      await addGoalFeedback(goal.ID, body, feedbackPinned);
       feedbackBody = "";
+      feedbackPinned = false;
       feedbackOpen = false;
       await refreshDetail();
       error = null;
@@ -1388,11 +1414,18 @@
                 rows="3"
                 bind:value={feedbackBody}
                 placeholder="Strategy notes, constraints, or next-step thoughts for the next goal run."></textarea>
+              <label class="pin-choice">
+                <input type="checkbox" bind:checked={feedbackPinned} />
+                <span>
+                  Keep as a standing directive
+                  <em>Applies for the whole goal, including the tasks and schedules the agent creates.</em>
+                </span>
+              </label>
               <div class="feedback-actions">
                 <button class="btn-primary" disabled={feedbackBusy || !feedbackBody.trim()} onclick={() => submitFeedback(g)}>
                   {feedbackBusy ? "Saving…" : "Save feedback"}
                 </button>
-                <button class="btn" disabled={feedbackBusy} onclick={() => { feedbackOpen = false; feedbackBody = ""; }}>Cancel</button>
+                <button class="btn" disabled={feedbackBusy} onclick={() => { feedbackOpen = false; feedbackBody = ""; feedbackPinned = false; }}>Cancel</button>
               </div>
             </div>
           {/if}
@@ -1466,8 +1499,16 @@
                       <div class="event-top">
                         <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
                         <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                        {#if ev.Pinned}
+                          <span class="directive-badge mono">standing directive</span>
+                        {/if}
                         {#if canEditFeedback(ev) && editingFeedbackID !== ev.ID}
                           <button class="event-edit mono" onclick={() => startEditFeedback(ev)}>edit</button>
+                        {/if}
+                        {#if ev.Kind === "user_feedback" && editingFeedbackID !== ev.ID}
+                          <button class="event-edit mono" disabled={pinBusyID === ev.ID} onclick={() => toggleFeedbackPin(g, ev)}>
+                            {pinBusyID === ev.ID ? "…" : ev.Pinned ? "unpin" : "pin"}
+                          </button>
                         {/if}
                       </div>
                       {#if editingFeedbackID === ev.ID}
@@ -1532,6 +1573,27 @@
               <div class="desc muted">No description or success criteria yet.</div>
             {/if}
           </div>
+
+          <!-- STANDING DIRECTIVES -->
+          {#if directives.length > 0}
+            <div class="panel rail-panel">
+              <div class="section-label mono rail-label">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+                Standing directives
+              </div>
+              <div class="directive-note mono">Binding for the whole goal — the agent gets these on every run, including the tasks and schedules it creates.</div>
+              <ul class="directive-list">
+                {#each directives as d (d.ID)}
+                  <li>
+                    <div class="directive-text"><AgentMarkdown content={d.Body} /></div>
+                    <button class="event-edit mono" disabled={pinBusyID === d.ID} onclick={() => toggleFeedbackPin(g, d)}>
+                      {pinBusyID === d.ID ? "…" : "unpin"}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
 
           <!-- METRICS -->
           {#if g.Metrics.length > 0}
@@ -2688,6 +2750,65 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 10px;
+  }
+  .directive-note {
+    font-size: 11px;
+    color: var(--faint);
+    line-height: 1.5;
+    margin-bottom: 10px;
+  }
+  .directive-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .directive-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-left: 2px solid #4a6fa8;
+    border-radius: 6px;
+    background: var(--panel-2, transparent);
+  }
+  .directive-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .directive-badge {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #4a6fa8;
+    border: 1px solid #4a6fa855;
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+  .pin-choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 8px 0 2px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .pin-choice input {
+    margin-top: 2px;
+    flex: none;
+  }
+  .pin-choice em {
+    display: block;
+    font-style: normal;
+    font-size: 11px;
+    color: var(--faint);
+    line-height: 1.45;
+    margin-top: 1px;
   }
   .rail-panel .desc {
     font-size: 13.5px;

@@ -105,6 +105,38 @@ next-step guidance. They have an empty `session_id`, are included in future
 goal planning/review prompts, and do not start a chat, trigger a review, notify
 the agent immediately, or change goal status/cadence.
 
+A feedback note may be **pinned** (`goal_events.pinned`), which promotes it from
+a note about this moment to a **standing directive**: binding for the goal's
+whole life. The two channels differ deliberately on every axis that matters:
+
+| | Ordinary feedback | Standing directive (pinned) |
+|---|---|---|
+| Reach | lead planning/review prompts | those **plus every goal-linked task and schedule run** (§4) |
+| Retention | newest 20, older ones fall out | all of them, always |
+| Rendering | truncated at 500 chars | in full |
+| Authority | guidance; success criteria win | binding; a conflict must be escalated, not resolved silently |
+| Editable | until the next planning/review run reads it | for the goal's whole life |
+| Ordering in the prompt | newest first | oldest first, so a later amendment reads last |
+
+Because a directive is rendered uncapped and untruncated, both bounds are
+enforced at the pin instead: at most 10 directives per goal, each at most 2000
+characters. Exceeding either is an error the user sees, never a silent drop —
+nothing the agent is told to obey may vanish without someone being told.
+
+A directive that would make a success criterion unreachable must be escalated
+with `podiom_ask_user` naming both sides, rather than the agent quietly picking
+a winner.
+
+Pinning does not change the append-only contract in spirit: `pinned` is simply
+absent from the `goal_events_append_only` trigger's equality list, so toggling it
+is permitted on `user_feedback` rows and still aborts on every other kind.
+
+`GET /api/goals/<id>` returns the directives as their own `directives` field
+rather than leaving the client to filter `events`, which carries only the newest
+`goalDetailEvents` entries. A directive pinned long ago binds every run but
+would have fallen outside that window — and a rule the agent is obeying that the
+user cannot see is precisely the failure the pin exists to prevent.
+
 ### 2.3 Access requests
 
 | Field | Notes |
@@ -212,16 +244,26 @@ its next review. An `env_var` approved **with** a value continues to
   roadmap`). Goal sessions carry `goal_id` for attribution.
 - **Planning session** — created immediately (asynchronously) when a goal is
   created, for the lead agent. Prompt contract: the goal's full definition +
-  recent `user_feedback` events + instructions to (a) decompose into roadmap
+  **standing directives** (§2.2) + recent `user_feedback` events + instructions to (a) decompose into roadmap
   tasks (`podiom_create_task`, delegating to other agents where sensible)
   and/or schedules (`podiom_create_schedule`), (b) record the plan via
   `podiom_record_goal_progress` (kind `plan_change`) **including `next_step` and
   `next_step_why`** (§2.1), (c) file `podiom_request_access` for any missing
   capability, and (d) hand any human-only step to the user with
   `podiom_request_user_action` (§2.4). Feedback is guidance, not a direct
-  conversation, and must not override explicit success criteria.
+  conversation, and must not override explicit success criteria; standing
+  directives are binding and do bind the tasks and schedules the agent creates.
+- **Delegated runs** — a goal-linked task (`RunTaskTurn`) or schedule
+  (`RunScheduled`) is prompted with its own text alone, with one exception: the
+  goal's standing directives are prefixed, under a one-line goal header giving
+  them context. Without this the goal's rules reach the agent that plans and
+  never the agent that does, since the lead is told to push substantial work
+  into exactly those runs. A goal with no directives leaves such a prompt
+  byte-identical, and a dangling `goal_id` degrades to no preamble rather than
+  failing the run.
 - **Review session** — fired on the goal's cadence (§5) or manually
-  ("Review now"). Prompt contract: goal definition + recent `user_feedback`
+  ("Review now"). Prompt contract: goal definition + **standing directives**
+  (§2.2) + recent `user_feedback`
   events + recent timeline + decided access requests **including
   `decision_note` texts** + **every open action item with the date it was filed,
   and the recently answered ones with their verdict and note** (§2.4) + duties:
@@ -378,7 +420,9 @@ entry explaining what moved.
 
 User feedback is also human-only: `POST /api/goals/<id>/feedback` appends a
 `user_feedback` event, and there is deliberately no agent tool for creating
-one. Responding to an action item is human-only for the same reason: the agent
+one. **Pinning is human-only for a sharper reason**: a standing directive is a
+guardrail, and a guardrail the agent can unpin is not a guardrail. No tool maps
+to the pin toggle; agents see `Pinned` on the events they read and nothing more. Responding to an action item is human-only for the same reason: the agent
 files it via `podiom_request_user_action`, and no tool maps to
 `POST /api/goal-action-items/<id>/respond` so an agent can never report on the
 user's behalf.

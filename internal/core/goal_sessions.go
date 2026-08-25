@@ -14,10 +14,11 @@ import (
 
 // GoalPlanningPrompt renders the decomposition contract for a goal's initial
 // planning session.
-func GoalPlanningPrompt(goal store.Goal, feedback []store.GoalEvent, actions GoalActionItems) string {
+func GoalPlanningPrompt(goal store.Goal, directives, feedback []store.GoalEvent, actions GoalActionItems) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a new Podiom goal. Plan how to reach it.\n\n")
 	writeGoalBrief(&b, goal)
+	writeGoalDirectives(&b, directives)
 	writeUserFeedback(&b, feedback)
 	writeGoalActionItems(&b, actions)
 	b.WriteString(`## How you run
@@ -33,7 +34,7 @@ exactly what you did while they were away.
    - Create roadmap tasks with podiom_create_task (assign other agents where sensible; you stay accountable). Pass goal_id (this goal's ID, above) so the task's runs are linked to this goal, run autonomously, and are audited on this timeline.
    - Create recurring schedules with podiom_create_schedule for work that must repeat, passing goal_id so they run as part of this goal's autonomous chain.
 2. Do quick setup and investigation directly (install a CLI tool, read the repo, run a probe command) — but push the substantial and recurring work into the tasks and schedules above so it is tracked and survives this session.
-3. Consider the user's feedback above as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
+3. Follow every standing directive above — they are binding, and they bind the tasks and schedules you create too. Each goal-linked task and schedule run is given them automatically, so do not copy them into task bodies. If a directive makes a success criterion unreachable, do not quietly override either one: call podiom_ask_user naming the directive and the criterion it collides with, and let the user resolve it. Recent user feedback is different — treat it as strategic guidance when shaping the plan, unless it conflicts with the goal definition or success criteria.
 4. Record your plan with podiom_record_goal_progress (kind "plan_change"): what you created and why it reaches the goal. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before your first review (e.g. "Benchmark the three candidate libraries"), not a restatement of a task or schedule you just created, and not a list, and it must be something YOU will do: if the move is really the user's to carry out, hand it to them with podiom_request_user_action (duty 7) and make next_step your own move around it. next_step_why is one sentence on why that is the right first move. This is what the user reads to understand where the goal is heading.
 5. File podiom_request_access only for things you genuinely cannot do yourself: assigning an MCP server, installing a marketplace skill, or a credential / environment variable. On credentials, check before you ask and store what you get: call podiom_list_credentials first — anything listed is already set in your environment, so read it as $NAME rather than requesting it again. If you HAVE a secret (the user pasted it, a CLI minted it), put it in Podiom with podiom_store_credential immediately and never write it to a .env, a shell profile, your memory, or any progress entry. Only when you do NOT have the value do you request it by variable name and purpose, never the secret value itself; the user enters it privately and it becomes available in your environment on later runs. You do not need to request CLI-tool installs or a permission level — you already have full access.
 6. If — and only if — you are genuinely blocked on a decision that is the user's to make (a strategic choice, a missing value, a preference you cannot infer), call podiom_ask_user with the question and a few selectable answers. This pauses the goal's reviews and surfaces the question on the goal page; the user's answer is fed into your next session. Do not ask about things you can decide yourself.
@@ -48,10 +49,11 @@ The user is away. They will see your plan, your access requests, anything you ha
 // GoalReviewPrompt renders the periodic review contract: recent timeline and
 // access-request decisions (including the user's notes — their channel back to
 // the agent) plus the review duties.
-func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, feedback []store.GoalEvent, answers []store.AgentQuestion, actions GoalActionItems) string {
+func GoalReviewPrompt(goal store.Goal, events []store.GoalEvent, requests []store.AccessRequest, directives, feedback []store.GoalEvent, answers []store.AgentQuestion, actions GoalActionItems) string {
 	var b strings.Builder
 	b.WriteString("You are the lead agent for a Podiom goal. This is a scheduled review session.\n\n")
 	writeGoalBrief(&b, goal)
+	writeGoalDirectives(&b, directives)
 	writeUserFeedback(&b, feedback)
 	writeAnsweredQuestions(&b, answers)
 	writeGoalActionItems(&b, actions)
@@ -96,7 +98,7 @@ tool-call entries to stay readable; the full record is on the goal page.)
 ## Your job right now (review session)
 
 1. Assess progress against the success criteria. Check the state of the tasks and schedules you created (podiom_list_tasks, podiom_list_schedules) and adjust them where the plan has drifted.
-2. Consider the user's recent feedback above as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
+2. Follow every standing directive above — they are binding, and they bind the tasks and schedules you create too. Each goal-linked task and schedule run is given them automatically, so do not copy them into task bodies. A directive that appeared since your last review may mean work you already planned has to change: check what you have running against them and adjust it. If a directive makes a success criterion unreachable, do not quietly override either one: call podiom_ask_user naming the directive and the criterion it collides with. Recent user feedback is different — treat it as strategic guidance when adjusting tasks, schedules, or next steps, unless it conflicts with explicit success criteria or status.
 3. Record a progress entry with podiom_record_goal_progress: what moved since the last review, with evidence. Update metric values there when they changed. If you stated a next step last time (see the goal brief above), say in the body whether it happened. In the same call set next_step and next_step_why — next_step is one short imperative line naming the single most important strategic move you will make before the next review (e.g. "Benchmark the three candidate libraries"), not a restatement of a task or schedule you created, and not a list, and it must be something YOU will do: if the move is really the user's to carry out, hand it to them with podiom_request_user_action (duty 7) and make next_step your own move around it. next_step_why is one sentence on why that is the right move now. This is what the user reads to understand where the goal is heading, so keep it current.
 4. Take direct corrective action when it is quick and unblocks progress (run a command, fix a file, unstick a task); push larger or recurring work into tasks and schedules (with goal_id) so it is tracked.
 5. File podiom_request_access only for what you cannot do yourself (an MCP server, a marketplace skill, a credential you do not have the value for — request it by variable name, never the value). An env_var request marked [executed] means the credential is already set in your environment — use it directly and never echo its value; podiom_list_credentials shows everything Podiom holds, so check there before declaring yourself blocked on auth. Any secret you receive or generate goes into Podiom with podiom_store_credential right away — never into a .env, a shell profile, your memory, or the text of a progress entry. If the user answered a previous request (see above), act on their note.
@@ -139,6 +141,32 @@ func writeGoalBrief(b *strings.Builder, goal store.Goal) {
 		if strings.TrimSpace(goal.NextStepWhy) != "" {
 			fmt.Fprintf(b, "  Why you said it mattered: %s\n", strings.TrimSpace(goal.NextStepWhy))
 		}
+	}
+	b.WriteString("\n")
+}
+
+// writeGoalDirectives renders the feedback notes the user pinned as standing
+// directives. Unlike the recent-feedback stream below it, this section is
+// uncapped and untruncated: a directive the agent is required to follow may not
+// be silently shortened or dropped, so the bound lives at the pin action instead
+// (maxPinnedGoalFeedback). Oldest first, because a later directive amends an
+// earlier one and the latest word should be the last thing read.
+func writeGoalDirectives(b *strings.Builder, directives []store.GoalEvent) {
+	if len(directives) == 0 {
+		return
+	}
+	b.WriteString("## Standing directives from the user\n\n")
+	b.WriteString(`These are binding for the whole life of this goal, not suggestions for this
+session. Follow them in everything you do, including the tasks and schedules you
+create. Where two conflict, the later one amends the earlier.
+
+`)
+	for _, ev := range directives {
+		body := strings.TrimSpace(ev.Body)
+		if body == "" {
+			continue
+		}
+		fmt.Fprintf(b, "- %s\n", body)
 	}
 	b.WriteString("\n")
 }
@@ -441,7 +469,11 @@ func (c *Core) StartGoalPlanning(ctx context.Context, goalID string) (store.Sess
 	if err != nil {
 		return store.Session{}, err
 	}
-	feedback, err := c.store.ListGoalEventsByKind(ctx, goal.ID, store.GoalEventUserFeedback, goalFeedbackContextEvents)
+	directives, err := c.store.ListPinnedGoalFeedback(ctx, goal.ID)
+	if err != nil {
+		return store.Session{}, err
+	}
+	feedback, err := c.store.ListUnpinnedGoalFeedback(ctx, goal.ID, goalFeedbackContextEvents)
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -450,7 +482,7 @@ func (c *Core) StartGoalPlanning(ctx context.Context, goalID string) (store.Sess
 		return store.Session{}, err
 	}
 	c.log.Info("goal planning started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal, feedback, actions))
+	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal, directives, feedback, actions))
 }
 
 // goalReviewContextEvents caps how much timeline a review prompt replays.
@@ -478,7 +510,11 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if err != nil {
 		return store.Session{}, err
 	}
-	feedback, err := c.store.ListGoalEventsByKind(ctx, goal.ID, store.GoalEventUserFeedback, goalFeedbackContextEvents)
+	directives, err := c.store.ListPinnedGoalFeedback(ctx, goal.ID)
+	if err != nil {
+		return store.Session{}, err
+	}
+	feedback, err := c.store.ListUnpinnedGoalFeedback(ctx, goal.ID, goalFeedbackContextEvents)
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -491,7 +527,34 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 		return store.Session{}, err
 	}
 	c.log.Info("goal review started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, feedback, answers, actions))
+	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, directives, feedback, answers, actions))
+}
+
+// goalDirectivePreamble renders the goal's standing directives for a delegated
+// run — a goal-linked task or schedule. Those prompts are otherwise just the
+// task's own text, with no goal definition at all, so the directives carry a
+// one-line goal header to give them context.
+//
+// It returns "" for a run that belongs to no goal or a goal with no directives,
+// and swallows lookup errors to "" as well: a schedule file can outlive the goal
+// it names (DeleteGoal leaves files on disk), and a dangling goal_id must not
+// stop the run — the same reasoning as the project fallback in RunScheduled.
+func (c *Core) goalDirectivePreamble(ctx context.Context, goalID string) string {
+	if strings.TrimSpace(goalID) == "" {
+		return ""
+	}
+	goal, err := c.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return ""
+	}
+	directives, err := c.store.ListPinnedGoalFeedback(ctx, goal.ID)
+	if err != nil || len(directives) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "This run is part of the Podiom goal %s: %s\n\n", goal.ID, strings.TrimSpace(goal.Title))
+	writeGoalDirectives(&b, directives)
+	return strings.TrimSpace(b.String())
 }
 
 // goalActionContext loads what the agent handed to the user and what came back.

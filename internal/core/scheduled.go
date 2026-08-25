@@ -127,7 +127,14 @@ func (c *Core) RunScheduled(ctx context.Context, req ScheduledRunRequest) (store
 		}
 	}
 
-	events, err := c.StreamTurn(ctx, sess.ID, req.Task, TurnOptions{
+	// A goal-linked schedule inherits the goal's standing directives; a standalone
+	// one gets its own task text unchanged.
+	task := req.Task
+	if preamble := c.goalDirectivePreamble(ctx, req.GoalID); preamble != "" {
+		task = preamble + "\n\n" + task
+	}
+
+	events, err := c.StreamTurn(ctx, sess.ID, task, TurnOptions{
 		PermissionTurnID: req.RunID,
 		PermissionRelay:  relay,
 		Unattended:       true,

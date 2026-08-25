@@ -887,3 +887,155 @@ func TestGoalTerminalDeletesLinkedSchedules(t *testing.T) {
 		t.Fatalf("goal B schedule file should be gone, stat err = %v", err)
 	}
 }
+
+// Pinning is a distinct verb on the same endpoint: a pin-only PATCH carries no
+// body, a body-only PATCH must leave an existing pin alone, and a pinned note
+// stays editable after a review has already read it.
+func TestGoalFeedbackPinEndpoint(t *testing.T) {
+	_, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	goal := createGoalViaCore(t, srv, store.Goal{ReviewEvery: "24h"})
+
+	post := func(payload string) store.GoalEvent {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/feedback", bytes.NewBufferString(payload))
+		rr := httptest.NewRecorder()
+		srv.handleGoal(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("post feedback %s: %d %s", payload, rr.Code, rr.Body.String())
+		}
+		var ev store.GoalEvent
+		if err := json.NewDecoder(rr.Body).Decode(&ev); err != nil {
+			t.Fatalf("decode feedback event: %v", err)
+		}
+		return ev
+	}
+	patch := func(payload string) (store.GoalEvent, int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/goals/"+goal.ID+"/feedback", bytes.NewBufferString(payload))
+		rr := httptest.NewRecorder()
+		srv.handleGoal(rr, req)
+		var ev store.GoalEvent
+		if rr.Code == http.StatusOK {
+			if err := json.NewDecoder(rr.Body).Decode(&ev); err != nil {
+				t.Fatalf("decode patched feedback event: %v", err)
+			}
+		}
+		return ev, rr.Code
+	}
+
+	// POST can create and pin in one call — the composer's checkbox.
+	pinned := post(`{"body":"Never touch production DNS.","pinned":true}`)
+	if !pinned.Pinned {
+		t.Fatalf("posted feedback with pinned:true = %+v", pinned)
+	}
+	plain := post(`{"body":"Check the CI failure."}`)
+	if plain.Pinned {
+		t.Fatalf("posted feedback without pinned = %+v", plain)
+	}
+
+	id := strconv.FormatInt(pinned.ID, 10)
+
+	// A body-only PATCH must not disturb the pin.
+	edited, code := patch(`{"event_id":` + id + `,"body":"Never touch production DNS or the CDN."}`)
+	if code != http.StatusOK {
+		t.Fatalf("edit pinned feedback: %d", code)
+	}
+	if !edited.Pinned || edited.Body != "Never touch production DNS or the CDN." {
+		t.Fatalf("body-only patch disturbed the pin: %+v", edited)
+	}
+
+	// A pin-only PATCH carries no body at all.
+	unpinned, code := patch(`{"event_id":` + id + `,"pinned":false}`)
+	if code != http.StatusOK {
+		t.Fatalf("unpin: %d", code)
+	}
+	if unpinned.Pinned {
+		t.Fatalf("unpin left the note pinned: %+v", unpinned)
+	}
+	if unpinned.Body != "Never touch production DNS or the CDN." {
+		t.Fatalf("pin-only patch changed the body: %+v", unpinned)
+	}
+	if _, code := patch(`{"event_id":` + id + `}`); code == http.StatusOK {
+		t.Fatal("a patch with neither body nor pinned should fail")
+	}
+
+	// A pinned note stays editable once a review has read it; an ordinary one does not.
+	if _, code := patch(`{"event_id":` + id + `,"pinned":true}`); code != http.StatusOK {
+		t.Fatalf("re-pin: %d", code)
+	}
+	if _, err := srv.core.RunGoalReview(context.Background(), goal.ID); err != nil {
+		t.Fatalf("run review: %v", err)
+	}
+	if _, code := patch(`{"event_id":` + id + `,"body":"Amended after the review."}`); code != http.StatusOK {
+		t.Fatalf("edit pinned feedback after review: %d", code)
+	}
+	if _, code := patch(`{"event_id":` + strconv.FormatInt(plain.ID, 10) + `,"body":"too late"}`); code == http.StatusOK {
+		t.Fatal("editing ordinary feedback after a review should fail")
+	}
+
+	// A refused pin must not leave the text behind as ordinary feedback, or the
+	// user's retry silently duplicates it.
+	before, err := srv.core.ListGoalEvents(context.Background(), goal.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	oversize, _ := json.Marshal(map[string]any{"body": strings.Repeat("x", 4000), "pinned": true})
+	req := httptest.NewRequest(http.MethodPost, "/api/goals/"+goal.ID+"/feedback", bytes.NewBuffer(oversize))
+	rr := httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code == http.StatusOK {
+		t.Fatal("posting an over-length directive should fail")
+	}
+	after, err := srv.core.ListGoalEvents(context.Background(), goal.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events after refused pin: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("refused pin left %d extra events behind", len(after)-len(before))
+	}
+}
+
+// The detail payload's Events field holds only the newest goalDetailEvents
+// entries. A directive pinned before that window still binds every run, so it
+// must reach the UI through its own field — a rule the agent obeys but the user
+// cannot see is the failure this feature exists to prevent.
+func TestGoalDetailCarriesDirectivesOutsideTheEventWindow(t *testing.T) {
+	_, srv, cleanup := newGoalTestServer(t)
+	defer cleanup()
+	goal := createGoalViaCore(t, srv, store.Goal{})
+	ctx := context.Background()
+
+	ev, err := srv.core.AddGoalFeedback(ctx, goal.ID, "Never touch production DNS.")
+	if err != nil {
+		t.Fatalf("add feedback: %v", err)
+	}
+	if _, err := srv.core.SetGoalFeedbackPin(ctx, goal.ID, ev.ID, true); err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	// Bury it well beyond the detail window.
+	for i := 0; i < goalDetailEvents+5; i++ {
+		if _, err := srv.core.AddGoalFeedback(ctx, goal.ID, "later note"); err != nil {
+			t.Fatalf("add filler feedback %d: %v", i, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/goals/"+goal.ID, nil)
+	rr := httptest.NewRecorder()
+	srv.handleGoal(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get goal: %d %s", rr.Code, rr.Body.String())
+	}
+	var detail GoalDetail
+	if err := json.NewDecoder(rr.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	for _, e := range detail.Events {
+		if e.ID == ev.ID {
+			t.Fatal("test is not exercising the window: the directive is still in Events")
+		}
+	}
+	if len(detail.Directives) != 1 || detail.Directives[0].ID != ev.ID {
+		t.Fatalf("detail.Directives = %+v, want the pinned note", detail.Directives)
+	}
+}

@@ -8,7 +8,7 @@ import (
 )
 
 // AppendGoalEvent adds one entry to a goal's timeline. Rows are immutable except
-// for unread user feedback body edits; rows leave only through the goal's
+// for user feedback body and pin edits; rows leave only through the goal's
 // ON DELETE CASCADE.
 func (s *Store) AppendGoalEvent(ctx context.Context, ev GoalEvent) (GoalEvent, error) {
 	if ev.Payload == "" {
@@ -94,21 +94,23 @@ func (s *Store) GetGoalEvent(ctx context.Context, id int64) (GoalEvent, error) {
 	return ev, nil
 }
 
-// UpdateUnreadGoalFeedback edits a user feedback event only until a later
-// planning/review session has started, which is when feedback has been assembled
-// into an agent prompt.
-func (s *Store) UpdateUnreadGoalFeedback(ctx context.Context, goalID string, eventID int64, body string) (GoalEvent, error) {
+// UpdateGoalFeedbackBody edits a user feedback event. An ordinary note is
+// editable only until a later planning/review session has started, which is when
+// feedback has been assembled into an agent prompt. A pinned note stays editable
+// for the goal's whole life: a standing directive is a live statement the user
+// amends, not a historical record of what they once said.
+func (s *Store) UpdateGoalFeedbackBody(ctx context.Context, goalID string, eventID int64, body string) (GoalEvent, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE goal_events
 		SET body = ?
 		WHERE id = ?
 			AND goal_id = ?
 			AND kind = ?
-			AND NOT EXISTS (
+			AND (pinned = 1 OR NOT EXISTS (
 				SELECT 1 FROM goal_events later
 				WHERE later.goal_id = goal_events.goal_id
 					AND later.id > goal_events.id
 					AND later.kind IN (?, ?)
-			)`,
+			))`,
 		body, eventID, goalID, GoalEventUserFeedback, GoalEventPlanningStarted, GoalEventReviewStarted,
 	)
 	if err != nil {
@@ -122,6 +124,85 @@ func (s *Store) UpdateUnreadGoalFeedback(ctx context.Context, goalID string, eve
 		return GoalEvent{}, fmt.Errorf("goal feedback %d for %q: %w", eventID, goalID, ErrNotFound)
 	}
 	return s.GetGoalEvent(ctx, eventID)
+}
+
+// SetGoalFeedbackPin marks a user feedback note as a standing directive, or
+// clears the mark. Unlike a body edit it has no unread gate — the user must be
+// able to retire a directive long after the agent has been acting on it. The
+// kind guard is belt-and-braces: the append-only trigger already aborts a pin
+// toggle on any other event kind.
+func (s *Store) SetGoalFeedbackPin(ctx context.Context, goalID string, eventID int64, pinned bool) (GoalEvent, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE goal_events
+		SET pinned = ?
+		WHERE id = ? AND goal_id = ? AND kind = ?`,
+		pinned, eventID, goalID, GoalEventUserFeedback,
+	)
+	if err != nil {
+		return GoalEvent{}, fmt.Errorf("pin goal feedback %d for %q: %w", eventID, goalID, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return GoalEvent{}, fmt.Errorf("pin goal feedback %d for %q rows affected: %w", eventID, goalID, err)
+	}
+	if changed == 0 {
+		return GoalEvent{}, fmt.Errorf("goal feedback %d for %q: %w", eventID, goalID, ErrNotFound)
+	}
+	return s.GetGoalEvent(ctx, eventID)
+}
+
+// ListPinnedGoalFeedback returns a goal's standing directives, oldest first and
+// unbounded. Oldest-first inverts the newest-first convention the rest of this
+// file follows, deliberately: directives accumulate into a rulebook where a later
+// entry amends an earlier one, so the most recent word belongs last, nearest the
+// duties that follow it in the prompt. Unbounded because a directive the agent
+// must obey may never be silently dropped — the count is capped where the user
+// pins, so they hear about it.
+func (s *Store) ListPinnedGoalFeedback(ctx context.Context, goalID string) ([]GoalEvent, error) {
+	rows, err := s.db.QueryContext(ctx,
+		goalEventSelect+` WHERE goal_id = ? AND kind = ? AND pinned = 1 ORDER BY id ASC`,
+		goalID, GoalEventUserFeedback,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pinned goal feedback for %q: %w", goalID, err)
+	}
+	defer rows.Close()
+
+	var events []GoalEvent
+	for rows.Next() {
+		ev, err := scanGoalEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
+}
+
+// ListUnpinnedGoalFeedback returns a goal's ordinary feedback notes, newest
+// first. Pinned notes are excluded so a standing directive never spends part of
+// the recent-feedback window it has already escaped.
+func (s *Store) ListUnpinnedGoalFeedback(ctx context.Context, goalID string, limit int) ([]GoalEvent, error) {
+	query := goalEventSelect + ` WHERE goal_id = ? AND kind = ? AND pinned = 0 ORDER BY id DESC`
+	args := []any{goalID, GoalEventUserFeedback}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list unpinned goal feedback for %q: %w", goalID, err)
+	}
+	defer rows.Close()
+
+	var events []GoalEvent
+	for rows.Next() {
+		ev, err := scanGoalEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
 }
 
 // ListGoalEvents returns a goal's timeline, newest first. A limit <= 0 returns
@@ -212,7 +293,7 @@ func (s *Store) ListGoalEventsByKind(ctx context.Context, goalID string, kind Go
 	return events, rows.Err()
 }
 
-const goalEventSelect = `SELECT id, goal_id, COALESCE(session_id, ''), COALESCE(run_id, ''), kind, body, payload_json, created_at FROM goal_events`
+const goalEventSelect = `SELECT id, goal_id, COALESCE(session_id, ''), COALESCE(run_id, ''), kind, body, payload_json, created_at, pinned FROM goal_events`
 
 func scanGoalEvent(row scanner) (GoalEvent, error) {
 	var ev GoalEvent
@@ -225,6 +306,7 @@ func scanGoalEvent(row scanner) (GoalEvent, error) {
 		&ev.Body,
 		&ev.Payload,
 		&ev.CreatedAt,
+		&ev.Pinned,
 	); err != nil {
 		return GoalEvent{}, err
 	}

@@ -388,8 +388,9 @@ func (c *Core) AddGoalFeedback(ctx context.Context, goalID, body string) (store.
 	return ev, nil
 }
 
-// UpdateGoalFeedback edits a user-authored goal feedback note until a later
-// goal planning/review session has started and consumed it.
+// UpdateGoalFeedback edits a user-authored goal feedback note. An ordinary note
+// is editable until a later goal planning/review session has started and
+// consumed it; a pinned one stays editable for the goal's whole life.
 func (c *Core) UpdateGoalFeedback(ctx context.Context, goalID string, eventID int64, body string) (store.GoalEvent, error) {
 	goal, err := c.store.GetGoal(ctx, goalID)
 	if err != nil {
@@ -399,11 +400,97 @@ func (c *Core) UpdateGoalFeedback(ctx context.Context, goalID string, eventID in
 	if body == "" {
 		return store.GoalEvent{}, fmt.Errorf("goal feedback body is required")
 	}
-	ev, err := c.store.UpdateUnreadGoalFeedback(ctx, goal.ID, eventID, body)
+	current, err := c.store.GetGoalEvent(ctx, eventID)
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	if current.Pinned && len(body) > maxPinnedFeedbackChars {
+		return store.GoalEvent{}, errPinnedFeedbackTooLong
+	}
+	ev, err := c.store.UpdateGoalFeedbackBody(ctx, goal.ID, eventID, body)
 	if err != nil {
 		return store.GoalEvent{}, err
 	}
 	c.log.Info("goal feedback updated", "event", "goal", "goal", goal.ID, "feedback", eventID)
+	return ev, nil
+}
+
+// maxPinnedGoalFeedback bounds a goal's standing directives. Pinned notes are
+// rendered in full into every run in the goal's chain, so the prompt cost has to
+// be bounded somewhere; making it an error the user sees when pinning — rather
+// than a LIMIT that quietly drops the oldest, as the recent-feedback window does
+// — is the point. Nothing the agent is told to obey may vanish silently.
+const maxPinnedGoalFeedback = 10
+
+// maxPinnedFeedbackChars bounds one directive's length for the same reason.
+// Ordinary feedback stays unbounded; only the untruncated path needs a ceiling.
+const maxPinnedFeedbackChars = 2000
+
+var errPinnedFeedbackTooLong = fmt.Errorf("a standing directive is limited to %d characters; shorten it or leave it as ordinary feedback", maxPinnedFeedbackChars)
+
+// checkPinnable reports whether a note may be pinned as a standing directive.
+// alreadyPinned exempts a re-pin from the count, since it adds nothing.
+func (c *Core) checkPinnable(ctx context.Context, goalID, body string, alreadyPinned bool) error {
+	if len(strings.TrimSpace(body)) > maxPinnedFeedbackChars {
+		return errPinnedFeedbackTooLong
+	}
+	if alreadyPinned {
+		return nil
+	}
+	existing, err := c.store.ListPinnedGoalFeedback(ctx, goalID)
+	if err != nil {
+		return err
+	}
+	if len(existing) >= maxPinnedGoalFeedback {
+		return fmt.Errorf("this goal already has %d standing directives; unpin one first", maxPinnedGoalFeedback)
+	}
+	return nil
+}
+
+// ListGoalDirectives returns a goal's standing directives, oldest first — the
+// same list, in the same order, its runs are given.
+func (c *Core) ListGoalDirectives(ctx context.Context, goalID string) ([]store.GoalEvent, error) {
+	if _, err := c.store.GetGoal(ctx, goalID); err != nil {
+		return nil, err
+	}
+	return c.store.ListPinnedGoalFeedback(ctx, goalID)
+}
+
+// CheckNewGoalDirective validates the bounds before a note the user asked to pin
+// is created at all. Without it a refused pin would leave the text behind as
+// ordinary feedback while reporting an error, so retrying would duplicate it.
+func (c *Core) CheckNewGoalDirective(ctx context.Context, goalID, body string) error {
+	goal, err := c.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return err
+	}
+	return c.checkPinnable(ctx, goal.ID, body, false)
+}
+
+// SetGoalFeedbackPin marks a feedback note as a standing directive, or retires
+// one. Pinning is human-only for the same reason writing feedback is: a
+// guardrail an agent can unpin is not a guardrail, so no MCP tool maps here.
+func (c *Core) SetGoalFeedbackPin(ctx context.Context, goalID string, eventID int64, pinned bool) (store.GoalEvent, error) {
+	goal, err := c.store.GetGoal(ctx, goalID)
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	if pinned {
+		current, err := c.store.GetGoalEvent(ctx, eventID)
+		if err != nil {
+			return store.GoalEvent{}, err
+		}
+		// Re-pinning an already pinned note is a no-op, so it must not count
+		// against the cap.
+		if err := c.checkPinnable(ctx, goal.ID, current.Body, current.Pinned); err != nil {
+			return store.GoalEvent{}, err
+		}
+	}
+	ev, err := c.store.SetGoalFeedbackPin(ctx, goal.ID, eventID, pinned)
+	if err != nil {
+		return store.GoalEvent{}, err
+	}
+	c.log.Info("goal feedback pin changed", "event", "goal", "goal", goal.ID, "feedback", eventID, "pinned", pinned)
 	return ev, nil
 }
 

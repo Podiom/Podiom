@@ -46,6 +46,36 @@ Adding feedback does **not** start a chat, interrupt the agent, trigger an
 immediate review, or create a back-and-forth. If you want the agent to consider
 it right away, add the feedback and then use **Review now**.
 
+### Standing directives
+
+Ordinary feedback is a nudge about right now. When you want to state something
+that should hold for the *whole* goal — an approach to stick to, a decision
+already made, somewhere the agent must not go — tick **Keep as a standing
+directive** when you save it, or hit **pin** on any feedback note already on the
+timeline. Pinned notes appear in their own **Standing directives** box beside the
+goal, and you can unpin one when it stops applying.
+
+A directive differs from a note in four ways that matter:
+
+- It is **binding**, not advice. The agent is told to follow it, and to come back
+  to you with a question rather than quietly override it if it ever collides with
+  your success criteria.
+- It reaches **the whole goal**, not just the agent's own reviews — including
+  every task and schedule the agent creates along the way. An ordinary note never
+  gets that far.
+- It **never expires or gets shortened**. Ordinary feedback keeps only the 20
+  most recent notes and trims long ones; a directive is passed on in full, for as
+  long as it is pinned.
+- You can **keep editing it**, long after the agent has read it. An ordinary note
+  locks once a run has seen it, because it was a record of a moment; a directive
+  is a live rule, so amend it whenever it changes.
+
+Because directives are passed on in full, a goal holds at most 10 of them, each
+up to 2000 characters. Pinning past either limit tells you so rather than quietly
+dropping the oldest — the agent should never be handed a rule that has silently
+gone missing. Pinning is yours alone: agents can read your directives but can
+never pin, edit, or unpin one.
+
 ## Lifecycle
 
 | Status | Meaning |
@@ -88,7 +118,8 @@ agent wakes up, this is *what it intends to do*.
 
 The next step is written by the agent, not you — there is no edit box. To steer
 it, add feedback (above); the agent reads your notes at its next review and
-revises. Each review also shows the agent its own previous next step and asks it
+revises. For something that should hold beyond this one review, pin it as a
+standing directive instead. Each review also shows the agent its own previous next step and asks it
 to report whether that happened, so the line stays current rather than going
 stale. It clears when the agent proposes completion or the goal is closed;
 pausing keeps it, so resuming shows the intent you paused on.
@@ -225,8 +256,8 @@ list sorts those goals first under **Needs you**.
 - `GET  /api/goals/<id>/events` (`?limit=&before=`) — timeline pagination
 - `GET  /api/goals/<id>/runs/<run-id>` — exact run metadata, events, and bounded transcript
 - `POST /api/goals/<id>/events` — record progress / metric updates / next step (agent tools)
-- `POST /api/goals/<id>/feedback` — add user feedback for the next goal run
-- `PATCH /api/goals/<id>/feedback` — edit feedback by `event_id` until a later planning/review session has read it
+- `POST /api/goals/<id>/feedback` — add user feedback for the next goal run; `{"pinned": true}` saves it as a standing directive
+- `PATCH /api/goals/<id>/feedback` — by `event_id`: edit `body` (until a later planning/review session has read it, or any time while pinned), toggle `pinned`, or both
 - `POST /api/goals/<id>/propose-completion`
 - `POST /api/goals/<id>/review` — trigger a review now
 - `GET  /api/access-requests` (`?goal_id=&status=`), `POST /api/access-requests`

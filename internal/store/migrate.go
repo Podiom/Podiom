@@ -1528,6 +1528,21 @@ var migrations = []migration{
 		END
 		WHERE origin IN ('schedule', 'roadmap', 'goal');`,
 	},
+	{
+		version: 41,
+		name:    "goal_feedback_pinned",
+		// A pinned user_feedback note is a standing directive: injected in full into
+		// every planning, review, task and schedule run for the goal's whole life,
+		// instead of competing for the 20-note recency window like an ordinary note.
+		//
+		// No trigger change accompanies this, deliberately. goal_events_append_only
+		// (migration 31) lists the columns that must stay equal on UPDATE and gates
+		// the whole exemption on OLD.kind = 'user_feedback'. `pinned` is not in that
+		// list, so toggling it is permitted on feedback rows and still aborts on
+		// every other kind — exactly the rule we want, without touching the trigger.
+		// Do not "fix" the trigger by adding `pinned` to its equality list.
+		sql: `ALTER TABLE goal_events ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each

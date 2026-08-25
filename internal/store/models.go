@@ -586,7 +586,7 @@ const (
 )
 
 // GoalEvent is one timeline entry in the goal's audit trail. Entries are
-// immutable except for unread user feedback body edits; rows are removed only by
+// immutable except for user feedback body and pin edits; rows are removed only by
 // goal cascade.
 // SessionID links the event to the session that produced it ("" for user
 // actions from the UI), so every autonomous claim is attributable (§8).
@@ -601,6 +601,11 @@ type GoalEvent struct {
 	// Payload is kind-specific JSON (metric deltas, request id, old/new status…).
 	Payload   string
 	CreatedAt string
+	// Pinned marks a user_feedback note as a standing directive: binding for the
+	// goal's whole life, rendered in full into every run in the goal's chain
+	// instead of competing for the recent-feedback window. Always false on every
+	// other kind — the append-only trigger permits the toggle on feedback only.
+	Pinned bool
 }
 
 // GoalRunKind identifies the execution shape behind a goal activity.

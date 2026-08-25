@@ -592,6 +592,10 @@ export interface GoalEvent {
   Body: string;
   Payload: string;
   CreatedAt: string;
+  // Pinned marks a user_feedback note as a standing directive: binding for the
+  // goal's whole life and delivered to every run in the goal's chain, rather
+  // than a note about this moment. Always false on other kinds.
+  Pinned: boolean;
 }
 
 export type AccessRequestKind = "mcp_server" | "skill" | "cli_tool" | "env_var" | "permission_mode";
@@ -694,6 +698,10 @@ export interface GoalDetail {
   pending_question?: AgentQuestion;
   // Open items first (oldest ask leading), then recently answered ones.
   action_items: GoalActionItem[];
+  // Standing directives, oldest first. Carried separately from `events`, which
+  // is only the newest page: a directive pinned long ago still binds every run,
+  // so it must not depend on being inside that window to be shown.
+  directives: GoalEvent[];
   usage?: UsageEstimate;
   running_run?: GoalRun;
 }

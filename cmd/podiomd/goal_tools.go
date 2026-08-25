@@ -122,7 +122,7 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 		{
 			Name:        "podiom_list_goal_events",
 			APIRoutes:   []string{"/api/goals/"},
-			Description: "Page through a goal's timeline, newest first. Pass before (an event id) to load older entries.",
+			Description: "Page through a goal's timeline, newest first. Pass before (an event id) to load older entries. A user_feedback entry with Pinned true is a standing directive: binding for the goal's whole life, not a note about one moment. You cannot pin or unpin — only the user can.",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id":     strProp("Goal id."),
 				"limit":  intProp("Max entries to return (default 50)."),

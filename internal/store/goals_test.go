@@ -235,11 +235,15 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, editableFeedbackMigration); err != nil {
 		t.Fatalf("replay v23 editable feedback migration: %v", err)
 	}
-	// v24 adds run provenance after the historical table-rebuild migrations.
-	// Replaying v20 above intentionally recreates that older shape, so restore
-	// the later column before exercising the current store queries.
+	// v24 adds run provenance and v41 the feedback pin, both after the historical
+	// table-rebuild migrations. Replaying v20 above intentionally recreates that
+	// older shape, so restore the later columns before exercising the current
+	// store queries.
 	if _, err := db.db.ExecContext(ctx, `ALTER TABLE goal_events ADD COLUMN run_id TEXT`); err != nil {
 		t.Fatalf("restore v24 run_id after replay: %v", err)
+	}
+	if _, err := db.db.ExecContext(ctx, `ALTER TABLE goal_events ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`); err != nil {
+		t.Fatalf("restore v41 pinned after replay: %v", err)
 	}
 	events, err = db.ListGoalEvents(ctx, goal.ID, 0, 0)
 	if err != nil {
@@ -268,7 +272,7 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 		t.Fatalf("page = %+v, want the rate-limit-resolved event", page)
 	}
 
-	updated, err := db.UpdateUnreadGoalFeedback(ctx, goal.ID, feedback[0].ID, "nudge launch")
+	updated, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, feedback[0].ID, "nudge launch")
 	if err != nil {
 		t.Fatalf("update unread feedback: %v", err)
 	}
@@ -282,7 +286,7 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
 		t.Fatalf("append review started: %v", err)
 	}
-	if _, err := db.UpdateUnreadGoalFeedback(ctx, goal.ID, feedback[0].ID, "too late"); !errors.Is(err, ErrNotFound) {
+	if _, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, feedback[0].ID, "too late"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update read feedback err = %v, want ErrNotFound", err)
 	}
 

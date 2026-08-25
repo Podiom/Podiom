@@ -776,7 +776,13 @@ func (c *Core) RunTaskTurn(ctx context.Context, sess store.Session) error {
 	if sess.GoalID == "" {
 		opts.PermissionRelay = NewAllowListRelay(nil, c.log)
 	}
-	events, err := c.StreamTurn(ctx, sess.ID, TaskPrompt(task), opts)
+	// A goal-linked task inherits the goal's standing directives; a standalone one
+	// gets its own text unchanged.
+	prompt := TaskPrompt(task)
+	if preamble := c.goalDirectivePreamble(ctx, sess.GoalID); preamble != "" {
+		prompt = preamble + "\n\n" + prompt
+	}
+	events, err := c.StreamTurn(ctx, sess.ID, prompt, opts)
 	if err != nil {
 		return err
 	}

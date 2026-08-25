@@ -172,7 +172,7 @@ func TestGoalReviewPromptCarriesActionItems(t *testing.T) {
 			Response: "Legal wants a redline first.",
 		}},
 	}
-	prompt := GoalReviewPrompt(goal, nil, nil, nil, nil, actions)
+	prompt := GoalReviewPrompt(goal, nil, nil, nil, nil, nil, actions)
 
 	for _, want := range []string{
 		"Action items you handed to the user",
@@ -187,7 +187,7 @@ func TestGoalReviewPromptCarriesActionItems(t *testing.T) {
 		}
 	}
 
-	bare := GoalReviewPrompt(goal, nil, nil, nil, nil, GoalActionItems{})
+	bare := GoalReviewPrompt(goal, nil, nil, nil, nil, nil, GoalActionItems{})
 	if strings.Contains(bare, "Action items you handed to the user") {
 		t.Fatal("review prompt rendered an empty action-item section")
 	}
@@ -199,8 +199,8 @@ func TestGoalReviewPromptCarriesActionItems(t *testing.T) {
 func TestGoalPromptsRouteUserWorkAwayFromNextStep(t *testing.T) {
 	goal := store.Goal{ID: "g1", Title: "Launch Podiom"}
 	for name, prompt := range map[string]string{
-		"planning": GoalPlanningPrompt(goal, nil, GoalActionItems{}),
-		"review":   GoalReviewPrompt(goal, nil, nil, nil, nil, GoalActionItems{}),
+		"planning": GoalPlanningPrompt(goal, nil, nil, GoalActionItems{}),
+		"review":   GoalReviewPrompt(goal, nil, nil, nil, nil, nil, GoalActionItems{}),
 	} {
 		if !strings.Contains(prompt, "podiom_request_user_action") {
 			t.Fatalf("%s prompt never mentions podiom_request_user_action:\n%s", name, prompt)

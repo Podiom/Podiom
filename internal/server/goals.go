@@ -69,6 +69,10 @@ type goalProgressRequest struct {
 type goalFeedbackRequest struct {
 	EventID int64  `json:"event_id,omitempty"`
 	Body    string `json:"body"`
+	// Pinned marks the note as a standing directive. A pointer so "not mentioned"
+	// stays distinguishable from an explicit false: a PATCH that only edits a body
+	// must leave the pin alone rather than silently retiring a directive.
+	Pinned *bool `json:"pinned,omitempty"`
 }
 
 type goalProposeCompletionRequest struct {
@@ -106,8 +110,15 @@ type GoalDetail struct {
 	// ActionItems is the work the agent handed back to the user: everything still
 	// open, then the recently answered ones, in the order the carousel shows them.
 	ActionItems []store.GoalActionItem `json:"action_items"`
-	Usage       *tokenmeter.Estimate   `json:"usage,omitempty"`
-	RunningRun  *store.GoalRun         `json:"running_run,omitempty"`
+	// Directives is the goal's standing directives, oldest first — the same list,
+	// in the same order, the agent is given. It is carried separately from Events
+	// because that field is only the newest goalDetailEvents entries: a directive
+	// pinned long ago would drop out of it while still binding every run, and a
+	// rule the user cannot see but the agent is still obeying is the one outcome
+	// this feature exists to prevent.
+	Directives []store.GoalEvent    `json:"directives"`
+	Usage      *tokenmeter.Estimate `json:"usage,omitempty"`
+	RunningRun *store.GoalRun       `json:"running_run,omitempty"`
 }
 
 type goalRunDetail struct {
@@ -392,7 +403,15 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 			writeJSON(w, nil, err)
 			return
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, ActionItems: actions, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running}, nil)
+		directives, err := s.core.ListGoalDirectives(r.Context(), id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if directives == nil {
+			directives = []store.GoalEvent{}
+		}
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, ActionItems: actions, Directives: directives, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -517,9 +536,33 @@ func (s *Server) handleGoalFeedback(w http.ResponseWriter, r *http.Request, id s
 			http.Error(w, "feedback event_id is required", http.StatusBadRequest)
 			return
 		}
-		ev, err = s.core.UpdateGoalFeedback(r.Context(), id, req.EventID, req.Body)
+		// A pin toggle carries no body, so only require one when there is no pin
+		// change to apply.
+		if strings.TrimSpace(req.Body) == "" && req.Pinned == nil {
+			http.Error(w, "feedback body or pinned is required", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Body) != "" {
+			ev, err = s.core.UpdateGoalFeedback(r.Context(), id, req.EventID, req.Body)
+		}
+		// Pin after the body edit: pinning validates the length of the text that
+		// will actually be rendered, not the text it is replacing.
+		if err == nil && req.Pinned != nil {
+			ev, err = s.core.SetGoalFeedbackPin(r.Context(), id, req.EventID, *req.Pinned)
+		}
 	} else {
+		// Validate the pin before creating anything: a refused pin must not leave
+		// the text behind as ordinary feedback while the caller sees an error.
+		if req.Pinned != nil && *req.Pinned {
+			if err := s.core.CheckNewGoalDirective(r.Context(), id, req.Body); err != nil {
+				writeJSON(w, nil, err)
+				return
+			}
+		}
 		ev, err = s.core.AddGoalFeedback(r.Context(), id, req.Body)
+		if err == nil && req.Pinned != nil && *req.Pinned {
+			ev, err = s.core.SetGoalFeedbackPin(r.Context(), id, ev.ID, true)
+		}
 	}
 	if err != nil {
 		writeJSON(w, nil, err)

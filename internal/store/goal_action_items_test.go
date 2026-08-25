@@ -189,7 +189,129 @@ func TestGoalActionEventsAppendOnlyAfterRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append feedback: %v", err)
 	}
-	if _, err := db.UpdateUnreadGoalFeedback(ctx, goal.ID, feedback.ID, "edited"); err != nil {
+	if _, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, feedback.ID, "edited"); err != nil {
 		t.Fatalf("edit unread feedback: %v", err)
+	}
+}
+
+// Migration 41 adds goal_events.pinned without touching the append-only trigger,
+// relying on the trigger listing only the columns that must stay equal and gating
+// the whole exemption on kind = 'user_feedback'. That is subtle enough to be
+// worth pinning down: a pin toggle must work on feedback and abort on every other
+// kind, and both properties must survive any later table rebuild.
+func TestGoalFeedbackPinTogglesOnlyOnFeedback(t *testing.T) {
+	ctx := context.Background()
+	db := openGoalStore(t)
+
+	goal, err := db.CreateGoal(ctx, Goal{Title: "Launch", LeadAgent: "atlas"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	feedback, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventUserFeedback, Body: "Never touch production DNS"})
+	if err != nil {
+		t.Fatalf("append feedback: %v", err)
+	}
+	if feedback.Pinned {
+		t.Fatal("a new feedback note must not start pinned")
+	}
+
+	pinned, err := db.SetGoalFeedbackPin(ctx, goal.ID, feedback.ID, true)
+	if err != nil {
+		t.Fatalf("pin feedback: %v", err)
+	}
+	if !pinned.Pinned {
+		t.Fatal("pinned feedback did not read back as pinned")
+	}
+
+	// A pinned note stays editable for the goal's whole life; an ordinary one
+	// locks once a review has assembled it into a prompt.
+	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
+		t.Fatalf("append review started: %v", err)
+	}
+	if _, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, feedback.ID, "Never touch production DNS or the CDN"); err != nil {
+		t.Fatalf("edit pinned feedback after review: %v", err)
+	}
+	ordinary, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventUserFeedback, Body: "check CI"})
+	if err != nil {
+		t.Fatalf("append ordinary feedback: %v", err)
+	}
+	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
+		t.Fatalf("append second review started: %v", err)
+	}
+	if _, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, ordinary.ID, "too late"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("edit read ordinary feedback err = %v, want ErrNotFound", err)
+	}
+
+	// The trigger must still refuse a pin on anything that is not feedback.
+	progress, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventProgress, Body: "shipped"})
+	if err != nil {
+		t.Fatalf("append progress: %v", err)
+	}
+	if _, err := db.db.ExecContext(ctx, `UPDATE goal_events SET pinned = 1 WHERE id = ?`, progress.ID); err == nil {
+		t.Fatal("pinning a progress event succeeded; the append-only trigger should have aborted it")
+	}
+	if _, err := db.SetGoalFeedbackPin(ctx, goal.ID, progress.ID, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("pin non-feedback event err = %v, want ErrNotFound", err)
+	}
+}
+
+// The two prompt-facing reads must partition a goal's feedback: directives are
+// unbounded and oldest-first, ordinary notes are newest-first and must not spend
+// their window on notes that have already escaped it.
+func TestPinnedAndUnpinnedFeedbackPartition(t *testing.T) {
+	ctx := context.Background()
+	db := openGoalStore(t)
+
+	goal, err := db.CreateGoal(ctx, Goal{Title: "Launch", LeadAgent: "atlas"})
+	if err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	var ids []int64
+	for _, body := range []string{"first", "second", "third", "fourth"} {
+		ev, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventUserFeedback, Body: body})
+		if err != nil {
+			t.Fatalf("append %q: %v", body, err)
+		}
+		ids = append(ids, ev.ID)
+	}
+	for _, id := range []int64{ids[0], ids[2]} {
+		if _, err := db.SetGoalFeedbackPin(ctx, goal.ID, id, true); err != nil {
+			t.Fatalf("pin %d: %v", id, err)
+		}
+	}
+
+	directives, err := db.ListPinnedGoalFeedback(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("list pinned: %v", err)
+	}
+	if len(directives) != 2 || directives[0].Body != "first" || directives[1].Body != "third" {
+		t.Fatalf("directives = %+v, want first then third (oldest first)", directives)
+	}
+
+	ordinary, err := db.ListUnpinnedGoalFeedback(ctx, goal.ID, 10)
+	if err != nil {
+		t.Fatalf("list unpinned: %v", err)
+	}
+	if len(ordinary) != 2 || ordinary[0].Body != "fourth" || ordinary[1].Body != "second" {
+		t.Fatalf("ordinary = %+v, want fourth then second (newest first, pinned excluded)", ordinary)
+	}
+
+	// Unpinning returns a note to the ordinary stream.
+	if _, err := db.SetGoalFeedbackPin(ctx, goal.ID, ids[0], false); err != nil {
+		t.Fatalf("unpin: %v", err)
+	}
+	directives, err = db.ListPinnedGoalFeedback(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("list pinned after unpin: %v", err)
+	}
+	if len(directives) != 1 || directives[0].Body != "third" {
+		t.Fatalf("directives after unpin = %+v", directives)
+	}
+	ordinary, err = db.ListUnpinnedGoalFeedback(ctx, goal.ID, 10)
+	if err != nil {
+		t.Fatalf("list unpinned after unpin: %v", err)
+	}
+	if len(ordinary) != 3 {
+		t.Fatalf("ordinary after unpin = %+v, want 3", ordinary)
 	}
 }

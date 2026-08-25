@@ -221,14 +221,14 @@ func TestGoalReviewPromptCarriesStatedNextStep(t *testing.T) {
 		NextStepWhy: "Organic signups stalled.",
 		NextStepAt:  "2026-07-29T09:00:00Z",
 	}
-	prompt := GoalReviewPrompt(goal, nil, nil, nil, nil, GoalActionItems{})
+	prompt := GoalReviewPrompt(goal, nil, nil, nil, nil, nil, GoalActionItems{})
 	for _, want := range []string{"Post the launch thread on r/selfhosted", "Organic signups stalled.", "2026-07-29T09:00:00Z", "next_step_why"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("review prompt missing %q:\n%s", want, prompt)
 		}
 	}
 
-	bare := GoalReviewPrompt(store.Goal{ID: "g1", Title: "Grow the newsletter"}, nil, nil, nil, nil, GoalActionItems{})
+	bare := GoalReviewPrompt(store.Goal{ID: "g1", Title: "Grow the newsletter"}, nil, nil, nil, nil, nil, GoalActionItems{})
 	if strings.Contains(bare, "Next step you stated") {
 		t.Fatalf("unstated next step should not appear in the brief:\n%s", bare)
 	}
