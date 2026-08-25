@@ -200,7 +200,7 @@
             </td>
             <td class="mono">{c.goal_id || "—"}</td>
             <td>{fmtDate(c.created_at)}</td>
-            <td class="actions"><button class="btn danger" onclick={() => (pendingDelete = c)}>Delete</button></td>
+            <td class="actions"><button class="delete-btn" type="button" onclick={() => (pendingDelete = c)}>Delete</button></td>
           </tr>
         {/each}
       </tbody>
@@ -360,6 +360,17 @@
   }
   .cred-table .actions {
     text-align: right;
+  }
+  .delete-btn {
+    border: 0;
+    border-radius: 9px;
+    padding: 7px 12px;
+    background: var(--orange);
+    color: #fff;
+    font: 700 12px "Hanken Grotesk";
+  }
+  .delete-btn:hover {
+    background: var(--orange-ink);
   }
   .by-agent {
     border: 1px solid var(--line-2);

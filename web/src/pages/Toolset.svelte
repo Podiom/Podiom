@@ -159,7 +159,7 @@
                   {reinstalling === t.tool ? "Installing…" : "Reinstall"}
                 </button>
               {/if}
-              <button class="btn danger" onclick={() => (pendingDelete = t)}>Remove</button>
+              <button class="remove-btn" type="button" onclick={() => (pendingDelete = t)}>Remove</button>
             </td>
           </tr>
         {/each}
@@ -251,6 +251,17 @@
   .tool-table .actions {
     text-align: right;
     white-space: nowrap;
+  }
+  .remove-btn {
+    border: 0;
+    border-radius: 9px;
+    padding: 7px 12px;
+    background: var(--orange);
+    color: #fff;
+    font: 700 12px "Hanken Grotesk";
+  }
+  .remove-btn:hover {
+    background: var(--orange-ink);
   }
   .tool-name {
     font-weight: 600;

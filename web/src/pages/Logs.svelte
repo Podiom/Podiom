@@ -217,7 +217,7 @@
   /* Constrain to a scrolling panel rather than filling the viewport. */
   .embedded .log-shell {
     flex: none;
-    height: 280px;
+    height: 440px;
     border-radius: 14px;
   }
 

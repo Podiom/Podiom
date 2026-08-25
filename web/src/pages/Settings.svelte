@@ -1011,7 +1011,7 @@
     {/if}
 
     {:else if tab === "general"}
-    <div class="settings-grid">
+    <div class="settings-grid general-grid">
     <!-- ===== CHAT DISPLAY ===== -->
     <section class="card">
       <div class="card-head">
@@ -1538,6 +1538,10 @@
   .settings-grid > .card,
   .settings-grid > .prov-card {
     margin-bottom: 0;
+  }
+
+  .settings-grid.general-grid {
+    align-items: stretch;
   }
 
   /* Prose, an interview and a tall textarea: hold a reading width. */
