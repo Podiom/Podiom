@@ -342,6 +342,22 @@ podiom agents update jared --generate-soul --notes "make the voice more direct"
 podiom agents update jared --generate-soul --yes
 ```
 
+| Flag | Description |
+| --- | --- |
+| `--provider claude\|codex` | Change the agent's provider. |
+| `--profile name` | Auth profile name to use. |
+| `--model name` | Default model. |
+| `--effort level` | Default provider-supported reasoning effort. |
+| `--permission approve\|auto\|yolo` | Agent permission default. |
+| `--fallback target` | Replace the entire fallback chain (repeatable): profile name, `claude\|codex`, or `default`. Replaces the whole chain rather than appending. |
+| `--generate-soul` | Generate a new `SOUL.md` and ask before saving. |
+| `--notes text` | Extra direction for `--generate-soul`. |
+| `--yes` / `-y` | Save generated `SOUL.md` without prompting. |
+
+Only flags that are explicitly passed are applied — all other agent fields are
+left untouched. Running `update` with just `--model` does not reset the
+provider, profile, or anything else.
+
 When `--generate-soul` is used, the CLI previews the generated markdown and asks
 before overwriting `$PODIOM_HOME/agents/<name>/SOUL.md`. `--yes` skips that
 confirmation. See [SOUL.md generation](soul-generation.md) for the generated
