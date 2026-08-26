@@ -17,6 +17,8 @@ opt-in described below.
 - **ttyd** — the web terminal behind the `/terminal/...` onboarding links
 - **Node and Python** — the runtimes the above are built on, and also the first
   two entries in **Language toolchains** below
+- **Chromium's shared libraries** — so agents can drive a headless browser with
+  Playwright, covered under **Headless browsing** below
 
 Exact bundled versions are listed in the changelog for every release.
 
@@ -152,6 +154,29 @@ point your agent at a Mac (SSH, or a macOS CI runner).
 Approving it acknowledges the request — Podiom cannot install a system-wide
 toolchain on your behalf — then you tick the box here and save.
 
+## Headless browsing — built in, no setting to change
+
+Chromium's shared libraries are part of the image, so an agent can drive a real
+browser with **Playwright** — read a page that needs JavaScript, fill in a form,
+take a screenshot — without asking you for anything first.
+
+The browser **binary** is not in the image, because a Chromium build belongs to
+the exact Playwright version that fetched it. The first agent that needs one
+runs `npx playwright install chromium` itself, which lands in
+`/data/home/.cache/ms-playwright`. Budget for it: that command fetches both the
+full browser and its headless shell, **about 1 GB on disk** (641 MB + 340 MB).
+Being on `/data` it is downloaded once and then survives restarts and add-on
+updates — and it is in your backups, so expect them to grow by that much.
+
+`npx playwright install chromium-headless-shell` installs only the 340 MB half,
+which is all a headless agent actually launches. Worth knowing if `/data` is on
+an SD card.
+
+There is nothing to configure. Playwright already turns off Chromium's sandbox
+and its use of shared memory, which is exactly what a container like this one
+needs. Firefox and WebKit are **not** supported: their libraries are not
+bundled, so launching them fails on missing dependencies.
+
 ## The toolset — individual tools, no setting to change
 
 Language toolchains are the runtimes you choose. Individual command-line tools
@@ -209,6 +234,11 @@ remotely, so Pi-class hardware is viable. However, Podiom has **no
 concurrency cap**: every agent turn you run in parallel spawns real processes
 and consumes real RAM. On small boards, keep an eye on memory and run fewer
 things at once.
+
+Disk is the other cost. The bundled compiler and browser libraries add about
+415 MB to the image for everyone, whatever you tick — 238 MB of that is
+Chromium's, most of it a Mesa/LLVM dependency Debian gives us no way to skip. A
+ticked toolchain and a downloaded browser add their own sizes on top, on `/data`.
 
 ## Always-on scheduling — a benefit of running under HA
 

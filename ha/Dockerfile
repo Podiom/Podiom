@@ -102,6 +102,40 @@ RUN set -eu; \
 # unusable and Swift's clang cannot do C++ interop. Measured at +177 MB
 # for every add-on user, including those who tick nothing — the cost of the
 # option existing at all. Keep in sync with swift.org's Debian dependency list.
+#
+# The third group is what headless Chromium needs in order to LOAD, for agents
+# browsing with Playwright — without it the browser Playwright downloads dies on
+# libglib-2.0.so.0, the first of twenty-one sonames this image has none of. It is
+# baked in for the same reason as the group above: uid 1000 cannot write /usr, so
+# an agent cannot apt-install these at the moment it discovers it needs them.
+#
+# The list is Playwright's own, from playwright-core's
+# lib/server/registry/nativeDeps.ts (`debian13` → `chromium`); its arm64 entry is
+# byte-identical, so one list serves both arches. To refresh it for a new base
+# image, run `npx playwright install-deps --dry-run chromium` inside that image
+# and copy the package names it prints. These are Trixie's time64 names — Debian
+# 12 calls the same six libglib2.0-0, libasound2, libatk1.0-0, libatk-bridge2.0-0,
+# libatspi2.0-0 and libcups2 — so a BUILD_FROM bump to another Debian fails
+# loudly right here instead of at the agent's first browser launch.
+#
+# The two font packages come from Playwright's `tools` group and are what keeps
+# rendered text and screenshots from being rows of tofu; the rest of that group is
+# xvfb and CJK/Thai font packs, which headless Chromium does not need.
+#
+# Measured at +238 MB on amd64 and +226 MB on arm64, again for every add-on user
+# whether they browse or not. Some 196 MB of that is one transitive chain and not
+# ours to trim: libgbm1 is a link-time dependency of the chrome binary, in Trixie
+# it hard-depends on mesa-libgallium, and that pulls libllvm19 (127 MB) and
+# libz3-4 (27 MB) for software rasterisation we never ask for. Dropping libgbm1
+# does not trade size for a working browser — the process fails to start.
+#
+# Nothing else is needed to make this work: Playwright passes
+# --disable-dev-shm-usage by default, so the container's 64 MB /dev/shm is not a
+# problem, and it disables the Chromium sandbox unless a caller explicitly asks
+# for it, so the add-on needs no AppArmor or capability changes. The browser
+# binary is deliberately NOT baked in — a Chromium build belongs to the exact
+# playwright version that fetched it, so Playwright downloads a matching one into
+# $HOME/.cache/ms-playwright, which is on /data and survives add-on updates.
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -110,6 +144,12 @@ RUN set -eu; \
       binutils binutils-gold gcc g++ libc6-dev pkg-config tzdata uuid-dev \
       libcurl4-openssl-dev libedit-dev libicu-dev libncurses-dev \
       libpython3-dev libsqlite3-dev libxml2-dev; \
+    apt-get install -y --no-install-recommends \
+      libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+      libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 \
+      libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 \
+      libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 \
+      fonts-liberation fonts-noto-color-emoji; \
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -; \
     apt-get install -y --no-install-recommends nodejs; \
     rm -rf /var/lib/apt/lists/*

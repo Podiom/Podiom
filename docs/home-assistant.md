@@ -147,6 +147,24 @@ which is macOS-only and cannot run in this container.
 
 Full behaviour, disk costs and caveats: `ha/addon/DOCS.md`.
 
+## Headless browser
+
+Chromium's shared libraries are bundled in the image, so agents can browse with
+Playwright out of the box — no option to tick. They have to be baked in: the
+container is sealed, and `/usr` is not writable by the runtime account, so an
+agent cannot install them at the moment it needs them.
+
+The browser binary is not bundled, because a Chromium build is tied to the
+Playwright version that downloaded it. The first `npx playwright install
+chromium` puts ~1 GB into `/data/home/.cache/ms-playwright` — the full browser
+plus its headless shell — which is on `/data` and so survives app updates and is
+captured by backups. `chromium-headless-shell` alone is 340 MB and is all a
+headless agent launches. Playwright disables the Chromium sandbox and
+shared-memory use itself, so nothing needs configuring. Firefox and WebKit are
+not supported.
+
+On a standalone install this is the host's business, as with the toolchains.
+
 ## Always-on scheduling
 
 The app starts on boot and is watchdog-supervised, so [schedules](scheduling.md)

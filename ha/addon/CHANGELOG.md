@@ -20,6 +20,13 @@
   background — untick `python` if you do not want it.
 - The image now carries the system libraries those toolchains need in order to
   link (+177 MB), since `/usr` cannot be written at runtime.
+- **Headless browsing now works out of the box.** The image carries Chromium's
+  shared libraries (+238 MB), for the same reason as above — `/usr` cannot be
+  written at runtime, so an agent could never install them itself. The browser
+  itself is not bundled: the first `playwright install chromium` downloads it
+  into `/data/home/.cache/ms-playwright`, on `/data`, where it survives updates
+  — about 1 GB, so it counts against your backups.
+  Firefox and WebKit are not supported. See DOCS.md.
 
 ## 0.0.0
 

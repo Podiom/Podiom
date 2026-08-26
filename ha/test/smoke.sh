@@ -11,6 +11,7 @@
 #   - legacy root-owned /data is safely migrated to the non-root podiom account
 #   - gh is available, and claude / codex / mcp-proxy / uvx / ttyd are pinned
 #   - yq is absent (profile login dispatch no longer needs it)
+#   - every shared library headless Chromium loads is present in the image
 #   - migrated SSH keys load, Git can commit, and podiomd sees the public key
 #   - Claude bypassPermissions starts as non-root instead of hitting its root guard
 #   - ttyd is listening on 127.0.0.1:7681
@@ -196,6 +197,24 @@ if docker exec "${cid}" bash -lc 'command -v yq' >/dev/null 2>&1; then
     fail "yq should not be bundled in the HA image"
 fi
 pass "yq is not bundled"
+
+echo "== headless Chromium's shared libraries are present"
+# Playwright downloads the browser binary itself, into /data where it persists;
+# these libraries are the half that can only come from the image, because uid
+# 1000 cannot write /usr. Asserted by soname rather than by package name: the
+# soname is what the dynamic linker actually resolves, and it stays true across
+# Debian's renames — Trixie's time64 transition renamed six of the packages.
+ldcache="$(docker exec "${cid}" ldconfig -p)"
+for so in libglib-2.0.so.0 libnss3.so libnspr4.so libatk-1.0.so.0 \
+          libatk-bridge-2.0.so.0 libatspi.so.0 libcups.so.2 libdbus-1.so.3 \
+          libdrm.so.2 libgbm.so.1 libpango-1.0.so.0 libcairo.so.2 \
+          libasound.so.2 libX11.so.6 libxcb.so.1 libXcomposite.so.1 \
+          libXdamage.so.1 libXext.so.6 libXfixes.so.3 libxkbcommon.so.0 \
+          libXrandr.so.2; do
+    echo "${ldcache}" | grep -q "^[[:space:]]*${so} " \
+        || fail "image is missing a Chromium runtime library: ${so}"
+done
+pass "every shared library headless Chromium loads resolves through ldconfig"
 
 echo "== migrated SSH keys and configuration work as podiom"
 derived_key="$(docker exec --user podiom "${cid}" \
@@ -439,6 +458,29 @@ if [ "${SMOKE_TOOLCHAINS:-0}" = "1" ]; then
     pass "python installs to /data, and mcp-proxy/uv are unaffected"
 else
     echo "  skip: real toolchain installs (set SMOKE_TOOLCHAINS=1)"
+fi
+
+# A real browser is a ~310 MB download and ~1 GB on disk; opt in with
+# SMOKE_BROWSER=1.
+if [ "${SMOKE_BROWSER:-0}" = "1" ]; then
+    echo "== Playwright installs and runs headless Chromium as podiom"
+    # No launch flags here on purpose: this asserts that a plain Playwright call
+    # works, which it does because Playwright already passes --no-sandbox and
+    # --disable-dev-shm-usage itself. A data: URL keeps the render offline.
+    docker exec --user podiom "${cid}" bash -lc '
+        set -euo pipefail
+        npx --yes playwright install chromium
+        npx --yes playwright screenshot --browser chromium \
+            "data:text/html,<h1>podiom</h1>" /tmp/smoke-shot.png
+    ' || fail "Playwright could not install or launch headless Chromium"
+    docker exec --user podiom "${cid}" test -s /tmp/smoke-shot.png \
+        || fail "headless Chromium rendered no screenshot"
+    # The browser has to land on /data, or it is gone on the next add-on update.
+    [ "$(docker exec "${cid}" stat -c %U /data/home/.cache/ms-playwright)" = "podiom" ] \
+        || fail "the browser cache is not under a podiom-owned /data path"
+    pass "Chromium installs into /data/home/.cache/ms-playwright and renders a page"
+else
+    echo "  skip: real browser install (set SMOKE_BROWSER=1)"
 fi
 
 echo "== container log must not contain the real gateway token"
