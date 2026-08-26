@@ -325,6 +325,8 @@ podiom agents create juno --generate-soul
 | `--effort level` | Default provider-supported reasoning effort. |
 | `--permission approve|auto|yolo` | Agent permission default. |
 | `--generate-soul` | Ask the daemon to generate and save the initial `SOUL.md` after creation. |
+| `--profile name` | Auth profile to use; must exist and match `--provider`. |
+| `--fallback target` | Ordered fallback target (repeatable): a profile name, `claude`/`codex`, or `default`. |
 
 Choosing `--permission yolo` prints a whole-machine-access warning: in `yolo`
 every tool call is auto-approved and the workspace is **not** a sandbox (R8.31).
