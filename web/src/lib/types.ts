@@ -868,6 +868,8 @@ export interface PermissionRequest {
   tool_use_id: string;
   description?: string;
   input: Record<string, unknown>;
+  /** The provider classified this call as pure reading: no write, no network. */
+  read_only?: boolean;
   expires_at?: string;
 }
 

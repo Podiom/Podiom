@@ -232,3 +232,34 @@ Plan mode is behavioral orchestration, not a sandbox boundary — a plan turn
 under `workspace-write` declined to write — but Podiom still pins
 `sandboxPolicy: readOnly` while planning so non-mutation is enforced rather
 than instructed.
+
+### The plan gate has to read Codex's command parse
+
+A plan turn runs under `PlanGateRelay`, which answers approvals by policy
+instead of asking a human. Two protocol details decide whether the agent can
+inspect anything at all:
+
+- **Every command arrives under one tool name.** `codex.command` covers `ls` and
+  `rm` alike, so a name-based allow-list denies all of them. Codex classifies the
+  command itself — `commandActions` on
+  `item/commandExecution/requestApproval`, `parsedCmd` (snake_case variants) on
+  the legacy `execCommandApproval` — with variants `read`, `listFiles`, `search`
+  and `unknown`. `codexReadOnlyApproval` allows a command only when every action
+  is one of the first three *and* the request asks for no extra network
+  (`additionalPermissions.network.enabled`, `networkApprovalContext`) or writable
+  path (`additionalPermissions.fileSystem`). Anything else — an `unknown` action,
+  an absent list, an unfamiliar shape — is not read-only. File-change approvals
+  are never read-only regardless of payload.
+
+- **A denial carries no reason.** `CommandExecutionRequestApprovalResponse` is
+  `{decision}` — there is no field for text, so `PermissionDecision.Message` is
+  dropped on the floor. The model gets a bare `decline` and has to guess why,
+  which is why a wrongly denied read shows up as a plan that names no files.
+
+Denying `item/permissions/requestApproval` also answers `strictAutoReview`,
+documented as *"Review every subsequent command in this turn before normal
+sandboxed execution."* Left at `true`, one policy denial routes every later
+command through the gate, which declines those too — the whole turn goes dark.
+The plan gate therefore sets `PermissionDecision.StrictReview` to `false`: the
+sandbox is already pinned read-only, so strict review adds no containment.
+Human denials leave the field unset and keep `true`.

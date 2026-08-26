@@ -40,6 +40,18 @@ project on disk. Reads are unaffected — also measured — so ledger access sti
 works. `approve` and `yolo` keep the broad set, where writes are respectively
 impossible and unrestricted by design.
 
+**Plan mode answers approvals by policy, not by asking.** A plan turn forces
+`approve`, pins Codex to `sandboxPolicy: readOnly`, and installs `PlanGateRelay`
+in place of the human broker. The relay allows read-only tools and the plan
+submit tool, and denies everything else — file changes included. Because Codex
+routes every command through one tool name, the relay also honours the adapter's
+own read-only classification of the command (`commandActions`/`parsedCmd`, plus
+the absence of any extra network or writable-path request); without it, a plan
+turn is denied `ls` along with `rm` and produces a plan that names no files. The
+classification is Codex's parse, not a shell allow-list of Podiom's own — a
+second parser would be a weaker boundary that disagrees with the first. Details
+in [integrations/codex.md](integrations/codex.md#the-plan-gate-has-to-read-codexs-command-parse).
+
 **On `--dangerously-skip-permissions`:** it and `--permission-mode
 bypassPermissions` are exactly equivalent — both report
 `permissionMode: bypassPermissions` in Claude's `system/init` event. Podiom uses

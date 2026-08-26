@@ -367,6 +367,60 @@ func TestPlanGateRelayAllowsReadsAndDeniesMutations(t *testing.T) {
 	}
 }
 
+// TestPlanGateRelayHonorsAdapterReadOnlyClassification covers the providers
+// whose tool name cannot answer the question. Codex runs every command through
+// one "codex.command" tool, so judging by name alone denied `ls` and `rg` along
+// with `rm`, and plan turns came back having read nothing.
+func TestPlanGateRelayHonorsAdapterReadOnlyClassification(t *testing.T) {
+	relay := NewPlanGateRelay()
+	ctx := context.Background()
+
+	read, err := relay.RequestPermission(ctx, adapter.PermissionRequest{
+		ID:       "cmd-read",
+		ToolName: "codex.command",
+		ReadOnly: true,
+		Input:    json.RawMessage(`{"command":"ls -la"}`),
+	}, time.Second)
+	if err != nil {
+		t.Fatalf("read-only command: %v", err)
+	}
+	if read.Behavior != "allow" {
+		t.Fatalf("classified read-only command should be allowed, got %+v", read)
+	}
+
+	unclassified, err := relay.RequestPermission(ctx, adapter.PermissionRequest{
+		ID:       "cmd-unknown",
+		ToolName: "codex.command",
+		Input:    json.RawMessage(`{"command":"rm -rf ."}`),
+	}, time.Second)
+	if err != nil {
+		t.Fatalf("unclassified command: %v", err)
+	}
+	if unclassified.Behavior != "deny" {
+		t.Fatalf("unclassified command must stay denied, got %+v", unclassified)
+	}
+
+	fileChange, err := relay.RequestPermission(ctx, adapter.PermissionRequest{
+		ID:       "file-change",
+		ToolName: "codex.file_change",
+		Input:    json.RawMessage(`{}`),
+	}, time.Second)
+	if err != nil {
+		t.Fatalf("file change: %v", err)
+	}
+	if fileChange.Behavior != "deny" {
+		t.Fatalf("file changes must stay denied in plan mode, got %+v", fileChange)
+	}
+
+	// A policy denial must not put the rest of the turn behind approval — that
+	// is what turned one denied request into a turn that could run nothing.
+	for _, denial := range []adapter.PermissionDecision{unclassified, fileChange} {
+		if denial.StrictReview == nil || *denial.StrictReview {
+			t.Fatalf("plan gate denial must clear strict review, got %+v", denial.StrictReview)
+		}
+	}
+}
+
 func validStructuredPlanMarkdown(title string) string {
 	return strings.Join([]string{
 		"# Plan: " + title,

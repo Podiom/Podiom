@@ -433,7 +433,12 @@ func (r *PlanGateRelay) RequestPermission(_ context.Context, req adapter.Permiss
 		return adapter.PermissionDecision{Behavior: "allow", UpdatedInput: req.Input}, nil
 	default:
 		r.log.Info("plan gate denied mutating tool", "event", "permission", "turn", req.TurnID, "request", req.ID, "tool_name", req.ToolName)
-		return adapter.PermissionDecision{Behavior: "deny", Message: PlanGateMessage}, nil
+		// The denial is a policy decision, not a human's, so it must not put the
+		// rest of the turn behind approval: the plan turn already runs in a
+		// pinned read-only sandbox, and starving it of reads is how a plan ends
+		// up naming no files at all.
+		strict := false
+		return adapter.PermissionDecision{Behavior: "deny", Message: PlanGateMessage, StrictReview: &strict}, nil
 	}
 }
 
@@ -456,7 +461,14 @@ var planReadOnlyTools = func() map[string]bool {
 	return set
 }()
 
+// isReadOnlyTool decides by name, or by the adapter's own classification when
+// the name cannot carry the answer. A provider that runs everything through one
+// shell tool reports the same name for `ls` and for `rm`, so judging it by name
+// alone denies every read it ever asks about.
 func isReadOnlyTool(req adapter.PermissionRequest) bool {
+	if req.ReadOnly {
+		return true
+	}
 	name := strings.ToLower(req.ToolName)
 	if planReadOnlyTools[name] {
 		return true

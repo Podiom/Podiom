@@ -332,6 +332,13 @@ type PermissionRequest struct {
 	Description string          `json:"description,omitempty"`
 	Input       json.RawMessage `json:"input"`
 	ExpiresAt   time.Time       `json:"expires_at,omitempty"`
+
+	// ReadOnly marks a request the provider itself classified as pure reading:
+	// no write, no network. A generic tool name like Codex's "codex.command"
+	// says nothing about effect, so the adapter that speaks the protocol is the
+	// only layer that can tell an `ls` from an `rm`. False is the safe default
+	// and the only value for any payload the adapter does not recognize.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 // PermissionDecision is returned to the provider permission mechanism.
@@ -339,6 +346,13 @@ type PermissionDecision struct {
 	Behavior     string          `json:"behavior"`
 	UpdatedInput json.RawMessage `json:"updatedInput,omitempty"`
 	Message      string          `json:"message,omitempty"`
+
+	// StrictReview asks the provider to route every later command in the turn
+	// through approval, whatever its sandbox would otherwise allow. nil leaves
+	// the provider default in place; a relay that denies on policy rather than
+	// on human judgement should set it false, or one denial starves the rest of
+	// the turn.
+	StrictReview *bool `json:"strict_review,omitempty"`
 }
 
 // PermissionRelay receives permission requests and waits for user decisions.

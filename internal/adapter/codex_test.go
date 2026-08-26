@@ -253,6 +253,150 @@ func TestCodexFileChangeApprovalFallbackIsReadable(t *testing.T) {
 	}
 }
 
+// TestCodexReadOnlyApprovalClassification pins the read-only classifier that
+// lets a plan turn inspect the repository. Codex reports the same tool name for
+// every command it runs, so this parse of its own commandActions/parsedCmd is
+// the only thing separating `ls` from `rm` at the plan gate. Every uncertain
+// shape must land on false.
+func TestCodexReadOnlyApprovalClassification(t *testing.T) {
+	const method = "item/commandExecution/requestApproval"
+	cases := []struct {
+		name   string
+		method string
+		params string
+		want   bool
+	}{
+		{
+			name:   "read and search actions",
+			method: method,
+			params: `{"command":"rg podiom","commandActions":[{"type":"search","command":"rg podiom"},{"type":"read","command":"cat go.mod","name":"go.mod","path":"/repo/go.mod"}]}`,
+			want:   true,
+		},
+		{
+			name:   "listFiles action",
+			method: method,
+			params: `{"command":"ls -la","commandActions":[{"type":"listFiles","command":"ls -la"}]}`,
+			want:   true,
+		},
+		{
+			name:   "legacy parsedCmd uses snake_case",
+			method: "execCommandApproval",
+			params: `{"command":"ls","parsedCmd":[{"type":"list_files","cmd":"ls"}]}`,
+			want:   true,
+		},
+		{
+			name:   "unknown action anywhere",
+			method: method,
+			params: `{"command":"cat x && curl y","commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"},{"type":"unknown","command":"curl y"}]}`,
+			want:   false,
+		},
+		{
+			name:   "no actions at all",
+			method: method,
+			params: `{"command":"make build"}`,
+			want:   false,
+		},
+		{
+			name:   "empty action list",
+			method: method,
+			params: `{"command":"make build","commandActions":[]}`,
+			want:   false,
+		},
+		{
+			name:   "read action asking for network",
+			method: method,
+			params: `{"command":"cat x","commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"}],"additionalPermissions":{"network":{"enabled":true}}}`,
+			want:   false,
+		},
+		{
+			name:   "read action with a network approval context",
+			method: method,
+			params: `{"command":"cat x","commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"}],"networkApprovalContext":{"host":"example.com","protocol":"https"}}`,
+			want:   false,
+		},
+		{
+			name:   "read action asking for a writable path",
+			method: method,
+			params: `{"command":"cat x","commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"}],"additionalPermissions":{"fileSystem":{"entries":[{"access":"write","path":{"type":"path","path":"/repo"}}]}}}`,
+			want:   false,
+		},
+		{
+			name:   "read action with a legacy write list",
+			method: method,
+			params: `{"command":"cat x","commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"}],"additionalPermissions":{"fileSystem":{"write":["/repo"]}}}`,
+			want:   false,
+		},
+		{
+			name:   "read action with read-only extra permissions",
+			method: method,
+			params: `{"command":"cat x","commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"}],"additionalPermissions":{"network":{"enabled":false},"fileSystem":{"entries":[{"access":"read","path":{"type":"path","path":"/repo"}}]}}}`,
+			want:   true,
+		},
+		{
+			name:   "file changes are never read-only",
+			method: "item/fileChange/requestApproval",
+			params: `{"commandActions":[{"type":"read","command":"cat x","name":"x","path":"/repo/x"}]}`,
+			want:   false,
+		},
+		{
+			name:   "malformed payload",
+			method: method,
+			params: `not json`,
+			want:   false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codexReadOnlyApproval(tc.method, json.RawMessage(tc.params)); got != tc.want {
+				t.Fatalf("codexReadOnlyApproval = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCodexPermissionRequestCarriesReadOnly checks the classification actually
+// reaches the relay, not just the helper.
+func TestCodexPermissionRequestCarriesReadOnly(t *testing.T) {
+	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
+	req := client.codexPermissionRequest(
+		"item/commandExecution/requestApproval",
+		json.RawMessage("9"),
+		json.RawMessage(`{"threadId":"t","turnId":"u","itemId":"call-3","startedAtMs":1,"command":"ls","commandActions":[{"type":"listFiles","command":"ls"}]}`),
+		codexActiveTurn{},
+	)
+	if !req.ReadOnly {
+		t.Fatalf("read-only command should be marked on the request: %+v", req)
+	}
+	mutating := client.codexPermissionRequest(
+		"item/commandExecution/requestApproval",
+		json.RawMessage("10"),
+		json.RawMessage(`{"threadId":"t","turnId":"u","itemId":"call-4","startedAtMs":1,"command":"rm -rf ."}`),
+		codexActiveTurn{},
+	)
+	if mutating.ReadOnly {
+		t.Fatalf("unclassified command must not be marked read-only: %+v", mutating)
+	}
+}
+
+// TestCodexPermissionsApprovalStrictReview covers the amplifier: a denial that
+// sets strictAutoReview routes every later command in the turn through approval,
+// so a policy relay's denial has to be able to clear it.
+func TestCodexPermissionsApprovalStrictReview(t *testing.T) {
+	const method = "item/permissions/requestApproval"
+	deny := codexApprovalResponse(method, nil, PermissionDecision{Behavior: "deny"}).(map[string]any)
+	if deny["strictAutoReview"] != true {
+		t.Fatalf("an unqualified denial keeps strict review: %#v", deny)
+	}
+	relaxed := false
+	policyDeny := codexApprovalResponse(method, nil, PermissionDecision{Behavior: "deny", StrictReview: &relaxed}).(map[string]any)
+	if policyDeny["strictAutoReview"] != false {
+		t.Fatalf("denial should honour StrictReview=false: %#v", policyDeny)
+	}
+	if policyDeny["scope"] != "turn" {
+		t.Fatalf("scope should stay turn-scoped: %#v", policyDeny)
+	}
+}
+
 func TestCodexToolUsesFromItems(t *testing.T) {
 	client := newCodexClient("codex", "", "", "", "", nil, nil, slogDiscard())
 	key := codexTurnKey{threadID: "thread-1", turnID: "turn-1"}
@@ -454,8 +598,11 @@ func TestCodexStreamsTurnAndRelaysApproval(t *testing.T) {
 	if req.TurnID != "podiom-turn-1" || req.ToolName != "codex.command" || req.ToolUseID != "item-1" {
 		t.Fatalf("bad permission request: %+v", req)
 	}
-	if req.Description != "Run echo ok" {
+	if req.Description != "Run cat README.md" {
 		t.Fatalf("bad permission request description %q", req.Description)
+	}
+	if !req.ReadOnly {
+		t.Fatalf("read command should reach the relay marked read-only: %+v", req)
 	}
 	if timeout := <-relay.timeouts; timeout != 5*time.Minute {
 		t.Fatalf("permission timeout = %v, want 5m", timeout)
@@ -1281,9 +1428,18 @@ func runFakeCodexAppServer() {
 					"turnId":      turnID,
 					"itemId":      "item-1",
 					"startedAtMs": time.Now().UnixMilli(),
-					"description": "Run echo ok",
-					"command":     "echo ok",
+					"description": "Run cat README.md",
+					"command":     "cat README.md",
 					"cwd":         "/tmp",
+					// Codex's own parse of the command. The plan gate has nothing
+					// else to go on: every command arrives under the same tool
+					// name, so this is what separates a read from a write.
+					"commandActions": []map[string]any{{
+						"type":    "read",
+						"command": "cat README.md",
+						"name":    "README.md",
+						"path":    "/tmp/README.md",
+					}},
 				})
 			} else if os.Getenv("PODIOM_CODEX_FAKE_MODE") == "user_input" {
 				pendingInput = struct {

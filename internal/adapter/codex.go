@@ -2454,7 +2454,92 @@ func (c *codexClient) codexPermissionRequest(method string, id, params json.RawM
 		ToolUseID:   toolUseID,
 		Description: c.codexPermissionDescription(method, fields, threadID, codexTurnID, toolUseID),
 		Input:       append(json.RawMessage(nil), params...),
+		ReadOnly:    codexReadOnlyApproval(method, params),
 	}
+}
+
+// codexReadOnlyActions are the command-action variants that describe pure
+// inspection. Both spellings appear: `item/commandExecution/requestApproval`
+// reports camelCase `commandActions`, the legacy `execCommandApproval` reports
+// snake_case `parsedCmd`.
+var codexReadOnlyActions = map[string]bool{
+	"read":       true,
+	"listfiles":  true,
+	"list_files": true,
+	"search":     true,
+}
+
+// codexReadOnlyApproval reports whether Codex's own parse of the command says it
+// only reads.
+//
+// Codex classifies every command it asks approval for and separately declares
+// what the command wants beyond its sandbox (`additionalPermissions`,
+// `networkApprovalContext`) — verified against the app-server 0.142.4 schema.
+// Reusing that classification is deliberate: Codex already tokenized the
+// command, and a second shell parser here would be a weaker boundary that
+// disagrees with the first. Anything unrecognized — an `unknown` action, an
+// absent list, a shape from a newer protocol — is not read-only.
+func codexReadOnlyApproval(method string, params json.RawMessage) bool {
+	switch method {
+	case "item/commandExecution/requestApproval", "execCommandApproval":
+	default:
+		return false
+	}
+	type codexCommandAction struct {
+		Type string `json:"type"`
+	}
+	var p struct {
+		CommandActions        []codexCommandAction `json:"commandActions"`
+		ParsedCmd             []codexCommandAction `json:"parsedCmd"`
+		AdditionalPermissions *struct {
+			FileSystem *struct {
+				Entries []struct {
+					Access string `json:"access"`
+				} `json:"entries"`
+				Write []string `json:"write"`
+			} `json:"fileSystem"`
+			Network *struct {
+				Enabled *bool `json:"enabled"`
+			} `json:"network"`
+		} `json:"additionalPermissions"`
+		NetworkApprovalContext json.RawMessage `json:"networkApprovalContext"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return false
+	}
+	actions := p.CommandActions
+	if len(actions) == 0 {
+		actions = p.ParsedCmd
+	}
+	if len(actions) == 0 {
+		return false
+	}
+	for _, action := range actions {
+		if !codexReadOnlyActions[strings.ToLower(strings.TrimSpace(action.Type))] {
+			return false
+		}
+	}
+	if len(p.NetworkApprovalContext) > 0 && !bytes.Equal(p.NetworkApprovalContext, []byte("null")) {
+		return false
+	}
+	perms := p.AdditionalPermissions
+	if perms == nil {
+		return true
+	}
+	if perms.Network != nil && perms.Network.Enabled != nil && *perms.Network.Enabled {
+		return false
+	}
+	if fs := perms.FileSystem; fs != nil {
+		if len(fs.Write) > 0 {
+			return false
+		}
+		for _, entry := range fs.Entries {
+			if strings.EqualFold(strings.TrimSpace(entry.Access), "write") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *codexClient) codexPermissionDescription(method string, fields map[string]json.RawMessage, threadID, turnID, itemID string) string {
@@ -2639,10 +2724,19 @@ func codexApprovalResponse(method string, params json.RawMessage, decision Permi
 		return map[string]any{"decision": "decline"}
 	case "item/permissions/requestApproval":
 		if !allowed {
+			// strictAutoReview routes every later command in the turn through
+			// approval, whatever the sandbox would have allowed on its own. That
+			// is right after a human says no and wrong after a policy relay says
+			// no — the latter would decline the follow-ups too, and the turn
+			// stops being able to do anything at all.
+			strict := true
+			if decision.StrictReview != nil {
+				strict = *decision.StrictReview
+			}
 			return map[string]any{
 				"permissions":      map[string]any{},
 				"scope":            "turn",
-				"strictAutoReview": true,
+				"strictAutoReview": strict,
 			}
 		}
 		var p struct {
