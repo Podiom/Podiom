@@ -75,3 +75,97 @@ func TestFormatUsageTableMixed(t *testing.T) {
 		t.Errorf("stale error missing:\n%s", out)
 	}
 }
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{name: "zero", d: 0, want: "0m"},
+		{name: "under an hour", d: 45 * time.Minute, want: "45m"},
+		{name: "exactly an hour", d: time.Hour, want: "1h 0m"},
+		{name: "multi-hour day branch", d: 26 * time.Hour, want: "1d 2h"},
+		{name: "rounds across hour", d: 59*time.Minute + 31*time.Second, want: "1h 0m"},
+		{name: "just under a day", d: 23*time.Hour + 59*time.Minute, want: "23h 59m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatDuration(tt.d); got != tt.want {
+				t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatResets(t *testing.T) {
+	tests := []struct {
+		name string
+		at   time.Time
+		want string
+	}{
+		{name: "zero", want: ""},
+		{name: "past", at: time.Now().Add(-time.Minute), want: "resets now"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatResets(tt.at); got != tt.want {
+				t.Errorf("formatResets(%v) = %q, want %q", tt.at, got, tt.want)
+			}
+		})
+	}
+
+	got := formatResets(time.Now().Add(2 * time.Hour))
+	if !strings.HasPrefix(got, "resets in ") || len(got) == len("resets in ") {
+		t.Errorf("formatResets(future) = %q, want a non-empty resets-in duration", got)
+	}
+}
+
+func TestFormatCredits(t *testing.T) {
+	tests := []struct {
+		name string
+		c    usage.Credits
+		want string
+	}{
+		{
+			name: "unlimited overrides other values",
+			c: usage.Credits{
+				Unlimited:    true,
+				Balance:      9.876,
+				MonthlyLimit: 100,
+				UsedCredits:  25,
+				Currency:     "USD",
+			},
+			want: "credits: unlimited",
+		},
+		{
+			name: "monthly limit formats used credits and currency",
+			c: usage.Credits{
+				MonthlyLimit: 100,
+				UsedCredits:  12.005,
+				Currency:     "USD",
+			},
+			want: "credits: 12.01/100.00 USD used",
+		},
+		{
+			name: "zero monthly limit falls back to balance",
+			c:    usage.Credits{MonthlyLimit: 0, Balance: 4.2},
+			want: "credits: 4.20 balance",
+		},
+		{
+			name: "negative monthly limit falls back to balance",
+			c:    usage.Credits{MonthlyLimit: -1, Balance: 4.2},
+			want: "credits: 4.20 balance",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatCredits(&tt.c); got != tt.want {
+				t.Errorf("formatCredits(%+v) = %q, want %q", tt.c, got, tt.want)
+			}
+		})
+	}
+}
