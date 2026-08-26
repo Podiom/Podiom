@@ -1,0 +1,35 @@
+name: pr-title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional-commit-title:
+    name: Conventional commit PR title
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate pull request title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9._/-]+\))?!?: [^[:space:]].*$'
+
+          if [[ ! "${PR_TITLE}" =~ ${pattern} ]]; then
+            echo "::error title=Invalid pull request title::Use Conventional Commits, for example 'feat: add roadmap filters' or 'fix(api)!: reject invalid provider'."
+            echo "Allowed types: build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test."
+            exit 1
+          fi
