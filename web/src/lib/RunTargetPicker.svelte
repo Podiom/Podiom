@@ -786,12 +786,19 @@
       margin-left: 0;
     }
     .run-target.toolbar .rt-menu {
+      position: fixed;
+      z-index: 45;
       right: calc(12px + env(safe-area-inset-right));
-      bottom: 47px;
+      bottom: var(--composer-mobile-menu-bottom, 119px);
       left: calc(12px + env(safe-area-inset-left));
       width: auto;
       min-width: 0;
       max-width: none;
+      max-height: min(340px, calc(100vh - var(--composer-mobile-menu-bottom, 119px) - 12px - env(safe-area-inset-top)));
+      max-height: min(340px, calc(100dvh - var(--composer-mobile-menu-bottom, 119px) - 12px - env(safe-area-inset-top)));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
   }
 </style>

@@ -4628,6 +4628,7 @@
     border-top: 1px solid var(--line);
     background: var(--surface-2);
     position: relative;
+    --composer-mobile-menu-bottom: 119px;
   }
 
   .slash-menu {
@@ -5577,13 +5578,18 @@
     }
 
     .composer-meta .dd-menu.up {
+      position: fixed;
+      z-index: 45;
       right: calc(12px + env(safe-area-inset-right));
-      bottom: 47px;
+      bottom: var(--composer-mobile-menu-bottom);
       left: calc(12px + env(safe-area-inset-left));
       width: auto;
       min-width: 0;
-      max-height: min(280px, calc(100dvh - 130px));
+      max-height: min(340px, calc(100vh - var(--composer-mobile-menu-bottom) - 12px - env(safe-area-inset-top)));
+      max-height: min(340px, calc(100dvh - var(--composer-mobile-menu-bottom) - 12px - env(safe-area-inset-top)));
       overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
 
     .composer-meta .dd-wrap,
