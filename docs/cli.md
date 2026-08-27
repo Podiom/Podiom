@@ -402,6 +402,7 @@ Slash commands can be sent as the message body:
 | `/permission approve|auto|yolo` | Set permission mode. |
 | `/name <text>` | Rename the session. |
 | `/describe <text>` | Set the session description. |
+| `/plan on|off` | Toggle plan mode for subsequent turns — the agent explores and proposes a plan before implementing. |
 | `/compact` | Summarize older history to free the context window; the next turn replays the summary plus recent turns into a fresh backing session/thread. |
 | `/help` | Print command help. |
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -912,5 +913,50 @@ func TestClaudeEnvPutsToolsetOnPath(t *testing.T) {
 	want := "/data/podiom/toolset/bin:/data/podiom/toolset/npm/bin:/usr/bin:/bin"
 	if path != want {
 		t.Fatalf("PATH = %q, want %q", path, want)
+	}
+}
+func TestIsLowerHex(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "Single hex letter", value: "a", want: true},
+		{name: "Single number", value: "0", want: true},
+		{name: "All lowercase hex letters", value: "deadbeef", want: true},
+		{name: "Numbers", value: "261391", want: true},
+		{name: "Hex letter and numbers", value: "0a1b2c", want: true},
+		{name: "Non-hex letter", value: "deadg", want: false},
+		{name: "Upercase hex letters", value: "DEAD", want: false},
+		{name: "Empty string", value: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isLowerHex(tt.value)
+			if got != tt.want {
+				t.Errorf("for value: %s, got: %v, want: %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNonEmptyTools(t *testing.T) {
+	tests := []struct {
+		name  string
+		tools []string
+		want  []string
+	}{
+		{name: "Non empty tools", tools: []string{"read", "write"}, want: []string{"read", "write"}},
+		{name: "Empty tools", tools: []string{"read", "", " ", "  write "}, want: []string{"read", "write"}},
+		{name: "Nil input", tools: []string{}, want: []string{}},
+		{name: "Empty input", tools: []string{"  ", ""}, want: []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nonEmptyTools(tt.tools)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("for tools: %v, got: %v, want: %v", tt.tools, got, tt.want)
+			}
+		})
 	}
 }
