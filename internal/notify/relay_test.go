@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -70,6 +71,12 @@ func (f *fakeRelay) Push(_ context.Context, _, idempotencyKey string, req pushRe
 		return pushResponse{}, f.pushErrs[attempt]
 	}
 	return f.pushResp, nil
+}
+
+type errorReader struct{}
+
+func (errorReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("read failed")
 }
 
 // newRelayChannel builds a channel over the fake and a real store, with enrollment state
@@ -554,5 +561,51 @@ func TestRelayChannelWithNoDevicesDoesNotCallTheRelay(t *testing.T) {
 	if len(results) != 0 || len(fake.pushes) != 0 || fake.enrollments != 0 {
 		t.Errorf("results=%d pushes=%d enrollments=%d, want 0/0/0 — nothing to deliver to means "+
 			"no reason to contact Podiom infrastructure", len(results), len(fake.pushes), fake.enrollments)
+	}
+}
+
+func TestRelayErrorMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		body io.Reader
+		want string
+	}{
+		{name: "Valid JSON", body: strings.NewReader(`{"error":{"code":"...","message":"rate limited"}}`), want: "rate limited"},
+		{name: "Valid JSON with no message", body: strings.NewReader(`{"error":{"code":"..."}}`), want: `{"error":{"code":"..."}}`},
+		{name: "Plan test", body: strings.NewReader(`"message":"rate limited"`), want: `"message":"rate limited"`},
+		{name: "Long plan text", body: strings.NewReader(strings.Repeat("a", 5000)), want: strings.Repeat("a", 4096)},
+		{name: "Empty body", body: strings.NewReader(""), want: ""},
+		{name: "Invalid reader", body: errorReader{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := relayErrorMessage(tt.body)
+			if got != tt.want {
+				t.Errorf("want: %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want time.Duration
+	}{
+		{name: "Postive integer", raw: "30", want: 30 * time.Second},
+		{name: "Negtive number", raw: "-5", want: 0},
+		{name: "Non-numeric", raw: "soon", want: 0},
+		{name: "Decimal", raw: "5.5", want: 0},
+		{name: "Zero", raw: "0", want: 0},
+		{name: "Empty string", raw: "", want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseRetryAfter(tt.raw)
+			if got != tt.want {
+				t.Errorf("for: %s, want: %v, got: %v", tt.raw, tt.want, got)
+			}
+		})
 	}
 }
