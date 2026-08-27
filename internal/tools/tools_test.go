@@ -211,6 +211,48 @@ func TestStubbedInstallerSuccess(t *testing.T) {
 	}
 }
 
+func TestNPMPackageName(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  string
+		want string
+	}{
+		{name: "Unscoped with version", pkg: "typescript@5.3.3", want: "typescript"},
+		{name: "Unscoped, no version", pkg: "typescript", want: "typescript"},
+		{name: "Scoped with version", pkg: "@modelcontextprotocol/server-filesystem@1.0.0", want: "@modelcontextprotocol/server-filesystem"},
+		{name: "Scoped, no version", pkg: "@modelcontextprotocol", want: "@modelcontextprotocol"},
+		{name: "Just @", pkg: "@", want: "@"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := npmPackageName(tt.pkg)
+			if got != tt.want {
+				t.Errorf("for: %s, want: %q, got: %q", tt.name, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestUVPackageName(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  string
+		want string
+	}{
+		{name: "Unscoped with version", pkg: "requests==2.31.0", want: "requests"},
+		{name: "No == present", pkg: "typescript@5.3.3", want: "typescript@5.3.3"},
+		{name: "", pkg: "requests==2.31.0; sys_platform == 'win32'", want: "requests"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := uvPackageName(tt.pkg)
+			if got != tt.want {
+				t.Errorf("for: %s, want: %q, got: %q", tt.name, tt.want, got)
+			}
+		})
+	}
+}
+
 // rewriteTransport sends every request to the test server regardless of URL.
 type rewriteTransport struct{ base string }
 
