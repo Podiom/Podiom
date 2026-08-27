@@ -48,6 +48,38 @@ func TestProviderIDsLabel(t *testing.T) {
 	}
 }
 
+func TestProviders(t *testing.T) {
+	got := Providers()
+	if len(got) != len(providerInfos) {
+		t.Fatalf("Providers() length = %d, want %d", len(got), len(providerInfos))
+	}
+	for i, info := range got {
+		if info.ID != providerInfos[i].ID || info.DisplayName != providerInfos[i].DisplayName {
+			t.Fatalf("Providers()[%d] = %+v, want registry entry %+v", i, info, providerInfos[i])
+		}
+	}
+	got[0] = ProviderInfo{}
+	if Providers()[0].ID != providerInfos[0].ID {
+		t.Fatal("mutating Providers result changed the registry")
+	}
+}
+
+func TestProviderIDs(t *testing.T) {
+	got := ProviderIDs()
+	providers := Providers()
+	if len(got) != len(providers) {
+		t.Fatalf("ProviderIDs() length = %d, want %d", len(got), len(providers))
+	}
+	for i, id := range got {
+		if id != providers[i].ID {
+			t.Fatalf("ProviderIDs()[%d] = %q, want %q", i, id, providers[i].ID)
+		}
+		if !KnownProvider(id) {
+			t.Fatalf("ProviderIDs()[%d] = %q is not a known provider", i, id)
+		}
+	}
+}
+
 func TestProfileDirRoundTrip(t *testing.T) {
 	claude := Profile{Name: "work", Provider: ProviderClaude}
 	claude.SetDir("/tmp/claude-work")

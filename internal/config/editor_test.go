@@ -5,7 +5,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestSequenceEqual(t *testing.T) {
+	tests := []struct {
+		name   string
+		node   *yaml.Node
+		values []string
+		want   bool
+	}{
+		{name: "non-sequence", node: &yaml.Node{Kind: yaml.MappingNode}, values: []string{"a"}, want: false},
+		{name: "different length", node: &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Value: "a"}}}, values: []string{"a", "b"}, want: false},
+		{name: "different value", node: &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Value: "a"}, {Value: "c"}}}, values: []string{"a", "b"}, want: false},
+		{name: "matching values", node: &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Value: "a"}, {Value: "b"}}}, values: []string{"a", "b"}, want: true},
+		{name: "both empty", node: &yaml.Node{Kind: yaml.SequenceNode}, values: nil, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sequenceEqual(tt.node, tt.values); got != tt.want {
+				t.Fatalf("sequenceEqual() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestRemoveAgentRemovesOnlyMatchingEntryAndKeepsConfigValid(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
