@@ -16,7 +16,7 @@ func TestSequenceEqual(t *testing.T) {
 		values []string
 		want   bool
 	}{
-		{name: "non-sequence", node: &yaml.Node{Kind: yaml.MappingNode}, values: []string{"a"}, want: false},
+		{name: "non-sequence", node: &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{{Value: "a"}}}, values: []string{"a"}, want: false},
 		{name: "different length", node: &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Value: "a"}}}, values: []string{"a", "b"}, want: false},
 		{name: "different value", node: &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Value: "a"}, {Value: "c"}}}, values: []string{"a", "b"}, want: false},
 		{name: "matching values", node: &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Value: "a"}, {Value: "b"}}}, values: []string{"a", "b"}, want: true},
