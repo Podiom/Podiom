@@ -2,8 +2,10 @@ package logging
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,5 +115,104 @@ func nextEvent(t *testing.T, events <-chan FollowEvent) FollowEvent {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for follow event")
 		return FollowEvent{}
+	}
+}
+
+func TestDurationMS(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     int64
+	}{
+		{name: "zero", duration: 0, want: 0},
+		{name: "sub-millisecond", duration: 500 * time.Microsecond, want: 0},
+		{name: "millisecond", duration: 150 * time.Millisecond, want: 150},
+		{name: "whole seconds", duration: 2 * time.Second, want: 2000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := "duration_ms"
+			attr := DurationMS(key, tt.duration)
+
+			if attr.Key != key {
+				t.Errorf("Got key = %q, want %q", attr.Key, key)
+			}
+			if attr.Value.Kind() != slog.KindInt64 {
+				t.Errorf("Kind = %v, want Int64", attr.Value.Kind())
+			}
+			if got := attr.Value.Int64(); got != tt.want {
+				t.Errorf("Int64() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestChangedFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		before map[string]string
+		after  map[string]string
+		want   []string
+	}{
+		{name: "Same", before: map[string]string{"a": "a", "b": "b"}, after: map[string]string{"a": "a", "b": "b"}, want: []string{}},
+		{name: "Different", before: map[string]string{"a": "a", "b": "b"}, after: map[string]string{"a": "c", "b": "e"}, want: []string{"a", "b"}},
+		{name: "Key only in before", before: map[string]string{"a": "a"}, after: map[string]string{}, want: []string{"a"}},
+		{name: "Key only in after", before: map[string]string{}, after: map[string]string{"a": "a"}, want: []string{"a"}},
+		{name: "Check sorting", before: map[string]string{"b": "b", "a": "a"}, after: map[string]string{"b": "e", "a": "c"}, want: []string{"a", "b"}},
+		{name: "Empty maps", before: map[string]string{}, after: map[string]string{}, want: []string{}},
+		{name: "Nil maps", before: nil, after: nil, want: []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ChangedFields(tt.before, tt.after)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("Got slice: %v, Want slice: %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCountStrings(t *testing.T) {
+	tests := []struct {
+		name       string
+		sliceValue []string
+		wantLen    int
+	}{
+		{name: "Populated slice", sliceValue: []string{"a", "b", "c", "d"}, wantLen: 4},
+		{name: "Lenght one", sliceValue: []string{"a"}, wantLen: 1},
+		{name: "Empty slice", sliceValue: []string{}, wantLen: 0},
+		{name: "Nil slice", sliceValue: nil, wantLen: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotLen := Count(tt.sliceValue)
+
+			if gotLen != tt.wantLen {
+				t.Errorf("Got length: %d, want length: %d", gotLen, tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestCountInts(t *testing.T) {
+	tests := []struct {
+		name       string
+		sliceValue []int
+		wantLen    int
+	}{
+		{name: "Populated slice", sliceValue: []int{0, 1, 2, 3, 4, 5, 6}, wantLen: 7},
+		{name: "Lenght one", sliceValue: []int{0}, wantLen: 1},
+		{name: "Empty slice", sliceValue: []int{}, wantLen: 0},
+		{name: "Nil slice", sliceValue: nil, wantLen: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotLen := Count(tt.sliceValue)
+
+			if gotLen != tt.wantLen {
+				t.Errorf("Got length: %d, want length: %d", gotLen, tt.wantLen)
+			}
+		})
 	}
 }
