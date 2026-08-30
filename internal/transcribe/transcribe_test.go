@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestError(t *testing.T) {
+	tests := []struct {
+		name string
+		e    *UpstreamError
+		want string
+	}{
+		{name: "", e: &UpstreamError{Status: 401, Message: "invalid_api_key"}, want: "openai transcription: status 401: invalid_api_key"},
+		{name: "empty message", e: &UpstreamError{Status: 500}, want: "openai transcription: status 500: "},
+	}
+	for _, tt := range tests {
+		got := tt.e.Error()
+		if got != tt.want {
+			t.Errorf("invalid error, want: %q, got: %q", tt.want, got)
+		}
+		// Checks it satisfies the error interface
+		var err error = tt.e
+		got = err.Error()
+		if got != tt.want {
+			t.Errorf("invalid error, want: %q, got: %q", tt.want, got)
+		}
+	}
+}
+
 func TestBaseContentType(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -113,8 +136,8 @@ func TestErrorMessage(t *testing.T) {
 			expected: "no error detail",
 		},
 		{
-			name:     "whitespace body returns default",
-			body:     []byte(`   
+			name: "whitespace body returns default",
+			body: []byte(`   
 	  `),
 			expected: "no error detail",
 		},
