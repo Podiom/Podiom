@@ -4,9 +4,24 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestPermissionModes(t *testing.T) {
+	want := []PermissionMode{PermissionApprove, PermissionAuto, PermissionYolo}
+	modes := PermissionModes()
+	if !slices.Equal(want, modes) {
+		t.Errorf("Invalid permission mode, want: %v, got: %v", want, modes)
+	}
+	// Check if a copy
+	modes[0] = "x"
+	modes = PermissionModes()
+	if !slices.Equal(want, modes) {
+		t.Errorf("Invalid permission mode as not a copy, want: %v, got: %v", want, modes)
+	}
+}
 
 func TestLoadDefaultConfigIsValid(t *testing.T) {
 	// The shipped default config.yaml must always load and validate — it's what a
