@@ -287,3 +287,65 @@ func TestDreamDueMatrix(t *testing.T) {
 		t.Fatal("should not be due before the dream time")
 	}
 }
+
+func TestTodaysDreamTime(t *testing.T) {
+	now := time.Date(2026, time.March, 15, 9, 30, 0, 0, time.Local)
+
+	t.Run("valid HH:MM resolves to today at that time", func(t *testing.T) {
+		got, ok := todaysDreamTime("22:15", now)
+		if !ok {
+			t.Fatal("expected ok, got false")
+		}
+		want := time.Date(2026, time.March, 15, 22, 15, 0, 0, now.Location())
+		if !got.Equal(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("empty string falls back to config default", func(t *testing.T) {
+		got, ok := todaysDreamTime("", now)
+		if !ok {
+			t.Fatal("expected ok, got false")
+		}
+		wantHM, err := time.Parse("15:04", config.DefaultDreamTime)
+		if err != nil {
+			t.Fatalf("config.DefaultDreamTime is not a valid HH:MM: %v", err)
+		}
+		want := time.Date(2026, time.March, 15, wantHM.Hour(), wantHM.Minute(), 0, 0, now.Location())
+		if !got.Equal(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("unparseable value returns ok=false and zero time", func(t *testing.T) {
+		for _, raw := range []string{"25:99", "not-a-time"} {
+			got, ok := todaysDreamTime(raw, now)
+			if ok {
+				t.Fatalf("raw %q: expected ok=false, got true (%v)", raw, got)
+			}
+			if !got.IsZero() {
+				t.Fatalf("raw %q: expected zero time, got %v", raw, got)
+			}
+		}
+	})
+}
+
+func TestMemoryLineCount(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"empty string", "", 0},
+		{"no trailing newline", "one line", 1},
+		{"single trailing newline", "one\ntwo\n", 2},
+		{"multiple trailing newlines", "a\n\n\n", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := memoryLineCount(tc.in); got != tc.want {
+				t.Fatalf("memoryLineCount(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
