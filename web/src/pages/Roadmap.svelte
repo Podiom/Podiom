@@ -523,19 +523,45 @@
               {@const key = goalGroupKey(col.key, entry.goalId)}
               <div class="task-goal-group">
                 <div class="task-goal-head">
-                  <button class="task-goal-toggle" onclick={() => toggleGoalGroup(col.key, entry.goalId)} title={goalGroupOpen(goalGroupsOpen, key) ? "Collapse goal group" : "Expand goal group"}>
+                  <button
+                    class="task-goal-toggle"
+                    onclick={() => toggleGoalGroup(col.key, entry.goalId)}
+                    title={goalGroupOpen(goalGroupsOpen, key) ? "Collapse goal group" : "Expand goal group"}
+                  >
                     <span class="goal-chevron" class:closed={!goalGroupOpen(goalGroupsOpen, key)}>⌄</span>
+
                     <span class="task-goal-text">
                       <span class="task-goal-title">{entry.label}</span>
-                      <span class="task-goal-sub mono">{groupCountLabel(entry.items.length, "task")}{entry.goal ? ` · ${entry.goal.Status}` : ""}</span>
+                      <span class="task-goal-sub mono">
+                        {groupCountLabel(entry.items.length, "task")}
+                        {entry.goal ? ` · ${entry.goal.Status}` : ""}
+                      </span>
                     </span>
                   </button>
+
                   {#if entry.goal}
-                    <button class="task-goal-open" onclick={() => onOpenGoal(entry.goalId)} title="Open goal" aria-label="Open goal">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4.5" /><circle cx="12" cy="12" r="0.5" fill="currentColor" /></svg>
+                    <button
+                      class="task-goal-open"
+                      onclick={() => onOpenGoal(entry.goalId)}
+                      title="Open goal"
+                      aria-label="Open goal"
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <circle cx="12" cy="12" r="4.5" />
+                        <circle cx="12" cy="12" r="0.5" fill="currentColor" />
+                      </svg>
                     </button>
                   {/if}
                 </div>
+
                 {#if goalGroupOpen(goalGroupsOpen, key)}
                   <div class="task-goal-items">
                     {#each entry.items as task (task.ID)}
@@ -547,6 +573,21 @@
             {:else}
               {@render taskCard(entry.item)}
             {/if}
+
+          {:else}
+            <div class="col-empty">
+              {#if col.key === "backlog"}
+                <strong>No tasks in Backlog yet.</strong>
+                <span>Use + New task above to add one.</span>
+              {:else if col.key === "in_progress"}
+                <strong>No tasks in progress.</strong>
+                <span>Drag a backlog task here to start it.</span>
+              {:else if col.key === "review"}
+                <strong>No tasks awaiting review.</strong>
+              {:else}
+                <strong>No completed tasks yet.</strong>
+              {/if}
+            </div>
           {/each}
         </div>
       </div>
@@ -876,6 +917,29 @@
     transition: all 0.15s;
     min-height: 80px;
   }
+  .col-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 120px;
+  padding: 24px 16px;
+
+  text-align: center;
+  color: var(--muted);
+}
+
+.col-empty strong {
+  font: 600 13px "Hanken Grotesk";
+  color: #6f6459;
+}
+
+.col-empty span {
+  margin-top: 4px;
+  font: 400 12px/1.45 "Hanken Grotesk";
+  color: #9a8e80;
+}
 
   .col-zone.donecol {
     background: rgba(79, 158, 120, 0.07);
