@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -385,7 +386,7 @@ func (l *Ledger) SyncRoadmaps(byProject map[string][]string) error {
 		if next == nil {
 			next = []string{}
 		}
-		if !sameStrings(file.Projects[i].Roadmap, next) {
+		if !slices.Equal(file.Projects[i].Roadmap, next) {
 			file.Projects[i].Roadmap = append([]string(nil), next...)
 			changed = true
 		}
@@ -426,18 +427,6 @@ func (l *Ledger) write(file ledgerFile) error {
 		return fmt.Errorf("write projects.yaml: %w", err)
 	}
 	return nil
-}
-
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func (p *Project) UnmarshalYAML(value *yaml.Node) error {
