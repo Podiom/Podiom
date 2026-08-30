@@ -88,6 +88,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// PODIOM_ADDR must move the daemon as well as the CLI, otherwise setting it
+	// makes every command report "podiomd is not running" while it is. The
+	// variable sits above config.yaml, matching the precedence the CLI
+	// documents; unset, config.yaml still decides on its own.
+	addrSource := "config"
+	if env := os.Getenv("PODIOM_ADDR"); env != "" {
+		bind, port, err := parseHostPort(env)
+		if err != nil {
+			return fmt.Errorf("invalid PODIOM_ADDR %q: %w", env, err)
+		}
+		cfg.Server.Bind = bind
+		cfg.Server.Port = port
+		addrSource = "env"
+	}
 	fileLog, closer, err := podiomlog.Open(podiomlog.Options{
 		Dir:           paths.LogsDir,
 		RetentionDays: cfg.Logging.RetentionDays,
@@ -356,7 +370,7 @@ func run() error {
 	// Serve until a termination signal arrives, then shut down gracefully.
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Start() }()
-	log.Info("podiomd listening", "addr", srv.Addr())
+	log.Info("podiomd listening", "addr", srv.Addr(), "source", addrSource)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -370,6 +384,28 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// parseHostPort splits a "host:port" listen address into the parts
+// server.Options expects. Unlike config.yaml, whose server.port range is
+// checked by Config.Validate, an address arriving from the environment is
+// unvalidated input, so the port is checked here.
+func parseHostPort(addr string) (string, int, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, err
+	}
+	if host == "" {
+		return "", 0, fmt.Errorf("no host to bind; want host:port")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("port %q is not a number", portStr)
+	}
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("port out of range: %d", port)
+	}
+	return host, port, nil
 }
 
 func internalCallbackAddr(bind string, port int) string {

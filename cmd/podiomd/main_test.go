@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/notify"
@@ -24,6 +25,55 @@ func TestInternalCallbackAddrNormalizesWildcardBinds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := internalCallbackAddr(tt.bind, 8099); got != tt.want {
 				t.Fatalf("internalCallbackAddr(%q) = %q, want %q", tt.bind, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseHostPort covers the daemon's read of PODIOM_ADDR. The variable is
+// unvalidated environment input, and a silently mis-parsed address would put the
+// daemon on a port the CLI is not looking at — the exact split PODIOM_ADDR was
+// reported for.
+func TestParseHostPort(t *testing.T) {
+	tests := []struct {
+		name       string
+		addr       string
+		wantBind   string
+		wantPort   int
+		wantErrSub string
+	}{
+		{name: "loopback", addr: "127.0.0.1:8799", wantBind: "127.0.0.1", wantPort: 8799},
+		{name: "hostname", addr: "podiom.local:8799", wantBind: "podiom.local", wantPort: 8799},
+		{name: "ipv4 wildcard", addr: "0.0.0.0:8799", wantBind: "0.0.0.0", wantPort: 8799},
+		{name: "ipv6 loopback", addr: "[::1]:8799", wantBind: "::1", wantPort: 8799},
+		{name: "min port", addr: "127.0.0.1:1", wantBind: "127.0.0.1", wantPort: 1},
+		{name: "max port", addr: "127.0.0.1:65535", wantBind: "127.0.0.1", wantPort: 65535},
+		{name: "no host", addr: ":8799", wantErrSub: "no host to bind"},
+		{name: "no port", addr: "127.0.0.1", wantErrSub: "missing port"},
+		{name: "non-numeric port", addr: "127.0.0.1:http", wantErrSub: "not a number"},
+		{name: "port above range", addr: "127.0.0.1:65536", wantErrSub: "port out of range"},
+		{name: "zero port", addr: "127.0.0.1:0", wantErrSub: "port out of range"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bind, port, err := parseHostPort(tt.addr)
+			if tt.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("parseHostPort(%q) = (%q, %d, nil), want error containing %q",
+						tt.addr, bind, port, tt.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Fatalf("parseHostPort(%q) error = %q, want it to contain %q",
+						tt.addr, err.Error(), tt.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseHostPort(%q) returned unexpected error: %v", tt.addr, err)
+			}
+			if bind != tt.wantBind || port != tt.wantPort {
+				t.Fatalf("parseHostPort(%q) = (%q, %d), want (%q, %d)",
+					tt.addr, bind, port, tt.wantBind, tt.wantPort)
 			}
 		})
 	}

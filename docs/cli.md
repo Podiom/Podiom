@@ -40,8 +40,11 @@ podiomd
 | `--help` | Show help. |
 | `--version` | Print version and commit. |
 
-Bind address and port come from `config.yaml` (`server.bind`, `server.port`;
-default `127.0.0.1:8787`).
+Bind address and port come from `PODIOM_ADDR` when set, otherwise from
+`config.yaml` (`server.bind`, `server.port`; default `127.0.0.1:8787`).
+`PODIOM_ADDR` moves both binaries: the daemon listens on it and the CLI looks
+there, so the two never disagree. The startup line reports where the value came
+from (`source=env` or `source=config`).
 
 ## `podiom`
 
