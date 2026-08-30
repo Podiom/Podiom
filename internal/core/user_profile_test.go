@@ -11,6 +11,26 @@ import (
 	"github.com/Podiom/Podiom/internal/config"
 )
 
+func TestValidInterviewTopic(t *testing.T) {
+	var InterviewTopicFake InterviewTopic = "fale"
+	tests := []struct {
+		name  string
+		topic InterviewTopic
+		want  bool
+	}{
+		{name: "in list", topic: InterviewTopicTechnicalDepth, want: true},
+		{name: "not in list", topic: InterviewTopicFake, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ValidInterviewTopic(tt.topic)
+			if got != tt.want {
+				t.Errorf("want: %v, got: %v", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestUserProfileReadWriteDelete(t *testing.T) {
 	c, cleanup := newTestCore(t)
 	defer cleanup()
