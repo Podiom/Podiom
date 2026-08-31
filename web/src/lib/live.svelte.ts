@@ -17,6 +17,7 @@ import { request } from "./http";
 import { randomID } from "./id";
 import { isNative } from "./native";
 import { enableNativePush, nativePermissionState, nativePushAvailable } from "./push";
+import { sendWebSocketMessage } from "./websocketSend";
 import type { Notification as PodiomNotification } from "./types";
 import type {
   ActiveTurnSummary,
@@ -173,9 +174,8 @@ class LiveStore {
     if (auth.token) this.open();
   }
 
-  send(msg: ClientMessage) {
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify(msg));
+  send(msg: ClientMessage): boolean {
+    return sendWebSocketMessage(this.ws, msg);
   }
 
   refreshUsage(): Promise<void> {
