@@ -401,6 +401,76 @@ func TestCodexProfileDisablesUnassignedAndBridgesHTTP(t *testing.T) {
 	}
 }
 
+func TestSanitizeName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"already clean", "my-server_1.0", "my-server_1.0"},
+		{"spaces", "my server", "my-server"},
+		{"at sign", "user@host", "user-host"},
+		{"slash", "a/b/c", "a-b-c"},
+		{"unicode", "café", "caf-"},
+		{"all special chars become dashes, not agent", "???", "---"},
+		{"empty falls back to agent", "", "agent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeName(tc.in); got != tc.want {
+				t.Fatalf("sanitizeName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeSources(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		a, b []Source
+		want []Source
+	}{
+		{"disjoint", []Source{SourceClaude}, []Source{SourceCodex}, []Source{SourceClaude, SourceCodex}},
+		{"overlapping", []Source{SourcePodiom, SourceClaude}, []Source{SourceClaude, SourceCodex}, []Source{SourcePodiom, SourceClaude, SourceCodex}},
+		{"empty plus non-empty", nil, []Source{SourceClaude}, []Source{SourceClaude}},
+		{"both empty", nil, nil, nil},
+		{"reversed input order still fixed output order", []Source{SourceCodex, SourcePodiom}, []Source{SourceClaude}, []Source{SourcePodiom, SourceClaude, SourceCodex}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeSources(tc.a, tc.b)
+			if len(got) != len(tc.want) {
+				t.Fatalf("mergeSources(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("mergeSources(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestPrettyYAML(t *testing.T) {
+	s := Server{
+		Name:      "github",
+		Transport: TransportHTTP,
+		URL:       "https://example.test/mcp",
+		Sources:   []Source{SourcePodiom},
+	}
+	got := PrettyYAML(s)
+	if strings.HasPrefix(got, "mcp_servers:") {
+		t.Fatalf("PrettyYAML should strip mcp_servers prefix:\n%s", got)
+	}
+	if got != strings.TrimSpace(got) {
+		t.Fatalf("PrettyYAML should have no leading/trailing whitespace:\n%q", got)
+	}
+	if !strings.Contains(got, "name: github") {
+		t.Fatalf("PrettyYAML missing name field:\n%s", got)
+	}
+	if !strings.Contains(got, "url: https://example.test/mcp") {
+		t.Fatalf("PrettyYAML missing url field:\n%s", got)
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
