@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { capabilityKey, defaultEffort, effortMeta, effortOptions, modelMeta, modelOptions } from "./capabilities";
-import type { ProviderCapabilities } from "./types";
+import type { Provider, ProviderCapabilities } from "./types";
 
-const DEFAULT_PROVIDER = "codex";
+const DEFAULT_PROVIDER = "provider-a";
 
 vi.mock("./api", () => ({
   getProviderCapabilities: vi.fn(),
 }));
 
 vi.mock("./providers", () => ({
-  DEFAULT_PROVIDER: "codex",
+  DEFAULT_PROVIDER: "provider-a",
 }));
 
 describe("capabilityKey", () => {
@@ -19,7 +19,7 @@ describe("capabilityKey", () => {
   });
 
   it("includes the selected provider and profile", () => {
-    expect(capabilityKey("codex", "work")).toBe("codex|work");
+    expect(capabilityKey("provider-b", "work")).toBe("provider-b|work");
   });
 });
 
@@ -30,7 +30,7 @@ describe("modelOptions", () => {
 
   it("keeps a current model that is no longer advertised", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -43,7 +43,7 @@ describe("modelOptions", () => {
 
   it("does not duplicate a current model already in the list", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -62,7 +62,7 @@ describe("effortOptions", () => {
 
   it("uses the selected model's supported efforts", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -76,7 +76,7 @@ describe("effortOptions", () => {
   it("falls back to provider efforts when the selected model has no efforts", () => {
     // An empty supported_efforts array means the model has no model-specific opinion.
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -89,7 +89,7 @@ describe("effortOptions", () => {
 
   it("keeps a current effort that is no longer advertised", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -104,7 +104,7 @@ describe("effortOptions", () => {
 describe("defaultEffort", () => {
   it("uses the selected model's default effort", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -117,7 +117,7 @@ describe("defaultEffort", () => {
 
   it("falls back to the first provider effort", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -136,7 +136,7 @@ describe("defaultEffort", () => {
 describe("modelMeta and effortMeta", () => {
   it("returns model metadata when present", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -149,7 +149,7 @@ describe("modelMeta and effortMeta", () => {
 
   it("returns undefined for a missing model", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -162,7 +162,7 @@ describe("modelMeta and effortMeta", () => {
 
   it("returns effort metadata from model-specific efforts", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
@@ -175,7 +175,7 @@ describe("modelMeta and effortMeta", () => {
 
   it("returns undefined for a missing effort", () => {
     const caps: ProviderCapabilities = {
-      provider: "codex",
+      provider: DEFAULT_PROVIDER as Provider,
       source: "live",
       fetched_at: "",
       stale: false,
