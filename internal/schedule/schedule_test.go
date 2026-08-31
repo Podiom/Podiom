@@ -173,6 +173,33 @@ Do a thing.
 	}
 }
 
+func TestParseValidatesCronSpecs(t *testing.T) {
+	dir := t.TempDir()
+	invalid := []string{"not a cron", "99 99 * * *", "* * * *", "@bogus"}
+	for _, spec := range invalid {
+		t.Run("rejects "+spec, func(t *testing.T) {
+			path := writeSchedule(t, dir, Slug("bad-"+spec)+".md", "---\nagent: jared\ncron: \""+spec+"\"\nrun_permission: preapproved\nenabled: true\n---\nbody\n")
+			if _, err := Parse(path); err == nil {
+				t.Fatalf("Parse accepted invalid cron spec %q", spec)
+			}
+		})
+	}
+
+	valid := []string{"0 3 * * *", "*/15 * * * *", "@daily", "@every 1h"}
+	for _, spec := range valid {
+		t.Run("accepts "+spec, func(t *testing.T) {
+			path := writeSchedule(t, dir, Slug("good-"+spec)+".md", "---\nagent: jared\ncron: \""+spec+"\"\nrun_permission: preapproved\nenabled: true\n---\nbody\n")
+			sched, err := Parse(path)
+			if err != nil {
+				t.Fatalf("Parse rejected valid cron spec %q: %v", spec, err)
+			}
+			if sched.CronSpec() != spec {
+				t.Fatalf("CronSpec() = %q, want %q", sched.CronSpec(), spec)
+			}
+		})
+	}
+}
+
 // TestParseWebhookOnlySchedule pins that a webhook is a trigger in its own
 // right: a schedule with no cadence at all is valid, and it registers no cron
 // entry because it has no spec to register.
