@@ -112,6 +112,10 @@ func (c *Core) RunningGoalRun(ctx context.Context, goalID string) (*store.GoalRu
 	return &run, nil
 }
 
+func (c *Core) ListGoalRuns(ctx context.Context, goalID string, limit int) ([]store.GoalRun, error) {
+	return c.store.ListGoalRuns(ctx, goalID, limit)
+}
+
 // GetGoalRunDetail returns the exact bounded transcript and events for one run.
 func (c *Core) GetGoalRunDetail(ctx context.Context, goalID, runID string) (store.GoalRun, store.Session, []store.Message, []store.GoalEvent, error) {
 	run, err := c.store.GetGoalRun(ctx, runID)

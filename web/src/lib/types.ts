@@ -679,6 +679,58 @@ export interface GoalRun {
   Error: string;
   StartedAt: string;
   FinishedAt: string;
+  InputTokens: number;
+  OutputTokens: number;
+  CacheReadTokens: number;
+  CacheWriteTokens: number;
+  Outcome: string;
+}
+
+export type GoalMemoryStatus = "pending_backfill" | "validating" | "ready" | "blocked";
+export type GoalMemoryItemKind = "milestone" | "decision" | "rejected" | "risk" | "artifact";
+
+export interface GoalMemoryItem {
+  id: string;
+  kind: GoalMemoryItemKind;
+  title: string;
+  detail?: string;
+  rationale?: string;
+  evidence?: string;
+  url?: string;
+  source_run_id: string;
+  retired?: boolean;
+  retirement_reason?: string;
+}
+
+export interface GoalMemory {
+  goal_id: string;
+  status: GoalMemoryStatus;
+  revision: number;
+  document: { current_state: string; active_plan: string[]; items: GoalMemoryItem[] };
+  block_reason?: string;
+  block_detail?: string;
+  last_run_id?: string;
+  outcome?: string;
+  updated_at: string;
+  repaired_at?: string;
+}
+
+export interface GoalFeedbackReceipt {
+  event_id: number;
+  disposition: "incorporated" | "completed" | "superseded";
+  memory_item_ids?: string[];
+  superseded_by?: number;
+  revision: number;
+  acknowledged_at: string;
+}
+
+export interface GoalMemoryRepairResult {
+  memory: GoalMemory;
+  runs_read: number;
+  feedback_read: number;
+  added: number;
+  changed: number;
+  retired: number;
 }
 
 export interface GoalRunDetail {
@@ -704,6 +756,9 @@ export interface GoalDetail {
   directives: GoalEvent[];
   usage?: UsageEstimate;
   running_run?: GoalRun;
+  memory: GoalMemory;
+  feedback_receipts: GoalFeedbackReceipt[];
+  runs: GoalRun[];
 }
 
 export interface GoalCreateRequest {

@@ -95,8 +95,7 @@ func (s *Store) GetGoalEvent(ctx context.Context, id int64) (GoalEvent, error) {
 }
 
 // UpdateGoalFeedbackBody edits a user feedback event. An ordinary note is
-// editable only until a later planning/review session has started, which is when
-// feedback has been assembled into an agent prompt. A pinned note stays editable
+// editable until a successful memory commit acknowledges it. A pinned note stays editable
 // for the goal's whole life: a standing directive is a live statement the user
 // amends, not a historical record of what they once said.
 func (s *Store) UpdateGoalFeedbackBody(ctx context.Context, goalID string, eventID int64, body string) (GoalEvent, error) {
@@ -106,12 +105,11 @@ func (s *Store) UpdateGoalFeedbackBody(ctx context.Context, goalID string, event
 			AND goal_id = ?
 			AND kind = ?
 			AND (pinned = 1 OR NOT EXISTS (
-				SELECT 1 FROM goal_events later
-				WHERE later.goal_id = goal_events.goal_id
-					AND later.id > goal_events.id
-					AND later.kind IN (?, ?)
+				SELECT 1 FROM goal_feedback_receipts receipt
+				WHERE receipt.goal_id = goal_events.goal_id
+					AND receipt.event_id = goal_events.id
 			))`,
-		body, eventID, goalID, GoalEventUserFeedback, GoalEventPlanningStarted, GoalEventReviewStarted,
+		body, eventID, goalID, GoalEventUserFeedback,
 	)
 	if err != nil {
 		return GoalEvent{}, fmt.Errorf("update goal feedback %d for %q: %w", eventID, goalID, err)
