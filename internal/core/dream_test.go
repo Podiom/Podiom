@@ -44,6 +44,11 @@ func TestTodaysDreamTime(t *testing.T) {
 	location := time.FixedZone("test-zone", 5*60*60+30*60)
 	now := time.Date(2026, time.August, 30, 14, 45, 0, 0, location)
 
+	defaultTime, err := time.Parse("15:04", config.DefaultDreamTime)
+	if err != nil {
+		t.Fatalf("config.DefaultDreamTime is not a valid HH:MM: %v", err)
+	}
+
 	cases := []struct {
 		name string
 		raw  string
@@ -59,7 +64,7 @@ func TestTodaysDreamTime(t *testing.T) {
 		{
 			name: "empty uses default",
 			raw:  "",
-			want: time.Date(2026, time.August, 30, 3, 0, 0, 0, location),
+			want: time.Date(2026, time.August, 30, defaultTime.Hour(), defaultTime.Minute(), 0, 0, location),
 			ok:   true,
 		},
 		{
