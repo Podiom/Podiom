@@ -1,9 +1,12 @@
 ---
 # Example: daily read-only repository health check.
 # Needs: an agent named "jared" and a project id "launch-kit" whose directory is
-# a Git checkout. Change both names before copying if your installation differs.
+# a Git checkout. Change both names before copying, if your setup differs.
+# Then set enabled: true to run this schedule.
+
 # What it does when it fires: starts a schedule-origin session, inspects local
 # repository state, and reports risks. It should not edit files or move tasks.
+
 # Permission note: Bash is allowed so the agent can run read-only git/gh
 # commands. Podiom allow-lists tool names, not individual shell commands.
 agent: jared
@@ -16,7 +19,7 @@ allowed_tools:
   - Glob
   - Grep
   - Bash
-enabled: true
+enabled: false
 ---
 
 Run a read-only repository health check for this project.
