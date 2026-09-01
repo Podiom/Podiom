@@ -1,9 +1,13 @@
 ---
 # Example: interval project digest using every:, not cron:.
-# Needs: an agent named "jared" and a project id "launch-kit". It works best
+# Needs: an agent named "jared" and a project id "launch-kit".
+# Change both names before copying, if your setup differs.
+# Then set enabled: true to run this schedule. It works best
 # when the project ledger entry has useful notes or instructions.
+
 # What it does when it fires: starts a schedule-origin session and produces a
 # short digest from readable project files and Podiom context.
+
 # Permission note: this intentionally omits Bash. In preapproved mode, any
 # unlisted side-effecting tool is denied automatically.
 agent: jared
@@ -15,7 +19,7 @@ allowed_tools:
   - LS
   - Glob
   - Grep
-enabled: true
+enabled: false
 ---
 
 Write a concise project digest for the last six hours.

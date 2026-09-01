@@ -13,7 +13,7 @@ unattended.
 
 Schedules are Markdown files with YAML frontmatter. Copy one into
 `$PODIOM_HOME/schedules/` (default `~/.podiom/schedules/`), edit the `agent` and
-`project` fields, then list it:
+`project` fields, edit the `enabled` feild to `ture`, then list it:
 
 ```sh
 cp examples/schedules/repo-health-daily.md ~/.podiom/schedules/
@@ -27,6 +27,9 @@ podiom schedules list
 
 `cron:` and `every:` are mutually exclusive. `allowed_tools` is the unattended
 preapproved allow-list; tools not listed are denied automatically.
+
+`enabled` is intentionally set to false to make sure the user sets the `agent` and
+`project` fields.
 
 ## Goals
 
