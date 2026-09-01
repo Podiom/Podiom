@@ -69,6 +69,10 @@ class LiveStore {
   // and on every goal_event broadcast.
   goalAttention = $state<Set<string>>(new Set());
 
+  // Standalone schedule names with a pending deferred question. Seeded from
+  // the initial state and replaced by each schedule_attention broadcast.
+  scheduleAttention = $state<Set<string>>(new Set());
+
   // Per-session context-window utilization keyed by session ID. Updated live from
   // "context" messages mid-turn and seeded from the persisted session fields so
   // the composer ring restores on load/reconnect. Drives the composer context ring.
@@ -281,6 +285,7 @@ class LiveStore {
         this.sessions = msg.sessions ?? [];
         this.applyTurnSummaries(msg.active_turns ?? []);
         if (msg.usage) this.usage = msg.usage;
+        this.scheduleAttention = new Set(msg.schedule_attention ?? []);
         this.seedContext(this.sessions);
         this.edgePlanAttention();
         break;
@@ -336,6 +341,9 @@ class LiveStore {
         break;
       case "goal_event":
         if (msg.goal_event) this.handleGoalEvent(msg.goal_event);
+        break;
+      case "schedule_attention":
+        this.scheduleAttention = new Set(msg.schedule_attention ?? []);
         break;
       case "notification":
         if (msg.notification) this.toastForNotification(msg.notification);

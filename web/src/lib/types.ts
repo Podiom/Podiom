@@ -1204,6 +1204,7 @@ export interface ServerMessage {
     | "done"
     | "dream_state"
     | "goal_event"
+    | "schedule_attention"
     | "notification"
     | "notification_update"
     | "notifications_read_all"
@@ -1242,6 +1243,9 @@ export interface ServerMessage {
   dream?: Dream;
   // goal_event: one appended goal-timeline entry, broadcast to every client.
   goal_event?: GoalEvent;
+  // Names of standalone schedules waiting for the user to answer a deferred
+  // question. Present on initial state and schedule_attention broadcasts.
+  schedule_attention?: string[];
 }
 
 // DreamPhase is the lifecycle a manual dream streams over the WebSocket so the

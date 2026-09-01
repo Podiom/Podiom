@@ -77,6 +77,10 @@ type ServerMessage struct {
 	// entry, fanned out to every live connection so open Goals views refresh
 	// and attention badges update without polling.
 	GoalEvent *store.GoalEvent `json:"goal_event,omitempty"`
+	// ScheduleAttention carries the names of standalone schedules with a pending
+	// deferred question. It is included in the initial state and in dedicated
+	// schedule_attention broadcasts so navigation badges stay domain-accurate.
+	ScheduleAttention []string `json:"schedule_attention,omitempty"`
 
 	// Notification carries a "notification" message (one was just recorded) or a
 	// "notification_update" message (its read or resolved state changed), so the

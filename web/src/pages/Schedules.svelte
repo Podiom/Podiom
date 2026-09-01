@@ -9,6 +9,7 @@
   import type { RunTargetValue } from "../lib/RunTargetPicker.svelte";
   import { apiUrl } from "../lib/base";
   import { goalGroupedEntries, goalGroupOpen } from "../lib/goalGrouping";
+  import { live } from "../lib/live.svelte";
   import { modeChip } from "../lib/theme";
   import type { AgentQuestion, Agent, Goal, ProfileInfo, Project, RunStatus, ScheduleRun, ScheduleStatus } from "../lib/types";
   import ConfirmModal from "../lib/ConfirmModal.svelte";
@@ -130,7 +131,13 @@
       (nsBody.trim() || "<your prompt here>"),
   );
 
-  onMount(load);
+  onMount(() => {
+    const unsubscribe = live.subscribe((msg) => {
+      if (msg.type === "schedule_attention") void load();
+    });
+    void load();
+    return unsubscribe;
+  });
 
   function openNew() {
     editingSchedule = null;
