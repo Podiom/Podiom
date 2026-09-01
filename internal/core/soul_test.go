@@ -1,9 +1,36 @@
 package core
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
+
+func TestValidateSoulMarkdown(t *testing.T) {
+	tests := []struct {
+		name    string
+		soul    string
+		wantErr error
+	}{
+		{name: "complete", soul: "# Identity, ## Purpose, ## Worldview, ## Working style, ## Voice, ## Strengths, ## Boundaries, ## Calibration notes", wantErr: nil},
+		{name: "incomplete missing ## Voice", soul: "# Identity, ## Purpose, ## Worldview, ## Working style, ## Strengths, ## Boundaries, ## Calibration notes", wantErr: errors.New(`generated SOUL.md missing required section "## Voice"`)},
+		{name: "empty", soul: "", wantErr: errors.New(`generated SOUL.md missing required section "# Identity"`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotErr := validateSoulMarkdown(tt.soul)
+			if gotErr != nil && tt.wantErr == nil {
+				t.Fatalf("unexpected error: %s", gotErr.Error())
+			}
+			if gotErr == nil && tt.wantErr != nil {
+				t.Fatalf("expected error: want: %s, got: nil", tt.wantErr.Error())
+			}
+			if tt.wantErr != nil && gotErr.Error() != tt.wantErr.Error() {
+				t.Errorf("invalid error meassage: want: %s, got: %s", tt.wantErr.Error(), gotErr.Error())
+			}
+		})
+	}
+}
 
 func TestSoulPromptCarriesInputsAndRequiredShape(t *testing.T) {
 	prompt := SoulPrompt("juno", "# Identity\n\nName: juno\n\nold soul", SoulGenerateRequest{

@@ -17,6 +17,7 @@ import { request } from "./http";
 import { randomID } from "./id";
 import { isNative } from "./native";
 import { enableNativePush, nativePermissionState, nativePushAvailable } from "./push";
+import { sendWebSocketMessage } from "./websocketSend";
 import type { Notification as PodiomNotification } from "./types";
 import type {
   ActiveTurnSummary,
@@ -67,6 +68,10 @@ class LiveStore {
   // status review). Drives the Goals nav badge; refreshed from REST on connect
   // and on every goal_event broadcast.
   goalAttention = $state<Set<string>>(new Set());
+
+  // Standalone schedule names with a pending deferred question. Seeded from
+  // the initial state and replaced by each schedule_attention broadcast.
+  scheduleAttention = $state<Set<string>>(new Set());
 
   // Per-session context-window utilization keyed by session ID. Updated live from
   // "context" messages mid-turn and seeded from the persisted session fields so
@@ -173,9 +178,8 @@ class LiveStore {
     if (auth.token) this.open();
   }
 
-  send(msg: ClientMessage) {
-    if (this.ws?.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify(msg));
+  send(msg: ClientMessage): boolean {
+    return sendWebSocketMessage(this.ws, msg);
   }
 
   refreshUsage(): Promise<void> {
@@ -281,6 +285,7 @@ class LiveStore {
         this.sessions = msg.sessions ?? [];
         this.applyTurnSummaries(msg.active_turns ?? []);
         if (msg.usage) this.usage = msg.usage;
+        this.scheduleAttention = new Set(msg.schedule_attention ?? []);
         this.seedContext(this.sessions);
         this.edgePlanAttention();
         break;
@@ -336,6 +341,9 @@ class LiveStore {
         break;
       case "goal_event":
         if (msg.goal_event) this.handleGoalEvent(msg.goal_event);
+        break;
+      case "schedule_attention":
+        this.scheduleAttention = new Set(msg.schedule_attention ?? []);
         break;
       case "notification":
         if (msg.notification) this.toastForNotification(msg.notification);

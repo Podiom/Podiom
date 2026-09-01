@@ -45,6 +45,9 @@ func (s *Server) handleAgentQuestions(w http.ResponseWriter, r *http.Request) {
 	if res.Event != nil {
 		s.broadcastGoalEvent(*res.Event)
 	}
+	if res.Question.Origin == store.AgentQuestionSchedule {
+		s.broadcastScheduleAttention(r.Context())
+	}
 	// Goal-scoped questions notify through the goal timeline hook in core. A
 	// schedule-scoped one appends no goal event, so there is nothing for that hook
 	// to see and the notification is published here instead.
@@ -102,6 +105,9 @@ func (s *Server) handleAgentQuestion(w http.ResponseWriter, r *http.Request) {
 	if res.Goal != nil {
 		// Answering clears the pause; the next scheduler tick resumes reviews.
 		s.broadcastGoalPing(r.Context(), res.Goal.ID)
+	}
+	if res.Question.Origin == store.AgentQuestionSchedule {
+		s.broadcastScheduleAttention(r.Context())
 	}
 	writeJSON(w, res.Question, nil)
 }

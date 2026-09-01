@@ -40,6 +40,118 @@ func dreamTestCore(t *testing.T) (*Core, *adapter.Fake, func()) {
 	}
 }
 
+func TestTodaysDreamTime(t *testing.T) {
+	location := time.FixedZone("test-zone", 5*60*60+30*60)
+	now := time.Date(2026, time.August, 30, 14, 45, 0, 0, location)
+
+	defaultTime, err := time.Parse("15:04", config.DefaultDreamTime)
+	if err != nil {
+		t.Fatalf("config.DefaultDreamTime is not a valid HH:MM: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		raw  string
+		want time.Time
+		ok   bool
+	}{
+		{
+			name: "valid time",
+			raw:  "21:30",
+			want: time.Date(2026, time.August, 30, 21, 30, 0, 0, location),
+			ok:   true,
+		},
+		{
+			name: "empty uses default",
+			raw:  "",
+			want: time.Date(2026, time.August, 30, defaultTime.Hour(), defaultTime.Minute(), 0, 0, location),
+			ok:   true,
+		},
+		{
+			name: "invalid time",
+			raw:  "25:99",
+			want: time.Time{},
+			ok:   false,
+		},
+		{
+			name: "invalid format",
+			raw:  "not-a-time",
+			want: time.Time{},
+			ok:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := todaysDreamTime(tc.raw, now)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if !got.Equal(tc.want) {
+				t.Fatalf("time = %v, want %v", got, tc.want)
+			}
+			if tc.ok {
+				if got.Location() != location {
+					t.Fatalf("location = %v, want %v", got.Location(), location)
+				}
+
+				gotYear, gotMonth, gotDay := got.Date()
+				wantYear, wantMonth, wantDay := tc.want.Date()
+				if gotYear != wantYear || gotMonth != wantMonth || gotDay != wantDay {
+					t.Fatalf("date = %v-%v-%v, want %v-%v-%v", gotYear, gotMonth, gotDay, wantYear, wantMonth, wantDay)
+				}
+			}
+		})
+	}
+}
+
+func TestMemoryLineCount(t *testing.T) {
+	cases := []struct {
+		name   string
+		memory string
+		want   int
+	}{
+		{
+			name:   "empty",
+			memory: "",
+			want:   0,
+		},
+		{
+			name:   "single line",
+			memory: "one line",
+			want:   1,
+		},
+		{
+			name:   "multiple lines",
+			memory: "one\ntwo",
+			want:   2,
+		},
+		{
+			name:   "trailing newline",
+			memory: "one\ntwo\n",
+			want:   2,
+		},
+		{
+			name:   "multiple trailing newlines",
+			memory: "a\n\n\n",
+			want:   1,
+		},
+		{
+			name:   "three lines",
+			memory: "one\ntwo\nthree",
+			want:   3,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := memoryLineCount(tc.memory); got != tc.want {
+				t.Fatalf("memoryLineCount(%q) = %d, want %d", tc.memory, got, tc.want)
+			}
+		})
+	}
+}
+
 // seedExchange creates a session for the agent with a real user+assistant
 // exchange, making it dreamable.
 func seedExchange(t *testing.T, c *Core, agent, name, userMsg, assistantMsg string) store.Session {

@@ -707,6 +707,9 @@
           class="nav-link"
           class:mobile-overflow={!MOBILE_PRIMARY_ROUTES.has(item.key)}
           class:active={route === item.key}
+          aria-label={item.key === "schedules" && live.scheduleAttention.size > 0
+            ? "Schedules, a schedule needs your attention"
+            : undefined}
           onclick={() => openRoute(item.key)}>
           <svg
             width="18"
@@ -724,6 +727,9 @@
           {/if}
           {#if item.key === "goals" && live.goalAttention.size > 0}
             <span class="nav-badge" title="A goal needs your attention">{live.goalAttention.size}</span>
+          {/if}
+          {#if item.key === "schedules" && live.scheduleAttention.size > 0}
+            <span class="nav-attention-dot" title="A schedule needs your attention" aria-hidden="true"></span>
           {/if}
         </button>
       {/each}
@@ -1175,6 +1181,16 @@
     align-items: center;
     justify-content: center;
     box-shadow: 0 0 0 2px rgba(214, 69, 40, 0.2);
+  }
+
+  .nav-attention-dot {
+    margin-left: auto;
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 50%;
+    background: #d64528;
+    box-shadow: 0 0 0 3px rgba(214, 69, 40, 0.18);
   }
 
   .push-reminder {
@@ -1644,6 +1660,14 @@
       height: 16px;
       padding: 0 4px;
       font-size: 9px;
+    }
+
+    .nav-attention-dot {
+      position: absolute;
+      top: 4px;
+      left: calc(50% + 7px);
+      margin-left: 0;
+      box-shadow: 0 0 0 2px var(--surface);
     }
 
     /* Anchored like .nav-badge, since it marks the same corner of the same button. */

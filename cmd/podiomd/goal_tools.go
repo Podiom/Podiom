@@ -151,6 +151,52 @@ func goalTools(c *manageClient, sessionID, agentName string) []mcpTool {
 			},
 		},
 		{
+			Name:        "podiom_commit_goal_memory",
+			APIRoutes:   []string{"/api/goals/"},
+			Description: "Publish the complete durable working-memory update for the current goal planning or review run. Omitted state and items remain unchanged; retire an obsolete item explicitly with its id and a reason. A successful commit is required before the run can finish. Ordinary feedback stops replaying only when given a disposition that points at the memory items retaining its effect.",
+			InputSchema: objectSchema([]string{"id", "base_revision", "outcome"}, map[string]any{
+				"id":            strProp("Goal id."),
+				"base_revision": map[string]any{"type": "integer", "description": "Memory revision supplied in the review packet (0 during initial planning)."},
+				"current_state": strProp("Current goal state, at most 240 characters. Omit to preserve it."),
+				"active_plan":   map[string]any{"type": "array", "description": "Full replacement active plan; each item is at most 180 characters.", "items": map[string]any{"type": "string"}},
+				"upserts": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object", "required": []string{"id", "kind", "title"},
+					"properties": map[string]any{
+						"id": strProp("Stable item id."), "kind": strProp("milestone, decision, rejected, risk, or artifact."),
+						"title": strProp("Short title."), "detail": strProp("Short detail."),
+						"rationale": strProp("Short rationale."), "evidence": strProp("Short evidence."), "url": strProp("Artifact URL, if any."),
+					},
+				}},
+				"retirements": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object", "required": []string{"id", "reason"},
+					"properties": map[string]any{"id": strProp("Existing memory item id."), "reason": strProp("Why it is no longer active.")},
+				}},
+				"feedback_dispositions": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object", "required": []string{"event_id", "disposition"},
+					"properties": map[string]any{
+						"event_id":        intProp("Pending feedback event id."),
+						"disposition":     strProp("incorporated, completed, or superseded."),
+						"memory_item_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"superseded_by":   intProp("Newer feedback event id when superseded."),
+					},
+				}},
+				"outcome": strProp("What this run achieved, at most 240 characters."),
+			}),
+			Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+				m, err := argMap(args)
+				if err != nil {
+					return "", err
+				}
+				for _, field := range []string{"id", "base_revision", "outcome"} {
+					if err := requireField(m, field); err != nil {
+						return "", err
+					}
+				}
+				body := stamp(bodyFrom(m, "base_revision", "current_state", "active_plan", "upserts", "retirements", "feedback_dispositions", "outcome"))
+				return c.post(ctx, "/api/goals/"+url.PathEscape(argString(m, "id"))+"/memory", body)
+			},
+		},
+		{
 			Name:        "podiom_propose_goal_completion",
 			APIRoutes:   []string{"/api/goals/"},
 			Description: "Propose that a goal's success criteria are met. The goal enters review with your closing report and the user is notified — only the user can mark it done. The closing report should walk through each success criterion." + workspaceFileProseGuidance,

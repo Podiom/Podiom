@@ -463,6 +463,10 @@ type TurnOptions struct {
 	// GoalRunID binds this turn to a run created by the goal planner/reviewer.
 	// Goal-linked task and schedule turns omit it and are assigned automatically.
 	GoalRunID string
+	// FreshContext preserves Podiom's canonical transcript but starts the
+	// provider turn without a resume handle or replayed messages. Goal reviews
+	// use this once their complete working memory is verified.
+	FreshContext bool
 }
 
 // TurnEvent is streamed by core while an adapter turn is running.
@@ -599,12 +603,34 @@ func (c *Core) StreamTurn(ctx context.Context, sessionID, userMessage string, op
 			opts.GoalRunID = goalRun.ID
 		}
 	}
+	if sess.Origin == store.OriginGoal && !opts.Unattended && strings.TrimSpace(userMessage) != "" {
+		if _, feedbackErr := c.appendGoalEvent(ctx, store.GoalEvent{
+			GoalID: sess.GoalID, RunID: goalRun.ID, Kind: store.GoalEventUserFeedback,
+			Body: strings.TrimSpace(userMessage),
+		}); feedbackErr != nil {
+			if goalRun.ID != "" {
+				_, _ = c.finishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, feedbackErr.Error())
+			}
+			return nil, feedbackErr
+		}
+	}
 	history, err := c.store.ListMessages(ctx, sessionID)
 	if err != nil {
 		if goalRun.ID != "" {
 			_, _ = c.finishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, err.Error())
 		}
 		return nil, err
+	}
+	if opts.FreshContext {
+		history = nil
+		refreshed, clearErr := c.store.UpdateSessionProviderHandle(ctx, sess.ID, "")
+		if clearErr != nil {
+			if goalRun.ID != "" {
+				_, _ = c.finishGoalRun(ctx, goalRun.ID, store.GoalRunFailed, clearErr.Error())
+			}
+			return nil, clearErr
+		}
+		sess = refreshed
 	}
 	userMessages, err := c.store.AppendUserMessage(ctx, sessionID, userMessage, opts.AttachmentIDs)
 	if err != nil {

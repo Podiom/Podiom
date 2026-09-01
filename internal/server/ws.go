@@ -370,11 +370,18 @@ func (s *Server) writeState(ctx context.Context, writer *wsWriter) error {
 	if err != nil {
 		return err
 	}
+	scheduleAttention, err := s.scheduleAttention(ctx)
+	if err != nil {
+		return err
+	}
 	var usageSnaps []usage.Snapshot
 	if s.usage != nil {
 		usageSnaps = s.usage.Snapshots()
 	}
-	return writer.write(ctx, ServerMessage{Type: "state", Agents: agents, Sessions: sessions, ActiveTurns: s.turns.summaries(), Usage: usageSnaps})
+	return writer.write(ctx, ServerMessage{
+		Type: "state", Agents: agents, Sessions: sessions, ActiveTurns: s.turns.summaries(),
+		Usage: usageSnaps, ScheduleAttention: scheduleAttention,
+	})
 }
 
 func (s *Server) runWSTurn(ctx context.Context, writer *wsWriter, msg ClientMessage) {

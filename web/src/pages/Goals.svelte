@@ -17,6 +17,7 @@
     listProjects,
     patchGoal,
     resolveGoalRateLimit,
+    repairGoalMemory,
     respondGoalActionItem,
     runGoalReview,
     updateGoalFeedback,
@@ -43,6 +44,8 @@
     GoalEvent,
     GoalEventKind,
     GoalMetric,
+    GoalMemoryItemKind,
+    GoalMemoryRepairResult,
     GoalRateLimitBlock,
     GoalRunDetail,
     GoalStatus,
@@ -131,6 +134,11 @@
   let editingFeedbackID = $state(0);
   let editingFeedbackBody = $state("");
   let editingFeedbackBusy = $state(false);
+  let repairOpen = $state(false);
+  let repairBusy = $state(false);
+  let repairError = $state<string | null>(null);
+  let repairResult = $state<GoalMemoryRepairResult | null>(null);
+  let technicalOpen = $state(false);
   // Deferred-question answering (podiom_ask_user). Keyed by question item id.
   let questionAnswers = $state<Record<string, string[]>>({});
   let questionBusy = $state(false);
@@ -510,10 +518,56 @@
 
   function canEditFeedback(ev: GoalEvent): boolean {
     if (!detail || ev.Kind !== "user_feedback") return false;
-    // A standing directive stays editable for the goal's whole life — the user
-    // amends the rule. An ordinary note locks once a run has read it.
+    // A standing directive stays editable for the goal's whole life. Ordinary
+    // feedback locks only after a successful memory revision incorporates it.
     if (ev.Pinned) return true;
-    return !detail.events.some((other) => other.ID > ev.ID && (other.Kind === "planning_started" || other.Kind === "review_started"));
+    return !detail.feedback_receipts.some((receipt) => receipt.event_id === ev.ID);
+  }
+
+  function memoryItems(kind: GoalMemoryItemKind) {
+    return (detail?.memory.document.items ?? []).filter((item) => item.kind === kind && !item.retired);
+  }
+
+  function recentOrdinaryFeedback() {
+    return (detail?.events ?? []).filter((event) => event.Kind === "user_feedback" && !event.Pinned).slice(0, 3);
+  }
+
+  function activeConcerns() {
+    return [...memoryItems("risk"), ...memoryItems("rejected")];
+  }
+
+  function feedbackState(ev: GoalEvent): string {
+    if (ev.Pinned) return "Standing directive";
+    return detail?.feedback_receipts.some((receipt) => receipt.event_id === ev.ID) ? "Included in memory" : "Pending";
+  }
+
+  function memoryBlockReason(reason?: string): string {
+    switch (reason) {
+      case "commit_missing": return "The last review ended before saving updated memory.";
+      case "over_budget": return "The memory is too large to send safely.";
+      case "validation_failed": return "The saved memory did not pass consistency checks.";
+      case "corrupt_memory": return "The saved memory cannot be read safely.";
+      case "missing_verified_memory": return "This goal has no verified working memory.";
+      default: return "Podiom could not verify this goal's working memory.";
+    }
+  }
+
+  async function runMemoryRepair(goal: Goal) {
+    repairBusy = true;
+    repairError = null;
+    try {
+      repairResult = await repairGoalMemory(goal.ID);
+      repairOpen = false;
+      await refreshDetail();
+    } catch (e) {
+      repairError = e instanceof Error ? e.message : "Memory repair didn't finish.";
+    } finally {
+      repairBusy = false;
+    }
+  }
+
+  function repairCurrentGoal() {
+    if (detail) void runMemoryRepair(detail.goal);
   }
 
   // The goal's rulebook, oldest first, mirroring the order the agent is given.
@@ -613,7 +667,7 @@
     | { kind: "toolGroup"; id: number; events: GoalEvent[] };
 
   const timelineItems = $derived.by<TimelineItem[]>(() => {
-    const evs = detail?.events ?? [];
+    const evs = (detail?.events ?? []).filter((ev) => technicalOpen || ev.Kind !== "tool_use");
     const items: TimelineItem[] = [];
     let group: GoalEvent[] = [];
     const flush = () => {
@@ -1159,7 +1213,7 @@
               </button>
             {/if}
           {/if}
-          {#if g.Status === "active" || g.Status === "paused"}
+          {#if g.Status === "active" || (g.Status === "paused" && detail.memory.status !== "blocked")}
             <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, g.Status === "paused" ? "active" : "paused", g.Status === "paused" ? "Resumed by you." : "Paused by you.")}>
               {g.Status === "paused" ? "Resume" : "Pause"}
             </button>
@@ -1182,6 +1236,111 @@
           </div>
         </div>
       </div>
+
+      {#if detail.memory.status === "blocked"}
+        <section class="memory-alert" id="goal-memory">
+          <div>
+            <strong>Goal paused to protect its memory</strong>
+            <p>Podiom could not verify that the next review would include all saved decisions and feedback. Your saved work is intact. Reviews are paused until memory is repaired.</p>
+          </div>
+          <button class="btn-primary" onclick={() => { repairError = null; repairOpen = true; }}>Review memory issue</button>
+        </section>
+      {:else if detail.memory.status === "pending_backfill" || detail.memory.status === "validating"}
+        <section class="memory-preparing">
+          <span class="btn-spinner" aria-hidden="true"></span>
+          <div><strong>Preparing goal memory</strong><span>Podiom is organizing saved context for shorter future reviews.</span></div>
+        </section>
+      {/if}
+
+      {#if repairResult}
+        <section class="memory-success">
+          <div><strong>Goal memory repaired</strong><span>Rebuilt from {repairResult.runs_read} runs and {repairResult.feedback_read} feedback notes · {repairResult.added} added · {repairResult.changed} changed · {repairResult.retired} retired.</span></div>
+          <div class="memory-success-actions"><button class="btn" onclick={() => document.querySelector(".state-card")?.scrollIntoView({ behavior: "smooth" })}>Review changes</button>{#if g.Status === "paused"}<button class="btn-primary" onclick={() => transition(g, "active", "Resumed after memory repair.")}>Resume goal</button>{/if}</div>
+        </section>
+      {/if}
+
+      <section class="goal-workspace" aria-label="Goal overview">
+        <article class="panel workspace-card outcome-card">
+          <div class="section-label mono">Outcome</div>
+          {#if g.Description}<div class="workspace-copy"><AgentMarkdown content={g.Description} /></div>{/if}
+          {#if g.SuccessCriteria}<div class="workspace-sub"><b>Done when</b><AgentMarkdown content={g.SuccessCriteria} /></div>{/if}
+        </article>
+
+        <article class="panel workspace-card progress-card">
+          <div class="section-label mono">Progress</div>
+          {#if g.Metrics.length > 0}
+            <div class="metrics compact">
+              {#each g.Metrics as m (m.name)}
+                <div><div class="metric-row"><span class="metric-name strong">{m.name}</span><span class="metric-val mono">{metricValue(m)}</span></div><div class="bar lg"><div class="fill" class:met={metricMet(m)} style="width:{metricPct(m)}%"></div></div></div>
+              {/each}
+            </div>
+          {:else}
+            <div class="workspace-big">{memoryItems("milestone").length}</div><div class="workspace-muted">completed milestone{memoryItems("milestone").length === 1 ? "" : "s"}</div>
+          {/if}
+        </article>
+
+        <article class="panel workspace-card next-card">
+          <div class="section-label mono">Next move</div>
+          <div class="workspace-next">{g.NextStep || "The next review will set this."}</div>
+          {#if g.NextStepWhy}<div class="workspace-muted">{g.NextStepWhy}</div>{/if}
+          <div class="workspace-foot mono">next review {nextLabel(g)}</div>
+        </article>
+
+        <article class="panel workspace-card state-card">
+          <div class="section-label mono">Where things stand</div>
+          <div class="workspace-state">{detail.memory.document.current_state || "Working memory is being prepared."}</div>
+          {#if detail.memory.document.active_plan.length > 0}
+            <ul class="memory-list">{#each detail.memory.document.active_plan.slice(0, 5) as step}<li>{step}</li>{/each}</ul>
+            {#if detail.memory.document.active_plan.length > 5}<details class="memory-more"><summary>Show all</summary><ul class="memory-list">{#each detail.memory.document.active_plan.slice(5) as step}<li>{step}</li>{/each}</ul></details>{/if}
+          {/if}
+          <details class="memory-meta"><summary>Memory details</summary><span class="mono">revision {detail.memory.revision} · updated {relTime(detail.memory.updated_at)}</span></details>
+        </article>
+
+        <article class="panel workspace-card guidance-card">
+          <div class="workspace-card-head"><div class="section-label mono">Guidance & feedback</div><button class="text-action" onclick={() => { feedbackOpen = true; document.getElementById("goal-timeline")?.scrollIntoView({ behavior: "smooth" }); }}>Add feedback</button></div>
+          {#if directives.length > 0}
+            <ul class="guidance-list">{#each directives as directive (directive.ID)}<li><span class="memory-chip directive">Standing directive</span><span>{directive.Body}</span></li>{/each}</ul>
+          {:else}<div class="workspace-muted">No standing directives.</div>{/if}
+          {#if recentOrdinaryFeedback().length > 0}<ul class="guidance-list feedback">{#each recentOrdinaryFeedback() as note (note.ID)}<li><span class="memory-chip">{feedbackState(note)}</span><span>{note.Body}</span></li>{/each}</ul>{/if}
+        </article>
+
+        <article class="panel workspace-card third-card done-card">
+          <div class="section-label mono">Done</div>
+          {#if memoryItems("milestone").length > 0}<ul class="memory-list outcomes">{#each memoryItems("milestone").slice(0, 5) as item (item.id)}<li><b>{item.title}</b>{#if item.evidence}<span>{item.evidence}</span>{/if}</li>{/each}</ul>{:else}<div class="workspace-muted">No milestones recorded yet.</div>{/if}
+        </article>
+        <article class="panel workspace-card third-card working-card">
+          <div class="section-label mono">In progress</div>
+          {#if detail.memory.document.active_plan.length > 0}<ul class="memory-list">{#each detail.memory.document.active_plan.slice(0, 5) as step}<li>{step}</li>{/each}</ul>{:else}<div class="workspace-muted">No active plan recorded.</div>{/if}
+        </article>
+        <article class="panel workspace-card third-card upcoming-card">
+          <div class="section-label mono">Up next</div>
+          <div class="workspace-next small">{g.NextStep || "Waiting for the next review."}</div>
+          {#if detail.action_items.filter((item) => item.Status === "open").length > 0}<div class="workspace-foot">{detail.action_items.filter((item) => item.Status === "open").length} item{detail.action_items.filter((item) => item.Status === "open").length === 1 ? "" : "s"} need you</div>{/if}
+        </article>
+
+        <article class="panel workspace-card half-card decisions-card">
+          <div class="section-label mono">Decisions</div>
+          {#if memoryItems("decision").length > 0}<ul class="memory-list outcomes">{#each memoryItems("decision") as item (item.id)}<li><b>{item.title}</b>{#if item.rationale}<span>{item.rationale}</span>{/if}</li>{/each}</ul>{:else}<div class="workspace-muted">No durable decisions yet.</div>{/if}
+        </article>
+        <article class="panel workspace-card half-card risks-card">
+          <div class="section-label mono">Risks & rejected approaches</div>
+          {#if activeConcerns().length > 0}<ul class="memory-list outcomes">{#each activeConcerns() as item (item.id)}<li><b>{item.title}</b>{#if item.detail || item.rationale}<span>{item.detail || item.rationale}</span>{/if}</li>{/each}</ul>{:else}<div class="workspace-muted">No active concerns recorded.</div>{/if}
+        </article>
+
+        {#if memoryItems("artifact").length > 0}
+          <article class="panel workspace-card artifacts-card"><div class="section-label mono">Important artifacts</div><div class="artifact-grid">{#each memoryItems("artifact") as item (item.id)}<a href={item.url || undefined} target={item.url ? "_blank" : undefined} rel="noreferrer"><b>{item.title}</b><span>{item.detail || item.evidence}</span></a>{/each}</div></article>
+        {/if}
+
+        <article class="panel workspace-card runs-card">
+          <div class="section-label mono">Activity highlights</div>
+          {#if detail.runs.length > 0}
+            <div class="run-highlights">{#each detail.runs.slice(0, 8) as run (run.ID)}
+              {@const runEvent = detail.events.find((event) => event.RunID === run.ID)}
+              <div class="run-highlight"><div><b>{run.Outcome || (run.Status === "running" ? "Review in progress" : `${run.Kind} ${run.Status}`)}</b><span class="mono">{run.Kind} · {relTime(run.StartedAt)} · {(run.InputTokens + run.OutputTokens + run.CacheReadTokens + run.CacheWriteTokens).toLocaleString()} tokens</span></div>{#if runEvent}<button class="text-action" onclick={() => openRun(runEvent)}>View details</button>{/if}</div>
+            {/each}</div>
+          {:else}<div class="workspace-muted">No completed runs yet.</div>{/if}
+        </article>
+      </section>
 
       <div class="detail-cols">
         <!-- LEFT: what's happening — everything that needs a decision, then the
@@ -1397,8 +1556,9 @@
         <!-- TIMELINE -->
         <div class="panel timeline" id="goal-timeline">
           <div class="timeline-head">
-            <span class="section-label mono" style="margin-bottom:0">Activity</span>
+            <span class="section-label mono" style="margin-bottom:0">Activity highlights</span>
             <span class="group-rule"></span>
+            <button class="btn feedback-toggle" onclick={() => (technicalOpen = !technicalOpen)}>{technicalOpen ? "Hide technical activity" : "Technical activity"}</button>
             <button class="btn feedback-toggle" onclick={() => (feedbackOpen = !feedbackOpen)}>
               {feedbackOpen ? "Cancel" : "Add feedback"}
             </button>
@@ -1501,6 +1661,8 @@
                         <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
                         {#if ev.Pinned}
                           <span class="directive-badge mono">standing directive</span>
+                        {:else if ev.Kind === "user_feedback"}
+                          <span class="directive-badge mono">{feedbackState(ev)}</span>
                         {/if}
                         {#if canEditFeedback(ev) && editingFeedbackID !== ev.ID}
                           <button class="event-edit mono" onclick={() => startEditFeedback(ev)}>edit</button>
@@ -1840,6 +2002,29 @@
         </button>
       {/if}
     {/if}
+  </div>
+{/if}
+
+{#if repairOpen && detail}
+  <div class="overlay" role="presentation" onclick={() => !repairBusy && (repairOpen = false)}>
+    <div class="modal memory-repair-modal" role="dialog" aria-modal="true" aria-labelledby="repair-title" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <div class="modal-head"><div class="modal-title" id="repair-title">{repairError ? "Memory repair didn't finish" : "Repair goal memory"}</div></div>
+      <div class="modal-body">
+        {#if repairError}
+          <div class="modal-text">Nothing was changed. Retry or view the technical details.</div>
+          <details class="repair-details"><summary>Technical details</summary><code>{repairError}</code></details>
+        {:else}
+          <div class="repair-reason">{memoryBlockReason(detail.memory.block_reason)}</div>
+          <div class="modal-text">Repair rebuilds the goal’s working memory from its saved timeline, reviews, decisions, tasks, schedules, and feedback. It does not redo project work, edit project files, or contact external services. It uses model processing and consumes tokens.</div>
+          <div class="modal-text quiet">You can review the changes before resuming the goal.</div>
+          {#if detail.memory.block_detail}<details class="repair-details"><summary>Technical details</summary><code>{detail.memory.block_detail}</code></details>{/if}
+        {/if}
+        <div class="modal-actions">
+          <button class="btn-primary grow" disabled={repairBusy} onclick={repairCurrentGoal}>{repairBusy ? "Repairing…" : repairError ? "Retry" : "Repair memory"}</button>
+          <button class="btn" disabled={repairBusy} onclick={() => (repairOpen = false)}>Cancel</button>
+        </div>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -2578,14 +2763,79 @@
   .menu-item.danger {
     color: #a23e22;
   }
-  /* Detail body: what's happening on the left, the goal at a glance on a
-     sticky right rail. */
-  .detail-cols {
+  /* Outcome-first goal workspace uses the complete content width. */
+  .memory-alert,
+  .memory-preparing,
+  .memory-success {
+    margin-top: 18px;
+    padding: 17px 19px;
+    border-radius: 16px;
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 18px;
+  }
+  .memory-alert { background: #fff1e9; border: 1px solid #efc0ad; color: #7f321d; }
+  .memory-preparing { background: #f2f0fb; border: 1px solid #d8cff3; color: #5847b8; justify-content: flex-start; }
+  .memory-success { background: #eaf5ef; border: 1px solid #c7e2d6; color: #2f6e60; }
+  .memory-alert strong, .memory-preparing strong, .memory-success strong { display: block; font-size: 15px; }
+  .memory-alert p { max-width: 820px; margin: 4px 0 0; color: #8e4d38; font-size: 13px; line-height: 1.5; }
+  .memory-preparing span:not(.btn-spinner), .memory-success span { display: block; margin-top: 3px; font-size: 13px; color: inherit; opacity: .8; }
+  .memory-success-actions { display: flex; gap: 8px; }
+  .goal-workspace {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 16px;
     margin-top: 20px;
-    align-items: flex-start;
-    flex-wrap: wrap;
+  }
+  .workspace-card { min-width: 0; }
+  .outcome-card, .progress-card, .next-card, .third-card { grid-column: span 4; }
+  .state-card { grid-column: span 8; }
+  .guidance-card { grid-column: span 4; }
+  .half-card { grid-column: span 6; }
+  .artifacts-card, .runs-card { grid-column: 1 / -1; }
+  .workspace-card .section-label { margin-bottom: 10px; }
+  .workspace-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .workspace-copy, .workspace-state { color: var(--ink-soft); font-size: 14px; line-height: 1.55; }
+  .workspace-sub { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-2); color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .workspace-sub b { display: block; margin-bottom: 4px; color: var(--teal-deep); }
+  .workspace-big { font-size: 34px; font-weight: 800; line-height: 1; }
+  .workspace-next { font-size: 18px; line-height: 1.35; font-weight: 750; text-wrap: pretty; }
+  .workspace-next.small { font-size: 15px; }
+  .workspace-muted { margin-top: 7px; color: var(--muted-2); font-size: 13px; line-height: 1.5; }
+  .workspace-foot { margin-top: 13px; padding-top: 10px; border-top: 1px solid var(--line-2); color: var(--faint); font-size: 10.5px; }
+  .metrics.compact { gap: 12px; }
+  .memory-list { margin: 13px 0 0; padding-left: 19px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.5; }
+  .memory-list li + li { margin-top: 7px; }
+  .memory-list.outcomes { padding: 0; list-style: none; }
+  .memory-list.outcomes li { padding: 10px 0; border-top: 1px solid var(--line-2); }
+  .memory-list.outcomes li:first-child { border-top: 0; padding-top: 0; }
+  .memory-list.outcomes b, .memory-list.outcomes span { display: block; }
+  .memory-list.outcomes span { margin-top: 3px; color: var(--muted-2); font-size: 12.5px; }
+  .memory-more summary, .memory-meta summary, .repair-details summary { cursor: pointer; color: var(--teal-deep); font-size: 12px; font-weight: 650; }
+  .memory-meta { margin-top: 14px; }
+  .memory-meta span { display: block; margin-top: 7px; color: var(--faint); font-size: 10px; }
+  .text-action { border: 0; background: transparent; padding: 0; color: var(--teal-deep); font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .guidance-list { margin: 0; padding: 0; list-style: none; }
+  .guidance-list.feedback { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+  .guidance-list li { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; font-size: 12.5px; line-height: 1.45; }
+  .guidance-list li + li { margin-top: 10px; }
+  .memory-chip { padding: 3px 7px; border-radius: 999px; background: #eef1f4; color: #66717b; font: 600 9px "JetBrains Mono", monospace; text-transform: uppercase; }
+  .memory-chip.directive { background: #eeeafb; color: #5847b8; }
+  .artifact-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .artifact-grid a { padding: 12px; border: 1px solid var(--line-2); border-radius: 12px; color: inherit; text-decoration: none; }
+  .artifact-grid b, .artifact-grid span { display: block; }
+  .artifact-grid span { margin-top: 3px; color: var(--muted-2); font-size: 12px; }
+  .run-highlights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px; }
+  .run-highlight { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line-2); }
+  .run-highlight:nth-child(-n+2) { border-top: 0; }
+  .run-highlight b, .run-highlight span { display: block; }
+  .run-highlight b { font-size: 13.5px; }
+  .run-highlight span { margin-top: 4px; color: var(--faint); font-size: 9.5px; }
+
+  .detail-cols {
+    display: block;
+    margin-top: 20px;
   }
   .detail-main {
     flex: 999 1 540px;
@@ -2595,19 +2845,16 @@
     gap: 16px;
   }
   .detail-rail {
-    flex: 1 1 300px;
-    min-width: 280px;
-    max-width: 400px;
-    position: sticky;
-    top: 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    display: none;
   }
-  /* Below the natural wrap point (540 + 300 + 18 gap) the rail would land under
-     the whole timeline. Flatten both columns instead and slot the rail in ahead
-     of the activity feed, keeping the single-column reading order. */
-  @container (max-width: 880px) {
+  .panel.ns-panel { display: none; }
+  /* Tablet and compact desktop: keep the six-column, two-card hierarchy from
+     the goal-page specification while retaining full-width state sections. */
+  @media (min-width: 769px) and (max-width: 1199px) {
+    .goal-workspace { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .outcome-card, .progress-card, .guidance-card, .third-card, .half-card { grid-column: span 3; }
+    .next-card, .state-card { grid-column: 1 / -1; }
+    .artifacts-card, .runs-card { grid-column: 1 / -1; }
     .detail-cols {
       flex-direction: column;
       /* align-items:flex-start would stop the flattened panels stretching once
@@ -2615,17 +2862,19 @@
       align-items: stretch;
       gap: 16px;
     }
-    .detail-main,
-    .detail-rail {
+    .detail-main {
       display: contents;
-    }
-    .detail-rail > * {
-      order: 1;
     }
     .panel.timeline {
       order: 2;
     }
   }
+
+  .memory-repair-modal { max-width: 560px; }
+  .repair-reason { margin-bottom: 12px; font-weight: 700; color: var(--ink); }
+  .modal-text.quiet { margin-top: 9px; color: var(--muted-2); }
+  .repair-details { margin-top: 14px; }
+  .repair-details code { display: block; margin-top: 8px; padding: 10px; border-radius: 9px; background: var(--surface-3); color: var(--muted); font-size: 11px; white-space: pre-wrap; }
   .panel {
     background: var(--surface);
     border: 1px solid var(--line-2);
@@ -3839,6 +4088,23 @@
     .detail-cols {
       margin-top: 16px;
     }
+    .goal-workspace { grid-template-columns: 1fr; }
+    .goal-workspace > * { grid-column: 1 !important; }
+    .outcome-card { order: 1; }
+    .next-card { order: 2; }
+    .progress-card { order: 3; }
+    .done-card { order: 4; }
+    .state-card { order: 5; }
+    .working-card { order: 6; }
+    .upcoming-card { order: 7; }
+    .decisions-card { order: 8; }
+    .guidance-card { order: 9; }
+    .risks-card { order: 10; }
+    .artifacts-card { order: 11; }
+    .runs-card { order: 12; }
+    .artifact-grid, .run-highlights { grid-template-columns: 1fr; }
+    .run-highlight:nth-child(2) { border-top: 1px solid var(--line-2); }
+    .memory-alert, .memory-success { align-items: flex-start; flex-direction: column; }
     .detail-rail {
       position: static;
       width: 100%;

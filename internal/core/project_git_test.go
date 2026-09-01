@@ -626,3 +626,24 @@ func findBackedUp(t *testing.T, projectDir, name string) string {
 	}
 	return ""
 }
+
+func TestFirstLine(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		want string
+	}{
+		{name: "multi-line input", s: " abcd \n efgh \n ijkl", want: "abcd"},
+		{name: "single-line", s: " abcd  ", want: "abcd"},
+		{name: "empty string", s: "", want: ""},
+		{name: "all whitespace", s: "    ", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := firstLine(tt.s)
+			if got != tt.want {
+				t.Errorf("invalid first line, want: %q, got: %q", tt.want, got)
+			}
+		})
+	}
+}

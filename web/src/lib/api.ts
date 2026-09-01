@@ -14,6 +14,7 @@ import type {
   Goal,
   GoalCreateRequest,
   GoalDetail,
+  GoalMemoryRepairResult,
   GoalEvent,
   GoalRunDetail,
   GoalPatchRequest,
@@ -1277,6 +1278,10 @@ export async function setGoalFeedbackPin(id: string, eventId: number, pinned: bo
 // as the review is started (results land on the timeline).
 export async function runGoalReview(id: string): Promise<{ status: string; goal_id: string }> {
   return asJSON(await request(`/api/goals/${id}/review`, { method: "POST" }));
+}
+
+export async function repairGoalMemory(id: string): Promise<GoalMemoryRepairResult> {
+  return asJSON(await request(`/api/goals/${encodeURIComponent(id)}/repair-memory`, { method: "POST" }));
 }
 
 export async function resolveGoalRateLimit(

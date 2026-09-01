@@ -69,9 +69,9 @@ func callTool(t *testing.T, c *manageClient, name string, args map[string]any) (
 
 func TestManageToolRegistryInvariants(t *testing.T) {
 	tools := manageTools(newManageClient("127.0.0.1:8787"), "", "")
-	// session 3 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 10 + agents 6 + credentials 2 + toolset 3 + platform 4.
-	if len(tools) != 54 {
-		t.Fatalf("expected 54 tools, got %d", len(tools))
+	// session 3 + tasks 6 + projects 5 + schedules 6 + skills 4 + mcp 5 + goals 11 + agents 6 + credentials 2 + toolset 3 + platform 4.
+	if len(tools) != 55 {
+		t.Fatalf("expected 55 tools, got %d", len(tools))
 	}
 	seen := map[string]bool{}
 	destructive := map[string]bool{
@@ -183,6 +183,24 @@ func TestUserVisibleProseToolsPointToWorkspaceFileAttachments(t *testing.T) {
 		if !strings.Contains(tool.Description, "podiom_attach_workspace_file") || !strings.Contains(tool.Description, "never refer the user to a local path") {
 			t.Errorf("tool %q is missing workspace file guidance: %s", name, tool.Description)
 		}
+	}
+}
+
+func TestCommitGoalMemoryPostsStampedRevision(t *testing.T) {
+	rec, c := newRecordingServer(t)
+	if _, err := callTool(t, c, "podiom_commit_goal_memory", map[string]any{
+		"id": "goal-1", "base_revision": 3, "current_state": "Ready to ship.", "outcome": "Prepared the release.",
+	}); err != nil {
+		t.Fatalf("commit memory tool: %v", err)
+	}
+	if rec.method != http.MethodPost || rec.path != "/api/goals/goal-1/memory" {
+		t.Fatalf("got %s %s", rec.method, rec.path)
+	}
+	if got := string(rec.body["session_id"]); got != `"sess-1"` {
+		t.Fatalf("session stamp = %s", got)
+	}
+	if got := string(rec.body["base_revision"]); got != "3" {
+		t.Fatalf("base revision = %s", got)
 	}
 }
 

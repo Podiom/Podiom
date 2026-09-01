@@ -1543,6 +1543,52 @@ var migrations = []migration{
 		// Do not "fix" the trigger by adding `pinned` to its equality list.
 		sql: `ALTER TABLE goal_events ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;`,
 	},
+	{
+		version: 42,
+		name:    "durable_goal_memory",
+		sql: `CREATE TABLE goal_memories (
+			goal_id       TEXT PRIMARY KEY REFERENCES goals(id) ON DELETE CASCADE,
+			status        TEXT NOT NULL DEFAULT 'pending_backfill'
+				CHECK (status IN ('pending_backfill', 'validating', 'ready', 'blocked')),
+			revision      INTEGER NOT NULL DEFAULT 0,
+			document_json TEXT NOT NULL DEFAULT '{"current_state":"","active_plan":[],"items":[]}',
+			block_reason  TEXT NOT NULL DEFAULT '',
+			block_detail  TEXT NOT NULL DEFAULT '',
+			last_run_id   TEXT NOT NULL DEFAULT '',
+			outcome       TEXT NOT NULL DEFAULT '',
+			updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+			repaired_at   TEXT
+		);
+
+		INSERT INTO goal_memories (goal_id) SELECT id FROM goals;
+
+		CREATE TABLE goal_memory_revisions (
+			goal_id       TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			revision      INTEGER NOT NULL,
+			run_id        TEXT NOT NULL DEFAULT '',
+			document_json TEXT NOT NULL,
+			outcome       TEXT NOT NULL DEFAULT '',
+			created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (goal_id, revision)
+		);
+
+		CREATE TABLE goal_feedback_receipts (
+			goal_id          TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+			event_id         INTEGER NOT NULL REFERENCES goal_events(id) ON DELETE CASCADE,
+			disposition      TEXT NOT NULL CHECK (disposition IN ('incorporated', 'completed', 'superseded')),
+			memory_item_ids_json TEXT NOT NULL DEFAULT '[]',
+			superseded_by    INTEGER,
+			revision         INTEGER NOT NULL,
+			acknowledged_at  TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (goal_id, event_id)
+		);
+
+		ALTER TABLE goal_runs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE goal_runs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE goal_runs ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE goal_runs ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+		ALTER TABLE goal_runs ADD COLUMN outcome TEXT NOT NULL DEFAULT '';`,
+	},
 }
 
 // migrate applies every migration whose version has not yet been recorded. Each
