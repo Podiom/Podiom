@@ -13,7 +13,8 @@ unattended.
 
 Schedules are Markdown files with YAML frontmatter. Copy one into
 `$PODIOM_HOME/schedules/` (default `~/.podiom/schedules/`), edit the `agent` and
-`project` fields, then list it:
+`project` fields, then set `enabled: true` once you've pointed it at a real
+agent and project, then list it:
 
 ```sh
 cp examples/schedules/repo-health-daily.md ~/.podiom/schedules/
