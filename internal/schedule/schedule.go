@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Podiom/Podiom/internal/config"
+	cron "github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -170,6 +171,11 @@ func (s Schedule) validate() error {
 	}
 	if s.Cron != "" && s.Every != "" {
 		return fmt.Errorf("set only one of cron or every, not both")
+	}
+	if s.Cron != "" {
+		if _, err := cron.ParseStandard(s.Cron); err != nil {
+			return fmt.Errorf("invalid schedule timing %q: %w", s.Cron, err)
+		}
 	}
 	if s.Every != "" {
 		if _, err := time.ParseDuration(s.Every); err != nil {
