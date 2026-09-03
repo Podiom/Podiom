@@ -12,6 +12,9 @@ import (
 // ErrNotFound reports that a requested store row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrAlreadyExists reports that a row cannot be created because its key is in use.
+var ErrAlreadyExists = errors.New("already exists")
+
 // CreateAgent inserts a durable agent definition.
 func (s *Store) CreateAgent(ctx context.Context, a Agent) (Agent, error) {
 	fallback, err := json.Marshal(a.Fallback)
@@ -28,6 +31,9 @@ func (s *Store) CreateAgent(ctx context.Context, a Agent) (Agent, error) {
 		a.Name, a.Provider, a.Profile, a.Model, a.Effort, a.PermissionMode, string(fallback), string(mcpServers), a.MCPConfig,
 	)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: agents.name") {
+			return Agent{}, fmt.Errorf("agent %q: %w", a.Name, ErrAlreadyExists)
+		}
 		return Agent{}, fmt.Errorf("create agent %q: %w", a.Name, err)
 	}
 	return s.GetAgent(ctx, a.Name)

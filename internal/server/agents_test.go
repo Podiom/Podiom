@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/adapter"
@@ -34,6 +35,31 @@ func TestDeleteAgentRejectsConfirmationMismatch(t *testing.T) {
 	}
 	if _, err := srv.core.GetAgent(ctx, "atlas"); err != nil {
 		t.Fatalf("agent should remain after mismatch: %v", err)
+	}
+}
+
+func TestCreateAgentDuplicateNameUsesHumanError(t *testing.T) {
+	_, srv, cleanup := newAgentAPITestServer(t)
+	defer cleanup()
+
+	body := `{"name":"atlas","provider":"claude","permission_mode":"approve"}`
+	first := httptest.NewRecorder()
+	srv.handleAgents(first, httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewBufferString(body)))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first create status = %d, want 200; body=%s", first.Code, first.Body.String())
+	}
+
+	second := httptest.NewRecorder()
+	srv.handleAgents(second, httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewBufferString(body)))
+	if second.Code != http.StatusBadRequest {
+		t.Fatalf("second create status = %d, want 400; body=%s", second.Code, second.Body.String())
+	}
+	got := strings.TrimSpace(second.Body.String())
+	if got != `agent "atlas": already exists` {
+		t.Fatalf("duplicate create body = %q", got)
+	}
+	if strings.Contains(got, "UNIQUE constraint") || strings.Contains(got, "constraint failed") {
+		t.Fatalf("duplicate create leaked raw sqlite error: %q", got)
 	}
 }
 
