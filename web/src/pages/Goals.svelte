@@ -3306,7 +3306,6 @@
     display: flex;
     flex-direction: column;
     gap: 15px;
-    max-width: 900px;
   }
   .gd-title-row {
     display: flex;
@@ -3320,7 +3319,6 @@
     text-wrap: pretty;
   }
   .gd-desc {
-    max-width: 760px;
     color: var(--muted);
     font-size: 15px;
     line-height: 1.6;
@@ -3347,7 +3345,6 @@
     grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
     gap: 14px;
     align-items: stretch;
-    max-width: 900px;
     margin-top: 22px;
   }
   .gd-card {
@@ -3420,7 +3417,6 @@
   /* The spine's timeline: "now" on top, then the story. */
   .spine-rail {
     position: relative;
-    max-width: 1180px;
     margin-top: 28px;
   }
   .spine-line {
@@ -3715,6 +3711,18 @@
       order: -2;
       width: 100%;
       padding-bottom: 34px;
+    }
+    /* Stacked, the spine is the whole page and nobody is sizing it, so the
+       reading measure comes back. */
+    .gd-head,
+    .gd-cards {
+      max-width: 900px;
+    }
+    .gd-desc {
+      max-width: 760px;
+    }
+    .spine-rail {
+      max-width: 1180px;
     }
     .gd-grip {
       display: none;
