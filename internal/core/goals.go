@@ -278,6 +278,11 @@ func (c *Core) TransitionGoal(ctx context.Context, id string, to store.GoalStatu
 	if !goalTransitionAllowed(from, to) {
 		return store.Goal{}, fmt.Errorf("goal cannot go from %s to %s", from, to)
 	}
+	if from == store.GoalPaused && to == store.GoalActive {
+		if memory, memoryErr := c.store.GetGoalMemoryForDisplay(ctx, goal.ID); memoryErr == nil && memory.Status == store.GoalMemoryBlocked {
+			return store.Goal{}, fmt.Errorf("repair goal memory before resuming")
+		}
+	}
 	goal.Status = to
 	switch to {
 	case store.GoalActive:
@@ -795,6 +800,13 @@ func (c *Core) ProposeGoalCompletion(ctx context.Context, goalID, sessionID, clo
 	}
 	if strings.TrimSpace(closingReport) == "" {
 		return store.Goal{}, fmt.Errorf("a closing report is required to propose completion")
+	}
+	if c.daemonAddr != "" {
+		runID := c.goalRunForAgentEvent(ctx, goal.ID, sessionID)
+		memory, memoryErr := c.store.GetGoalMemory(ctx, goal.ID)
+		if memoryErr != nil || runID == "" || memory.LastRunID != runID {
+			return store.Goal{}, fmt.Errorf("commit goal memory before proposing completion")
+		}
 	}
 	goal.Status = store.GoalReview
 	goal.ClosingReport = closingReport

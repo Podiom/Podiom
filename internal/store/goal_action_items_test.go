@@ -224,7 +224,7 @@ func TestGoalFeedbackPinTogglesOnlyOnFeedback(t *testing.T) {
 	}
 
 	// A pinned note stays editable for the goal's whole life; an ordinary one
-	// locks once a review has assembled it into a prompt.
+	// locks only after a successful memory commit acknowledges it.
 	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
 		t.Fatalf("append review started: %v", err)
 	}
@@ -237,6 +237,10 @@ func TestGoalFeedbackPinTogglesOnlyOnFeedback(t *testing.T) {
 	}
 	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
 		t.Fatalf("append second review started: %v", err)
+	}
+	if _, err := db.CommitGoalMemory(ctx, goal.ID, 0, "run-1", "Feedback incorporated",
+		GoalMemoryDocument{}, []GoalFeedbackDispositionInput{{EventID: ordinary.ID, Disposition: GoalFeedbackIncorporated}}, false); err != nil {
+		t.Fatalf("acknowledge ordinary feedback: %v", err)
 	}
 	if _, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, ordinary.ID, "too late"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("edit read ordinary feedback err = %v, want ErrNotFound", err)

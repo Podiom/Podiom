@@ -730,6 +730,10 @@ func newAgentsListCmd(addr *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if len(agents) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "no agents yet")
+				return nil
+			}
 			for _, agent := range agents {
 				fmt.Printf("%s\tprovider=%s\tprofile=%s\tmodel=%s\teffort=%s\tpermission=%s\tfallback=%s\n",
 					agent.Name, agent.Provider, agent.Profile, agent.Model, agent.Effort, agent.PermissionMode,

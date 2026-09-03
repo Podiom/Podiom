@@ -530,6 +530,85 @@ type Goal struct {
 	UpdatedAt   string
 }
 
+// GoalMemoryStatus is the verification state of Podiom-owned working memory.
+// Reviews may use fresh provider contexts only while memory is ready.
+type GoalMemoryStatus string
+
+const (
+	GoalMemoryPendingBackfill GoalMemoryStatus = "pending_backfill"
+	GoalMemoryValidating      GoalMemoryStatus = "validating"
+	GoalMemoryReady           GoalMemoryStatus = "ready"
+	GoalMemoryBlocked         GoalMemoryStatus = "blocked"
+)
+
+// GoalMemoryItemKind identifies durable facts whose history must survive fresh
+// review contexts.
+type GoalMemoryItemKind string
+
+const (
+	GoalMemoryMilestone GoalMemoryItemKind = "milestone"
+	GoalMemoryDecision  GoalMemoryItemKind = "decision"
+	GoalMemoryRejected  GoalMemoryItemKind = "rejected"
+	GoalMemoryRisk      GoalMemoryItemKind = "risk"
+	GoalMemoryArtifact  GoalMemoryItemKind = "artifact"
+)
+
+// GoalMemoryItem is one versioned, attributable memory fact. Retired facts stay
+// visible for audit but are excluded from future review packets.
+type GoalMemoryItem struct {
+	ID               string             `json:"id"`
+	Kind             GoalMemoryItemKind `json:"kind"`
+	Title            string             `json:"title"`
+	Detail           string             `json:"detail,omitempty"`
+	Rationale        string             `json:"rationale,omitempty"`
+	Evidence         string             `json:"evidence,omitempty"`
+	URL              string             `json:"url,omitempty"`
+	SourceRunID      string             `json:"source_run_id"`
+	Retired          bool               `json:"retired,omitempty"`
+	RetirementReason string             `json:"retirement_reason,omitempty"`
+}
+
+// GoalMemoryDocument is the compact state supplied in full to every review.
+type GoalMemoryDocument struct {
+	CurrentState string           `json:"current_state"`
+	ActivePlan   []string         `json:"active_plan"`
+	Items        []GoalMemoryItem `json:"items"`
+}
+
+// GoalMemory is the current verified revision and any reason reviews are
+// paused. Document remains the last valid version while blocked.
+type GoalMemory struct {
+	GoalID      string             `json:"goal_id"`
+	Status      GoalMemoryStatus   `json:"status"`
+	Revision    int64              `json:"revision"`
+	Document    GoalMemoryDocument `json:"document"`
+	BlockReason string             `json:"block_reason,omitempty"`
+	BlockDetail string             `json:"block_detail,omitempty"`
+	LastRunID   string             `json:"last_run_id,omitempty"`
+	Outcome     string             `json:"outcome,omitempty"`
+	UpdatedAt   string             `json:"updated_at"`
+	RepairedAt  string             `json:"repaired_at,omitempty"`
+}
+
+type GoalFeedbackDisposition string
+
+const (
+	GoalFeedbackIncorporated GoalFeedbackDisposition = "incorporated"
+	GoalFeedbackCompleted    GoalFeedbackDisposition = "completed"
+	GoalFeedbackSuperseded   GoalFeedbackDisposition = "superseded"
+)
+
+// GoalFeedbackReceipt records when raw ordinary feedback can stop being
+// replayed because its effect is present in durable memory.
+type GoalFeedbackReceipt struct {
+	EventID        int64                   `json:"event_id"`
+	Disposition    GoalFeedbackDisposition `json:"disposition"`
+	MemoryItemIDs  []string                `json:"memory_item_ids,omitempty"`
+	SupersededBy   int64                   `json:"superseded_by,omitempty"`
+	Revision       int64                   `json:"revision"`
+	AcknowledgedAt string                  `json:"acknowledged_at"`
+}
+
 // GoalEventKind classifies one entry in a goal's append-only timeline.
 type GoalEventKind string
 
@@ -632,18 +711,23 @@ const (
 
 // GoalRun binds a goal activity to an exact turn within a durable session.
 type GoalRun struct {
-	ID            string
-	GoalID        string
-	SessionID     string
-	TurnMessageID int64
-	Kind          GoalRunKind
-	AgentName     string
-	SourceID      string
-	Status        GoalRunStatus
-	Legacy        bool
-	Error         string
-	StartedAt     string
-	FinishedAt    string
+	ID               string
+	GoalID           string
+	SessionID        string
+	TurnMessageID    int64
+	Kind             GoalRunKind
+	AgentName        string
+	SourceID         string
+	Status           GoalRunStatus
+	Legacy           bool
+	Error            string
+	StartedAt        string
+	FinishedAt       string
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	Outcome          string
 }
 
 // GoalRateLimitStatus is the lifecycle state of a goal-level rate-limit block.

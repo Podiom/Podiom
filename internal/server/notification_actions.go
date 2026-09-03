@@ -216,6 +216,9 @@ func (s *Server) answerQuestionByOptionIndex(r *http.Request, row store.Notifica
 	if res.Goal != nil {
 		s.broadcastGoalPing(ctx, res.Goal.ID)
 	}
+	if res.Question.Origin == store.AgentQuestionSchedule {
+		s.broadcastScheduleAttention(ctx)
+	}
 	return nil
 }
 

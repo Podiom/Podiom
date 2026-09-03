@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/config"
 	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/notify"
 	"github.com/Podiom/Podiom/internal/store"
+	"nhooyr.io/websocket"
 )
 
 // postAction performs a notification action through the HTTP surface.
@@ -258,6 +260,53 @@ func TestAnswerQuestionByOptionIndex(t *testing.T) {
 	// Answering twice must not overwrite the recorded answer.
 	if rr := postAction(t, srv, n.ID, "answer:0"); rr.Code != http.StatusConflict {
 		t.Errorf("second answer status = %d, want 409", rr.Code)
+	}
+}
+
+// TestScheduleQuestionNotificationActionClearsAttention covers the second answer
+// path: choosing an option directly from a notification must clear the Schedules
+// navigation signal on every open dashboard.
+func TestScheduleQuestionNotificationActionClearsAttention(t *testing.T) {
+	srv, db, _ := newNotifyTestServer(t)
+	ctx := context.Background()
+	if _, err := srv.core.CreateAgent(ctx, core.CreateAgentRequest{Name: "runner", Provider: config.ProviderClaude}); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	sess, err := srv.core.CreateSession(ctx, core.CreateSessionRequest{
+		AgentName: "runner", Origin: store.OriginSchedule, ScheduleID: "nightly",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	asked, err := srv.core.CreateAgentQuestion(ctx, sess.ID, []store.AgentQuestionItem{{
+		ID: "channel", Question: "Which channel?",
+		Options: []store.AgentQuestionOption{{Label: "Stable"}, {Label: "Beta"}},
+	}})
+	if err != nil {
+		t.Fatalf("create question: %v", err)
+	}
+	n := seedNotification(t, db, store.Notification{
+		Type: notify.TypeScheduleQuestion, ScheduleName: "nightly",
+		ResourceKind: string(notify.ResourceAgentQuestion), ResourceID: asked.Question.ID, Actionable: true,
+	})
+
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+	conn := dialWSTest(t, "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/ws")
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	state := readWSTestUntil(t, conn, "state with schedule attention", func(msg ServerMessage) bool { return msg.Type == "state" })
+	if len(state.ScheduleAttention) != 1 || state.ScheduleAttention[0] != "nightly" {
+		t.Fatalf("schedule attention = %v, want [nightly]", state.ScheduleAttention)
+	}
+
+	if rr := postAction(t, srv, n.ID, "answer:0"); rr.Code != http.StatusOK {
+		t.Fatalf("answer status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	cleared := readWSTestUntil(t, conn, "schedule attention cleared", func(msg ServerMessage) bool {
+		return msg.Type == "schedule_attention"
+	})
+	if len(cleared.ScheduleAttention) != 0 {
+		t.Fatalf("schedule attention after notification answer = %v, want none", cleared.ScheduleAttention)
 	}
 }
 

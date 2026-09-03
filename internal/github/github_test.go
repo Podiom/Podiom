@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -151,6 +152,43 @@ func TestMigrateLegacyRootSnapshotBacksUpOldRootContents(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("legacy backup matches = %v, want one backed up main.go", matches)
+	}
+}
+
+func TestExpiresAt(t *testing.T) {
+	tests := []struct {
+		name     string
+		seconds  int
+		want     string
+		wantTime bool
+	}{
+		{name: "negative seconds", seconds: -100, want: "", wantTime: false},
+		{name: "zero seconds", seconds: 0, want: "", wantTime: false},
+		{name: "postive seconds", seconds: 100, wantTime: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := expiresAt(tt.seconds)
+			if !tt.wantTime {
+				if got != tt.want {
+					t.Errorf("invalid output, want: %q, got %q", tt.want, got)
+				}
+			} else {
+				// Check time difference
+				maxTimeDifference := 5
+				now := time.Now().UTC()
+				wantTime := now.Add(time.Duration(tt.seconds) * time.Second)
+
+				gotTime, err := time.Parse(time.RFC3339, got)
+				if err != nil {
+					t.Fatalf("invalid time, want: %q, got %q", wantTime.Format(time.RFC3339), got)
+				}
+				differenceSeconds := int(math.Abs(wantTime.Sub(gotTime).Seconds()))
+				if differenceSeconds > maxTimeDifference {
+					t.Errorf("too large time difference of secounds %d", differenceSeconds)
+				}
+			}
+		})
 	}
 }
 

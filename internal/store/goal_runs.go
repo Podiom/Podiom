@@ -53,6 +53,29 @@ func (s *Store) GetRunningGoalRunByGoal(ctx context.Context, goalID string) (Goa
 	return run, err
 }
 
+func (s *Store) ListGoalRuns(ctx context.Context, goalID string, limit int) ([]GoalRun, error) {
+	query := goalRunSelect + ` WHERE goal_id = ? ORDER BY started_at DESC, id DESC`
+	args := []any{goalID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list goal runs for %q: %w", goalID, err)
+	}
+	defer rows.Close()
+	var out []GoalRun
+	for rows.Next() {
+		run, err := scanGoalRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) SetGoalRunTurn(ctx context.Context, id string, messageID int64) (GoalRun, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE goal_runs SET turn_message_id = ? WHERE id = ? AND status = ?`, messageID, id, GoalRunRunning)
 	if err != nil {
@@ -75,6 +98,21 @@ func (s *Store) FinishGoalRun(ctx context.Context, id string, status GoalRunStat
 		return GoalRun{}, fmt.Errorf("goal run %q: %w", id, ErrNotFound)
 	}
 	return s.GetGoalRun(ctx, id)
+}
+
+// SetGoalRunSummary stores the tokens billed by this exact turn and its short
+// user-facing outcome. It is valid after the lifecycle row has finished.
+func (s *Store) SetGoalRunSummary(ctx context.Context, id string, usage SessionUsage, outcome string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE goal_runs SET input_tokens = ?, output_tokens = ?,
+		cache_read_tokens = ?, cache_write_tokens = ?, outcome = ? WHERE id = ?`,
+		usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheWriteTokens, outcome, id)
+	if err != nil {
+		return fmt.Errorf("set goal run %q summary: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("goal run %q: %w", id, ErrNotFound)
+	}
+	return nil
 }
 
 // InterruptRunningGoalRuns releases durable run locks left by a daemon crash.
@@ -140,13 +178,15 @@ func (s *Store) ListMessagesForGoalRun(ctx context.Context, run GoalRun) ([]Mess
 }
 
 const goalRunSelect = `SELECT id, goal_id, session_id, COALESCE(turn_message_id, 0), kind,
-	agent_name, source_id, status, legacy, error, started_at, COALESCE(finished_at, '') FROM goal_runs`
+	agent_name, source_id, status, legacy, error, started_at, COALESCE(finished_at, ''),
+	input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, outcome FROM goal_runs`
 
 func scanGoalRun(row scanner) (GoalRun, error) {
 	var run GoalRun
 	var legacy int
 	if err := row.Scan(&run.ID, &run.GoalID, &run.SessionID, &run.TurnMessageID, &run.Kind,
-		&run.AgentName, &run.SourceID, &run.Status, &legacy, &run.Error, &run.StartedAt, &run.FinishedAt); err != nil {
+		&run.AgentName, &run.SourceID, &run.Status, &legacy, &run.Error, &run.StartedAt, &run.FinishedAt,
+		&run.InputTokens, &run.OutputTokens, &run.CacheReadTokens, &run.CacheWriteTokens, &run.Outcome); err != nil {
 		return GoalRun{}, err
 	}
 	run.Legacy = legacy != 0

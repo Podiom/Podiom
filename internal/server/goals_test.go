@@ -960,7 +960,8 @@ func TestGoalFeedbackPinEndpoint(t *testing.T) {
 		t.Fatal("a patch with neither body nor pinned should fail")
 	}
 
-	// A pinned note stays editable once a review has read it; an ordinary one does not.
+	// A pinned note stays editable forever. Ordinary feedback remains editable
+	// until a successful memory revision acknowledges it.
 	if _, code := patch(`{"event_id":` + id + `,"pinned":true}`); code != http.StatusOK {
 		t.Fatalf("re-pin: %d", code)
 	}
@@ -970,8 +971,15 @@ func TestGoalFeedbackPinEndpoint(t *testing.T) {
 	if _, code := patch(`{"event_id":` + id + `,"body":"Amended after the review."}`); code != http.StatusOK {
 		t.Fatalf("edit pinned feedback after review: %d", code)
 	}
+	if _, code := patch(`{"event_id":` + strconv.FormatInt(plain.ID, 10) + `,"body":"still pending"}`); code != http.StatusOK {
+		t.Fatalf("edit pending ordinary feedback: %d", code)
+	}
+	if _, err := srv.core.Store().CommitGoalMemory(context.Background(), goal.ID, 0, "run-1", "Feedback included",
+		store.GoalMemoryDocument{}, []store.GoalFeedbackDispositionInput{{EventID: plain.ID, Disposition: store.GoalFeedbackIncorporated}}, false); err != nil {
+		t.Fatalf("acknowledge ordinary feedback: %v", err)
+	}
 	if _, code := patch(`{"event_id":` + strconv.FormatInt(plain.ID, 10) + `,"body":"too late"}`); code == http.StatusOK {
-		t.Fatal("editing ordinary feedback after a review should fail")
+		t.Fatal("editing acknowledged ordinary feedback should fail")
 	}
 
 	// A refused pin must not leave the text behind as ordinary feedback, or the

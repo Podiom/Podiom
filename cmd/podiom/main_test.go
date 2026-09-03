@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,6 +61,29 @@ func TestAgentsUpdateRejectsYesWithoutGenerateSoul(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--yes only applies with --generate-soul") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAgentsListPrintsEmptyState(t *testing.T) {
+	t.Setenv("PODIOM_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agents" {
+			t.Fatalf("request path = %q, want /api/agents", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "[]")
+	}))
+	t.Cleanup(srv.Close)
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	cmd := newAgentsListCmd(&addr)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "no agents yet\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 

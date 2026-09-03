@@ -17,6 +17,7 @@
     listProjects,
     patchGoal,
     resolveGoalRateLimit,
+    repairGoalMemory,
     respondGoalActionItem,
     runGoalReview,
     updateGoalFeedback,
@@ -43,6 +44,9 @@
     GoalEvent,
     GoalEventKind,
     GoalMetric,
+    GoalMemoryItem,
+    GoalMemoryItemKind,
+    GoalMemoryRepairResult,
     GoalRateLimitBlock,
     GoalRunDetail,
     GoalStatus,
@@ -131,6 +135,11 @@
   let editingFeedbackID = $state(0);
   let editingFeedbackBody = $state("");
   let editingFeedbackBusy = $state(false);
+  let repairOpen = $state(false);
+  let repairBusy = $state(false);
+  let repairError = $state<string | null>(null);
+  let repairResult = $state<GoalMemoryRepairResult | null>(null);
+  let technicalOpen = $state(false);
   // Deferred-question answering (podiom_ask_user). Keyed by question item id.
   let questionAnswers = $state<Record<string, string[]>>({});
   let questionBusy = $state(false);
@@ -510,10 +519,56 @@
 
   function canEditFeedback(ev: GoalEvent): boolean {
     if (!detail || ev.Kind !== "user_feedback") return false;
-    // A standing directive stays editable for the goal's whole life — the user
-    // amends the rule. An ordinary note locks once a run has read it.
+    // A standing directive stays editable for the goal's whole life. Ordinary
+    // feedback locks only after a successful memory revision incorporates it.
     if (ev.Pinned) return true;
-    return !detail.events.some((other) => other.ID > ev.ID && (other.Kind === "planning_started" || other.Kind === "review_started"));
+    return !detail.feedback_receipts.some((receipt) => receipt.event_id === ev.ID);
+  }
+
+  function memoryItems(kind: GoalMemoryItemKind) {
+    return (detail?.memory.document.items ?? []).filter((item) => item.kind === kind && !item.retired);
+  }
+
+  function recentOrdinaryFeedback() {
+    return (detail?.events ?? []).filter((event) => event.Kind === "user_feedback" && !event.Pinned).slice(0, 3);
+  }
+
+  function activeConcerns() {
+    return [...memoryItems("risk"), ...memoryItems("rejected")];
+  }
+
+  function feedbackState(ev: GoalEvent): string {
+    if (ev.Pinned) return "Standing directive";
+    return detail?.feedback_receipts.some((receipt) => receipt.event_id === ev.ID) ? "Included in memory" : "Pending";
+  }
+
+  function memoryBlockReason(reason?: string): string {
+    switch (reason) {
+      case "commit_missing": return "The last review ended before saving updated memory.";
+      case "over_budget": return "The memory is too large to send safely.";
+      case "validation_failed": return "The saved memory did not pass consistency checks.";
+      case "corrupt_memory": return "The saved memory cannot be read safely.";
+      case "missing_verified_memory": return "This goal has no verified working memory.";
+      default: return "Podiom could not verify this goal's working memory.";
+    }
+  }
+
+  async function runMemoryRepair(goal: Goal) {
+    repairBusy = true;
+    repairError = null;
+    try {
+      repairResult = await repairGoalMemory(goal.ID);
+      repairOpen = false;
+      await refreshDetail();
+    } catch (e) {
+      repairError = e instanceof Error ? e.message : "Memory repair didn't finish.";
+    } finally {
+      repairBusy = false;
+    }
+  }
+
+  function repairCurrentGoal() {
+    if (detail) void runMemoryRepair(detail.goal);
   }
 
   // The goal's rulebook, oldest first, mirroring the order the agent is given.
@@ -613,7 +668,7 @@
     | { kind: "toolGroup"; id: number; events: GoalEvent[] };
 
   const timelineItems = $derived.by<TimelineItem[]>(() => {
-    const evs = detail?.events ?? [];
+    const evs = (detail?.events ?? []).filter((ev) => technicalOpen || ev.Kind !== "tool_use");
     const items: TimelineItem[] = [];
     let group: GoalEvent[] = [];
     const flush = () => {
@@ -979,6 +1034,205 @@
     executed: ["#e3f1ec", "#bfe0d6", "#2f6e60", "granted"],
     denied: ["#f1ece6", "#e2d8cc", "#8a7f73", "denied"],
   };
+
+  const RUN_STATUS: Record<string, [string, string, string]> = {
+    running: ["#eeeafb", "#d8cff3", "#5847b8"],
+    done: ["#e3f1ec", "#bfe0d6", "#2f6e60"],
+    failed: ["#fbeae0", "#f2d6c5", "#b14e2a"],
+  };
+
+  // ---- the record (left rail) --------------------------------------------------
+  // One tabbed panel over the four memory item kinds, instead of a card per kind:
+  // the record is reference material, and only one kind is ever being read.
+  type RecordTabKey = "milestones" | "decisions" | "risks" | "artifacts";
+  const RECORD_TABS: { k: RecordTabKey; label: string; empty: string }[] = [
+    { k: "milestones", label: "Done", empty: "No milestones recorded yet." },
+    { k: "decisions", label: "Decisions", empty: "No durable decisions yet." },
+    { k: "risks", label: "Risks & rejected", empty: "No active concerns recorded." },
+    { k: "artifacts", label: "Artifacts", empty: "No artifacts recorded." },
+  ];
+  let recordTab = $state<RecordTabKey>("milestones");
+
+  function recordItems(k: RecordTabKey) {
+    switch (k) {
+      case "milestones": return memoryItems("milestone");
+      case "decisions": return memoryItems("decision");
+      case "risks": return activeConcerns();
+      case "artifacts": return memoryItems("artifact");
+    }
+  }
+
+  function recordDetail(item: GoalMemoryItem): string {
+    return item.detail || item.rationale || item.evidence || "";
+  }
+
+  const activeRecord = $derived(RECORD_TABS.find((tab) => tab.k === recordTab) ?? RECORD_TABS[0]);
+  const activeRecordItems = $derived(recordItems(activeRecord.k));
+
+  // Feedback the user has written, as the right rail shows it: standing
+  // directives first because they bind every run, then the newest ordinary
+  // notes. The timeline still carries the full chronological record.
+  const feedbackNotes = $derived([...directives, ...recentOrdinaryFeedback()]);
+
+  function metricsAverage(metrics: GoalMetric[]): number {
+    if (metrics.length === 0) return 0;
+    return Math.round(metrics.reduce((sum, m) => sum + metricPct(m), 0) / metrics.length);
+  }
+
+  // ---- "now": one line saying whether the goal is waiting on the user ----------
+  type NowState = {
+    tone: "alert" | "planning" | "quiet" | "calm";
+    label: string;
+    sub: string;
+    chips: string[];
+    calm: string;
+  };
+
+  const nowState = $derived.by<NowState>(() => {
+    if (!detail) return { tone: "calm", label: "", sub: "", chips: [], calm: "" };
+    const g = detail.goal;
+    const chips: string[] = [];
+    let blocked = 0;
+    if (g.Status === "review") { chips.push("completion proposed"); blocked += 1; }
+    if (detailPendingQuestion) { chips.push("question to answer"); blocked += 1; }
+    if (detailPendingRateLimit) { chips.push("rate limit"); blocked += 1; }
+    if (detailOpenReqs.length > 0) {
+      chips.push(`${detailOpenReqs.length} access request${detailOpenReqs.length === 1 ? "" : "s"}`);
+      blocked += detailOpenReqs.length;
+    }
+    const openActions = detailActionItems.filter((item) => item.Status === "open").length;
+    if (openActions > 0) {
+      chips.push(`${openActions} action item${openActions === 1 ? "" : "s"}`);
+      blocked += openActions;
+    }
+    if (chips.length > 0) {
+      return {
+        tone: "alert",
+        label: "Now — waiting on you",
+        sub: `${blocked} ${blocked === 1 ? "thing is" : "things are"} blocked until you decide`,
+        chips,
+        calm: "",
+      };
+    }
+    if (isPlanning) {
+      return { tone: "planning", label: "Now — planning", sub: "the agent is decomposing the goal", chips, calm: "" };
+    }
+    if (g.Status === "paused") {
+      return {
+        tone: "quiet",
+        label: "Now — paused",
+        sub: "no reviews are scheduled",
+        chips,
+        calm: `This goal is paused, so ${g.LeadAgent} is not working on it and no review is scheduled. Resume to pick it back up.`,
+      };
+    }
+    if (g.Status === "done" || g.Status === "abandoned") {
+      return {
+        tone: "quiet",
+        label: "Now — closed",
+        sub: g.Status === "done" ? "marked done by you" : "abandoned by you",
+        chips,
+        calm: `This goal is ${g.Status}. Reviews have stopped — its record and timeline are kept, and you can reopen it.`,
+      };
+    }
+    return {
+      tone: "calm",
+      label: "Now — running unattended",
+      sub: `next review ${nextLabel(g)}`,
+      chips,
+      calm: `Nothing is waiting on you. ${g.LeadAgent} keeps working unattended — the next review is ${nextLabel(g)}.`,
+    };
+  });
+
+  // ---- resizable side rails ---------------------------------------------------
+  // The width is written straight to the element rather than held in state, so a
+  // drag never re-renders the goal, and it is remembered per side. Only the wide
+  // layout has grips; below 1320px the rails stack and the stored width is
+  // ignored.
+  const COL_KEY = "podiom-goal-rail-";
+  const COL_DEFAULT = { left: 384, right: 340 };
+  let historyEl = $state<HTMLElement | null>(null);
+  let nextEl = $state<HTMLElement | null>(null);
+
+  const railEl = (side: "left" | "right") => (side === "left" ? historyEl : nextEl);
+
+  $effect(() => {
+    if (view !== "detail" || window.innerWidth <= 1319) return;
+    for (const side of ["left", "right"] as const) {
+      const el = railEl(side);
+      if (!el) continue;
+      try {
+        const stored = parseInt(window.localStorage.getItem(COL_KEY + side) ?? "", 10);
+        if (stored > 0) el.style.width = `${stored}px`;
+      } catch {
+        // Storage can be blocked; the default width is fine.
+      }
+    }
+  });
+
+  // The drag bounds: rails never squeeze the spine below a readable measure.
+  const colBounds = () => ({ min: 300, max: Math.max(300, Math.min(760, window.innerWidth - 520)) });
+
+  function nudgeCol(side: "left" | "right", step: number) {
+    const el = railEl(side);
+    if (!el) return;
+    const { min, max } = colBounds();
+    const width = Math.max(min, Math.min(max, Math.round(el.getBoundingClientRect().width + step)));
+    el.style.width = `${width}px`;
+    try {
+      window.localStorage.setItem(COL_KEY + side, String(width));
+    } catch {
+      // The change still applies for this page load.
+    }
+  }
+
+  function resizeKey(side: "left" | "right", e: KeyboardEvent) {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === "ArrowLeft") nudgeCol(side, side === "left" ? -step : step);
+    else if (e.key === "ArrowRight") nudgeCol(side, side === "left" ? step : -step);
+    else if (e.key === "Home") resetCol(side);
+    else return;
+    e.preventDefault();
+  }
+
+  function resetCol(side: "left" | "right") {
+    const el = railEl(side);
+    if (!el) return;
+    el.style.width = `${COL_DEFAULT[side]}px`;
+    try {
+      window.localStorage.removeItem(COL_KEY + side);
+    } catch {
+      // Nothing to forget if storage is blocked.
+    }
+  }
+
+  function startResize(side: "left" | "right", e: MouseEvent) {
+    const el = railEl(side);
+    if (!el) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = el.getBoundingClientRect().width;
+    const { min, max } = colBounds();
+    const move = (ev: MouseEvent) => {
+      const delta = side === "left" ? ev.clientX - startX : startX - ev.clientX;
+      el.style.width = `${Math.max(min, Math.min(max, Math.round(startWidth + delta)))}px`;
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try {
+        window.localStorage.setItem(COL_KEY + side, String(parseInt(el.style.width, 10) || COL_DEFAULT[side]));
+      } catch {
+        // The drag still applies for this page load.
+      }
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
 </script>
 
 <div class="goals-scroll">
@@ -1123,482 +1377,198 @@
   {/if}
 
   <!-- ================= DETAIL ================= -->
+  <!-- Three columns, each answering one question and nothing else: the left
+       rail is the history the agent accumulated, the spine is the goal itself
+       and what is happening on it right now, and the right rail is what happens
+       next plus the controls that change it. The side rails stay put while the
+       spine scrolls, so the reference material never scrolls away from the
+       decision it informs. Below 1320px they stack under the spine. -->
   {#if view === "detail" && detail}
     {@const g = detail.goal}
     {@const [bg, bd, tc, lbl, pulse] = isPlanning ? STATUS_PILL.planning : statusPill(g)}
-    <div class="page detail-page">
-      <button class="back" onclick={() => { view = "list"; void refreshAll(); }}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>All goals
-      </button>
+    <!-- The goal's controls live in the right rail, where they stay in view
+         while the spine scrolls. Once the rails stack they would land past the
+         whole timeline, so the same snippet is rendered in the header instead —
+         one is always hidden, and both drive the same state. -->
+    {#snippet goalActions()}
+      <div class="detail-actions">
+        {#if g.Status === "active"}
+          {#if reviewRunning}
+            <button class="btn teal reviewing" disabled>
+              <span class="btn-spinner" aria-hidden="true"></span>Reviewing…
+            </button>
+          {:else}
+            <button class="btn teal" disabled={busy === g.ID} title="Run a review now" onclick={() => reviewNow(g)}>
+              {reviewButtonLabel(g)}
+            </button>
+          {/if}
+        {/if}
+        {#if g.Status === "active" || (g.Status === "paused" && detail?.memory.status !== "blocked")}
+          <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, g.Status === "paused" ? "active" : "paused", g.Status === "paused" ? "Resumed by you." : "Paused by you.")}>
+            {g.Status === "paused" ? "Resume" : "Pause"}
+          </button>
+        {/if}
+        {#if g.Status === "done" || g.Status === "abandoned"}
+          <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, "active", "Reopened by you.")}>Reopen</button>
+        {/if}
+        <div class="menu-wrap">
+          <button class="btn icon" title="More" onclick={() => (menuOpen = !menuOpen)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+          </button>
+          {#if menuOpen}
+            <div class="menu">
+              {#if g.Status !== "done" && g.Status !== "abandoned"}
+                <button class="menu-item" onclick={() => { menuOpen = false; pendingAbandon = g; }}>Abandon goal</button>
+              {/if}
+              <button class="menu-item danger" onclick={() => { menuOpen = false; pendingDelete = g; }}>Delete goal</button>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/snippet}
+    <div class="goal-detail">
+      <!-- ---------- LEFT: HISTORY ---------- -->
+      <aside class="gd-history" bind:this={historyEl}>
+        <div class="rail-head">
+          <span class="rail-badge history">↺</span>
+          <span class="section-label mono">History — how this run got here</span>
+        </div>
 
-      <!-- header -->
-      <div class="detail-head">
-        <div class="detail-head-main">
-          <div class="card-meta" style="margin-bottom:10px">
+        <section class="gd-block">
+          <div class="section-label mono">Where things stand</div>
+          <div class="state-card">
+            <div class="state-text">{detail.memory.document.current_state || "Working memory is being prepared."}</div>
+            <div class="state-meta mono">the agent's working memory · revision {detail.memory.revision} · updated {relTime(detail.memory.updated_at)}</div>
+          </div>
+        </section>
+
+        {#if detail.runs.length > 0}
+          <section class="gd-block">
+            <div class="section-label mono">Runs — what each session did</div>
+            <div class="run-list">
+              {#each detail.runs.slice(0, 8) as run (run.ID)}
+                {@const runEvent = detail.events.find((event) => event.RunID === run.ID)}
+                {@const tokens = run.InputTokens + run.OutputTokens + run.CacheReadTokens + run.CacheWriteTokens}
+                <button class="run-card" disabled={!runEvent} title={runEvent ? "Open the full transcript of this run" : "No transcript recorded for this run"} onclick={() => runEvent && openRun(runEvent)}>
+                  <div class="run-card-top">
+                    <b>{run.Outcome || (run.Status === "running" ? "Review in progress" : `${run.Kind} ${run.Status}`)}</b>
+                    <span class="pill mono sm" style="background:{RUN_STATUS[run.Status]?.[0] ?? '#f1ece6'};border-color:{RUN_STATUS[run.Status]?.[1] ?? '#e2d8cc'};color:{RUN_STATUS[run.Status]?.[2] ?? '#8a7f73'}">{run.Status}</span>
+                  </div>
+                  <div class="run-card-meta mono">
+                    <span>{runKindLabel(run.Kind).toLowerCase()} · {relTime(run.StartedAt)} · {tokens.toLocaleString()} tokens</span>
+                    {#if runEvent}<span class="run-card-open">View transcript →</span>{/if}
+                  </div>
+                </button>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        <section class="gd-block">
+          <div class="section-label mono">The record — what the agent has learned</div>
+          <div class="record">
+            <div class="record-tabs">
+              {#each RECORD_TABS as tab (tab.k)}
+                {@const items = recordItems(tab.k)}
+                <button class="record-tab" class:sel={recordTab === tab.k} onclick={() => (recordTab = tab.k)}>
+                  {tab.label}<span class="record-count mono">{items.length}</span>
+                </button>
+              {/each}
+            </div>
+            {#if activeRecordItems.length > 0}
+              <div class="record-items">
+                {#each activeRecordItems as item (item.id)}
+                  <div class="record-item">
+                    <b>{item.title}</b>
+                    {#if item.url}
+                      <a class="record-link mono" href={item.url} target="_blank" rel="noreferrer"><span>↗</span>{item.detail || item.evidence || item.url}</a>
+                    {:else if recordDetail(item)}
+                      <span>{recordDetail(item)}</span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="record-empty">{activeRecord.empty}</div>
+            {/if}
+          </div>
+        </section>
+      </aside>
+
+      <!-- Dragging a grip resizes the rail it sits beside; a double-click puts
+           it back. Widths are written straight to the element and remembered
+           per side, so a drag never re-renders the page. -->
+      <button
+        class="gd-grip"
+        aria-label="Resize the history rail — arrow keys adjust, Home resets"
+        title="Drag to resize · double-click to reset"
+        onmousedown={(e) => startResize("left", e)}
+        ondblclick={() => resetCol("left")}
+        onkeydown={(e) => resizeKey("left", e)}></button>
+
+      <!-- ---------- CENTER: THE GOAL ---------- -->
+      <main class="gd-spine">
+        <button class="back" onclick={() => { view = "list"; void refreshAll(); }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>All goals
+        </button>
+
+        <header class="gd-head">
+          <div class="head-actions">{@render goalActions()}</div>
+          <div class="gd-title-row">
+            <h1 class="detail-title">{g.Title}</h1>
             <span class="pill mono lg" style="background:{bg};border-color:{bd};color:{tc}">
               {#if pulse}<span class="pill-dot" style="background:{tc};box-shadow:0 0 0 3px {bg}"></span>{/if}
               {isPlanning ? "planning" : lbl}
             </span>
-            <span class="agent-chip lg">
-              <AgentAvatar name={g.LeadAgent} size={22} radius={7} fontSize={10} />
-              {g.LeadAgent}
-            </span>
-            {#if g.ProjectID}<span class="proj mono">◆ {g.ProjectID}</span>{/if}
           </div>
-          <div class="detail-title">{g.Title}</div>
-        </div>
-        <div class="detail-actions">
-          {#if g.Status === "active"}
-            {#if reviewRunning}
-              <button class="btn teal reviewing" disabled>
-                <span class="btn-spinner" aria-hidden="true"></span>Reviewing…
-              </button>
-            {:else}
-              <button class="btn teal" disabled={busy === g.ID} title="Run a review now" onclick={() => reviewNow(g)}>
-                {reviewButtonLabel(g)}
-              </button>
-            {/if}
+          {#if g.Description}
+            <div class="gd-desc"><AgentMarkdown content={g.Description} /></div>
           {/if}
-          {#if g.Status === "active" || g.Status === "paused"}
-            <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, g.Status === "paused" ? "active" : "paused", g.Status === "paused" ? "Resumed by you." : "Paused by you.")}>
-              {g.Status === "paused" ? "Resume" : "Pause"}
-            </button>
-          {/if}
-          {#if g.Status === "done" || g.Status === "abandoned"}
-            <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, "active", "Reopened by you.")}>Reopen</button>
-          {/if}
-          <div class="menu-wrap">
-            <button class="btn icon" title="More" onclick={() => (menuOpen = !menuOpen)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
-            </button>
-            {#if menuOpen}
-              <div class="menu">
-                {#if g.Status !== "done" && g.Status !== "abandoned"}
-                  <button class="menu-item" onclick={() => { menuOpen = false; pendingAbandon = g; }}>Abandon goal</button>
-                {/if}
-                <button class="menu-item danger" onclick={() => { menuOpen = false; pendingDelete = g; }}>Delete goal</button>
-              </div>
-            {/if}
-          </div>
-        </div>
-      </div>
-
-      <div class="detail-cols">
-        <!-- LEFT: what's happening — everything that needs a decision, then the
-             agent's stated intent, then the record of what it has done. -->
-        <div class="detail-main">
-        <!-- PLANNING banner -->
-        {#if isPlanning}
-          <div class="banner planning">
-            <div class="banner-icon violet">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5847b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.8 10.6c.6.6.8 1 .8 1.9h6c0-.9.2-1.3.8-1.9A6 6 0 0 0 12 3z"/></svg>
+          {#if g.SuccessCriteria}
+            <div class="gd-criteria">
+              <div class="section-label mono teal">Done when</div>
+              <div class="gd-criteria-text"><AgentMarkdown content={g.SuccessCriteria} /></div>
             </div>
+          {/if}
+        </header>
+
+        {#if detail.memory.status === "blocked"}
+          <section class="memory-alert" id="goal-memory">
             <div>
-              <div class="banner-title violet-ink">{g.LeadAgent} is planning this goal now<span class="dots"><span class="dot"></span><span class="dot" style="animation-delay:.15s"></span><span class="dot" style="animation-delay:.3s"></span></span></div>
-              <div class="banner-sub violet-sub">
-                Decomposing the goal into tasks and schedules. This runs in the background — metrics, the timeline, and
-                access requests will fill in as the agent makes progress. You can safely leave.
-              </div>
+              <strong>Goal paused to protect its memory</strong>
+              <p>Podiom could not verify that the next review would include all saved decisions and feedback. Your saved work is intact. Reviews are paused until memory is repaired.</p>
             </div>
-          </div>
+            <button class="btn-primary" onclick={() => { repairError = null; repairOpen = true; }}>Review memory issue</button>
+          </section>
+        {:else if detail.memory.status === "pending_backfill" || detail.memory.status === "validating"}
+          <section class="memory-preparing">
+            <span class="btn-spinner" aria-hidden="true"></span>
+            <div><strong>Preparing goal memory</strong><span>Podiom is organizing saved context for shorter future reviews.</span></div>
+          </section>
         {/if}
 
-        <!-- PENDING QUESTION banner: the agent is blocked on a decision -->
-        {#if detailPendingQuestion}
-          <div class="banner goal-question" id={detailPendingQuestion ? `goal-question-${detailPendingQuestion.ID}` : undefined}>
-            <div class="banner-icon amber">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
-            </div>
-            <div class="recovery-main">
-              <div class="banner-title amber-ink">{g.LeadAgent} needs an answer to continue</div>
-              <div class="banner-sub amber-sub">Reviews are paused until you answer. Your answer reaches the agent on its next session.</div>
-              <div class="goal-q-body">
-                {#each detailPendingQuestion.Questions as item}
-                  <div class="goal-q-block">
-                    {#if item.header}<div class="goal-q-header">{item.header}</div>{/if}
-                    <div class="goal-q-text"><AgentMarkdown content={item.question} /></div>
-                    {#if item.options && item.options.length > 0}
-                      <div class="goal-q-options">
-                        {#each item.options as option}
-                          <button
-                            class="goal-q-option"
-                            class:sel={qSelected(item.id, option.label)}
-                            onclick={() => qToggle(item, option.label)}
-                          >
-                            <span class="goal-q-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
-                            <span class="goal-q-option-text">
-                              <span>{option.label}</span>
-                              {#if option.description}<small><AgentMarkdown content={option.description} /></small>{/if}
-                            </span>
-                          </button>
-                        {/each}
-                      </div>
-                    {:else}
-                      <input
-                        class="goal-q-free"
-                        type={item.is_secret ? "password" : "text"}
-                        placeholder="Your answer"
-                        value={(questionAnswers[item.id] ?? [])[0] ?? ""}
-                        oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
-                      />
-                    {/if}
-                  </div>
-                {/each}
-                <button class="btn-primary" disabled={questionBusy || !qReady(detailPendingQuestion)} onclick={() => submitQuestionAnswer(detailPendingQuestion)}>
-                  {questionBusy ? "Sending…" : "Send answer"}
-                </button>
-              </div>
-            </div>
-          </div>
+        {#if repairResult}
+          <section class="memory-success">
+            <div><strong>Goal memory repaired</strong><span>Rebuilt from {repairResult.runs_read} runs and {repairResult.feedback_read} feedback notes · {repairResult.added} added · {repairResult.changed} changed · {repairResult.retired} retired.</span></div>
+            <div class="memory-success-actions"><button class="btn" onclick={() => document.querySelector(".state-card")?.scrollIntoView({ behavior: "smooth" })}>Review changes</button>{#if g.Status === "paused"}<button class="btn-primary" onclick={() => transition(g, "active", "Resumed after memory repair.")}>Resume goal</button>{/if}</div>
+          </section>
         {/if}
 
-        <!-- RATE LIMIT RECOVERY banner -->
-        {#if detailPendingRateLimit}
-          <div class="banner rate-limit" id="goal-recovery">
-            <div class="banner-icon amber">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b14e2a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/></svg>
-            </div>
-            <div class="recovery-main">
-              <div class="banner-title amber-ink">Rate limit reached</div>
-              <div class="banner-sub amber-sub">
-                {g.LeadAgent} could not continue the {detailPendingRateLimit.Phase} run after automatic fallback. Pick a target and retry.
-              </div>
-              <div class="recovery-picker">
-                <RunTargetPicker
-                  agent={selectedDetailAgent}
-                  {profiles}
-                  variant="inline"
-                  value={{ provider: recoveryProvider, profile: recoveryProfile, model: recoveryModel, effort: recoveryEffort }}
-                  onChange={(next) => {
-                    recoveryProvider = next.provider || "";
-                    recoveryProfile = next.profile || "";
-                    recoveryModel = next.model || "";
-                    recoveryEffort = next.effort || "";
-                  }}
-                />
-                <button class="btn-primary" disabled={recoveryBusy} onclick={() => resolveRateLimit(detailPendingRateLimit)}>
-                  {recoveryBusy ? "Retrying…" : "Retry with this model"}
-                </button>
-              </div>
-              {#if detailPendingRateLimit.Error}
-                <div class="recovery-error mono">{detailPendingRateLimit.Error}</div>
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <!-- COMPLETION banner -->
-        {#if g.Status === "review"}
-          <div class="completion" id="goal-completion">
-            <div class="completion-head">
-              <span class="pulse-dot"></span>
-              <div>
-                <div class="completion-title">{g.LeadAgent} believes this goal is done</div>
-                <div class="completion-sub">Review the closing report, then confirm. Only you can mark a goal done.</div>
-              </div>
-            </div>
-            <div class="completion-body">
-              <div class="section-label mono">Closing report</div>
-              <div class="md"><AgentMarkdown content={g.ClosingReport} /></div>
-              <div class="completion-actions">
-                <button class="btn-primary grow" disabled={busy === g.ID} onclick={() => transition(g, "done", "Marked done by you.")}>Mark done</button>
-                <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, "active", "Reopened by you.")}>Reopen</button>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <!-- PENDING ACCESS REQUESTS -->
-        {#if detailOpenReqs.length > 0}
-          <div class="requests">
-            <div class="requests-head">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#b37a1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V8a4 4 0 0 1 8 0"/><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M12 15v2"/></svg>
-              <div class="requests-title">Access requests waiting on you</div>
-              <span class="req-count mono">{detailOpenReqs.length}</span>
-            </div>
-            <div class="requests-body">
-              {#each detailOpenReqs as r (r.ID)}
-                {@const rk = RK[r.Kind]}
-                {@const [sbg, sbd, stc, rawLbl] = reqStatusChip[r.Status] ?? reqStatusChip.pending}
-                <!-- The id is the deep-link anchor for a notification about this request. -->
-                <div class="req-card" class:failed={r.Status === "failed"} id={`goal-access-${r.ID}`}>
-                  <span class="req-icon" style="background:{rk.t};border-color:{rk.b}">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={rk.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html rk.ic}</svg>
-                  </span>
-                  <div class="req-main">
-                    <div class="req-top">
-                      <span class="req-kind">{rk.label}</span>
-                      <span class="pill mono sm" style="background:{sbg};border-color:{sbd};color:{stc}">{rawLbl}</span>
-                    </div>
-                    <div class="req-reason"><AgentMarkdown content={r.Reason} /></div>
-                    <div class="req-payload">
-                      {#each payloadEntries(r) as [k, v]}
-                        <span class="kv mono"><span class="k">{k}</span><span class="v">{v}</span></span>
-                      {/each}
-                    </div>
-                    {#if r.ExecutionError}
-                      <div class="req-error">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.3 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/></svg>
-                        {r.ExecutionError}
-                      </div>
-                    {/if}
-                    {#if r.Status === "pending" || r.Status === "failed"}
-                      <div class="req-actions">
-                        <button class="btn-approve" onclick={() => (dialog = { req: r, action: "approve", note: "", secret: "", busy: false })}>Approve</button>
-                        <button class="btn-deny" onclick={() => (dialog = { req: r, action: "deny", note: "", secret: "", busy: false })}>Deny</button>
-                      </div>
-                    {/if}
-                  </div>
+        <div class="gd-cards">
+          <!-- PROGRESS -->
+          <article class="panel gd-card">
+            <div class="section-label mono">Progress to done</div>
+            {#if g.Metrics.length > 0}
+              {@const pct = metricsAverage(g.Metrics)}
+              <div class="progress-top">
+                <div class="progress-ring" style="background:conic-gradient(var(--teal) {pct}%, #e6efea 0)">
+                  <div class="progress-ring-hole">{pct}%</div>
                 </div>
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        <!-- ACTION ITEMS — work handed back to you. Below the blocking cards
-             above (question, rate limit, access requests) because the goal keeps
-             running while these wait, and above Next step because that is what
-             the agent will do around them. -->
-        {#if detailActionItems.length > 0}
-          {#key g.ID}
-            <GoalActionItems items={detailActionItems} onRespond={submitActionResponse} />
-          {/key}
-        {/if}
-
-        <!-- NEXT STEP -->
-        {#if nextStepVisible}
-          <div class="panel ns-panel">
-            <div class="ns-head">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--teal-deep)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M12 5l7 7-7 7"/></svg>
-              <span class="section-label mono ns-label">Next step — what {g.LeadAgent} does next</span>
-              {#if g.NextStepAt}
-                <span class="ns-age mono">stated {relTime(g.NextStepAt)}</span>
-              {/if}
-            </div>
-            <div class="ns-body">
-              {#if g.NextStep}
-                <div class="ns-action"><AgentMarkdown content={g.NextStep} /></div>
-                {#if g.NextStepWhy}
-                  <div class="ns-why"><AgentMarkdown content={g.NextStepWhy} /></div>
-                {/if}
-                <div class="ns-foot mono">
-                  <AgentAvatar name={g.LeadAgent} size={17} radius={5} fontSize={8} />
-                  {g.LeadAgent} decided this · restated at every review · next review <b>{nextLabel(g)}</b>
+                <div>
+                  <div class="progress-summary">{g.Metrics.filter(metricMet).length} of {g.Metrics.length} metric{g.Metrics.length === 1 ? "" : "s"} met</div>
+                  <div class="progress-note mono">mean of metric targets</div>
                 </div>
-              {:else}
-                <div class="desc muted">
-                  No next step stated yet — {g.LeadAgent} sets one at its next review.
-                </div>
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <!-- TIMELINE -->
-        <div class="panel timeline" id="goal-timeline">
-          <div class="timeline-head">
-            <span class="section-label mono" style="margin-bottom:0">Activity</span>
-            <span class="group-rule"></span>
-            <button class="btn feedback-toggle" onclick={() => (feedbackOpen = !feedbackOpen)}>
-              {feedbackOpen ? "Cancel" : "Add feedback"}
-            </button>
-          </div>
-          {#if feedbackOpen}
-            <div class="feedback-composer">
-              <div class="field-label-row">
-                <div class="field-label mono">Feedback</div>
-                <VoiceButton size="sm" onText={(t) => (feedbackBody = appendTranscript(feedbackBody, t))} />
               </div>
-              <textarea
-                class="field"
-                rows="3"
-                bind:value={feedbackBody}
-                placeholder="Strategy notes, constraints, or next-step thoughts for the next goal run."></textarea>
-              <label class="pin-choice">
-                <input type="checkbox" bind:checked={feedbackPinned} />
-                <span>
-                  Keep as a standing directive
-                  <em>Applies for the whole goal, including the tasks and schedules the agent creates.</em>
-                </span>
-              </label>
-              <div class="feedback-actions">
-                <button class="btn-primary" disabled={feedbackBusy || !feedbackBody.trim()} onclick={() => submitFeedback(g)}>
-                  {feedbackBusy ? "Saving…" : "Save feedback"}
-                </button>
-                <button class="btn" disabled={feedbackBusy} onclick={() => { feedbackOpen = false; feedbackBody = ""; feedbackPinned = false; }}>Cancel</button>
-              </div>
-            </div>
-          {/if}
-          <div class="timeline">
-            <div class="timeline-rule"></div>
-            <div class="events">
-              {#each timelineItems as item (item.kind === "toolGroup" ? "g" + item.id : "e" + item.ev.ID)}
-                {#if item.kind === "toolGroup"}
-                  {@const k = EK.tool_use}
-                  <div class="event">
-                    <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
-                    </span>
-                    <div class="event-main">
-                      <button class="tool-group-toggle" onclick={() => toggleGroup(item.id)}>
-                        <span class="event-kind mono" style="color:{k.c}">{item.events.length} read-only tool calls</span>
-                        <span class="arrow" class:open={expandedGroups.has(item.id)}>›</span>
-                      </button>
-                      {#if expandedGroups.has(item.id)}
-                        <div class="tool-group-list">
-                          {#each item.events as ev (ev.ID)}
-                            {@const tp = toolPayload(ev)}
-                            <div class="tool-row">
-                              <span class="tool-name mono">{tp.tool}</span>
-                              {#if tp.summary}<span class="tool-summary mono">{tp.summary}</span>{/if}
-                              <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
-                            </div>
-                          {/each}
-                        </div>
-                      {/if}
-                      {#if canViewRun(item.events[0])}
-                        <button class="event-session mono" onclick={() => openRun(item.events[0])}>
-                          view run <span class="arrow">↗</span>
-                        </button>
-                      {/if}
-                    </div>
-                  </div>
-                {:else if item.ev.Kind === "tool_use"}
-                  {@const ev = item.ev}
-                  {@const k = EK.tool_use}
-                  {@const tp = toolPayload(ev)}
-                  <div class="event">
-                    <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
-                    </span>
-                    <div class="event-main">
-                      <div class="event-top">
-                        <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
-                        <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
-                      </div>
-                      <div class="event-title">{tp.tool}</div>
-                      {#if tp.summary}
-                        <div class="event-cmd mono">{tp.summary}{#if tp.input_truncated}<span class="tool-trunc"> …truncated</span>{/if}</div>
-                      {/if}
-					  {#if canViewRun(ev)}
-						<button class="event-session mono" onclick={() => openRun(ev)}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-						  view run <span class="arrow">↗</span>
-                        </button>
-                      {/if}
-                    </div>
-                  </div>
-                {:else}
-                  {@const ev = item.ev}
-                  {@const k = EK[ev.Kind] ?? EK.progress}
-                  <div class="event">
-                    <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
-                    </span>
-                    <div class="event-main">
-                      <div class="event-top">
-                        <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
-                        <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
-                        {#if ev.Pinned}
-                          <span class="directive-badge mono">standing directive</span>
-                        {/if}
-                        {#if canEditFeedback(ev) && editingFeedbackID !== ev.ID}
-                          <button class="event-edit mono" onclick={() => startEditFeedback(ev)}>edit</button>
-                        {/if}
-                        {#if ev.Kind === "user_feedback" && editingFeedbackID !== ev.ID}
-                          <button class="event-edit mono" disabled={pinBusyID === ev.ID} onclick={() => toggleFeedbackPin(g, ev)}>
-                            {pinBusyID === ev.ID ? "…" : ev.Pinned ? "unpin" : "pin"}
-                          </button>
-                        {/if}
-                      </div>
-                      {#if editingFeedbackID === ev.ID}
-                        <div class="feedback-edit">
-                          <textarea class="field" rows="3" bind:value={editingFeedbackBody}></textarea>
-                          <div class="feedback-actions">
-                            <button class="btn-primary" disabled={editingFeedbackBusy || !editingFeedbackBody.trim()} onclick={() => submitFeedbackEdit(g, ev)}>
-                              {editingFeedbackBusy ? "Saving…" : "Save changes"}
-                            </button>
-                            <button class="btn" disabled={editingFeedbackBusy} onclick={cancelEditFeedback}>Cancel</button>
-                          </div>
-                        </div>
-                      {:else}
-                        <div class="event-title">{eventTitle(ev)}</div>
-                        {#if ev.Kind === "metric_update" && metricDelta(ev)}
-                          <div class="event-delta mono">{metricDelta(ev)}</div>
-                        {/if}
-                        {#if eventBody(ev)}
-                          <div class="event-body md"><AgentMarkdown content={eventBody(ev)} /></div>
-                        {/if}
-                      {/if}
-					  {#if canViewRun(ev)}
-						<button class="event-session mono" onclick={() => openRun(ev)}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-						  view run <span class="arrow">↗</span>
-                        </button>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
-              {/each}
-            </div>
-          </div>
-          {#if moreEvents}
-            <button class="load-more mono" disabled={loadingMore} onclick={loadMoreEvents}>
-              {loadingMore ? "loading…" : "load older activity"}
-            </button>
-          {/if}
-        </div>
-        </div>
-
-        <!-- RIGHT RAIL: the goal at a glance — what it is, how far along it is,
-             and how it runs. Reference material, so it stays put while the
-             left column scrolls. -->
-        <aside class="detail-rail">
-          <!-- OUTCOME -->
-          <div class="panel rail-panel">
-            <div class="section-label mono rail-label">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.6"/></svg>
-              The outcome
-            </div>
-            {#if g.Description}
-              <div class="desc"><AgentMarkdown content={g.Description} /></div>
-            {/if}
-            {#if g.SuccessCriteria}
-              <div class="criteria" class:mt={!!g.Description}>
-                <div class="criteria-label mono">Success criteria — what “done” means</div>
-                <div class="criteria-text"><AgentMarkdown content={g.SuccessCriteria} /></div>
-              </div>
-            {/if}
-            {#if !g.Description && !g.SuccessCriteria}
-              <div class="desc muted">No description or success criteria yet.</div>
-            {/if}
-          </div>
-
-          <!-- STANDING DIRECTIVES -->
-          {#if directives.length > 0}
-            <div class="panel rail-panel">
-              <div class="section-label mono rail-label">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
-                Standing directives
-              </div>
-              <div class="directive-note mono">Binding for the whole goal — the agent gets these on every run, including the tasks and schedules it creates.</div>
-              <ul class="directive-list">
-                {#each directives as d (d.ID)}
-                  <li>
-                    <div class="directive-text"><AgentMarkdown content={d.Body} /></div>
-                    <button class="event-edit mono" disabled={pinBusyID === d.ID} onclick={() => toggleFeedbackPin(g, d)}>
-                      {pinBusyID === d.ID ? "…" : "unpin"}
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            </div>
-          {/if}
-
-          <!-- METRICS -->
-          {#if g.Metrics.length > 0}
-            <div class="panel rail-panel">
-              <div class="section-label mono">Progress to done</div>
               <div class="metrics">
                 {#each g.Metrics as m (m.name)}
                   <div>
@@ -1616,35 +1586,30 @@
                   </div>
                 {/each}
               </div>
-            </div>
-          {/if}
+            {:else}
+              <div class="progress-big">{memoryItems("milestone").length}</div>
+              <div class="progress-note">completed milestone{memoryItems("milestone").length === 1 ? "" : "s"} · no metrics on this goal</div>
+            {/if}
+          </article>
 
           <!-- HOW THIS GOAL RUNS -->
-          <div class="panel rail-panel">
+          <article class="panel gd-card">
             <div class="section-label mono">How this goal runs</div>
             <div class="runs-agent">
               <AgentAvatar name={g.LeadAgent} size={22} radius={7} fontSize={10} />
-              <div>
+              <div class="runs-agent-id">
                 <div class="runs-agent-name">{g.LeadAgent}</div>
                 <div class="runs-agent-role mono">lead agent</div>
               </div>
-            </div>
-            <div class="runs-meta">
-              <span class="meta-item">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                reviews {cadenceLabel(g)}
-              </span>
-              <span class="meta-item next">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="M12 5l7 7-7 7"/></svg>
-                <span>next review <b>{nextLabel(g)}</b></span>
-              </span>
-            </div>
-            <div class="runs-yolo">
               <span class="yolo-pill mono" title="This goal runs autonomously with full access (yolo): its sessions, tasks, and schedules run shell commands, edit files, and install software without per-action approval. Every tool call is recorded on the activity feed.">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4-3 6.7-7 8-4-1.3-7-4-7-8V6z"/><path d="M12 9v4"/><path d="M12 16h.01"/></svg>
                 autonomous · full access
               </span>
-              <div class="runs-yolo-note">Works unattended between reviews; every tool call lands on the activity feed.</div>
+            </div>
+            <div class="runs-meta">
+              <span class="meta-item"><span class="meta-dot"></span>reviews {cadenceLabel(g)}</span>
+              <span class="meta-item next"><span class="meta-dot teal"></span>next review <b>{nextLabel(g)}</b></span>
+              {#if g.ProjectID}<span class="meta-item"><span class="meta-dot"></span>project <b>{g.ProjectID}</b></span>{/if}
             </div>
             {#if detail.usage}
               <div class="runs-usage">
@@ -1652,9 +1617,472 @@
                 <UsageBar usage={detail.usage} />
               </div>
             {/if}
+            <div class="runs-foot mono">memory revision {detail.memory.revision} · updated {relTime(detail.memory.updated_at)}</div>
+          </article>
+        </div>
+
+        <!-- The spine's own timeline: what is true now, then the story of how
+             it got here. Everything that blocks the goal hangs off the "now"
+             node, so a decision is never further than one screen from the
+             状態 it changes. -->
+        <div class="spine-rail">
+          <div class="spine-line"></div>
+
+          <!-- ======== NOW ======== -->
+          <section class="spine-node">
+            <span class="spine-marker" class:alert={nowState.tone === "alert"} class:planning={nowState.tone === "planning"} class:quiet={nowState.tone === "quiet"}>●</span>
+            <div class="spine-body">
+              <div class="spine-head">
+                <span class="spine-title" class:alert={nowState.tone === "alert"} class:planning={nowState.tone === "planning"} class:quiet={nowState.tone === "quiet"}>{nowState.label}</span>
+                <span class="spine-sub mono">{nowState.sub}</span>
+              </div>
+              {#if nowState.chips.length > 0}
+                <div class="block-chips">
+                  {#each nowState.chips as chip}<span class="block-chip mono">{chip}</span>{/each}
+                </div>
+              {/if}
+              {#if nowState.calm}
+                <div class="calm-line" class:quiet={nowState.tone === "quiet"}>{nowState.calm}</div>
+              {/if}
+
+              <div class="now-stack">
+                <!-- PLANNING banner -->
+                {#if isPlanning}
+                  <div class="banner planning">
+                    <div class="banner-icon violet">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5847b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.8 10.6c.6.6.8 1 .8 1.9h6c0-.9.2-1.3.8-1.9A6 6 0 0 0 12 3z"/></svg>
+                    </div>
+                    <div>
+                      <div class="banner-title violet-ink">{g.LeadAgent} is planning this goal now<span class="dots"><span class="dot"></span><span class="dot" style="animation-delay:.15s"></span><span class="dot" style="animation-delay:.3s"></span></span></div>
+                      <div class="banner-sub violet-sub">
+                        Decomposing the goal into tasks and schedules. This runs in the background — metrics, the timeline, and
+                        access requests will fill in as the agent makes progress. You can safely leave.
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- PENDING QUESTION banner: the agent is blocked on a decision -->
+                {#if detailPendingQuestion}
+                  <div class="banner goal-question" id={`goal-question-${detailPendingQuestion.ID}`}>
+                    <div class="banner-icon amber">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9a6e1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4 2.8c-.8.4-1.1 1-1.1 2"/><path d="M12 17h.01"/></svg>
+                    </div>
+                    <div class="recovery-main">
+                      <div class="banner-title amber-ink">{g.LeadAgent} needs an answer to continue</div>
+                      <div class="banner-sub amber-sub">Reviews are paused until you answer. Your answer reaches the agent on its next session.</div>
+                      <div class="goal-q-body">
+                        {#each detailPendingQuestion.Questions as item}
+                          <div class="goal-q-block">
+                            {#if item.header}<div class="goal-q-header">{item.header}</div>{/if}
+                            <div class="goal-q-text"><AgentMarkdown content={item.question} /></div>
+                            {#if item.options && item.options.length > 0}
+                              <div class="goal-q-options">
+                                {#each item.options as option}
+                                  <button
+                                    class="goal-q-option"
+                                    class:sel={qSelected(item.id, option.label)}
+                                    onclick={() => qToggle(item, option.label)}
+                                  >
+                                    <span class="goal-q-dot">{item.multi_select ? (qSelected(item.id, option.label) ? "✓" : "") : ""}</span>
+                                    <span class="goal-q-option-text">
+                                      <span>{option.label}</span>
+                                      {#if option.description}<small><AgentMarkdown content={option.description} /></small>{/if}
+                                    </span>
+                                  </button>
+                                {/each}
+                              </div>
+                            {:else}
+                              <input
+                                class="goal-q-free"
+                                type={item.is_secret ? "password" : "text"}
+                                placeholder="Your answer"
+                                value={(questionAnswers[item.id] ?? [])[0] ?? ""}
+                                oninput={(e) => qSetFree(item.id, e.currentTarget.value)}
+                              />
+                            {/if}
+                          </div>
+                        {/each}
+                        <button class="btn-primary" disabled={questionBusy || !qReady(detailPendingQuestion)} onclick={() => submitQuestionAnswer(detailPendingQuestion)}>
+                          {questionBusy ? "Sending…" : "Send answer"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- RATE LIMIT RECOVERY banner -->
+                {#if detailPendingRateLimit}
+                  <div class="banner rate-limit" id="goal-recovery">
+                    <div class="banner-icon amber">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#b14e2a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M12 17v5"/><path d="m4.9 4.9 3.5 3.5"/><path d="m15.6 15.6 3.5 3.5"/><path d="M2 12h5"/><path d="M17 12h5"/><path d="m4.9 19.1 3.5-3.5"/><path d="m15.6 8.4 3.5-3.5"/></svg>
+                    </div>
+                    <div class="recovery-main">
+                      <div class="banner-title amber-ink">Rate limit reached</div>
+                      <div class="banner-sub amber-sub">
+                        {g.LeadAgent} could not continue the {detailPendingRateLimit.Phase} run after automatic fallback. Pick a target and retry.
+                      </div>
+                      <div class="recovery-picker">
+                        <RunTargetPicker
+                          agent={selectedDetailAgent}
+                          {profiles}
+                          variant="inline"
+                          value={{ provider: recoveryProvider, profile: recoveryProfile, model: recoveryModel, effort: recoveryEffort }}
+                          onChange={(next) => {
+                            recoveryProvider = next.provider || "";
+                            recoveryProfile = next.profile || "";
+                            recoveryModel = next.model || "";
+                            recoveryEffort = next.effort || "";
+                          }}
+                        />
+                        <button class="btn-primary" disabled={recoveryBusy} onclick={() => resolveRateLimit(detailPendingRateLimit)}>
+                          {recoveryBusy ? "Retrying…" : "Retry with this model"}
+                        </button>
+                      </div>
+                      {#if detailPendingRateLimit.Error}
+                        <div class="recovery-error mono">{detailPendingRateLimit.Error}</div>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- COMPLETION banner -->
+                {#if g.Status === "review"}
+                  <div class="completion" id="goal-completion">
+                    <div class="completion-head">
+                      <span class="pulse-dot"></span>
+                      <div>
+                        <div class="completion-title">{g.LeadAgent} believes this goal is done</div>
+                        <div class="completion-sub">Review the closing report, then confirm. Only you can mark a goal done.</div>
+                      </div>
+                    </div>
+                    <div class="completion-body">
+                      <div class="section-label mono">Closing report</div>
+                      <div class="md"><AgentMarkdown content={g.ClosingReport} /></div>
+                      <div class="completion-actions">
+                        <button class="btn-primary grow" disabled={busy === g.ID} onclick={() => transition(g, "done", "Marked done by you.")}>Mark done</button>
+                        <button class="btn" disabled={busy === g.ID} onclick={() => transition(g, "active", "Reopened by you.")}>Reopen</button>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- PENDING ACCESS REQUESTS -->
+                {#if detailOpenReqs.length > 0}
+                  <div class="requests">
+                    <div class="requests-head">
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#b37a1e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 11V8a4 4 0 0 1 8 0"/><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M12 15v2"/></svg>
+                      <div class="requests-title">Access requests waiting on you</div>
+                      <span class="req-count mono">{detailOpenReqs.length}</span>
+                    </div>
+                    <div class="requests-body">
+                      {#each detailOpenReqs as r (r.ID)}
+                        {@const rk = RK[r.Kind]}
+                        {@const [sbg, sbd, stc, rawLbl] = reqStatusChip[r.Status] ?? reqStatusChip.pending}
+                        <!-- The id is the deep-link anchor for a notification about this request. -->
+                        <div class="req-card" class:failed={r.Status === "failed"} id={`goal-access-${r.ID}`}>
+                          <span class="req-icon" style="background:{rk.t};border-color:{rk.b}">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={rk.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html rk.ic}</svg>
+                          </span>
+                          <div class="req-main">
+                            <div class="req-top">
+                              <span class="req-kind">{rk.label}</span>
+                              <span class="pill mono sm" style="background:{sbg};border-color:{sbd};color:{stc}">{rawLbl}</span>
+                            </div>
+                            <div class="req-reason"><AgentMarkdown content={r.Reason} /></div>
+                            <div class="req-payload">
+                              {#each payloadEntries(r) as [k, v]}
+                                <span class="kv mono"><span class="k">{k}</span><span class="v">{v}</span></span>
+                              {/each}
+                            </div>
+                            {#if r.ExecutionError}
+                              <div class="req-error">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.3 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"/></svg>
+                                {r.ExecutionError}
+                              </div>
+                            {/if}
+                            {#if r.Status === "pending" || r.Status === "failed"}
+                              <div class="req-actions">
+                                <button class="btn-approve" onclick={() => (dialog = { req: r, action: "approve", note: "", secret: "", busy: false })}>Approve</button>
+                                <button class="btn-deny" onclick={() => (dialog = { req: r, action: "deny", note: "", secret: "", busy: false })}>Deny</button>
+                              </div>
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- ACTION ITEMS — work handed back to you. Below the blocking cards
+                     above (question, rate limit, access requests) because the goal keeps
+                     running while these wait. -->
+                {#if detailActionItems.length > 0}
+                  {#key g.ID}
+                    <GoalActionItems items={detailActionItems} onRespond={submitActionResponse} />
+                  {/key}
+                {/if}
+              </div>
+            </div>
+          </section>
+
+          <!-- ======== THE STORY ======== -->
+          <section class="spine-node">
+            <span class="spine-marker story">↻</span>
+            <div class="spine-body">
+              <div class="timeline-head">
+                <span class="section-label mono">Timeline — newest first</span>
+                <span class="group-rule"></span>
+                <button class="btn feedback-toggle" onclick={() => (technicalOpen = !technicalOpen)}>{technicalOpen ? "Hide technical activity" : "Technical activity"}</button>
+              </div>
+              <div class="panel timeline" id="goal-timeline">
+                <div class="timeline">
+                  <div class="timeline-rule"></div>
+                  <div class="events">
+                    {#each timelineItems as item (item.kind === "toolGroup" ? "g" + item.id : "e" + item.ev.ID)}
+                      {#if item.kind === "toolGroup"}
+                        {@const k = EK.tool_use}
+                        <div class="event">
+                          <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
+                          </span>
+                          <div class="event-main">
+                            <button class="tool-group-toggle" onclick={() => toggleGroup(item.id)}>
+                              <span class="event-kind mono" style="color:{k.c}">{item.events.length} read-only tool calls</span>
+                              <span class="arrow" class:open={expandedGroups.has(item.id)}>›</span>
+                            </button>
+                            {#if expandedGroups.has(item.id)}
+                              <div class="tool-group-list">
+                                {#each item.events as ev (ev.ID)}
+                                  {@const tp = toolPayload(ev)}
+                                  <div class="tool-row">
+                                    <span class="tool-name mono">{tp.tool}</span>
+                                    {#if tp.summary}<span class="tool-summary mono">{tp.summary}</span>{/if}
+                                    <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                                  </div>
+                                {/each}
+                              </div>
+                            {/if}
+                            {#if canViewRun(item.events[0])}
+                              <button class="event-session mono" onclick={() => openRun(item.events[0])}>
+                                view run <span class="arrow">↗</span>
+                              </button>
+                            {/if}
+                          </div>
+                        </div>
+                      {:else if item.ev.Kind === "tool_use"}
+                        {@const ev = item.ev}
+                        {@const k = EK.tool_use}
+                        {@const tp = toolPayload(ev)}
+                        <div class="event">
+                          <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
+                          </span>
+                          <div class="event-main">
+                            <div class="event-top">
+                              <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
+                              <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                            </div>
+                            <div class="event-title">{tp.tool}</div>
+                            {#if tp.summary}
+                              <div class="event-cmd mono">{tp.summary}{#if tp.input_truncated}<span class="tool-trunc"> …truncated</span>{/if}</div>
+                            {/if}
+                            {#if canViewRun(ev)}
+                              <button class="event-session mono" onclick={() => openRun(ev)}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                view run <span class="arrow">↗</span>
+                              </button>
+                            {/if}
+                          </div>
+                        </div>
+                      {:else}
+                        {@const ev = item.ev}
+                        {@const k = EK[ev.Kind] ?? EK.progress}
+                        <div class="event">
+                          <span class="event-dot" style="background:{k.t};border-color:{k.c}22">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={k.c} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{@html k.ic}</svg>
+                          </span>
+                          <div class="event-main">
+                            <div class="event-top">
+                              <span class="event-kind mono" style="color:{k.c}">{k.label}</span>
+                              <span class="event-time mono">{relTime(ev.CreatedAt)}</span>
+                              {#if ev.Pinned}
+                                <span class="directive-badge mono">standing directive</span>
+                              {:else if ev.Kind === "user_feedback"}
+                                <span class="directive-badge mono">{feedbackState(ev)}</span>
+                              {/if}
+                              {#if canEditFeedback(ev) && editingFeedbackID !== ev.ID}
+                                <button class="event-edit mono" onclick={() => startEditFeedback(ev)}>edit</button>
+                              {/if}
+                              {#if ev.Kind === "user_feedback" && editingFeedbackID !== ev.ID}
+                                <button class="event-edit mono" disabled={pinBusyID === ev.ID} onclick={() => toggleFeedbackPin(g, ev)}>
+                                  {pinBusyID === ev.ID ? "…" : ev.Pinned ? "unpin" : "pin"}
+                                </button>
+                              {/if}
+                            </div>
+                            {#if editingFeedbackID === ev.ID}
+                              <div class="feedback-edit">
+                                <textarea class="field" rows="3" bind:value={editingFeedbackBody}></textarea>
+                                <div class="feedback-actions">
+                                  <button class="btn-primary" disabled={editingFeedbackBusy || !editingFeedbackBody.trim()} onclick={() => submitFeedbackEdit(g, ev)}>
+                                    {editingFeedbackBusy ? "Saving…" : "Save changes"}
+                                  </button>
+                                  <button class="btn" disabled={editingFeedbackBusy} onclick={cancelEditFeedback}>Cancel</button>
+                                </div>
+                              </div>
+                            {:else}
+                              <div class="event-title">{eventTitle(ev)}</div>
+                              {#if ev.Kind === "metric_update" && metricDelta(ev)}
+                                <div class="event-delta mono">{metricDelta(ev)}</div>
+                              {/if}
+                              {#if eventBody(ev)}
+                                <div class="event-body md"><AgentMarkdown content={eventBody(ev)} /></div>
+                              {/if}
+                            {/if}
+                            {#if canViewRun(ev)}
+                              <button class="event-session mono" onclick={() => openRun(ev)}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                view run <span class="arrow">↗</span>
+                              </button>
+                            {/if}
+                          </div>
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                </div>
+                {#if moreEvents}
+                  <button class="load-more mono" disabled={loadingMore} onclick={loadMoreEvents}>
+                    {loadingMore ? "loading…" : "load older activity"}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <button
+        class="gd-grip"
+        aria-label="Resize the next rail — arrow keys adjust, Home resets"
+        title="Drag to resize · double-click to reset"
+        onmousedown={(e) => startResize("right", e)}
+        ondblclick={() => resetCol("right")}
+        onkeydown={(e) => resizeKey("right", e)}></button>
+
+      <!-- ---------- RIGHT: WHAT HAPPENS NEXT ---------- -->
+      <aside class="gd-next" bind:this={nextEl}>
+        <div class="rail-actions">{@render goalActions()}</div>
+
+        <!-- NEXT STEP -->
+        {#if nextStepVisible}
+          <section class="gd-block">
+            <div class="rail-head">
+              <span class="rail-badge next">→</span>
+              <span class="section-label mono">Next — what {g.LeadAgent} does next</span>
+            </div>
+            <div class="ns-card">
+              {#if g.NextStep}
+                <div class="ns-action"><AgentMarkdown content={g.NextStep} /></div>
+                {#if g.NextStepWhy}<div class="ns-why"><AgentMarkdown content={g.NextStepWhy} /></div>{/if}
+              {:else}
+                <div class="ns-action muted">No next step stated yet — {g.LeadAgent} sets one at its next review.</div>
+              {/if}
+              {#if detail.memory.document.active_plan.length > 0}
+                <div class="ns-plan">
+                  <div class="section-label mono">Then, from the plan</div>
+                  <ul class="memory-list">{#each detail.memory.document.active_plan.slice(0, 5) as step}<li>{step}</li>{/each}</ul>
+                  {#if detail.memory.document.active_plan.length > 5}
+                    <details class="memory-more"><summary>Show all</summary><ul class="memory-list">{#each detail.memory.document.active_plan.slice(5) as step}<li>{step}</li>{/each}</ul></details>
+                  {/if}
+                </div>
+              {/if}
+              <div class="ns-foot mono">{g.NextStepAt ? `stated ${relTime(g.NextStepAt)} · ` : ""}restated at every review · next review <b>{nextLabel(g)}</b></div>
+            </div>
+          </section>
+        {/if}
+
+        <!-- YOUR FEEDBACK -->
+        <section class="gd-block feedback-block">
+          <div class="rail-head">
+            <span class="rail-badge feedback">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 8h8"/><path d="M8 12h5"/></svg>
+            </span>
+            <span class="section-label mono grow">Your feedback</span>
+            <button class="btn sm" onclick={() => (feedbackOpen = !feedbackOpen)}>{feedbackOpen ? "Cancel" : "Add"}</button>
           </div>
-        </aside>
-      </div>
+
+          {#if feedbackOpen}
+            <div class="feedback-composer">
+              <div class="field-label-row">
+                <div class="field-label mono">Feedback</div>
+                <VoiceButton size="sm" onText={(t) => (feedbackBody = appendTranscript(feedbackBody, t))} />
+              </div>
+              <textarea
+                class="field"
+                rows="4"
+                bind:value={feedbackBody}
+                placeholder="Strategy notes, constraints, or next-step thoughts for the next goal run."></textarea>
+              <label class="pin-choice">
+                <input type="checkbox" bind:checked={feedbackPinned} />
+                <span>
+                  Keep as a standing directive
+                  <em>Applies for the whole goal, including the tasks and schedules the agent creates.</em>
+                </span>
+              </label>
+              <div class="feedback-actions">
+                <button class="btn-primary" disabled={feedbackBusy || !feedbackBody.trim()} onclick={() => submitFeedback(g)}>
+                  {feedbackBusy ? "Saving…" : "Save feedback"}
+                </button>
+                <button class="btn" disabled={feedbackBusy} onclick={() => { feedbackOpen = false; feedbackBody = ""; feedbackPinned = false; }}>Cancel</button>
+              </div>
+              <div class="feedback-note mono">reaches {g.LeadAgent} on its next session</div>
+            </div>
+          {/if}
+
+          {#if feedbackNotes.length > 0}
+            <div class="note-list">
+              {#each feedbackNotes as note (note.ID)}
+                <div class="note-card" class:pinned={note.Pinned}>
+                  <button class="note-pin" class:on={note.Pinned} disabled={pinBusyID === note.ID} title={note.Pinned ? "Unpin — stop applying this to every run" : "Pin as a standing directive"} onclick={() => toggleFeedbackPin(g, note)}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+                  </button>
+                  <div class="note-main">
+                    <div class="note-top">
+                      <span class="directive-badge mono">{feedbackState(note)}</span>
+                      <span class="event-time mono">{relTime(note.CreatedAt)}</span>
+                      {#if canEditFeedback(note) && editingFeedbackID !== note.ID}
+                        <button class="event-edit mono" onclick={() => startEditFeedback(note)}>edit</button>
+                      {/if}
+                    </div>
+                    {#if editingFeedbackID === note.ID}
+                      <div class="feedback-edit">
+                        <textarea class="field" rows="4" bind:value={editingFeedbackBody}></textarea>
+                        <div class="feedback-actions">
+                          <button class="btn-primary" disabled={editingFeedbackBusy || !editingFeedbackBody.trim()} onclick={() => submitFeedbackEdit(g, note)}>
+                            {editingFeedbackBusy ? "Saving…" : "Save changes"}
+                          </button>
+                          <button class="btn" disabled={editingFeedbackBusy} onclick={cancelEditFeedback}>Cancel</button>
+                        </div>
+                      </div>
+                    {:else}
+                      <div class="note-body"><AgentMarkdown content={note.Body} /></div>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+            {#if directives.length > 0}
+              <div class="pinned-note mono">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#b14322" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+                {directives.length} pinned — binding on every run, task and schedule this goal creates
+              </div>
+            {/if}
+          {:else}
+            <div class="note-empty">No feedback yet. Anything you write here reaches {g.LeadAgent} on its next session.</div>
+          {/if}
+        </section>
+      </aside>
     </div>
   {/if}
 
@@ -1840,6 +2268,29 @@
         </button>
       {/if}
     {/if}
+  </div>
+{/if}
+
+{#if repairOpen && detail}
+  <div class="overlay" role="presentation" onclick={() => !repairBusy && (repairOpen = false)}>
+    <div class="modal memory-repair-modal" role="dialog" aria-modal="true" aria-labelledby="repair-title" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+      <div class="modal-head"><div class="modal-title" id="repair-title">{repairError ? "Memory repair didn't finish" : "Repair goal memory"}</div></div>
+      <div class="modal-body">
+        {#if repairError}
+          <div class="modal-text">Nothing was changed. Retry or view the technical details.</div>
+          <details class="repair-details"><summary>Technical details</summary><code>{repairError}</code></details>
+        {:else}
+          <div class="repair-reason">{memoryBlockReason(detail.memory.block_reason)}</div>
+          <div class="modal-text">Repair rebuilds the goal’s working memory from its saved timeline, reviews, decisions, tasks, schedules, and feedback. It does not redo project work, edit project files, or contact external services. It uses model processing and consumes tokens.</div>
+          <div class="modal-text quiet">You can review the changes before resuming the goal.</div>
+          {#if detail.memory.block_detail}<details class="repair-details"><summary>Technical details</summary><code>{detail.memory.block_detail}</code></details>{/if}
+        {/if}
+        <div class="modal-actions">
+          <button class="btn-primary grow" disabled={repairBusy} onclick={repairCurrentGoal}>{repairBusy ? "Repairing…" : repairError ? "Retry" : "Repair memory"}</button>
+          <button class="btn" disabled={repairBusy} onclick={() => (repairOpen = false)}>Cancel</button>
+        </div>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -2055,11 +2506,6 @@
     max-width: none;
     margin: 0 auto;
     padding: 26px 30px 70px;
-  }
-  .page.detail-page {
-    /* The two-column body flattens on its own width, not the viewport's — the
-       sidebar eats 236px of the window and disappears entirely on mobile. */
-    container-type: inline-size;
   }
   .page.form-page {
     max-width: 660px;
@@ -2307,9 +2753,6 @@
     font-weight: 500;
     color: var(--muted);
   }
-  .agent-chip.lg {
-    font-size: 12.5px;
-  }
   .proj {
     font-size: 11px;
     color: var(--faint);
@@ -2468,16 +2911,6 @@
     padding: 4px 0;
     margin-bottom: 14px;
   }
-  .detail-head {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-  .detail-head-main {
-    flex: 1;
-    min-width: 280px;
-  }
   .detail-title {
     font-size: 28px;
     font-weight: 800;
@@ -2578,54 +3011,741 @@
   .menu-item.danger {
     color: #a23e22;
   }
-  /* Detail body: what's happening on the left, the goal at a glance on a
-     sticky right rail. */
-  .detail-cols {
+  .memory-alert,
+  .memory-preparing,
+  .memory-success {
+    margin-top: 18px;
+    padding: 17px 19px;
+    border-radius: 16px;
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 18px;
-    margin-top: 20px;
-    align-items: flex-start;
-    flex-wrap: wrap;
   }
-  .detail-main {
-    flex: 999 1 540px;
-    min-width: 0;
+  .memory-alert { background: #fff1e9; border: 1px solid #efc0ad; color: #7f321d; }
+  .memory-preparing { background: #f2f0fb; border: 1px solid #d8cff3; color: #5847b8; justify-content: flex-start; }
+  .memory-success { background: #eaf5ef; border: 1px solid #c7e2d6; color: #2f6e60; }
+  .memory-alert strong, .memory-preparing strong, .memory-success strong { display: block; font-size: 15px; }
+  .memory-alert p { max-width: 820px; margin: 4px 0 0; color: #8e4d38; font-size: 13px; line-height: 1.5; }
+  .memory-preparing span:not(.btn-spinner), .memory-success span { display: block; margin-top: 3px; font-size: 13px; color: inherit; opacity: .8; }
+  .memory-success-actions { display: flex; gap: 8px; }
+  /* ---- goal detail: history rail | spine | next rail ---------------------- */
+  .goal-detail {
+    display: flex;
+    align-items: flex-start;
+    min-height: 100%;
+  }
+  .gd-history,
+  .gd-next {
+    flex: none;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: #f1f6f3;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 15px;
   }
-  .detail-rail {
-    flex: 1 1 300px;
-    min-width: 280px;
-    max-width: 400px;
+  .gd-history {
+    width: 384px;
+    border-right: 1px solid #dde7e2;
+    padding: 20px 22px 30px;
+  }
+  .gd-next {
+    width: 340px;
+    border-left: 1px solid #dde7e2;
+    padding: 24px 22px 40px;
+    gap: 14px;
+  }
+  .gd-spine {
+    flex: 1;
+    min-width: 0;
+    align-self: stretch;
+    background: var(--surface);
+    padding: 24px 32px 90px;
+  }
+  /* A grip is a hit target, not a divider: it overlaps the rail border so the
+     seam itself stays one pixel wide. */
+  .gd-grip {
+    flex: none;
+    padding: 0;
+    border: 0;
+    width: 7px;
+    align-self: stretch;
     position: sticky;
-    top: 22px;
+    top: 0;
+    height: 100vh;
+    z-index: 6;
+    cursor: col-resize;
+    background: transparent;
+  }
+  .gd-grip:first-of-type {
+    margin-left: -4px;
+  }
+  .gd-grip:last-of-type {
+    margin-right: -4px;
+  }
+  .gd-grip:hover {
+    background: #efe6d9;
+  }
+
+  .rail-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .rail-head .section-label {
+    margin-bottom: 0;
+  }
+  .rail-head .grow {
+    flex: 1;
+  }
+  .rail-badge {
+    width: 26px;
+    height: 26px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    font: 700 12px "JetBrains Mono", monospace;
+  }
+  .rail-badge.history {
+    background: #e6efea;
+    border: 1px solid #cfe0d8;
+    color: #3a6b5f;
+  }
+  .rail-badge.next {
+    background: #eff7f4;
+    border: 1px dashed #8fbfb0;
+    color: var(--teal-deep);
+  }
+  .rail-badge.feedback {
+    background: #e7eef7;
+    border: 1px solid rgba(74, 111, 168, 0.13);
+    color: #4a6fa8;
+  }
+  .gd-block {
+    min-width: 0;
+  }
+  .gd-block .section-label {
+    margin-bottom: 9px;
+  }
+
+  /* Where things stand — the agent's working memory, verbatim. */
+  .state-card {
+    background: var(--surface);
+    border: 1px solid #d3e7df;
+    border-left: 4px solid var(--teal);
+    border-radius: 16px;
+    padding: 18px 20px;
+  }
+  .state-text {
+    color: var(--ink-soft);
+    font-size: 14.5px;
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+  .state-meta {
+    margin-top: 12px;
+    color: var(--faint);
+    font-size: 10.5px;
+  }
+
+  .run-list {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .run-card {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    width: 100%;
+    text-align: left;
+    padding: 13px 15px;
+    border: 1px solid #dcd5f0;
+    border-left: 4px solid var(--violet);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .run-card:hover:not(:disabled) {
+    border-color: #c3b8e8;
+    border-left-color: var(--violet);
+    background: var(--surface-3);
+  }
+  .run-card-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .run-card-top b {
+    flex: 1;
+    min-width: 0;
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+  .run-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    color: var(--faint);
+    font-size: 10px;
+  }
+  .run-card-meta span:first-child {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .run-card-open {
+    flex: none;
+    color: var(--teal-deep);
+    font-weight: 600;
+  }
+
+  /* The record — one tab per memory kind. */
+  .record {
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .record-tabs {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+    padding: 13px 16px;
+    border-bottom: 1px solid #f0e7dc;
+    background: #fdfaf6;
+  }
+  .record-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px;
+    border: 1px solid var(--field-line);
+    border-radius: 999px;
+    background: white;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .record-tab.sel {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--surface);
+  }
+  .record-count {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+  .record-tab.sel .record-count {
+    color: #c9bfb2;
+  }
+  .record-items {
+    padding: 4px 18px 16px;
+  }
+  .record-item {
+    padding: 12px 0;
+    border-top: 1px solid #f0e7dc;
+    min-width: 0;
+  }
+  .record-item b {
+    display: block;
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+  .record-item span {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted-2);
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .record-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    margin-top: 5px;
+    padding: 4px 9px;
+    border: 1px solid var(--field-line);
+    border-radius: 9px;
+    background: var(--surface-3);
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+  .record-link:hover {
+    border-color: #d6c7b3;
+    color: var(--ink);
+  }
+  .record-link span {
+    display: inline;
+    flex: none;
+    margin: 0;
+    color: inherit;
+  }
+  .record-empty {
+    padding: 18px;
+    color: var(--muted-2);
+    font-size: 13px;
+  }
+
+  /* ---- spine ------------------------------------------------------------- */
+  .gd-head {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    max-width: 900px;
+  }
+  .gd-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .gd-title-row .detail-title {
+    margin: 0;
+    font-size: 29px;
+    text-wrap: pretty;
+  }
+  .gd-desc {
+    max-width: 760px;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .gd-criteria {
+    padding: 12px 14px;
+    border: 1px solid #d8e8e0;
+    border-radius: 14px;
+    background: #f2f8f5;
+  }
+  .gd-criteria .section-label {
+    margin-bottom: 5px;
+  }
+  .section-label.teal {
+    color: var(--teal-deep);
+  }
+  .gd-criteria-text {
+    color: var(--ink-soft);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .gd-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+    gap: 14px;
+    align-items: stretch;
+    max-width: 900px;
+    margin-top: 22px;
+  }
+  .gd-card {
+    padding: 16px;
+  }
+  .progress-top {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 12px 0 14px;
+  }
+  .progress-ring {
+    width: 72px;
+    height: 72px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+  }
+  .progress-ring-hole {
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--teal-deep);
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .progress-summary {
+    color: var(--ink-soft);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .progress-note {
+    margin-top: 3px;
+    color: var(--faint);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .progress-big {
+    margin-top: 10px;
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .runs-agent-id {
+    flex: 1;
+    min-width: 0;
+  }
+  .runs-foot {
+    margin-top: 12px;
+    color: var(--faint);
+    font-size: 10px;
+  }
+  .meta-dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 99px;
+    background: #d3c7b6;
+  }
+  .meta-dot.teal {
+    background: var(--teal);
+  }
+
+  /* The spine's timeline: "now" on top, then the story. */
+  .spine-rail {
+    position: relative;
+    max-width: 1180px;
+    margin-top: 28px;
+  }
+  .spine-line {
+    position: absolute;
+    left: 14px;
+    top: 14px;
+    bottom: 20px;
+    width: 2px;
+    background: #e9dfd1;
+  }
+  .spine-node {
+    display: flex;
+    gap: 14px;
+  }
+  .spine-node + .spine-node {
+    margin-top: 24px;
+  }
+  .spine-marker {
+    width: 30px;
+    height: 30px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    border-radius: 999px;
+    border: 1px solid #c7e2da;
+    background: #e2f0ec;
+    color: var(--teal-deep);
+    font-size: 11px;
+  }
+  .spine-marker.alert {
+    border-color: #efc7b4;
+    background: #fdf3e7;
+    color: #a94724;
+    animation: pulse 1.8s infinite;
+  }
+  .spine-marker.planning {
+    border-color: #d8cff3;
+    background: #eeeafb;
+    color: var(--violet);
+  }
+  .spine-marker.quiet,
+  .spine-marker.story {
+    border-color: #e3d8ca;
+    background: #f7f2ea;
+    color: var(--muted-2);
+    animation: none;
+  }
+  .spine-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .spine-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 5px;
+  }
+  .spine-title {
+    color: var(--teal-deep);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .spine-title.alert {
+    color: #a94724;
+  }
+  .spine-title.planning {
+    color: var(--violet);
+  }
+  .spine-title.quiet {
+    color: var(--muted-2);
+  }
+  .spine-sub {
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .block-chips {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-top: 9px;
+  }
+  .block-chip {
+    padding: 4px 10px;
+    border: 1px solid #efd4b4;
+    border-radius: 999px;
+    background: #fff6ea;
+    color: var(--gold);
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+  .calm-line {
+    margin-top: 11px;
+    padding: 15px 17px;
+    border: 1px solid #d3e7df;
+    border-radius: 16px;
+    background: #eff7f4;
+    color: #3a6b5f;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  .calm-line.quiet {
+    border-color: #e7ddce;
+    background: #f7f3ec;
+    color: var(--muted);
+  }
+  .now-stack {
     display: flex;
     flex-direction: column;
     gap: 14px;
   }
-  /* Below the natural wrap point (540 + 300 + 18 gap) the rail would land under
-     the whole timeline. Flatten both columns instead and slot the rail in ahead
-     of the activity feed, keeping the single-column reading order. */
-  @container (max-width: 880px) {
-    .detail-cols {
+  .now-stack:not(:empty) {
+    margin-top: 12px;
+  }
+  .spine-body .timeline-head {
+    padding-top: 6px;
+  }
+  .spine-body .timeline-head .section-label {
+    margin-bottom: 0;
+  }
+  .spine-body .panel.timeline {
+    margin-top: 14px;
+  }
+
+  /* ---- next rail --------------------------------------------------------- */
+  .rail-actions .detail-actions,
+  .head-actions .detail-actions {
+    flex-wrap: wrap;
+    position: relative;
+  }
+  /* The header copy of the controls only exists once the rails have stacked. */
+  .head-actions {
+    display: none;
+    margin-bottom: 4px;
+  }
+  .ns-card {
+    background: var(--surface);
+    border: 1px solid #d3e7df;
+    border-left: 4px solid var(--teal);
+    border-radius: 16px;
+    padding: 18px 20px;
+  }
+  .ns-action.muted {
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--muted-2);
+  }
+  .ns-plan {
+    margin-top: 14px;
+    padding-top: 13px;
+    border-top: 1px solid var(--line-2);
+  }
+  .ns-plan .section-label {
+    margin-bottom: 0;
+  }
+  .memory-list {
+    margin: 9px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  .memory-list li + li {
+    margin-top: 6px;
+  }
+  .memory-more {
+    margin-top: 8px;
+  }
+  .memory-more summary,
+  .repair-details summary {
+    cursor: pointer;
+    color: var(--teal-deep);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .feedback-block {
+    margin-top: 4px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+  }
+  .btn.sm {
+    flex: none;
+    padding: 5px 10px;
+    font-size: 11.5px;
+  }
+  .gd-next .feedback-composer {
+    margin-top: 11px;
+  }
+  .feedback-note {
+    margin-top: 9px;
+    color: var(--faint);
+    font-size: 10.5px;
+    line-height: 1.45;
+  }
+  .note-list {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    margin-top: 11px;
+  }
+  .note-card {
+    display: flex;
+    gap: 10px;
+    padding: 13px 15px;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .note-card.pinned {
+    border-color: #efc7b4;
+    background: #fffaf6;
+  }
+  .note-pin {
+    width: 27px;
+    height: 27px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--field-line);
+    border-radius: 9px;
+    background: white;
+    color: var(--faint);
+  }
+  .note-pin.on {
+    border-color: #efc7b4;
+    color: #b14322;
+  }
+  .note-pin:hover:not(:disabled) {
+    border-color: #b14322;
+    color: #b14322;
+  }
+  .note-main {
+    flex: 1;
+    min-width: 0;
+  }
+  .note-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .note-top .event-time {
+    margin-left: auto;
+    white-space: nowrap;
+  }
+  .note-body {
+    margin-top: 6px;
+    color: var(--ink-soft);
+    font-size: 13.5px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+  .pinned-note {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 10px;
+    color: var(--faint);
+    font-size: 10px;
+    line-height: 1.4;
+  }
+  .note-empty {
+    margin-top: 11px;
+    padding: 15px 16px;
+    border: 1px dashed #e3d8ca;
+    border-radius: 16px;
+    background: var(--surface);
+    color: var(--muted-2);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  /* Below this width the three columns stop paying for themselves: the rails
+     unpin and stack under the spine, which keeps its reading measure. */
+  @media (max-width: 1319px) {
+    .goal-detail {
       flex-direction: column;
-      /* align-items:flex-start would stop the flattened panels stretching once
-         the cross axis is horizontal. */
-      align-items: stretch;
-      gap: 16px;
     }
-    .detail-main,
-    .detail-rail {
-      display: contents;
+    .gd-history,
+    .gd-next {
+      position: static;
+      width: 100% !important;
+      height: auto;
+      overflow: visible;
+      border: 0;
+      border-top: 1px solid #dde7e2;
     }
-    .detail-rail > * {
-      order: 1;
+    .gd-spine {
+      order: -2;
+      width: 100%;
+      padding-bottom: 34px;
     }
-    .panel.timeline {
-      order: 2;
+    .gd-grip {
+      display: none;
+    }
+    /* What happens next reads before the history that led here. */
+    .gd-next {
+      order: -1;
+    }
+    .head-actions {
+      display: block;
+    }
+    .rail-actions {
+      display: none;
     }
   }
+  @media (max-width: 1049px) {
+    .gd-history,
+    .gd-next {
+      padding-left: 20px;
+      padding-right: 20px;
+    }
+    .gd-spine {
+      padding: 22px 20px 34px;
+    }
+  }
+
+  .memory-repair-modal { max-width: 560px; }
+  .repair-reason { margin-bottom: 12px; font-weight: 700; color: var(--ink); }
+  .modal-text.quiet { margin-top: 9px; color: var(--muted-2); }
+  .repair-details { margin-top: 14px; }
+  .repair-details code { display: block; margin-top: 8px; padding: 10px; border-radius: 9px; background: var(--surface-3); color: var(--muted); font-size: 11px; white-space: pre-wrap; }
   .panel {
     background: var(--surface);
     border: 1px solid var(--line-2);
@@ -2641,37 +3761,6 @@
     color: var(--faint);
     margin-bottom: 14px;
   }
-  .desc {
-    font-size: 14.5px;
-    line-height: 1.7;
-    color: var(--ink-soft);
-  }
-  .desc.muted {
-    color: var(--faint);
-  }
-  .criteria {
-    padding: 15px 17px;
-    background: #f6f9f7;
-    border: 1px solid #dcede6;
-    border-radius: 13px;
-  }
-  .criteria.mt {
-    margin-top: 16px;
-  }
-  .criteria-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--teal);
-    margin-bottom: 6px;
-  }
-  .criteria-text {
-    font-size: 13.5px;
-    line-height: 1.6;
-    font-weight: 500;
-    color: #2a4740;
-  }
   .metrics {
     display: flex;
     flex-direction: column;
@@ -2679,37 +3768,8 @@
   }
 
   /* Next step: the agent's stated intent. Action-first typography and a teal
-     accent, deliberately unlike the header's "next review" clock — one is what
-     the agent will do, the other is only when it wakes up. */
-  .panel.ns-panel {
-    padding: 0;
-    overflow: hidden;
-    border-color: #cbe2d8;
-    box-shadow:
-      0 1px 2px rgba(43, 37, 32, 0.04),
-      0 14px 30px -24px rgba(47, 110, 96, 0.35);
-  }
-  .ns-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 20px;
-    background: #f2f8f5;
-    border-bottom: 1px solid #dcede6;
-  }
-  .ns-label {
-    color: var(--teal-deep);
-    margin-bottom: 0;
-  }
-  .ns-age {
-    margin-left: auto;
-    font-size: 11px;
-    color: #7fa396;
-    white-space: nowrap;
-  }
-  .ns-body {
-    padding: 17px 20px 18px;
-  }
+     accent, deliberately unlike the "next review" clock — one is what the agent
+     will do, the other is only when it wakes up. */
   .ns-action {
     font-size: 17px;
     line-height: 1.4;
@@ -2740,47 +3800,6 @@
     color: #a8825e;
   }
 
-  /* Right rail: same panel chrome, one density step down so three panels read
-     as reference material rather than competing with the left column. */
-  .rail-panel {
-    padding: 20px;
-  }
-  .rail-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 10px;
-  }
-  .directive-note {
-    font-size: 11px;
-    color: var(--faint);
-    line-height: 1.5;
-    margin-bottom: 10px;
-  }
-  .directive-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .directive-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 8px 10px;
-    border: 1px solid var(--line);
-    border-left: 2px solid #4a6fa8;
-    border-radius: 6px;
-    background: var(--panel-2, transparent);
-  }
-  .directive-text {
-    flex: 1;
-    min-width: 0;
-    font-size: 13px;
-    line-height: 1.5;
-  }
   .directive-badge {
     font-size: 10px;
     letter-spacing: 0.04em;
@@ -2809,33 +3828,6 @@
     color: var(--faint);
     line-height: 1.45;
     margin-top: 1px;
-  }
-  .rail-panel .desc {
-    font-size: 13.5px;
-    line-height: 1.65;
-  }
-  .rail-panel .criteria {
-    padding: 13px 15px;
-  }
-  .rail-panel .criteria.mt {
-    margin-top: 14px;
-  }
-  .rail-panel .criteria-text {
-    font-size: 13px;
-  }
-  .rail-panel .metrics {
-    gap: 15px;
-  }
-  .rail-panel .metric-row {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .rail-panel .metric-name.strong {
-    font-size: 12.5px;
-    min-width: 0;
-  }
-  .rail-panel .bar.lg {
-    height: 8px;
   }
   .runs-agent {
     display: flex;
@@ -2868,15 +3860,6 @@
   }
   .runs-meta b {
     font-weight: 700;
-  }
-  .runs-yolo {
-    margin-top: 12px;
-  }
-  .runs-yolo-note {
-    font-size: 11.5px;
-    line-height: 1.5;
-    color: var(--faint);
-    margin-top: 7px;
   }
   .runs-usage {
     margin-top: 13px;
@@ -3757,8 +4740,6 @@
       margin-bottom: 18px;
     }
     .page-title-wrap,
-    .detail-head-main,
-    .detail-rail,
     .two-col > div {
       min-width: 0;
     }
@@ -3775,7 +4756,6 @@
     .agent-chip,
     .banner-title,
     .banner-sub,
-    .ns-label,
     .run-drawer-title,
     .run-message,
     .run-selected {
@@ -3836,16 +4816,22 @@
       width: 44px;
       height: 44px;
     }
-    .detail-cols {
-      margin-top: 16px;
+    .memory-alert, .memory-success { align-items: flex-start; flex-direction: column; }
+    .gd-spine,
+    .gd-history,
+    .gd-next {
+      padding: 18px 16px 28px;
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
     }
-    .detail-rail {
-      position: static;
-      width: 100%;
-      max-width: none;
+    .gd-cards {
+      grid-template-columns: 1fr;
+      margin-top: 18px;
     }
-    .panel,
-    .rail-panel {
+    .spine-rail {
+      margin-top: 22px;
+    }
+    .panel {
       padding: 16px;
       border-radius: 16px;
     }
@@ -3867,23 +4853,6 @@
     .recovery-picker > .btn-primary {
       width: 100%;
     }
-    .ns-head {
-      align-items: flex-start;
-      flex-wrap: wrap;
-      padding: 12px 16px;
-    }
-    .ns-label {
-      flex: 1;
-      min-width: 0;
-    }
-    .ns-age {
-      width: 100%;
-      margin-left: 22px;
-      white-space: normal;
-    }
-    .ns-body {
-      padding: 16px;
-    }
     .ns-action {
       font-size: 16px;
     }
@@ -3900,8 +4869,8 @@
     .completion-sub,
     .requests-title,
     .req-reason,
-    .desc,
-    .criteria-text,
+    .gd-desc,
+    .gd-criteria-text,
     .ns-action,
     .ns-why,
     .runs-agent-name {
@@ -4061,9 +5030,15 @@
     .detail-title {
       font-size: 22px;
     }
-    .panel,
-    .rail-panel {
+    .panel {
       padding: 14px;
+    }
+    .gd-spine,
+    .gd-history,
+    .gd-next {
+      padding: 16px 12px 24px;
+      padding-left: max(12px, env(safe-area-inset-left));
+      padding-right: max(12px, env(safe-area-inset-right));
     }
     .banner,
     .completion-body {

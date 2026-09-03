@@ -286,6 +286,10 @@ func TestGoalEventsAppendOnlyAndPagination(t *testing.T) {
 	if _, err := db.AppendGoalEvent(ctx, GoalEvent{GoalID: goal.ID, Kind: GoalEventReviewStarted}); err != nil {
 		t.Fatalf("append review started: %v", err)
 	}
+	if _, err := db.CommitGoalMemory(ctx, goal.ID, 0, "run-1", "Feedback incorporated",
+		GoalMemoryDocument{}, []GoalFeedbackDispositionInput{{EventID: feedback[0].ID, Disposition: GoalFeedbackIncorporated}}, false); err != nil {
+		t.Fatalf("acknowledge feedback: %v", err)
+	}
 	if _, err := db.UpdateGoalFeedbackBody(ctx, goal.ID, feedback[0].ID, "too late"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("update read feedback err = %v, want ErrNotFound", err)
 	}

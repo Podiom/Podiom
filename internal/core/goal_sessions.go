@@ -175,16 +175,13 @@ func writeUserFeedback(b *strings.Builder, feedback []store.GoalEvent) {
 	if len(feedback) == 0 {
 		return
 	}
-	b.WriteString("## Recent user feedback (newest first)\n\n")
+	b.WriteString("## Pending user feedback\n\n")
 	for _, ev := range feedback {
 		body := strings.TrimSpace(ev.Body)
 		if body == "" {
 			continue
 		}
-		if len(body) > 500 {
-			body = body[:500] + "…"
-		}
-		fmt.Fprintf(b, "- %s: %s\n", ev.CreatedAt, body)
+		fmt.Fprintf(b, "- Feedback %d (%s): %s\n", ev.ID, ev.CreatedAt, body)
 	}
 	b.WriteString("\n")
 }
@@ -264,7 +261,7 @@ func writeAnsweredQuestions(b *strings.Builder, answers []store.AgentQuestion) {
 // whole chain in yolo mode (full autonomous access) — the point of a goal is to
 // reach an outcome without the user in the loop — so every tool call is recorded
 // on the goal timeline (EventToolUse → goal_events) as the audit counterweight.
-func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.GoalEventKind, prompt string) (store.Session, error) {
+func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.GoalEventKind, prompt string, freshContext, requireMemory bool) (store.Session, error) {
 	phase := goalRateLimitPhase(kind)
 	sess, goal, err := c.ensureGoalLeadSession(ctx, goal)
 	if err != nil {
@@ -281,6 +278,7 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 	if err != nil {
 		return sess, fmt.Errorf("goal already has an active run: %w", err)
 	}
+	usageBefore := sess.Usage
 	payload, _ := json.Marshal(map[string]string{"session_id": sess.ID})
 	if _, err := c.appendGoalEvent(ctx, store.GoalEvent{
 		GoalID:    goal.ID,
@@ -297,6 +295,7 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 		PermissionTurnID: sess.ID,
 		Unattended:       true,
 		GoalRunID:        run.ID,
+		FreshContext:     freshContext,
 	})
 	if err != nil {
 		_, _ = c.finishGoalRun(context.WithoutCancel(ctx), run.ID, store.GoalRunFailed, err.Error())
@@ -316,7 +315,25 @@ func (c *Core) runGoalSession(ctx context.Context, goal store.Goal, kind store.G
 		}
 		return sess, &ScheduledRunError{Message: turnErr}
 	}
-	return sess, nil
+	updatedSession, _ := c.store.GetSession(ctx, sess.ID)
+	usageDelta := store.SessionUsage{
+		InputTokens:      updatedSession.Usage.InputTokens - usageBefore.InputTokens,
+		OutputTokens:     updatedSession.Usage.OutputTokens - usageBefore.OutputTokens,
+		CacheReadTokens:  updatedSession.Usage.CacheReadTokens - usageBefore.CacheReadTokens,
+		CacheWriteTokens: updatedSession.Usage.CacheWriteTokens - usageBefore.CacheWriteTokens,
+	}
+	var outcome string
+	if memory, memoryErr := c.store.GetGoalMemory(ctx, goal.ID); memoryErr == nil {
+		outcome = memory.Outcome
+		if requireMemory && c.daemonAddr != "" && memory.LastRunID != run.ID {
+			detail := "The review ended before it saved an updated memory."
+			_ = c.blockGoalMemory(context.WithoutCancel(ctx), goal.ID, "commit_missing", detail)
+			_ = c.store.SetGoalRunSummary(context.WithoutCancel(ctx), run.ID, usageDelta, "Review paused because working memory was not saved.")
+			return updatedSession, fmt.Errorf("goal memory commit required: %s", detail)
+		}
+	}
+	_ = c.store.SetGoalRunSummary(context.WithoutCancel(ctx), run.ID, usageDelta, outcome)
+	return updatedSession, nil
 }
 
 // ensureGoalLeadSession returns the single continuing planning/review
@@ -473,7 +490,7 @@ func (c *Core) StartGoalPlanning(ctx context.Context, goalID string) (store.Sess
 	if err != nil {
 		return store.Session{}, err
 	}
-	feedback, err := c.store.ListUnpinnedGoalFeedback(ctx, goal.ID, goalFeedbackContextEvents)
+	feedback, err := c.store.ListPendingGoalFeedback(ctx, goal.ID)
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -482,7 +499,13 @@ func (c *Core) StartGoalPlanning(ctx context.Context, goalID string) (store.Sess
 		return store.Session{}, err
 	}
 	c.log.Info("goal planning started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, GoalPlanningPrompt(goal, directives, feedback, actions))
+	prompt := GoalPlanningPrompt(goal, directives, feedback, actions) + `
+
+Before planning can finish, call podiom_commit_goal_memory with base_revision 0.
+Capture the current state, active plan, decisions, risks, milestones, artifacts,
+and a short user-facing outcome. Incorporate clear pending feedback by event id.
+`
+	return c.runGoalSession(ctx, goal, store.GoalEventPlanningStarted, prompt, false, true)
 }
 
 // goalReviewContextEvents caps how much timeline a review prompt replays.
@@ -514,7 +537,7 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if err != nil {
 		return store.Session{}, err
 	}
-	feedback, err := c.store.ListUnpinnedGoalFeedback(ctx, goal.ID, goalFeedbackContextEvents)
+	feedback, err := c.store.ListPendingGoalFeedback(ctx, goal.ID)
 	if err != nil {
 		return store.Session{}, err
 	}
@@ -526,8 +549,38 @@ func (c *Core) RunGoalReview(ctx context.Context, goalID string) (store.Session,
 	if err != nil {
 		return store.Session{}, err
 	}
-	c.log.Info("goal review started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent)
-	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, GoalReviewPrompt(goal, events, requests, directives, feedback, answers, actions))
+	memory, err := c.store.GetGoalMemory(ctx, goal.ID)
+	if err != nil {
+		_ = c.blockGoalMemory(ctx, goal.ID, "validation_failed", err.Error())
+		return store.Session{}, fmt.Errorf("read goal memory: %w", err)
+	}
+	fresh := memory.Status == store.GoalMemoryReady
+	var prompt string
+	if fresh {
+		tasks, taskErr := c.store.ListTasks(ctx)
+		if taskErr != nil {
+			return store.Session{}, taskErr
+		}
+		goalTasks := tasks[:0]
+		for _, task := range tasks {
+			if task.GoalID == goal.ID {
+				goalTasks = append(goalTasks, task)
+			}
+		}
+		prompt = GoalStatelessReviewPrompt(goal, memory, directives, feedback, requests, answers, actions, goalTasks, c.goalScheduleSummaries(goal.ID))
+	} else {
+		if err := c.store.SetGoalMemoryValidating(ctx, goal.ID); err != nil {
+			return store.Session{}, err
+		}
+		prompt = GoalReviewPrompt(goal, events, requests, directives, feedback, answers, actions) + fmt.Sprintf("\nBefore this validation review finishes, call podiom_commit_goal_memory with base_revision %d.\n", memory.Revision)
+	}
+	if len([]byte(prompt)) > maxGoalPacketBytes {
+		detail := fmt.Sprintf("The complete review packet is %d bytes; limit is %d.", len([]byte(prompt)), maxGoalPacketBytes)
+		_ = c.blockGoalMemory(ctx, goal.ID, "over_budget", detail)
+		return store.Session{}, fmt.Errorf("%s", detail)
+	}
+	c.log.Info("goal review started", "event", "goal", "goal", goal.ID, "agent", goal.LeadAgent, "fresh_context", fresh)
+	return c.runGoalSession(ctx, goal, store.GoalEventReviewStarted, prompt, fresh, true)
 }
 
 // goalDirectivePreamble renders the goal's standing directives for a delegated

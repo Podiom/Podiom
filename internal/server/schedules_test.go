@@ -9,9 +9,112 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/core"
 	"github.com/Podiom/Podiom/internal/schedule"
 	"github.com/Podiom/Podiom/internal/store"
+	"nhooyr.io/websocket"
 )
+
+// TestScheduleAttentionLifecycle pins the app-wide navigation signal. Multiple
+// pending questions for one schedule still produce one name, answering only one
+// keeps the signal lit, and deleting the schedule clears it.
+func TestScheduleAttentionLifecycle(t *testing.T) {
+	ctx := context.Background()
+	_, srv, sched, cleanup := newGoalSchedulerTestServer(t)
+	defer cleanup()
+	if _, err := sched.Create(ctx, schedule.CreateParams{
+		Name: "nightly", Agent: "atlas", Cron: "0 0 * * *", Body: "Check the project.",
+	}); err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+	sess, err := srv.core.CreateSession(ctx, core.CreateSessionRequest{
+		AgentName: "atlas", Origin: store.OriginSchedule, ScheduleID: "nightly",
+	})
+	if err != nil {
+		t.Fatalf("create schedule session: %v", err)
+	}
+
+	ts := httptest.NewServer(srv.httpSrv.Handler)
+	defer ts.Close()
+	conn := dialWSTest(t, "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/ws")
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	initial := readWSTestUntil(t, conn, "initial state", func(msg ServerMessage) bool { return msg.Type == "state" })
+	if len(initial.ScheduleAttention) != 0 {
+		t.Fatalf("initial schedule attention = %v, want none", initial.ScheduleAttention)
+	}
+
+	ask := func(itemID string) string {
+		t.Helper()
+		body, _ := json.Marshal(agentQuestionCreateRequest{
+			SessionID: sess.ID,
+			Questions: []store.AgentQuestionItem{{ID: itemID, Question: "Which path?"}},
+		})
+		rr := httptest.NewRecorder()
+		srv.handleAgentQuestions(rr, httptest.NewRequest(http.MethodPost, "/api/agent-questions", strings.NewReader(string(body))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("ask status = %d, body=%s", rr.Code, rr.Body.String())
+		}
+		var result struct {
+			QuestionID string `json:"question_id"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil || result.QuestionID == "" {
+			t.Fatalf("decode ask response: id=%q err=%v body=%s", result.QuestionID, err, rr.Body.String())
+		}
+		return result.QuestionID
+	}
+	answer := func(questionID, itemID string) {
+		t.Helper()
+		body, _ := json.Marshal(agentQuestionAnswerRequest{Answers: map[string][]string{itemID: {"Stable"}}})
+		rr := httptest.NewRecorder()
+		path := "/api/agent-questions/" + questionID + "/answer"
+		srv.handleAgentQuestion(rr, httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(body))))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("answer status = %d, body=%s", rr.Code, rr.Body.String())
+		}
+	}
+	attention := func(want int) {
+		t.Helper()
+		msg := readWSTestUntil(t, conn, "schedule attention", func(msg ServerMessage) bool {
+			return msg.Type == "schedule_attention"
+		})
+		if len(msg.ScheduleAttention) != want || (want == 1 && msg.ScheduleAttention[0] != "nightly") {
+			t.Fatalf("schedule attention = %v, want nightly count %d", msg.ScheduleAttention, want)
+		}
+	}
+
+	first := ask("choice-1")
+	attention(1)
+	second := ask("choice-2")
+	attention(1)
+	answer(second, "choice-2")
+	attention(1)
+	answer(first, "choice-1")
+	attention(0)
+
+	// A new connection gets the same authoritative state, not a history-derived
+	// unread flag.
+	ask("choice-3")
+	attention(1)
+	reconnected := dialWSTest(t, "ws"+strings.TrimPrefix(ts.URL, "http")+"/api/ws")
+	defer reconnected.Close(websocket.StatusNormalClosure, "")
+	state := readWSTestUntil(t, reconnected, "state with pending schedule question", func(msg ServerMessage) bool {
+		return msg.Type == "state"
+	})
+	if len(state.ScheduleAttention) != 1 || state.ScheduleAttention[0] != "nightly" {
+		t.Fatalf("reconnected schedule attention = %v, want [nightly]", state.ScheduleAttention)
+	}
+	rr := httptest.NewRecorder()
+	srv.handleSchedule(rr, httptest.NewRequest(http.MethodDelete, "/api/schedules/nightly", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	cleared := readWSTestUntil(t, reconnected, "schedule attention cleared by delete", func(msg ServerMessage) bool {
+		return msg.Type == "schedule_attention"
+	})
+	if len(cleared.ScheduleAttention) != 0 {
+		t.Fatalf("schedule attention after delete = %v, want none", cleared.ScheduleAttention)
+	}
+}
 
 // webhookTestSchedule creates a webhook-triggered schedule and returns the
 // secret the scheduler minted for it.

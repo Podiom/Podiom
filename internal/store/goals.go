@@ -38,6 +38,10 @@ func (s *Store) CreateGoal(ctx context.Context, goal Goal) (Goal, error) {
 	if err != nil {
 		return Goal{}, fmt.Errorf("create goal %q: %w", goal.ID, err)
 	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO goal_memories (goal_id) VALUES (?)`, goal.ID); err != nil {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM goals WHERE id = ?`, goal.ID)
+		return Goal{}, fmt.Errorf("create memory for goal %q: %w", goal.ID, err)
+	}
 	return s.GetGoal(ctx, goal.ID)
 }
 

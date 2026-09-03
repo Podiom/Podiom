@@ -522,11 +522,10 @@
   }
 
   function send(msg: ClientMessage): boolean {
-    if (live.status !== "live") {
+    if (!live.send(msg)) {
       error = "WebSocket is offline — reconnecting…";
       return false;
     }
-    live.send(msg);
     return true;
   }
 
@@ -2360,7 +2359,7 @@
             </div>
           </div>
         </div>
-      {:else if sending && !pendingAssistant && !pendingReasoning && !pendingPermission && !pendingUserInput}
+      {:else if sending && status === "live" && !pendingAssistant && !pendingReasoning && !pendingPermission && !pendingUserInput}
         <div class="row-start" style="align-items:center">
           <AgentAvatar name={activeName} size={30} radius={10} fontSize={13} />
           <span class="thinking">
@@ -4009,8 +4008,8 @@
 
   .bubble-user {
     max-width: 74%;
-    background: #fff;
-    border: 1px solid var(--line-3);
+    background: #f6efe6;
+    border: 1px solid #e6dbcb;
     border-radius: 18px 18px 6px 18px;
     padding: 12px 16px;
     font: 400 15px/1.5 "Hanken Grotesk";
@@ -4031,8 +4030,8 @@
   }
 
   .bubble-assistant {
-    background: #fff;
-    border: 1px solid var(--line-3);
+    background: #eef6f3;
+    border: 1px solid #d7e8e1;
     border-radius: 6px 18px 18px 18px;
     padding: 13px 16px;
     font: 400 15px/1.6 "Hanken Grotesk";
@@ -4340,8 +4339,8 @@
     align-items: center;
     padding: 9px 13px;
     border-radius: 16px;
-    background: #fff;
-    border: 1px solid var(--line-3);
+    background: #eef6f3;
+    border: 1px solid #d7e8e1;
   }
 
   .tdot {

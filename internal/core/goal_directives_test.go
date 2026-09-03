@@ -214,10 +214,10 @@ func lastMessage(t *testing.T, fake *adapter.Fake) string {
 }
 
 // splitFeedbackSections carves a goal prompt into its standing-directives and
-// recent-feedback sections so each can be asserted on independently.
+// pending-feedback sections so each can be asserted on independently.
 func splitFeedbackSections(prompt string) (directives, feedback string, ok bool) {
 	const directiveHead = "## Standing directives from the user"
-	const feedbackHead = "## Recent user feedback (newest first)"
+	const feedbackHead = "## Pending user feedback"
 	di := strings.Index(prompt, directiveHead)
 	fi := strings.Index(prompt, feedbackHead)
 	if di < 0 || fi < 0 || fi < di {

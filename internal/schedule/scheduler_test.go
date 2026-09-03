@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -389,6 +390,34 @@ Summarise the calendar.
 	}
 	if statuses[0].Body != "Summarise the calendar." {
 		t.Fatalf("body = %q", statuses[0].Body)
+	}
+}
+
+func TestCreatedBySession(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		s         *Scheduler
+		wantErr   error
+		wantNames []string
+	}{
+		{name: "empty session id", sessionID: "", s: &Scheduler{}, wantErr: nil, wantNames: nil},
+		{name: "whitespace session id", sessionID: "   ", s: &Scheduler{}, wantErr: nil, wantNames: nil},
+		{name: "empty session id", sessionID: "123", s: &Scheduler{dir: t.TempDir()}, wantErr: nil, wantNames: nil},
+		{name: "non matching session id", sessionID: "abc", s: &Scheduler{dir: writeDirWithSchedule(t, "good.md")}, wantErr: nil, wantNames: []string{}},
+		{name: "one session", sessionID: "123", s: &Scheduler{dir: writeDirWithSchedule(t, "good.md")}, wantErr: nil, wantNames: []string{"good"}},
+		{name: "multiple unsorted", sessionID: "123", s: &Scheduler{dir: writeDirWithSchedule(t, "b.md", "a.md")}, wantErr: nil, wantNames: []string{"a", "b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotNames, gotErr := tt.s.CreatedBySession(tt.sessionID)
+			if gotErr != tt.wantErr {
+				t.Fatalf("unexpected error, got: %v, want: %v", gotErr, tt.wantErr)
+			}
+			if !slices.Equal(gotNames, tt.wantNames) {
+				t.Errorf("unexpected session names, got: %v, want: %v", gotNames, tt.wantNames)
+			}
+		})
 	}
 }
 
@@ -779,4 +808,14 @@ func waitForScheduleNotification(t *testing.T, db *store.Store, notifType string
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func writeDirWithSchedule(t *testing.T, names ...string) string {
+	t.Helper()
+	content := "---\nagent: jared\nevery: 1h\ncreated_by_session: 123\n---\nwork\n"
+	dir := t.TempDir()
+	for _, name := range names {
+		writeSchedule(t, dir, name, content)
+	}
+	return dir
 }

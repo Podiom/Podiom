@@ -182,6 +182,7 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 			if err := s.core.DeleteAgentQuestions(r.Context(), store.AgentQuestionSchedule, name); err != nil {
 				s.log.Warn("delete schedule questions failed", "event", "question", "schedule", name, "err", err)
 			}
+			s.broadcastScheduleAttention(r.Context())
 		}
 		writeJSON(w, map[string]string{"deleted": name}, nil)
 	case "run":

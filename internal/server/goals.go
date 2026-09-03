@@ -116,9 +116,12 @@ type GoalDetail struct {
 	// pinned long ago would drop out of it while still binding every run, and a
 	// rule the user cannot see but the agent is still obeying is the one outcome
 	// this feature exists to prevent.
-	Directives []store.GoalEvent    `json:"directives"`
-	Usage      *tokenmeter.Estimate `json:"usage,omitempty"`
-	RunningRun *store.GoalRun       `json:"running_run,omitempty"`
+	Directives       []store.GoalEvent           `json:"directives"`
+	Usage            *tokenmeter.Estimate        `json:"usage,omitempty"`
+	RunningRun       *store.GoalRun              `json:"running_run,omitempty"`
+	Memory           store.GoalMemory            `json:"memory"`
+	FeedbackReceipts []store.GoalFeedbackReceipt `json:"feedback_receipts"`
+	Runs             []store.GoalRun             `json:"runs"`
 }
 
 type goalRunDetail struct {
@@ -271,6 +274,29 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request) {
 		s.handleGoalEvents(w, r, id)
 	case "feedback":
 		s.handleGoalFeedback(w, r, id)
+	case "memory":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req core.CommitGoalMemoryInput
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.GoalID = id
+		memory, err := s.core.CommitGoalMemory(r.Context(), req)
+		writeJSON(w, memory, err)
+	case "repair-memory":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		result, err := s.core.RepairGoalMemory(r.Context(), id)
+		if err == nil {
+			s.broadcastGoalPing(r.Context(), id)
+		}
+		writeJSON(w, result, err)
 	case "runs":
 		if len(parts) != 3 || parts[2] == "" {
 			http.Error(w, "goal run id is required", http.StatusBadRequest)
@@ -411,7 +437,28 @@ func (s *Server) handleGoalItem(w http.ResponseWriter, r *http.Request, id strin
 		if directives == nil {
 			directives = []store.GoalEvent{}
 		}
-		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, ActionItems: actions, Directives: directives, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running}, nil)
+		memory, err := s.core.GetGoalMemory(r.Context(), id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		receipts, err := s.core.ListGoalFeedbackReceipts(r.Context(), id)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		runs, err := s.core.ListGoalRuns(r.Context(), id, 20)
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if receipts == nil {
+			receipts = []store.GoalFeedbackReceipt{}
+		}
+		if runs == nil {
+			runs = []store.GoalRun{}
+		}
+		writeJSON(w, GoalDetail{Goal: goal, Events: events, AccessRequests: requests, RateLimitBlocks: rateLimits, PendingQuestion: question, ActionItems: actions, Directives: directives, Usage: s.goalUsageEstimate(r.Context(), id), RunningRun: running, Memory: memory, FeedbackReceipts: receipts, Runs: runs}, nil)
 	case http.MethodPatch:
 		var req goalUpdateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
