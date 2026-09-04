@@ -616,6 +616,31 @@ func TestClaudeRateLimitedText(t *testing.T) {
 	}
 }
 
+func TestClaudeRateLimited(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  map[string]any
+		want bool
+	}{
+		{name: "status float 429", raw: map[string]any{"status": float64(429)}, want: true},
+		{name: "status code float 429", raw: map[string]any{"status_code": float64(429)}, want: true},
+		{name: "statusCode float 429", raw: map[string]any{"statusCode": float64(429)}, want: true},
+		{name: "status string 429", raw: map[string]any{"status": "429"}, want: true},
+		{name: "non 429 status", raw: map[string]any{"status": float64(500)}, want: false},
+		{name: "unsupported status type", raw: map[string]any{"status": true}, want: false},
+		{name: "message fallback", raw: map[string]any{"message": "API Error: 429 too many requests"}, want: true},
+		{name: "empty payload", raw: map[string]any{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeRateLimited(tt.raw); got != tt.want {
+				t.Fatalf("claudeRateLimited(%v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClaudeWaitErrorKeepsProviderMessage(t *testing.T) {
 	event, send := claudeWaitEvent(errors.New("exit status 1"), "", claudeStreamTrack{lastMessage: "claude error: not logged in"})
 	if send {
