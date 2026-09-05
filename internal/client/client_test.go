@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,4 +34,26 @@ func TestPostLongJSONSendsGatewayToken(t *testing.T) {
 	if gotToken != token {
 		t.Fatalf("gateway token header = %q, want %q", gotToken, token)
 	}
+}
+
+func TestSharedHelpersMapDaemonUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	srv.Close()
+
+	c := New(addr)
+
+	t.Run("GET", func(t *testing.T) {
+		_, err := c.ListProfiles(context.Background())
+		if !errors.Is(err, ErrDaemonUnreachable) {
+			t.Fatalf("ListProfiles error = %v, want ErrDaemonUnreachable", err)
+		}
+	})
+
+	t.Run("POST", func(t *testing.T) {
+		_, err := c.CreateProfile(context.Background(), ProfileRequest{})
+		if !errors.Is(err, ErrDaemonUnreachable) {
+			t.Fatalf("CreateProfile error = %v, want ErrDaemonUnreachable", err)
+		}
+	})
 }

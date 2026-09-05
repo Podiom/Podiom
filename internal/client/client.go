@@ -718,7 +718,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -745,7 +745,7 @@ func (c *Client) postWithClient(ctx context.Context, hc *http.Client, path strin
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
