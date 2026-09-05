@@ -28,7 +28,24 @@ import (
 )
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	root := newRootCmd()
+	root.SilenceErrors = true
+
+	if err := root.Execute(); err != nil {
+		switch {
+		case errors.Is(err, onboard.ErrNoTTY):
+			// The command already printed its no-TTY guidance.
+		case errors.Is(err, client.ErrDaemonUnreachable):
+			flagAddr, _ := root.PersistentFlags().GetString("addr")
+			resolved, resolveErr := resolveAddr(flagAddr)
+			if resolveErr != nil {
+				fmt.Fprintln(os.Stderr, "podiomd is not running.\nStart it with: podiomd")
+			} else {
+				fmt.Fprintf(os.Stderr, "podiomd is not running (tried %s).\nStart it with: podiomd\n", resolved)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -476,10 +493,6 @@ func newStatusCmd(addr *string) *cobra.Command {
 			c := client.New(resolved)
 			h, err := c.Health(context.Background())
 			if err != nil {
-				if errors.Is(err, client.ErrDaemonUnreachable) {
-					fmt.Fprintf(os.Stderr, "podiomd is not running (tried %s).\nStart it with: podiomd\n", resolved)
-					return err
-				}
 				return err
 			}
 			fmt.Printf("podiomd is live at %s\n", resolved)

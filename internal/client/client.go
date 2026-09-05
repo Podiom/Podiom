@@ -495,7 +495,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 		httpClient := c.bespokeClient(0)
 		resp, err := httpClient.Do(httpReq)
 		if err != nil {
-			errs <- err
+			errs <- fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 			return
 		}
 		defer resp.Body.Close()
@@ -594,7 +594,7 @@ func (c *Client) RunSchedule(ctx context.Context, name string) (store.ScheduleRu
 	}
 	resp, err := c.bespokeClient(0).Do(req)
 	if err != nil {
-		return run, err
+		return run, fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -641,7 +641,7 @@ func (c *Client) Usage(ctx context.Context, refresh bool) ([]usage.Snapshot, err
 	hc := c.bespokeClient(20 * time.Second)
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -718,7 +718,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -745,7 +745,7 @@ func (c *Client) postWithClient(ctx context.Context, hc *http.Client, path strin
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -767,7 +767,7 @@ func (c *Client) putJSON(ctx context.Context, path string, in any, out any) erro
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -789,7 +789,7 @@ func (c *Client) deleteJSON(ctx context.Context, path string, in any, out any) e
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrDaemonUnreachable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

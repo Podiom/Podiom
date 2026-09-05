@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,4 +34,67 @@ func TestPostLongJSONSendsGatewayToken(t *testing.T) {
 	if gotToken != token {
 		t.Fatalf("gateway token header = %q, want %q", gotToken, token)
 	}
+}
+
+func TestSharedHelpersMapDaemonUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	srv.Close()
+
+	c := New(addr)
+
+	t.Run("GET", func(t *testing.T) {
+		_, err := c.ListProfiles(context.Background())
+		if !errors.Is(err, ErrDaemonUnreachable) {
+			t.Fatalf("ListProfiles error = %v, want ErrDaemonUnreachable", err)
+		}
+	})
+
+	t.Run("POST", func(t *testing.T) {
+		_, err := c.CreateProfile(context.Background(), ProfileRequest{})
+		if !errors.Is(err, ErrDaemonUnreachable) {
+			t.Fatalf("CreateProfile error = %v, want ErrDaemonUnreachable", err)
+		}
+	})
+}
+
+func TestRemainingDaemonRequestsMapDaemonUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	srv.Close()
+
+	c := New(addr)
+
+	assertUnreachable := func(t *testing.T, err error) {
+		t.Helper()
+		if !errors.Is(err, ErrDaemonUnreachable) {
+			t.Fatalf("error = %v, want ErrDaemonUnreachable", err)
+		}
+	}
+
+	t.Run("PUT", func(t *testing.T) {
+		_, err := c.UpdateProfile(context.Background(), "test", ProfileRequest{})
+		assertUnreachable(t, err)
+	})
+
+	t.Run("DELETE", func(t *testing.T) {
+		err := c.DeleteProfile(context.Background(), "test")
+		assertUnreachable(t, err)
+	})
+
+	t.Run("RUN_SCHEDULE", func(t *testing.T) {
+		_, err := c.RunSchedule(context.Background(), "test")
+		assertUnreachable(t, err)
+	})
+
+	t.Run("USAGE_REFRESH", func(t *testing.T) {
+		_, err := c.Usage(context.Background(), true)
+		assertUnreachable(t, err)
+	})
+
+	t.Run("CHAT", func(t *testing.T) {
+		_, errs := c.Chat(context.Background(), ChatRequest{})
+		err := <-errs
+		assertUnreachable(t, err)
+	})
 }
