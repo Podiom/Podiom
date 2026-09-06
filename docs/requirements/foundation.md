@@ -899,7 +899,9 @@ server:
   history after a crash) and for fast queries powering the session list (incl.
   filtering by origin or schedule). Agent **workspaces** remain plain files on
   disk (§5.2), so project content stays transparent and git-friendly; only
-  Podiom's internal bookkeeping lives in the DB.
+  Podiom's internal bookkeeping lives in the DB. Transactions acquire SQLite's
+  write lock before taking a read snapshot, so concurrent read-then-write
+  operations wait for one another instead of failing during lock upgrade.
 - **R11.3** *(O5 — resolved: no limit in v1.)* Podiom imposes **no concurrency
   cap** in v1: every triggered run (interactive or scheduled) executes
   immediately. Accepted trade-off: many parallel Claude turns (each its own
