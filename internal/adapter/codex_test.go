@@ -987,6 +987,52 @@ func TestCodexNativeAgentActivityParsingAndEnrichment(t *testing.T) {
 	}
 }
 
+func TestCodexAgentStateStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   string
+	}{
+		{name: "completed", status: "completed", want: "completed"},
+		{name: "errored", status: "errored", want: "failed"},
+		{name: "not found", status: "notFound", want: "failed"},
+		{name: "interrupted", status: "interrupted", want: "cancelled"},
+		{name: "shutdown", status: "shutdown", want: "cancelled"},
+		{name: "unknown", status: "unknown"},
+		{name: "empty"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexAgentStateStatus(tt.status); got != tt.want {
+				t.Fatalf("codexAgentStateStatus(%q) = %q, want %q", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCodexSubAgentActivityStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		kind string
+		want string
+	}{
+		{name: "started", kind: "started", want: "started"},
+		{name: "interacted", kind: "interacted", want: "started"},
+		{name: "interrupted", kind: "interrupted", want: "cancelled"},
+		{name: "unknown", kind: "unknown"},
+		{name: "empty"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexSubAgentActivityStatus(tt.kind); got != tt.want {
+				t.Fatalf("codexSubAgentActivityStatus(%q) = %q, want %q", tt.kind, got, tt.want)
+			}
+		})
+	}
+}
+
 // Codex sends its reasoning twice: as deltas while the turn runs, then whole at
 // turn/completed. Emitting both would duplicate every working note, so the
 // completion copy is dropped once deltas have streamed — and the item-boundary
