@@ -88,6 +88,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	daemonBind, daemonPort, addrSource, err := resolveDaemonAddr(
+		cfg.Server.Bind,
+		cfg.Server.Port,
+		os.Getenv("PODIOM_ADDR"),
+		res.CreatedConfig,
+	)
+	if err != nil {
+		return err
+	}
+	cfg.Server.Bind = daemonBind
+	cfg.Server.Port = daemonPort
 	fileLog, closer, err := podiomlog.Open(podiomlog.Options{
 		Dir:           paths.LogsDir,
 		RetentionDays: cfg.Logging.RetentionDays,
@@ -356,7 +367,7 @@ func run() error {
 	// Serve until a termination signal arrives, then shut down gracefully.
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Start() }()
-	log.Info("podiomd listening", "addr", srv.Addr())
+	log.Info("podiomd listening", "addr", srv.Addr(), "source", addrSource)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -370,6 +381,26 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+func resolveDaemonAddr(configBind string, configPort int, envAddr string, defaultConfig bool) (string, int, string, error) {
+	if envAddr == "" {
+		source := "config"
+		if defaultConfig {
+			source = "default"
+		}
+		return configBind, configPort, source, nil
+	}
+
+	bind, portText, err := net.SplitHostPort(envAddr)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("PODIOM_ADDR must be host:port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", 0, "", fmt.Errorf("PODIOM_ADDR has invalid port %q", portText)
+	}
+	return bind, port, "env", nil
 }
 
 func internalCallbackAddr(bind string, port int) string {

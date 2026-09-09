@@ -40,8 +40,10 @@ podiomd
 | `--help` | Show help. |
 | `--version` | Print version and commit. |
 
-Bind address and port come from `config.yaml` (`server.bind`, `server.port`;
-default `127.0.0.1:8787`).
+Bind address and port come from `PODIOM_ADDR` when set, otherwise from
+`config.yaml` (`server.bind`, `server.port`; default `127.0.0.1:8787`). The
+daemon logs `source=env`, `source=config`, or `source=default` with its resolved
+listen address.
 
 ## `podiom`
 
@@ -49,7 +51,7 @@ Global flags:
 
 | Flag | Description |
 | --- | --- |
-| `--addr host:port` | Daemon address. Precedence: `--addr` → `PODIOM_ADDR` → `config.yaml` → `127.0.0.1:8787`. |
+| `--addr host:port` | Daemon address. Precedence: `--addr` → `PODIOM_ADDR` (shared by CLI and daemon) → `config.yaml` → `127.0.0.1:8787`. |
 | `--version` | Print version and commit. |
 
 ### Install scripts

@@ -8,6 +8,41 @@ import (
 	"github.com/Podiom/Podiom/internal/store"
 )
 
+func TestResolveDaemonAddrUsesEnvironmentBeforeConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		wantBind   string
+		wantPort   int
+		wantSource string
+		wantErr    bool
+		defaultCfg bool
+	}{
+		{name: "config fallback", wantBind: "0.0.0.0", wantPort: 8787, wantSource: "config"},
+		{name: "new default config", wantBind: "0.0.0.0", wantPort: 8787, wantSource: "default", defaultCfg: true},
+		{name: "environment override", env: "127.0.0.1:8799", wantBind: "127.0.0.1", wantPort: 8799, wantSource: "env"},
+		{name: "IPv6 environment override", env: "[::1]:8800", wantBind: "::1", wantPort: 8800, wantSource: "env"},
+		{name: "missing port", env: "127.0.0.1", wantErr: true},
+		{name: "invalid port", env: "127.0.0.1:nope", wantErr: true},
+		{name: "out of range port", env: "127.0.0.1:70000", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bind, port, source, err := resolveDaemonAddr("0.0.0.0", 8787, tt.env, tt.defaultCfg)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveDaemonAddr() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if bind != tt.wantBind || port != tt.wantPort || source != tt.wantSource {
+				t.Fatalf("resolveDaemonAddr() = (%q, %d, %q), want (%q, %d, %q)", bind, port, source, tt.wantBind, tt.wantPort, tt.wantSource)
+			}
+		})
+	}
+}
+
 func TestInternalCallbackAddrNormalizesWildcardBinds(t *testing.T) {
 	tests := []struct {
 		name string
