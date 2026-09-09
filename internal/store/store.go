@@ -23,9 +23,11 @@ type Store struct {
 // registers under the name "sqlite".
 func Open(path string) (*Store, error) {
 	// Busy timeout avoids spurious "database is locked" errors under the parallel
-	// runs Podiom allows (no concurrency cap, R11.3); foreign_keys + WAL give us
-	// referential integrity and better read/write concurrency.
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)", path)
+	// runs Podiom allows (no concurrency cap, R11.3). Immediate transactions take
+	// the write lock before any read snapshot, so read-then-write operations wait
+	// here instead of failing later with SQLITE_BUSY_SNAPSHOT. Foreign keys + WAL
+	// give us referential integrity and better read/write concurrency.
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_txlock=immediate", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
