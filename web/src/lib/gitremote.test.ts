@@ -28,6 +28,7 @@ describe("remoteError", () => {
     "--upload-pack=touch /tmp/pwned",
     "-oProxyCommand=x",
     "ext::sh -c 'id'",
+    "ext::sh",
     "ssh://-oProxyCommand=x/y",
     "ftp://host/repo.git",
     "git@host:",
@@ -36,6 +37,15 @@ describe("remoteError", () => {
     "git@host:owner\nrepo",
   ])("rejects %j", (remote) => {
     expect(remoteError(remote)).not.toBe("");
+  });
+
+  // Pins the remote-helper guard specifically (issue #160): an ext:: remote without whitespace
+  // would otherwise bypass the UNSAFE guard. Asserting on the message verifies that the
+  // remote-helper branch specifically fired.
+  it("rejects git remote helpers with a dedicated error message", () => {
+    const err = remoteError("ext::sh");
+    expect(err).not.toBe("");
+    expect(err).toContain("remote helper");
   });
 
   // TrimSpace on the Go side strips a trailing newline, so this must be accepted on both
