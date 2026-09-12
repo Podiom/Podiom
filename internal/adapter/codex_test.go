@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Podiom/Podiom/internal/capabilities"
 	"github.com/Podiom/Podiom/internal/config"
 	podiommcp "github.com/Podiom/Podiom/internal/mcp"
 	"github.com/Podiom/Podiom/internal/store"
@@ -140,6 +142,84 @@ func TestParseCodexModelList(t *testing.T) {
 	}
 	if strings.Join(model.InputModalities, ",") != "text,image" {
 		t.Fatalf("input modalities = %v", model.InputModalities)
+	}
+}
+
+func TestUnionModelEfforts(t *testing.T) {
+	tests := []struct {
+		name   string
+		models []capabilities.ModelOption
+		want   []capabilities.EffortOption
+	}{
+		{
+			name: "no models",
+			want: nil,
+		},
+		{
+			name: "merges efforts across models without duplicates",
+			models: []capabilities.ModelOption{
+				{Model: "gpt-5.1", SupportedEfforts: []capabilities.EffortOption{
+					{Effort: "low", Description: "Fast"},
+					{Effort: "high"},
+				}},
+				{Model: "gpt-5.2", SupportedEfforts: []capabilities.EffortOption{
+					{Effort: "high", Description: "Duplicate kept out"},
+					{Effort: "xhigh"},
+				}},
+			},
+			want: []capabilities.EffortOption{
+				{Effort: "low", Description: "Fast"},
+				{Effort: "high"},
+				{Effort: "xhigh"},
+			},
+		},
+		{
+			name: "keeps first-seen order rather than sorting",
+			models: []capabilities.ModelOption{
+				{Model: "a", SupportedEfforts: []capabilities.EffortOption{
+					{Effort: "xhigh"},
+					{Effort: "low"},
+				}},
+				{Model: "b", SupportedEfforts: []capabilities.EffortOption{
+					{Effort: "medium"},
+				}},
+			},
+			want: []capabilities.EffortOption{
+				{Effort: "xhigh"},
+				{Effort: "low"},
+				{Effort: "medium"},
+			},
+		},
+		{
+			name: "skips empty effort values",
+			models: []capabilities.ModelOption{
+				{Model: "a", SupportedEfforts: []capabilities.EffortOption{
+					{Effort: "", Description: "No name"},
+					{Effort: "low"},
+				}},
+			},
+			want: []capabilities.EffortOption{{Effort: "low"}},
+		},
+		{
+			name: "model without supported efforts still merges",
+			models: []capabilities.ModelOption{
+				{Model: "a", SupportedEfforts: []capabilities.EffortOption{{Effort: "low"}}},
+				{Model: "b"},
+				{Model: "c", SupportedEfforts: []capabilities.EffortOption{{Effort: "high"}}},
+			},
+			want: []capabilities.EffortOption{
+				{Effort: "low"},
+				{Effort: "high"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unionModelEfforts(tt.models)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("unionModelEfforts(%v) = %v, want %v", tt.models, got, tt.want)
+			}
+		})
 	}
 }
 
