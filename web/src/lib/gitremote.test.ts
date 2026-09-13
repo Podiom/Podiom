@@ -38,6 +38,16 @@ describe("remoteError", () => {
     expect(remoteError(remote)).not.toBe("");
   });
 
+  // A remote helper need not contain whitespace, so this case can only be
+  // rejected by the "::" guard. The shared table above cannot pin that branch:
+  // "ext::sh -c 'id'" also trips the unsafe-character check, so it still
+  // rejects if the "::" guard is deleted.
+  it("rejects a git remote helper with no whitespace", () => {
+    const error = remoteError("ext::sh");
+    expect(error).not.toBe("");
+    expect(error).toContain("remote helper");
+  });
+
   // TrimSpace on the Go side strips a trailing newline, so this must be accepted on both
   // sides. Only an embedded control character is a real problem.
   it("accepts a remote with trailing whitespace, as the server does", () => {
