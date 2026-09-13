@@ -87,3 +87,26 @@ func TestCapabilitiesHelpers(t *testing.T) {
 		t.Fatal("HasEffort returned an incorrect result")
 	}
 }
+
+func TestClone(t *testing.T) {
+	original := ProviderCapabilities{
+		Models: []ModelOption{{
+			SupportedEfforts: []EffortOption{{Effort: "low"}},
+			InputModalities:  []string{"text"},
+		}},
+		Efforts: []EffortOption{{Effort: "low"}},
+	}
+	clone := Clone(original)
+	clone.Models[0].SupportedEfforts[0].Effort = "high"
+	clone.Models[0].InputModalities[0] = "image"
+	clone.Efforts[0].Effort = "high"
+	if original.Models[0].SupportedEfforts[0].Effort != "low" {
+		t.Fatal("mutating clone SupportedEfforts changed the original")
+	}
+	if original.Models[0].InputModalities[0] != "text" {
+		t.Fatal("mutating clone InputModalities changed the original")
+	}
+	if original.Efforts[0].Effort != "low" {
+		t.Fatal("mutating clone Efforts changed the original")
+	}
+}
