@@ -51,16 +51,18 @@ describe("parseMemory", () => {
   });
 
   it("ignores the top-level # heading instead of making it a section", () => {
-    const parsed = parseMemory("# Memory\n## Likes\n- rain");
+    const parsed = parseMemory("# Memory\nsome intro\n## Likes\n- rain");
 
     expect(parsed.sections.map((s) => s.title)).toEqual(["Likes"]);
+    expect(parsed.intro).toBe("some intro");
   });
 
   it("skips comment lines and strips inline comments from item text", () => {
     const parsed = parseMemory(
-      "<!-- last dreamed 2026-09-03 -->\n## Likes\n- rain <!-- the wet kind -->",
+      "<!-- last dreamed 2026-09-03 -->\nsome intro\n## Likes\n- rain <!-- the wet kind -->",
     );
 
+    expect(parsed.intro).toBe("some intro");
     expect(parsed.sections[0].items).toEqual([{ text: "rain" }]);
   });
 
