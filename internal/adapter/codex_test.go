@@ -1837,3 +1837,55 @@ func TestCodexClientCarriesToolsetDirs(t *testing.T) {
 		t.Fatalf("client toolsetDirs = %v, want %v", client.toolsetDirs, dirs)
 	}
 }
+
+func TestCodexErrorMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		in   json.RawMessage
+		want string
+	}{
+		{
+			name: "string error is re-marshalled with quotes",
+			in:   json.RawMessage(`{"error":"boom"}`),
+			want: `codex error: "boom"`,
+		},
+		{
+			name: "object error is re-marshalled",
+			in:   json.RawMessage(`{"error":{"code":"rate_limit","message":"slow down"}}`),
+			want: `codex error: {"code":"rate_limit","message":"slow down"}`,
+		},
+		{
+			name: "numeric error is re-marshalled",
+			in:   json.RawMessage(`{"error":42}`),
+			want: `codex error: 42`,
+		},
+		{
+			name: "error absent yields plain prefix",
+			in:   json.RawMessage(`{"ok":true}`),
+			want: "codex error",
+		},
+		{
+			name: "error null yields plain prefix",
+			in:   json.RawMessage(`{"error":null}`),
+			want: "codex error",
+		},
+		{
+			name: "non-JSON params yield plain prefix",
+			in:   json.RawMessage(`not-json`),
+			want: "codex error",
+		},
+		{
+			name: "empty params yield plain prefix",
+			in:   json.RawMessage(``),
+			want: "codex error",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := codexErrorMessage(tt.in)
+			if got != tt.want {
+				t.Fatalf("codexErrorMessage(%s) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
