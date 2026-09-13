@@ -25,6 +25,26 @@ func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestCodexErrorMessage(t *testing.T) {
+	tests := []struct {
+		name   string
+		params json.RawMessage
+		want   string
+	}{
+		{name: "error", params: json.RawMessage("{\"error\":\"boom\"}"), want: "codex error: \"boom\""},
+		{name: "missing error", params: json.RawMessage("{}"), want: "codex error"},
+		{name: "null error", params: json.RawMessage("{\"error\":null}"), want: "codex error"},
+		{name: "invalid JSON", params: json.RawMessage("not-json"), want: "codex error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexErrorMessage(tt.params); got != tt.want {
+				t.Fatalf("codexErrorMessage(%s) = %q, want %q", tt.params, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	approveStart := codexThreadStartParams(StartRequest{
 		Model:          "gpt-5.5",
