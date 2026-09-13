@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+func TestClone(t *testing.T) {
+	original := ProviderCapabilities{
+		Models: []ModelOption{{
+			Model:            "model",
+			SupportedEfforts: []EffortOption{{Effort: "medium"}},
+			InputModalities:  []string{"text"},
+		}},
+		Efforts: []EffortOption{{Effort: "high"}},
+	}
+
+	cloned := Clone(original)
+	cloned.Models[0].SupportedEfforts[0].Effort = "low"
+	cloned.Models[0].InputModalities[0] = "image"
+	cloned.Efforts[0].Effort = "xhigh"
+
+	if got := original.Models[0].SupportedEfforts[0].Effort; got != "medium" {
+		t.Fatalf("original model effort = %q, want medium", got)
+	}
+	if got := original.Models[0].InputModalities[0]; got != "text" {
+		t.Fatalf("original input modality = %q, want text", got)
+	}
+	if got := original.Efforts[0].Effort; got != "high" {
+		t.Fatalf("original provider effort = %q, want high", got)
+	}
+}
+
 func TestParseEffortsFromHelp(t *testing.T) {
 	help := `--effort <level>  Effort level for the current session
                                         (low, medium, high, xhigh, max)`
