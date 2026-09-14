@@ -25,6 +25,25 @@ func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestWithoutCodexNativeAgents(t *testing.T) {
+	original := TurnSettings{
+		WorkspaceDir:    "/workspace",
+		NativeAgentName: "reviewer",
+		NativeAgents:    []NativeAgent{{Name: "reviewer"}},
+	}
+
+	got := withoutCodexNativeAgents(original)
+	if got.NativeAgentName != "" || got.NativeAgents != nil {
+		t.Fatalf("native agents were not cleared: %#v", got)
+	}
+	if got.WorkspaceDir != original.WorkspaceDir {
+		t.Fatalf("WorkspaceDir = %q, want %q", got.WorkspaceDir, original.WorkspaceDir)
+	}
+	if original.NativeAgentName != "reviewer" || len(original.NativeAgents) != 1 {
+		t.Fatalf("original settings were modified: %#v", original)
+	}
+}
+
 func TestCodexParamsUseNativePermissionModes(t *testing.T) {
 	approveStart := codexThreadStartParams(StartRequest{
 		Model:          "gpt-5.5",
