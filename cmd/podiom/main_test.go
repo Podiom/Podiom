@@ -36,6 +36,32 @@ func TestConfirmAgentDeletionRequiresExactName(t *testing.T) {
 	}
 }
 
+func TestParseEnvFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     []string
+		wantName  string
+		wantValue string
+	}{
+		{name: "value", input: []string{"NAME=VALUE"}, wantName: "NAME", wantValue: "VALUE"},
+		{name: "bare", input: []string{"NAME"}, wantName: "NAME"},
+		{name: "trim name", input: []string{" NAME = value "}, wantName: "NAME", wantValue: " value "},
+		{name: "first equals", input: []string{"K=a=b"}, wantName: "K", wantValue: "a=b"},
+		{name: "explicit empty", input: []string{"NAME="}, wantName: "NAME"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseEnvFlags(tt.input)
+			if len(got) != 1 || got[0].Name != tt.wantName || got[0].Value != tt.wantValue {
+				t.Fatalf("parseEnvFlags(%q) = %#v, want name %q value %q", tt.input, got, tt.wantName, tt.wantValue)
+			}
+		})
+	}
+	if got := parseEnvFlags(nil); got != nil {
+		t.Fatalf("parseEnvFlags(nil) = %#v, want nil", got)
+	}
+}
+
 func TestConfirmOverwriteDefaultsNo(t *testing.T) {
 	var out bytes.Buffer
 	if confirmOverwrite(strings.NewReader("\n"), &out, "Overwrite?") {
