@@ -9,6 +9,37 @@ import (
 	"testing"
 )
 
+func TestServerAdvertiseEnabled(t *testing.T) {
+	enabled, disabled := true, false
+	for name, tt := range map[string]struct {
+		value *bool
+		want  bool
+	}{
+		"absent": {nil, true},
+		"true":   {&enabled, true},
+		"false":  {&disabled, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := (Server{Advertise: tt.value}).AdvertiseEnabled(); got != tt.want {
+				t.Fatalf("AdvertiseEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNotificationsRelayEndpoint(t *testing.T) {
+	for input, want := range map[string]string{
+		"":                        DefaultRelayURL,
+		"   ":                     DefaultRelayURL,
+		"https://relay.test/path": "https://relay.test/path",
+		"  https://relay.test/  ": "https://relay.test/",
+	} {
+		if got := (Notifications{RelayURL: input}).RelayEndpoint(); got != want {
+			t.Errorf("RelayEndpoint() = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestPermissionModes(t *testing.T) {
 	want := []PermissionMode{PermissionApprove, PermissionAuto, PermissionYolo}
 	modes := PermissionModes()
