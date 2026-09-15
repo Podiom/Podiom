@@ -7,6 +7,29 @@ import (
 	"testing"
 )
 
+func TestProfileName(t *testing.T) {
+	tests := map[string]string{
+		"":          "podiom-agent",
+		"my agent!": "podiom-my-agent-",
+		"!!!":       "podiom----",
+	}
+	for input, want := range tests {
+		if got := ProfileName(input); got != want {
+			t.Errorf("ProfileName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestProfileHash(t *testing.T) {
+	got := ProfileHash("profile contents")
+	if len(got) != 16 {
+		t.Fatalf("ProfileHash length = %d, want 16", len(got))
+	}
+	if want := "7ff509519a0dd995"; got != want {
+		t.Fatalf("ProfileHash() = %q, want %q", got, want)
+	}
+}
+
 func TestLoadUserFileReadsLegacyAuthEnvAndWritesEnvVars(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.yaml")
