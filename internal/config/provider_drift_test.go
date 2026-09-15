@@ -71,9 +71,12 @@ func TestProviderKnowledgeStaysInRegistry(t *testing.T) {
 		}
 		rel = filepath.ToSlash(rel)
 
+		// Tests are exempt on both sides: asserting that a provider behaves a
+		// certain way necessarily names it, and that is not drift.
 		isGo := strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, "_test.go")
 		isWeb := strings.HasPrefix(rel, "web/src/") &&
-			(strings.HasSuffix(rel, ".ts") || strings.HasSuffix(rel, ".svelte"))
+			(strings.HasSuffix(rel, ".ts") || strings.HasSuffix(rel, ".svelte")) &&
+			!strings.HasSuffix(rel, ".test.ts") && !strings.HasSuffix(rel, ".spec.ts")
 		if !isGo && !isWeb {
 			return nil
 		}
