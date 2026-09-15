@@ -68,9 +68,12 @@ func newTestManager(t *testing.T, provider config.Provider, script string) (*Man
 // waitPhase polls until the session reaches want, or fails the test.
 func waitPhase(t *testing.T, m *Manager, id string, want Phase) Session {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	ctx := t.Context()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
 	var last Session
-	for time.Now().Before(deadline) {
+	for {
 		sess, err := m.Get(id)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
@@ -79,10 +82,15 @@ func waitPhase(t *testing.T, m *Manager, id string, want Phase) Session {
 		if sess.Phase == want {
 			return sess
 		}
-		time.Sleep(10 * time.Millisecond)
+		if sess.Phase.Done() {
+			t.Fatalf("session terminated in phase %q (message %q), want %q", sess.Phase, sess.Message, want)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("phase = %q (message %q), want %q (test context ended: %v)", last.Phase, last.Message, want, ctx.Err())
+		case <-ticker.C:
+		}
 	}
-	t.Fatalf("phase = %q (message %q), want %q", last.Phase, last.Message, want)
-	return last
 }
 
 func TestClaudeLoginScrapesURLAndAcceptsCode(t *testing.T) {
