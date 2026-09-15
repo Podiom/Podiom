@@ -271,6 +271,8 @@ func (m *Manager) Submit(id, code string) (Session, error) {
 		m.mu.Unlock()
 		return Session{}, ErrNotAwaitingCode
 	}
+	sess.state.Phase = PhaseVerifying
+	sess.state.Message = ""
 	stdin := sess.stdin
 	m.mu.Unlock()
 
@@ -280,11 +282,6 @@ func (m *Manager) Submit(id, code string) (Session, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// The CLI may have already exited between the unlock and the write.
-	if !sess.state.Phase.Done() {
-		sess.state.Phase = PhaseVerifying
-		sess.state.Message = ""
-	}
 	return sess.state, nil
 }
 
