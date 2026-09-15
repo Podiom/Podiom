@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseCredentials(t *testing.T) {
@@ -69,5 +70,46 @@ func TestKeychainService(t *testing.T) {
 	}
 	if got := KeychainService(filepath.Join(home, ".claude")); got != KeychainBase {
 		t.Errorf("explicit default service = %q, want %q", got, KeychainBase)
+	}
+}
+
+func TestCredentialsHasScope(t *testing.T) {
+	tests := []struct {
+		name   string
+		scopes []string
+		scope  string
+		want   bool
+	}{
+		{name: "exact match", scopes: []string{"user:inference"}, scope: "user:inference", want: true},
+		{name: "trimmed case insensitive match", scopes: []string{" User:Inference "}, scope: "user:inference", want: true},
+		{name: "absent", scopes: []string{"user:read"}, scope: "user:inference", want: false},
+		{name: "empty scopes", scopes: nil, scope: "user:inference", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (Credentials{Scopes: tt.scopes}).HasScope(tt.scope); got != tt.want {
+				t.Fatalf("HasScope(%q) = %v, want %v", tt.scope, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCredentialsExpired(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name      string
+		expiresAt int64
+		want      bool
+	}{
+		{name: "zero never expires", expiresAt: 0, want: false},
+		{name: "past", expiresAt: now.Add(-time.Hour).UnixMilli(), want: true},
+		{name: "future", expiresAt: now.Add(time.Hour).UnixMilli(), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (Credentials{ExpiresAt: tt.expiresAt}).Expired(); got != tt.want {
+				t.Fatalf("Expired() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
