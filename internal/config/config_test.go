@@ -354,3 +354,219 @@ func TestResolveHomeMakesRelativeOverrideAbsolute(t *testing.T) {
 		t.Errorf("ResolveHome() = %q, want an absolute path", got)
 	}
 }
+
+func TestValidateProfile(t *testing.T) {
+	existingMap := map[string]Provider{
+		"personal": ProviderClaude,
+		"work":     ProviderCodex,
+	}
+
+	tests := []struct {
+		name        string
+		profile     Profile
+		existing    map[string]Provider
+		wantErrText string
+	}{
+		{
+			name: "empty name",
+			profile: Profile{
+				Name:      "",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude",
+			},
+			existing:    nil,
+			wantErrText: "name is required",
+		},
+		{
+			name: "reserved name default",
+			profile: Profile{
+				Name:      "default",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude",
+			},
+			existing:    nil,
+			wantErrText: `profile name "default" is reserved`,
+		},
+		{
+			name: "reserved bare provider claude",
+			profile: Profile{
+				Name:      "claude",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude",
+			},
+			existing:    nil,
+			wantErrText: `profile name "claude" is reserved`,
+		},
+		{
+			name: "reserved bare provider codex",
+			profile: Profile{
+				Name:     "codex",
+				Provider: ProviderCodex,
+				HomeDir:  "/tmp/codex",
+			},
+			existing:    nil,
+			wantErrText: `profile name "codex" is reserved`,
+		},
+		{
+			name: "unreserved prefix name valid",
+			profile: Profile{
+				Name:      "claude-work",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude-work",
+			},
+			existing:    nil,
+			wantErrText: "",
+		},
+		{
+			name: "nil existing map skips duplicate check",
+			profile: Profile{
+				Name:      "personal",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude",
+			},
+			existing:    nil,
+			wantErrText: "",
+		},
+		{
+			name: "duplicate profile name with existing map",
+			profile: Profile{
+				Name:      "personal",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude",
+			},
+			existing:    existingMap,
+			wantErrText: `duplicate profile name "personal"`,
+		},
+		{
+			name: "non-duplicate profile name with existing map",
+			profile: Profile{
+				Name:      "staging",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/claude-staging",
+			},
+			existing:    existingMap,
+			wantErrText: "",
+		},
+		{
+			name: "unknown provider rejected",
+			profile: Profile{
+				Name:     "custom",
+				Provider: Provider("unknown"),
+			},
+			existing:    nil,
+			wantErrText: `unknown provider "unknown"`,
+		},
+		{
+			name: "claude profile missing config_dir",
+			profile: Profile{
+				Name:      "valid-claude",
+				Provider:  ProviderClaude,
+				ConfigDir: "",
+			},
+			existing:    nil,
+			wantErrText: "claude profile needs config_dir",
+		},
+		{
+			name: "codex profile missing home_dir",
+			profile: Profile{
+				Name:     "valid-codex",
+				Provider: ProviderCodex,
+				HomeDir:  "",
+			},
+			existing:    nil,
+			wantErrText: "codex profile needs home_dir",
+		},
+		{
+			name: "valid claude profile",
+			profile: Profile{
+				Name:      "my-claude",
+				Provider:  ProviderClaude,
+				ConfigDir: "/tmp/my-claude",
+			},
+			existing:    nil,
+			wantErrText: "",
+		},
+		{
+			name: "valid codex profile",
+			profile: Profile{
+				Name:     "my-codex",
+				Provider: ProviderCodex,
+				HomeDir:  "/tmp/my-codex",
+			},
+			existing:    nil,
+			wantErrText: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateProfile(tt.profile, tt.existing)
+			if tt.wantErrText == "" {
+				if err != nil {
+					t.Fatalf("ValidateProfile() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateProfile() = nil, want error containing %q", tt.wantErrText)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrText) {
+				t.Fatalf("ValidateProfile() error = %q, want containing %q", err.Error(), tt.wantErrText)
+			}
+		})
+	}
+}
+
+func TestReservedProfileName(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"default", true},
+		{"claude", true},
+		{"codex", true},
+		{"claude-work", false},
+		{"codex-main", false},
+		{"custom", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := reservedProfileName(tt.name); got != tt.want {
+				t.Errorf("reservedProfileName(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateProfileDir(t *testing.T) {
+	// Unknown provider has no ProviderInfoFor entry — absence of metadata is permissive (returns nil).
+	unregistered := Profile{
+		Name:     "unregistered",
+		Provider: Provider("unregistered"),
+	}
+	if err := validateProfileDir(unregistered); err != nil {
+		t.Errorf("validateProfileDir(unregistered) = %v, want nil", err)
+	}
+
+	// Known provider with empty dir produces error.
+	missingDir := Profile{
+		Name:      "empty",
+		Provider:  ProviderClaude,
+		ConfigDir: "",
+	}
+	if err := validateProfileDir(missingDir); err == nil || !strings.Contains(err.Error(), "claude profile needs config_dir") {
+		t.Errorf("validateProfileDir(missingDir) = %v, want error containing %q", err, "claude profile needs config_dir")
+	}
+
+	// Known provider with populated dir returns nil.
+	validDir := Profile{
+		Name:      "valid",
+		Provider:  ProviderClaude,
+		ConfigDir: "/tmp/claude",
+	}
+	if err := validateProfileDir(validDir); err != nil {
+		t.Errorf("validateProfileDir(validDir) = %v, want nil", err)
+	}
+}
