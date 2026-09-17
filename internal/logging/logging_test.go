@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -214,5 +215,43 @@ func TestCountInts(t *testing.T) {
 				t.Errorf("Got length: %d, want length: %d", gotLen, tt.wantLen)
 			}
 		})
+	}
+}
+
+func TestParseLevel(t *testing.T) {
+	tests := []struct {
+		raw     string
+		want    slog.Level
+		wantErr bool
+	}{
+		{"", slog.LevelInfo, false}, {" info ", slog.LevelInfo, false}, {"DEBUG", slog.LevelDebug, false},
+		{"warn", slog.LevelWarn, false}, {" warning ", slog.LevelWarn, false}, {"error", slog.LevelError, false},
+		{"verbose", slog.LevelInfo, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got, err := parseLevel(tt.raw)
+			if got != tt.want {
+				t.Fatalf("parseLevel(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseLevel(%q) error = %v, wantErr %v", tt.raw, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestErrorAttr(t *testing.T) {
+	attr := ErrorAttr(nil)
+	if attr.Key != "error" || attr.Value.String() != "" {
+		t.Fatalf("ErrorAttr(nil) = %+v", attr)
+	}
+	secret := "sk-proj-1234567890"
+	attr = ErrorAttr(fmt.Errorf("request failed with %s", secret))
+	if attr.Key != "error" {
+		t.Fatalf("ErrorAttr key = %q", attr.Key)
+	}
+	if strings.Contains(attr.Value.String(), secret) {
+		t.Fatalf("ErrorAttr leaked secret: %s", attr.Value.String())
 	}
 }
