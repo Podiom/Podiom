@@ -13,6 +13,11 @@ describe("normalizeAddress", () => {
     expect(normalizeAddress("podiom.local").toString()).toBe("http://podiom.local/");
   });
 
+  it("adds http to a bare host:port", () => {
+    expect(normalizeAddress("192.168.1.20:8080").toString()).toBe("http://192.168.1.20:8080/");
+    expect(normalizeAddress("podiom.local:8080").toString()).toBe("http://podiom.local:8080/");
+  });
+
   it("keeps explicit schemes", () => {
     expect(normalizeAddress("https://podiom.local").toString()).toBe("https://podiom.local/");
   });
