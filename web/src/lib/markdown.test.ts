@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it } from "vitest";
 
 import { renderMarkdown } from "./markdown";
@@ -11,7 +13,7 @@ describe("renderMarkdown", () => {
   });
 
   it("turns a single newline into a line break", () => {
-    expect(renderMarkdown("first\nsecond")).toContain("first<br>\nsecond");
+    expect(renderMarkdown("first\nsecond")).toContain("first<br>second");
   });
 
   it("sanitizes scripts and inline event handlers", () => {
