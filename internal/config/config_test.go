@@ -152,6 +152,53 @@ func TestValidateRejectsReservedProfileName(t *testing.T) {
 	}
 }
 
+func TestValidateProfile(t *testing.T) {
+	cases := []struct {
+		name     string
+		profile  Profile
+		existing map[string]Provider
+		want     string // substring of the error text; empty means valid
+	}{
+		{"ok claude profile", Profile{Name: "personal", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, nil, ""},
+		{"ok codex profile", Profile{Name: "codex-main", Provider: ProviderCodex, HomeDir: "/tmp/codex-main"}, nil, ""},
+		{"empty name", Profile{Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, nil, "name is required"},
+		{"default is reserved", Profile{Name: "default", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, nil, `profile name "default" is reserved`},
+		{"bare provider token is reserved", Profile{Name: "claude", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, nil, `profile name "claude" is reserved`},
+		{"second bare provider token is reserved", Profile{Name: "codex", Provider: ProviderCodex, HomeDir: "/tmp/codex-main"}, nil, `profile name "codex" is reserved`},
+		{"provider token with suffix is fine", Profile{Name: "claude-work", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, nil, ""},
+		{"nil existing skips duplicate check", Profile{Name: "personal", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, nil, ""},
+		{"unrelated existing names do not collide", Profile{Name: "personal", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, map[string]Provider{"other": ProviderClaude}, ""},
+		{"duplicate name", Profile{Name: "personal", Provider: ProviderClaude, ConfigDir: "/tmp/claude-personal"}, map[string]Provider{"personal": ProviderClaude}, `duplicate profile name "personal"`},
+		{"unknown provider", Profile{Name: "personal", Provider: Provider("gpt"), ConfigDir: "/tmp/claude-personal"}, nil, `unknown provider "gpt"`},
+		{"claude profile needs config_dir", Profile{Name: "personal", Provider: ProviderClaude}, nil, "claude profile needs config_dir"},
+		{"codex profile needs home_dir", Profile{Name: "personal", Provider: ProviderCodex}, nil, "codex profile needs home_dir"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateProfile(tc.profile, tc.existing)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("ValidateProfile(%+v) err = %v, want nil", tc.profile, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateProfile(%+v) err = %v, want error containing %q", tc.profile, err, tc.want)
+			}
+		})
+	}
+}
+
+// A provider absent from ProviderInfoFor has no declared ProfileDirKey, so
+// there is no directory to require: the check is permissive by design, and a
+// known-provider-only test would not notice if that started failing closed.
+func TestValidateProfileDirUnknownProviderIsPermissive(t *testing.T) {
+	p := Profile{Name: "future", Provider: Provider("future")}
+	if err := validateProfileDir(p); err != nil {
+		t.Fatalf("validateProfileDir(%+v) = %v, want nil", p, err)
+	}
+}
+
 func TestValidateRejectsDuplicateAgentNames(t *testing.T) {
 	c := &Config{
 		Global: Global{Provider: ProviderClaude, PermissionMode: PermissionApprove, PermissionTimeout: DefaultPermissionTimeout},
