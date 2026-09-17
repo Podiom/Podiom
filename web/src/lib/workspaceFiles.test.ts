@@ -29,7 +29,7 @@ describe("workspaceFileIDFromHref", () => {
     expect(workspaceFileIDFromHref(`api/workspace-files/${ID}`)).toBe(ID);
   });
 
-  it.each([`api/workspace-files/${ID}?download=1`, `api/workspace-files/${ID}#preview`, `https://example.com/api/workspace-files/${ID}`])("rejects %s", (href) => {
+  it.each([`api/workspace-files/${ID}?download=1`, `api/workspace-files/${ID}#preview`, `https://example.com/app/api/workspace-files/${ID}`])("rejects %s", (href) => {
     expect(workspaceFileIDFromHref(href)).toBeNull();
   });
 });
