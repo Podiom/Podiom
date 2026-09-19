@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -419,4 +421,108 @@ func seedAgentQuestion(t *testing.T, srv *Server, options []store.AgentQuestionO
 		t.Fatalf("create question: %v", err)
 	}
 	return goal, res.Question
+}
+
+func TestIsStaleActionError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "bare errStaleAction",
+			err:  errStaleAction,
+			want: true,
+		},
+		{
+			name: "bare store.ErrAlreadyDecided",
+			err:  store.ErrAlreadyDecided,
+			want: true,
+		},
+		{
+			name: "bare store.ErrNotFound",
+			err:  store.ErrNotFound,
+			want: true,
+		},
+		{
+			name: "wrapped store.ErrAlreadyDecided",
+			err:  fmt.Errorf("decide access request: %w", store.ErrAlreadyDecided),
+			want: true,
+		},
+		{
+			name: "wrapped errStaleAction",
+			err:  fmt.Errorf("respond to action item: %w", errStaleAction),
+			want: true,
+		},
+		{
+			name: "nested two levels deep store.ErrNotFound",
+			err:  fmt.Errorf("handle notification action: %w", fmt.Errorf("load agent: %w", store.ErrNotFound)),
+			want: true,
+		},
+		{
+			name: "unrelated error",
+			err:  errors.New("boom"),
+			want: false,
+		},
+		{
+			name: "wrapped unrelated error",
+			err:  fmt.Errorf("database query failed: %w", errors.New("boom")),
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStaleActionError(tc.err); got != tc.want {
+				t.Errorf("isStaleActionError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOrFallback(t *testing.T) {
+	cases := []struct {
+		name     string
+		value    string
+		fallback string
+		want     string
+	}{
+		{
+			name:     "non-empty value unchanged",
+			value:    "primary",
+			fallback: "fallback",
+			want:     "primary",
+		},
+		{
+			name:     "empty value uses fallback",
+			value:    "",
+			fallback: "fallback",
+			want:     "fallback",
+		},
+		{
+			name:     "whitespace string is not empty",
+			value:    " ",
+			fallback: "x",
+			want:     " ",
+		},
+		{
+			name:     "both empty returns empty",
+			value:    "",
+			fallback: "",
+			want:     "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := orFallback(tc.value, tc.fallback); got != tc.want {
+				t.Errorf("orFallback(%q, %q) = %q, want %q", tc.value, tc.fallback, got, tc.want)
+			}
+		})
+	}
 }
