@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   formatHash,
@@ -9,6 +9,8 @@ import {
   type Target,
 } from "./deeplink";
 import type { Notification } from "./types";
+
+afterEach(() => vi.unstubAllGlobals());
 
 // notification builds a minimal notification with the fields a target depends on.
 function notification(fields: Partial<Notification>): Notification {
@@ -101,6 +103,15 @@ describe("formatHash and parseHash", () => {
   it("does not throw on a malformed escape", () => {
     expect(() => parseHash("#/goals/%E0%A4%A")).not.toThrow();
   });
+
+  it.each(["projects", "skills", "terminal"])("parses the top-level %s route", (route) => {
+    expect(parseHash(`#/${route}`)).toEqual({ kind: "route", route });
+  });
+
+  it.each(["#/goals/goal-1/bogus/x", "#/goals/goal-1/actions/a/b"])(
+    "rejects an unrecognized goal focus in %s",
+    (hash) => expect(parseHash(hash)).toBeNull(),
+  );
 });
 
 describe("routeOf", () => {
@@ -117,6 +128,19 @@ describe("routeOf", () => {
 });
 
 describe("hrefFor", () => {
+  it("uses localhost when no document is available", () => {
+    expect(hrefFor({ kind: "route", route: "goals" })).toBe("http://localhost/#/goals");
+  });
+
+  it("uses the current document URL by default", () => {
+    vi.stubGlobal("document", {
+      location: { href: "http://homeassistant.local:8123/api/hassio_ingress/abc123/" },
+    });
+    expect(hrefFor({ kind: "goal", goalId: "goal-1" })).toBe(
+      "http://homeassistant.local:8123/api/hassio_ingress/abc123/#/goals/goal-1",
+    );
+  });
+
   // Under a Home Assistant ingress the daemon injects a <base href>, and a bare
   // "#/goals" anchor resolves against that base rather than the current document.
   // hrefFor builds the URL from the document itself so an anchor stays correct.
