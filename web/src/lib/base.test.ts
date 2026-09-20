@@ -1,11 +1,32 @@
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it } from "vitest";
 
-import { apiUrl, endpoint, setEndpoint, wsUrl } from "./base";
+import { apiUrl, deployment, endpoint, setEndpoint, wsUrl } from "./base";
 
 // The configured endpoint is module-level state: anything a test installs here
 // would leak into the next test, so each one clears it again afterwards.
 afterEach(() => {
   setEndpoint(null);
+  document.querySelectorAll("base, meta[name='podiom-deployment']").forEach((node) => node.remove());
+});
+
+describe("deployment", () => {
+  it.each([
+    [null, "standalone"],
+    ["standalone", "standalone"],
+    ["HA", "standalone"],
+    ["ha-ingress", "standalone"],
+    ["ha", "ha"],
+  ])("maps %s to %s", (content, want) => {
+    if (content !== null) {
+      const meta = document.createElement("meta");
+      meta.name = "podiom-deployment";
+      meta.content = content;
+      document.head.append(meta);
+    }
+    expect(deployment()).toBe(want);
+  });
 });
 
 describe("setEndpoint", () => {
@@ -31,6 +52,16 @@ describe("setEndpoint", () => {
 });
 
 describe("apiUrl", () => {
+  it.each([
+    ["http://h/api/hassio_ingress/tok/", "http://h/api/hassio_ingress/tok/api/agents"],
+    ["http://h/api/hassio_ingress/tok/index.html", "http://h/api/hassio_ingress/tok/api/agents"],
+  ])("uses the document base %s", (href, want) => {
+    const base = document.createElement("base");
+    base.href = href;
+    document.head.append(base);
+    expect(apiUrl("/api/agents").href).toBe(want);
+  });
+
   // The leading-slash strip is what keeps the path relative: without it
   // "/api/agents" would resolve against the origin root and drop the base
   // path entirely.
@@ -57,6 +88,13 @@ describe("apiUrl", () => {
 });
 
 describe("wsUrl", () => {
+  it("uses the document base when no endpoint is configured", () => {
+    const base = document.createElement("base");
+    base.href = "https://h/api/hassio_ingress/tok/";
+    document.head.append(base);
+    expect(wsUrl()).toBe("wss://h/api/hassio_ingress/tok/api/ws");
+  });
+
   it("upgrades an http: base to ws:", () => {
     setEndpoint(new URL("http://h:8080/"));
 
