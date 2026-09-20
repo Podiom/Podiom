@@ -50,6 +50,8 @@ pnpm-debug.log*
 /tmp/
 /coverage/
 /coverage.html
+# vitest --coverage writes here; the good-first-issues ask contributors to run it.
+web/coverage/
 
 # Design source export (large binary; kept local, not in git history)
 /Podiom frontend design.zip
