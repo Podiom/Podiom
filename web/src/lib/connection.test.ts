@@ -63,6 +63,13 @@ describe("probe", () => {
     await expect(probe(address, "token")).resolves.toEqual({ ok: false, reason: "not-podiom" });
   });
 
+  it("reports unreachable when the auth check fails at the network level", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(health()).mockRejectedValueOnce(new Error("offline"));
+    vi.stubGlobal("fetch", fetch);
+    await expect(probe(address, "token")).resolves.toEqual({ ok: false, reason: "unreachable" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     [{ ok: false, status: 401 }, "token-rejected"],
     [{ ok: false, status: 500 }, "unreachable"],
