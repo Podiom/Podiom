@@ -429,3 +429,109 @@ func TestTaskStartWithoutBodyStaysAttended(t *testing.T) {
 		t.Fatalf("attended start should leave history empty, got %d messages", len(history))
 	}
 }
+
+func TestRepoOwnerName(t *testing.T) {
+	cases := []struct {
+		name      string
+		req       projectRepoRequest
+		wantOwner string
+		wantName  string
+	}{
+		{
+			name: "explicit owner and name win",
+			req: projectRepoRequest{
+				Owner:    "alice",
+				Name:     "my-repo",
+				FullName: "bob/other-repo",
+			},
+			wantOwner: "alice",
+			wantName:  "my-repo",
+		},
+		{
+			name: "whitespace-padded owner and name are trimmed",
+			req: projectRepoRequest{
+				Owner: "  alice  ",
+				Name:  "  my-repo \t\n",
+			},
+			wantOwner: "alice",
+			wantName:  "my-repo",
+		},
+		{
+			name: "owner set but name blank falls through to full_name",
+			req: projectRepoRequest{
+				Owner:    "alice",
+				Name:     "   ",
+				FullName: "bob/my-repo",
+			},
+			wantOwner: "bob",
+			wantName:  "my-repo",
+		},
+		{
+			name: "name set but owner blank falls through to full_name",
+			req: projectRepoRequest{
+				Owner:    "",
+				Name:     "my-repo",
+				FullName: "bob/my-repo",
+			},
+			wantOwner: "bob",
+			wantName:  "my-repo",
+		},
+		{
+			name: "full_name with two segments",
+			req: projectRepoRequest{
+				FullName: "alice/my-repo",
+			},
+			wantOwner: "alice",
+			wantName:  "my-repo",
+		},
+		{
+			name: "full_name with whitespace is trimmed",
+			req: projectRepoRequest{
+				FullName: "  alice/my-repo  ",
+			},
+			wantOwner: "alice",
+			wantName:  "my-repo",
+		},
+		{
+			name: "full_name with three segments a/b/c yields a and b",
+			req: projectRepoRequest{
+				FullName: "a/b/c",
+			},
+			wantOwner: "a",
+			wantName:  "b",
+		},
+		{
+			name: "full_name with no slash returns empty",
+			req: projectRepoRequest{
+				FullName: "repo-only-no-slash",
+			},
+			wantOwner: "",
+			wantName:  "",
+		},
+		{
+			name:      "empty input returns empty",
+			req:       projectRepoRequest{},
+			wantOwner: "",
+			wantName:  "",
+		},
+		{
+			name: "all whitespace returns empty",
+			req: projectRepoRequest{
+				Owner:    "  ",
+				Name:     " ",
+				FullName: "  ",
+			},
+			wantOwner: "",
+			wantName:  "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotOwner, gotName := repoOwnerName(tc.req)
+			if gotOwner != tc.wantOwner || gotName != tc.wantName {
+				t.Errorf("repoOwnerName(%+v) = (%q, %q), want (%q, %q)", tc.req, gotOwner, gotName, tc.wantOwner, tc.wantName)
+			}
+		})
+	}
+}
