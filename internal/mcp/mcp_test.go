@@ -494,6 +494,84 @@ func TestPrettyYAML(t *testing.T) {
 	}
 }
 
+func TestAssigned(t *testing.T) {
+	cat := Catalogue{
+		Servers: []Server{
+			{Name: "fetch", Transport: TransportHTTP, URL: "https://fetch.test"},
+			{Name: "git", Transport: TransportStdio, Command: "git-mcp"},
+			{Name: "filesystem", Transport: TransportStdio, Command: "fs-mcp"},
+		},
+	}
+
+	t.Run("preserves input order rather than catalogue order", func(t *testing.T) {
+		got, err := Assigned(cat, []string{"filesystem", "fetch", "git"})
+		if err != nil {
+			t.Fatalf("Assigned: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("got %d servers, want 3", len(got))
+		}
+		if got[0].Name != "filesystem" || got[1].Name != "fetch" || got[2].Name != "git" {
+			t.Errorf("got order [%s, %s, %s], want [filesystem, fetch, git]", got[0].Name, got[1].Name, got[2].Name)
+		}
+	})
+
+	t.Run("trims whitespace from names before lookup", func(t *testing.T) {
+		got, err := Assigned(cat, []string{"  git  ", "\tfetch\n"})
+		if err != nil {
+			t.Fatalf("Assigned: %v", err)
+		}
+		if len(got) != 2 || got[0].Name != "git" || got[1].Name != "fetch" {
+			t.Errorf("got %+v, want [git, fetch]", got)
+		}
+	})
+
+	t.Run("skips empty and deduplicates repeated names", func(t *testing.T) {
+		got, err := Assigned(cat, []string{"git", "", "  ", "fetch", "git", "fetch", "  git  "})
+		if err != nil {
+			t.Fatalf("Assigned: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d servers, want 2 (deduped)", len(got))
+		}
+		if got[0].Name != "git" || got[1].Name != "fetch" {
+			t.Errorf("got [%s, %s], want [git, fetch]", got[0].Name, got[1].Name)
+		}
+	})
+
+	t.Run("unknown name returns error and nil slice without partial results", func(t *testing.T) {
+		got, err := Assigned(cat, []string{"git", "unknown-server", "fetch"})
+		if err == nil {
+			t.Fatal("Assigned wanted error for unknown server, got nil")
+		}
+		if got != nil {
+			t.Errorf("Assigned with error returned non-nil slice: %+v", got)
+		}
+		wantMsg := `assigned mcp server "unknown-server" is not in the catalogue`
+		if err.Error() != wantMsg {
+			t.Errorf("error = %q, want %q", err.Error(), wantMsg)
+		}
+	})
+
+	t.Run("empty input returns nil slice without error", func(t *testing.T) {
+		got, err := Assigned(cat, nil)
+		if err != nil {
+			t.Fatalf("Assigned(nil): %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %d servers, want 0", len(got))
+		}
+
+		got, err = Assigned(cat, []string{"", "   "})
+		if err != nil {
+			t.Fatalf("Assigned(blanks): %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %d servers, want 0", len(got))
+		}
+	})
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
