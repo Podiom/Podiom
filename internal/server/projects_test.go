@@ -429,3 +429,76 @@ func TestTaskStartWithoutBodyStaysAttended(t *testing.T) {
 		t.Fatalf("attended start should leave history empty, got %d messages", len(history))
 	}
 }
+
+func TestRepoOwnerName(t *testing.T) {
+	cases := []struct {
+		name      string
+		req       projectRepoRequest
+		wantOwner string
+		wantName  string
+	}{
+		{
+			name:      "explicit owner and name win over full name",
+			req:       projectRepoRequest{Owner: "acme", Name: "widgets", FullName: "other/repo"},
+			wantOwner: "acme",
+			wantName:  "widgets",
+		},
+		{
+			name:      "whitespace-padded owner and name are trimmed",
+			req:       projectRepoRequest{Owner: "  acme ", Name: "\twidgets\n"},
+			wantOwner: "acme",
+			wantName:  "widgets",
+		},
+		{
+			name:      "owner without name falls through to full name",
+			req:       projectRepoRequest{Owner: "acme", Name: "   ", FullName: "other/repo"},
+			wantOwner: "other",
+			wantName:  "repo",
+		},
+		{
+			name:      "name without owner falls through to full name",
+			req:       projectRepoRequest{Name: "widgets", FullName: "other/repo"},
+			wantOwner: "other",
+			wantName:  "repo",
+		},
+		{
+			name:      "full name is trimmed before splitting",
+			req:       projectRepoRequest{FullName: "  acme/widgets \n"},
+			wantOwner: "acme",
+			wantName:  "widgets",
+		},
+		{
+			name:      "extra full name segments keep the first two",
+			req:       projectRepoRequest{FullName: "a/b/c"},
+			wantOwner: "a",
+			wantName:  "b",
+		},
+		{
+			name:      "full name without a slash yields nothing",
+			req:       projectRepoRequest{FullName: "acme"},
+			wantOwner: "",
+			wantName:  "",
+		},
+		{
+			name:      "empty input yields nothing",
+			req:       projectRepoRequest{},
+			wantOwner: "",
+			wantName:  "",
+		},
+		{
+			name:      "whitespace-only fields yield nothing",
+			req:       projectRepoRequest{Owner: " ", Name: " ", FullName: " "},
+			wantOwner: "",
+			wantName:  "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			owner, name := repoOwnerName(tc.req)
+			if owner != tc.wantOwner || name != tc.wantName {
+				t.Errorf("repoOwnerName(%+v) = (%q, %q), want (%q, %q)", tc.req, owner, name, tc.wantOwner, tc.wantName)
+			}
+		})
+	}
+}
