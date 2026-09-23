@@ -190,11 +190,12 @@ func newSkillsRelinkCmd(use string) *cobra.Command {
 }
 
 // oneLine collapses internal whitespace so a multi-line frontmatter description
-// renders as a single tidy row, truncated to keep the table scannable.
+// renders as a single tidy row of at most 96 runes.
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 96 {
-		s = s[:95] + "…"
+	runes := []rune(s)
+	if len(runes) > 96 {
+		s = string(runes[:95]) + "…"
 	}
 	return s
 }
