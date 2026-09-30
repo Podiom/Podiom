@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Podiom/Podiom/internal/config"
 )
 
 func TestConfirmAgentDeletionRequiresExactName(t *testing.T) {
@@ -123,5 +125,37 @@ func TestActiveLogPathUsesPodiomHome(t *testing.T) {
 	want := filepath.Join(home, "logs", "podiomd.log")
 	if got != want {
 		t.Fatalf("activeLogPath() = %q, want %q", got, want)
+	}
+}
+
+func TestProfilePath(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile config.Profile
+		want    string
+	}{
+		{
+			name:    "Claude config directory",
+			profile: config.Profile{Provider: config.ProviderClaude, ConfigDir: "/tmp/claude-test"},
+			want:    "/tmp/claude-test",
+		},
+		{
+			name:    "Codex home directory",
+			profile: config.Profile{Provider: config.ProviderCodex, HomeDir: "/tmp/codex-test"},
+			want:    "/tmp/codex-test",
+		},
+		{
+			name:    "no explicit directory",
+			profile: config.Profile{Provider: config.ProviderCodex},
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := profilePath(tt.profile); got != tt.want {
+				t.Fatalf("profilePath(%#v) = %q, want %q", tt.profile, got, tt.want)
+			}
+		})
 	}
 }
