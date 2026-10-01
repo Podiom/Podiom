@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Podiom/Podiom/internal/store"
@@ -157,5 +158,87 @@ func TestFormatTokenCount(t *testing.T) {
 				t.Errorf("formatTokenCount(%d) = %q, want %q", tt.n, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatTokensTableEmpty(t *testing.T) {
+	var output strings.Builder
+	formatTokensTable(&output, TokenStats{})
+
+	if got, want := output.String(), "no token usage data\n"; got != want {
+		t.Fatalf("formatTokensTable(empty) = %q, want %q", got, want)
+	}
+}
+
+func TestFormatTokensTableShowsAgentAndTotals(t *testing.T) {
+	stats := TokenStats{
+		TotalSessions: 2,
+		Total: store.SessionUsage{
+			InputTokens:      1000,
+			OutputTokens:     500,
+			CacheReadTokens:  100,
+			CacheWriteTokens: 50,
+		},
+		ByAgent: []AgentTokenStats{{
+			Agent:    "agent-a",
+			Sessions: 2,
+			Usage: store.SessionUsage{
+				InputTokens:      1000,
+				OutputTokens:     300,
+				CacheReadTokens:  50,
+				CacheWriteTokens: 25,
+			},
+		}},
+	}
+	var output strings.Builder
+	formatTokensTable(&output, stats)
+
+	got := output.String()
+	for _, want := range []string{
+		"AGENT", "SESSIONS", "INPUT", "OUTPUT", "CACHE_R", "CACHE_W", "TOTAL", "agent-a",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatTokensTable output is missing %q:\n%s", want, got)
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("formatTokensTable output is missing the agent row:\n%s", got)
+	}
+	if !strings.Contains(lines[1], "1.4K") {
+		t.Errorf("agent row is missing its total: %q", lines[1])
+	}
+	if !strings.Contains(lines[len(lines)-1], "1.6K") {
+		t.Errorf("total row is missing its total: %q", lines[len(lines)-1])
+	}
+}
+
+func TestFormatTokensDetailShowsUsageAndModelBreakdown(t *testing.T) {
+	agent := AgentTokenStats{
+		Agent:    "agent-a",
+		Sessions: 2,
+		Usage: store.SessionUsage{
+			InputTokens:      2500,
+			OutputTokens:     800,
+			CacheReadTokens:  100,
+			CacheWriteTokens: 50,
+		},
+	}
+	models := []ModelTokenStats{
+		{Model: "claude-sonnet", Total: 2500},
+		{Model: "gpt-4.1", Total: 950},
+	}
+	var output strings.Builder
+	formatTokensDetail(&output, agent, models)
+
+	got := output.String()
+	for _, want := range []string{
+		"Agent: agent-a", "Sessions: 2", "Input:", "2.5K", "Output:", "800",
+		"Cache read:", "100", "Cache write:", "50", "Total:", "3.5K",
+		"By model:", "claude-sonnet: 2.5K", "gpt-4.1: 950",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatTokensDetail output is missing %q:\n%s", want, got)
+		}
 	}
 }
