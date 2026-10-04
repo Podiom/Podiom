@@ -39,7 +39,11 @@ func newMCPListCmd(addr *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			if len(snapshot.Servers) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "no MCP servers configured")
+				return nil
+			}
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
 			fmt.Fprintln(tw, "NAME\tTRANSPORT\tSOURCES\tENV")
 			for _, s := range snapshot.Servers {
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Name, s.Transport, sourceList(s.Sources), envList(s.EnvStatus))
