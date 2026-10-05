@@ -169,3 +169,29 @@ func TestFormatCredits(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatUptime(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		{name: "zero", d: 0, want: "0s"},
+		{name: "negative clamps to zero", d: -5 * time.Second, want: "0s"},
+		{name: "sub-second", d: 999 * time.Millisecond, want: "0s"},
+		{name: "seconds", d: 19972 * time.Millisecond, want: "19s"},
+		{name: "just under a minute", d: 59*time.Second + 999*time.Millisecond, want: "59s"},
+		{name: "exactly a minute", d: time.Minute, want: "1m"},
+		{name: "minutes", d: 45*time.Minute + 10*time.Second, want: "45m"},
+		{name: "hours", d: 3*time.Hour + 7*time.Minute, want: "3h 7m"},
+		{name: "a day", d: 86400000 * time.Millisecond, want: "1d 0h"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatUptime(tt.d); got != tt.want {
+				t.Errorf("formatUptime(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
+	}
+}
