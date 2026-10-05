@@ -1308,7 +1308,7 @@ func newSchedulesCmd(addr *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedules",
 		Short: "Inspect and trigger scheduled routines",
-		Long: "Schedules are self-describing markdown files under ~/.podiom/schedules/.\n" +
+		Long: "Schedules are self-describing markdown files under $PODIOM_HOME/schedules (default ~/.podiom/schedules/).\n" +
 			"List their next-run times and run history, or trigger a run on demand.",
 		Example: "  podiom schedules list\n  podiom schedules run morning-calendar",
 	}
@@ -1362,7 +1362,7 @@ func newSchedulesListCmd(addr *string) *cobra.Command {
 				return err
 			}
 			if len(statuses) == 0 {
-				fmt.Println("no schedules (drop a *.md file in ~/.podiom/schedules/)")
+				fmt.Println("no schedules (drop a *.md file in $PODIOM_HOME/schedules (default ~/.podiom/schedules/))")
 				return nil
 			}
 			for _, s := range statuses {
