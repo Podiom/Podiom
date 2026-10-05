@@ -115,6 +115,29 @@ func TestAgentsListPrintsEmptyState(t *testing.T) {
 	}
 }
 
+func TestMCPListPrintsEmptyState(t *testing.T) {
+	t.Setenv("PODIOM_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/mcp" {
+			t.Fatalf("request path = %q, want /api/mcp", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"servers":[],"agents":[],"assignments":{}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	cmd := newMCPListCmd(&addr)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "no MCP servers configured\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestActiveLogPathUsesPodiomHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PODIOM_HOME", home)
