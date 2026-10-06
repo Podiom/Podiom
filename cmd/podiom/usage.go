@@ -109,6 +109,20 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
+// formatUptime renders a daemon uptime for `podiom status`. Unlike
+// formatDuration, which rounds to the nearest minute, it keeps sub-minute
+// uptimes visible as seconds (e.g. "19s") and delegates to formatDuration
+// from one minute upward.
+func formatUptime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d/time.Second))
+	}
+	return formatDuration(d)
+}
+
 func formatCredits(c *usage.Credits) string {
 	if c.Unlimited {
 		return "credits: unlimited"

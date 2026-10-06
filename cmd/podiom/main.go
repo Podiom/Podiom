@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/buildinfo"
@@ -498,7 +499,7 @@ func newStatusCmd(addr *string) *cobra.Command {
 			fmt.Printf("podiomd is live at %s\n", resolved)
 			fmt.Printf("  status:  %s\n", h.Status)
 			fmt.Printf("  version: %s (%s)\n", h.Version, h.Commit)
-			fmt.Printf("  uptime:  %dms\n", h.UptimeMS)
+			fmt.Printf("  uptime:  %s\n", formatUptime(time.Duration(h.UptimeMS)*time.Millisecond))
 			return nil
 		},
 	}
