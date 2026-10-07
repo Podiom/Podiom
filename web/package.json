@@ -33,7 +33,7 @@
     "@capacitor/core": "8.5.0",
     "@capacitor/keyboard": "8.0.5",
     "@capacitor/status-bar": "8.0.3",
-    "dompurify": "3.4.13",
+    "dompurify": "3.4.16",
     "marked": "18.0.5"
   }
 }
