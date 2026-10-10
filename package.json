@@ -26,7 +26,7 @@
     "@capacitor/app": "8.1.1",
     "@capacitor/browser": "8.0.4",
     "@capacitor/core": "8.5.0",
-    "@capacitor/ios": "8.5.0",
+    "@capacitor/ios": "8.5.3",
     "@capacitor/keyboard": "8.0.5",
     "@capacitor/status-bar": "8.0.3",
     "podiom-discovery": "*"
