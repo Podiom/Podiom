@@ -145,7 +145,7 @@ can set up user-level autostart, and launches `podiom onboard` to check Claude
 and Codex and create your first agent. Linux releases are distro-neutral static
 binaries.
 
-Running Home Assistant? Podiom is also packaged as an add-on. Add
+Running Home Assistant? Podiom is also packaged as an app (add-on). Add
 `https://github.com/Podiom/ha-app` under **Settings → Add-ons → Add-on store →
 ⋮ → Repositories**, then install **Podiom**. HA handles TLS, remote access, and
 login, so the web UI reaches your phone without Podiom opening a port. See the
