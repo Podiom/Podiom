@@ -113,6 +113,11 @@ existing Svelte and TypeScript style in `web/src`.
 - New configuration, storage, or API behavior is documented.
 - Security-sensitive behavior has been reviewed against `docs/security.md`.
 
+## Reviews
+
+Review comments on pull requests may be agent-assisted. A maintainer is
+accountable for every merge decision either way.
+
 ## Security reports
 
 Please do not open a public issue for vulnerabilities or token/log exposure
