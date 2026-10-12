@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -248,4 +249,66 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestCopyFileCopiesBytesAndTruncatesDestination verifies that copying replaces
+// stale destination contents rather than leaving trailing bytes behind.
+func TestCopyFileCopiesBytesAndTruncatesDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source")
+	dest := filepath.Join(dir, "destination")
+	want := []byte("short source")
+
+	if err := os.WriteFile(src, want, 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(dest, []byte("stale destination contents that are longer"), 0o644); err != nil {
+		t.Fatalf("write destination: %v", err)
+	}
+
+	if err := copyFile(src, dest); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read destination: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("destination bytes = %q, want %q", got, want)
+	}
+}
+
+func TestCopyFileCreatesDestinationWithExecutableMode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source")
+	dest := filepath.Join(dir, "destination")
+
+	if err := os.WriteFile(src, []byte("executable"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := copyFile(src, dest); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatalf("stat destination: %v", err)
+	}
+	// Windows does not expose Unix executable permission bits in the same way.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
+		t.Fatalf("destination mode = %#o, want %#o", info.Mode().Perm(), 0o755)
+	}
+}
+
+func TestCopyFileMissingSourceReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "missing-source")
+	dest := filepath.Join(dir, "destination")
+
+	if err := copyFile(src, dest); !os.IsNotExist(err) {
+		t.Fatalf("copyFile error = %v, want not-exist error", err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("destination should not exist after missing-source error, stat error = %v", err)
+	}
 }
