@@ -76,13 +76,14 @@ type rawSubscription struct {
 	parsed browserPushSubscription
 }
 
-// readRawSubscription decodes the request body into both its raw JSON (persisted
-// as-is) and a parsed form (for the endpoint identity), validating the shape.
+// readRawSubscription decodes the request body into a parsed form,
+// validates the endpoint, and re-encodes the subscription as JSON for storage.
+// Fields not defined in browserPushSubscription are dropped during re-encoding.
 func readRawSubscription(r *http.Request) (rawSubscription, error) {
 	var parsed browserPushSubscription
 	dec := json.NewDecoder(r.Body)
-	// Capture the raw bytes by re-encoding the decoded value; the browser sends a
-	// compact, well-defined object so a round-trip is faithful and normalizes it.
+	// Re-encode the parsed subscription for storage. Unknown fields, such as
+	// expirationTime, are omitted because they are not defined in the struct.
 	if err := dec.Decode(&parsed); err != nil {
 		return rawSubscription{}, err
 	}
