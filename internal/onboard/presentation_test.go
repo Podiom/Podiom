@@ -81,12 +81,22 @@ func TestProviderLabel(t *testing.T) {
 	})
 }
 
-func TestSuggestNamesFallbackForUnknownOrEmptyRole(t *testing.T) {
-	want := []string{"juno", "forge", "ember", "rowan"}
-	for _, role := range []string{"", "something new"} {
-		t.Run(role, func(t *testing.T) {
-			if got := suggestNames(answers{Role: role}); !reflect.DeepEqual(got, want) {
-				t.Fatalf("suggestNames(%q) = %v, want %v", role, got, want)
+func TestSuggestNames(t *testing.T) {
+	tests := []struct {
+		role string
+		want []string
+	}{
+		{role: "researcher", want: []string{"atlas", "mira", "sage", "lumen"}},
+		{role: "operator", want: []string{"riley", "switch", "marin", "pilot"}},
+		{role: "creative partner", want: []string{"sol", "nova", "fig", "muse"}},
+		{role: "reviewer", want: []string{"quinn", "arden", "scope", "vera"}},
+		{role: "", want: []string{"juno", "forge", "ember", "rowan"}},
+		{role: "something new", want: []string{"juno", "forge", "ember", "rowan"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			if got := suggestNames(answers{Role: tt.role}); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("suggestNames(%q) = %v, want %v", tt.role, got, tt.want)
 			}
 		})
 	}
