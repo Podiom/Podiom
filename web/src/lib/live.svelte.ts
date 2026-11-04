@@ -18,6 +18,7 @@ import { randomID } from "./id";
 import { isNative } from "./native";
 import { enableNativePush, nativePermissionState, nativePushAvailable } from "./push";
 import { sendWebSocketMessage } from "./websocketSend";
+import { urlBase64ToUint8Array } from "./vapid";
 import type { Notification as PodiomNotification } from "./types";
 import type {
   ActiveTurnSummary,
@@ -577,17 +578,6 @@ class LiveStore {
       }
     });
   }
-}
-
-// urlBase64ToUint8Array converts a VAPID public key (URL-safe base64) into the
-// byte array PushManager.subscribe expects.
-function urlBase64ToUint8Array(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const normalized = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(normalized);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
 }
 
 export const live = new LiveStore();
