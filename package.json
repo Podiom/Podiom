@@ -16,7 +16,7 @@
     "sync:android": "npm run build:web && cap sync android"
   },
   "devDependencies": {
-    "@capacitor/cli": "8.5.0",
+    "@capacitor/cli": "8.6.0",
     "typescript": "^5.7.3"
   },
   "dependencies": {
