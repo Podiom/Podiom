@@ -80,3 +80,19 @@ func TestScalarValue(t *testing.T) {
 		}
 	})
 }
+
+// #363: an alias node's Value holds the anchor NAME, not the aliased content —
+// the new AliasNode case recurses into node.Alias instead, so `k: *anc` renders
+// "hello", not "anc". The anchor-defining line itself already worked (a plain
+// scalar); this pins the alias reference specifically.
+func TestScalarValueResolvesAliases(t *testing.T) {
+	doc := "base: &anc hello\nk: *anc\n"
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte(doc), &node); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := scalarValue(node.Content[0].Content[1])
+	if got != "hello" {
+		t.Errorf("k: *anc rendered %q, want the aliased value %q", got, "hello")
+	}
+}

@@ -194,6 +194,13 @@ func scalarValue(n *yaml.Node) string {
 			parts = append(parts, n.Content[i].Value+": "+scalarValue(n.Content[i+1]))
 		}
 		return strings.Join(parts, ", ")
+	case yaml.AliasNode:
+		// #363: an alias node's Value holds the ANCHOR NAME, not the aliased
+		// content — yaml.v3 points Alias at the target node, so recurse into
+		// that instead of falling through to the anchor-name string.
+		if n.Alias != nil {
+			return scalarValue(n.Alias)
+		}
 	}
 	return strings.TrimSpace(n.Value)
 }
