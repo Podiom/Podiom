@@ -72,8 +72,10 @@ func (c *manageClient) del(ctx context.Context, path string) (string, error) {
 	return c.do(ctx, http.MethodDelete, path, nil)
 }
 
-// prettyJSON re-indents a JSON response for readability in the tool result. If
-// the body isn't JSON (or is empty), it's returned verbatim.
+// prettyJSON re-indents a JSON response for readability in the tool result. An
+// empty (or whitespace-only) body renders as "ok", which callers rely on to
+// confirm an empty 204; a body that is not JSON, or has trailing content after
+// the JSON value, is returned verbatim.
 func prettyJSON(raw []byte) string {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
