@@ -54,3 +54,27 @@ func TestAttachmentCleanupRemovesExpiredDraftsAndFilesystemOrphans(t *testing.T)
 		}
 	}
 }
+
+func TestAttachmentExtension(t *testing.T) {
+	tests := []struct {
+		name     string
+		mimeType string
+		want     string
+	}{
+		{name: "jpeg", mimeType: "image/jpeg", want: ".jpg"},
+		{name: "png", mimeType: "image/png", want: ".png"},
+		{name: "gif", mimeType: "image/gif", want: ".gif"},
+		{name: "webp", mimeType: "image/webp", want: ".webp"},
+		{name: "case must match exactly", mimeType: "image/JPEG", want: ".bin"},
+		{name: "parameters are not stripped", mimeType: "image/jpeg; charset=utf-8", want: ".bin"},
+		{name: "empty", mimeType: "", want: ".bin"},
+		{name: "unknown type", mimeType: "application/pdf", want: ".bin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := attachmentExtension(tt.mimeType); got != tt.want {
+				t.Fatalf("attachmentExtension(%q) = %q, want %q", tt.mimeType, got, tt.want)
+			}
+		})
+	}
+}
