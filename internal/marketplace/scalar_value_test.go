@@ -80,3 +80,51 @@ func TestScalarValue(t *testing.T) {
 		}
 	})
 }
+
+// renderDocScalar parses a full document (anchors and aliases live across keys,
+// so the single-key helper above cannot express them) and renders one key.
+func renderDocScalar(t *testing.T, doc string, key string) string {
+	t.Helper()
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte(doc), &node); err != nil {
+		t.Fatalf("unmarshal %q: %v", doc, err)
+	}
+	m := node.Content[0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return scalarValue(m.Content[i+1])
+		}
+	}
+	t.Fatalf("key %q not found in %q", key, doc)
+	return ""
+}
+
+// #363: an alias used to fall through to the raw node value, and for an
+// yaml.AliasNode that is the anchor name, so `k: *anc` rendered as "anc".
+func TestScalarValueAlias(t *testing.T) {
+	t.Run("an alias renders the aliased value, not the anchor name", func(t *testing.T) {
+		if out := renderDocScalar(t, "base: &anc hello\nk: *anc\n", "k"); out != "hello" {
+			t.Fatalf("got %q, want %q", out, "hello")
+		}
+	})
+
+	t.Run("an alias to a sequence renders the aliased sequence", func(t *testing.T) {
+		if out := renderDocScalar(t, "base: &anc [a, b]\nk: *anc\n", "k"); out != "a, b" {
+			t.Fatalf("got %q, want %q", out, "a, b")
+		}
+	})
+
+	t.Run("an alias to a mapping renders the joined mapping", func(t *testing.T) {
+		if out := renderDocScalar(t, "base: &anc {a: 1}\nk: *anc\n", "k"); out != "a: 1" {
+			t.Fatalf("got %q, want %q", out, "a: 1")
+		}
+	})
+
+	t.Run("a self-referencing anchor terminates", func(t *testing.T) {
+		// `a: &x {k: *x}` is valid YAML; without the path cut the recursion
+		// would not terminate once aliases resolve into their own anchor.
+		if out := renderDocScalar(t, "a: &x {k: *x}\n", "a"); out != "k: " {
+			t.Fatalf("got %q, want the cycle cut at %q", out, "k: ")
+		}
+	})
+}

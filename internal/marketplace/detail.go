@@ -178,20 +178,39 @@ func parseFrontmatterFields(body string) (fields []FrontmatterField, name, desc 
 	return fields, name, desc
 }
 
+// scalarValue renders a frontmatter value node as a single compact string.
+// Aliases render the aliased content, not the anchor name (#363): the parser
+// already points node.Alias at the target, so no re-parsing is needed. The
+// path slice cuts self-referencing anchors, which are valid YAML and would
+// otherwise recurse forever.
 func scalarValue(n *yaml.Node) string {
+	return scalarValuePath(n, nil)
+}
+
+func scalarValuePath(n *yaml.Node, path []*yaml.Node) string {
+	for _, p := range path {
+		if p == n {
+			return ""
+		}
+	}
 	switch n.Kind {
+	case yaml.AliasNode:
+		if n.Alias == nil {
+			return strings.TrimSpace(n.Value)
+		}
+		return scalarValuePath(n.Alias, append(path, n))
 	case yaml.ScalarNode:
 		return strings.TrimSpace(n.Value)
 	case yaml.SequenceNode:
 		var parts []string
 		for _, c := range n.Content {
-			parts = append(parts, scalarValue(c))
+			parts = append(parts, scalarValuePath(c, append(path, n)))
 		}
 		return strings.Join(parts, ", ")
 	case yaml.MappingNode:
 		var parts []string
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			parts = append(parts, n.Content[i].Value+": "+scalarValue(n.Content[i+1]))
+			parts = append(parts, n.Content[i].Value+": "+scalarValuePath(n.Content[i+1], append(path, n)))
 		}
 		return strings.Join(parts, ", ")
 	}
