@@ -81,3 +81,23 @@ func TestParseFrontmatterFieldsNoFrontmatter(t *testing.T) {
 		t.Fatalf("name/desc = %q/%q, want empty", name, desc)
 	}
 }
+
+// #363: the exact repro from the issue, through the public entry point the
+// marketplace UI calls: `k: *anc` must render the aliased value "hello", not
+// the anchor name "anc".
+func TestParseFrontmatterFieldsAlias(t *testing.T) {
+	body := "---\nbase: &anc hello\nk: *anc\n---\n# Body\n"
+	fields, _, _ := parseFrontmatterFields(body)
+	found := false
+	for _, f := range fields {
+		if f.Key == "k" {
+			found = true
+			if f.Value != "hello" {
+				t.Fatalf("k = %q, want the aliased value hello", f.Value)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("k missing from fields: %+v", fields)
+	}
+}
