@@ -85,8 +85,8 @@ func TestDedupeMergesURLIntoStdio(t *testing.T) {
 // record: one result can be assembled from two different inputs.
 func TestDedupeFirstWinsPerField(t *testing.T) {
 	got := dedupe([]Server{
-		{Name: "x", Command: "first", Sources: []Source{SourceCodex}},
-		{Name: "x", Command: "second", URL: "https://u", Sources: []Source{SourcePodiom}},
+		{Name: "x", Command: "first", URL: "https://first", Sources: []Source{SourceCodex}},
+		{Name: "x", Command: "second", URL: "https://second", Sources: []Source{SourcePodiom}},
 	})
 	if len(got) != 1 {
 		t.Fatalf("got %d servers (%#v), want 1", len(got), serverNames(got))
@@ -94,8 +94,8 @@ func TestDedupeFirstWinsPerField(t *testing.T) {
 	if got[0].Command != "first" {
 		t.Fatalf("Command = %q, want %q (first-wins per field)", got[0].Command, "first")
 	}
-	if got[0].URL != "https://u" {
-		t.Fatalf("URL = %q, want %q (backfilled from the second entry)", got[0].URL, "https://u")
+	if got[0].URL != "https://first" {
+		t.Fatalf("URL = %q, want %q (first-wins per field)", got[0].URL, "https://first")
 	}
 	wantSources := []Source{SourcePodiom, SourceCodex}
 	if !reflect.DeepEqual(got[0].Sources, wantSources) {
@@ -152,7 +152,7 @@ func TestDedupeAliasesCallerArgsOnFirstInsert(t *testing.T) {
 
 	in2 := []string{"b"}
 	got2 := dedupe([]Server{
-		{Name: "y", Args: []string{"a"}},
+		{Name: "y"},
 		{Name: "y", Args: in2},
 	})
 	if len(got2) != 1 {
