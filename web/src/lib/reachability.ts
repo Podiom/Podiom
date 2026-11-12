@@ -59,5 +59,6 @@ export function classify(online: boolean, probe: Probe): Verdict {
 }
 
 function isAbort(err: unknown): boolean {
-  return err instanceof DOMException ? err.name === "AbortError" : (err as Error)?.name === "AbortError";
+  const name = err instanceof DOMException ? err.name : (err as Error)?.name;
+  return name === "AbortError" || name === "TimeoutError";
 }
