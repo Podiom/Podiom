@@ -28,6 +28,13 @@ describe("classify", () => {
     });
   });
 
+  it("reports a timeout when AbortSignal.timeout fired (TimeoutError)", () => {
+    expect(classify(true, { error: timeoutError() })).toEqual({
+      reason: "timeout",
+      code: "ETIMEDOUT",
+    });
+  });
+
   it("reports a timeout for a plain error object named AbortError", () => {
     // Not every runtime rejects with a DOMException; the name is the contract.
     const err = Object.assign(new Error("aborted"), { name: "AbortError" });
@@ -75,4 +82,8 @@ describe("reachable", () => {
 
 function abortError(): DOMException {
   return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function timeoutError(): DOMException {
+  return new DOMException("The operation timed out.", "TimeoutError");
 }
