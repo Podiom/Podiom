@@ -28,6 +28,31 @@ describe("classify", () => {
     });
   });
 
+  it("reports a timeout when AbortSignal.timeout fired", () => {
+    // AbortSignal.timeout() rejects with a TimeoutError, not an AbortError, and
+    // it is what the probe uses — so this is the production timeout path.
+    expect(classify(true, { error: timeoutError() })).toEqual({
+      reason: "timeout",
+      code: "ETIMEDOUT",
+    });
+  });
+
+  it("reports a timeout for the rejection of a real AbortSignal.timeout", async () => {
+    const signal = AbortSignal.timeout(1);
+    const reason = await new Promise<unknown>((resolve) =>
+      signal.addEventListener("abort", () => resolve(signal.reason)),
+    );
+    expect(classify(true, { error: reason })).toEqual({
+      reason: "timeout",
+      code: "ETIMEDOUT",
+    });
+  });
+
+  it("reports a timeout for a plain error object named TimeoutError", () => {
+    const err = Object.assign(new Error("timed out"), { name: "TimeoutError" });
+    expect(classify(true, { error: err }).reason).toBe("timeout");
+  });
+
   it("reports a timeout for a plain error object named AbortError", () => {
     // Not every runtime rejects with a DOMException; the name is the contract.
     const err = Object.assign(new Error("aborted"), { name: "AbortError" });
@@ -75,4 +100,9 @@ describe("reachable", () => {
 
 function abortError(): DOMException {
   return new DOMException("The operation was aborted.", "AbortError");
+}
+
+// timeoutError is what AbortSignal.timeout() rejects a fetch with.
+function timeoutError(): DOMException {
+  return new DOMException("The operation timed out.", "TimeoutError");
 }
