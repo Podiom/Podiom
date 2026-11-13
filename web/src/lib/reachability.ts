@@ -58,6 +58,11 @@ export function classify(online: boolean, probe: Probe): Verdict {
   return { reason: "unreachable", code: "ECONNREFUSED" };
 }
 
+// isAbort reports whether the fetch was cut short by an abort signal.
+// AbortSignal.timeout() — what the probe uses — rejects with a "TimeoutError";
+// a manual controller.abort() rejects with an "AbortError". Both mean the
+// request was still outstanding when we stopped waiting.
 function isAbort(err: unknown): boolean {
-  return err instanceof DOMException ? err.name === "AbortError" : (err as Error)?.name === "AbortError";
+  const name = err instanceof DOMException ? err.name : (err as Error | undefined)?.name;
+  return name === "TimeoutError" || name === "AbortError";
 }
