@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,6 +179,92 @@ func TestProfilePath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := profilePath(tt.profile); got != tt.want {
 				t.Fatalf("profilePath(%#v) = %q, want %q", tt.profile, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveAddr(t *testing.T) {
+	// No t.Parallel: t.Setenv panics in parallel tests. Every case sets
+	// PODIOM_ADDR (even to "") and a fresh PODIOM_HOME so the developer's own
+	// environment and config.yaml cannot leak into the result.
+	tests := []struct {
+		name     string
+		flagAddr string
+		envAddr  string
+		config   string // written to $PODIOM_HOME/config.yaml when non-empty
+		want     string
+	}{
+		{
+			name:     "flag wins over env and config",
+			flagAddr: "10.0.0.1:1234",
+			envAddr:  "127.0.0.1:5555",
+			config:   "server:\n  bind: 127.0.0.1\n  port: 9999\n",
+			want:     "10.0.0.1:1234",
+		},
+		{
+			name:    "env wins over config",
+			envAddr: "127.0.0.1:5555",
+			config:  "server:\n  bind: 127.0.0.1\n  port: 9999\n",
+			want:    "127.0.0.1:5555",
+		},
+		{
+			name:    "whitespace-only env is returned verbatim, not trimmed",
+			envAddr: "   ",
+			want:    "   ",
+		},
+		{
+			name:    "env is not validated",
+			envAddr: "garbage no port",
+			want:    "garbage no port",
+		},
+		{
+			name:   "config bind and port are used",
+			config: "server:\n  bind: 0.0.0.0\n  port: 9999\n",
+			want:   "0.0.0.0:9999",
+		},
+		{
+			name:   "empty config bind defaults to 127.0.0.1, not an empty host",
+			config: "server:\n  bind: \"\"\n  port: 9999\n",
+			want:   "127.0.0.1:9999",
+		},
+		{
+			name:   "config port 0 defaults to 8787",
+			config: "server:\n  bind: 0.0.0.0\n  port: 0\n",
+			want:   "0.0.0.0:8787",
+		},
+		{
+			name:   "IPv6 config bind is bracketed",
+			config: "server:\n  bind: \"::1\"\n  port: 9999\n",
+			want:   "[::1]:9999",
+		},
+		{
+			name: "no config falls back to the default",
+			want: "127.0.0.1:8787",
+		},
+		{
+			name:   "malformed config falls back to the default without an error",
+			config: "server: [not a mapping\n",
+			want:   "127.0.0.1:8787",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("PODIOM_HOME", home)
+			t.Setenv("PODIOM_ADDR", tt.envAddr)
+			if tt.config != "" {
+				if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(tt.config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := resolveAddr(tt.flagAddr)
+			if err != nil {
+				t.Fatalf("resolveAddr(%q) error = %v, want nil", tt.flagAddr, err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveAddr(%q) = %q, want %q", tt.flagAddr, got, tt.want)
 			}
 		})
 	}
