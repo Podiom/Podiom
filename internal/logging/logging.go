@@ -392,6 +392,7 @@ type redactionPattern struct {
 }
 
 var sensitivePatterns = []redactionPattern{
+	{regexp.MustCompile(`(?i)"(api[_-]?key|token|secret|password)"\s*:\s*"[^"]*"`), `"$1":"[REDACTED]"`},
 	{regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^,\s"}]+`), "$1=[REDACTED]"},
 	{regexp.MustCompile(`(?i)(access_token|refresh_token)"\s*:\s*"[^"]+"`), `$1":"[REDACTED]"`},
 	{regexp.MustCompile(`(?i)(authorization)\s*:\s*bearer\s+[^,\s"}]+`), "$1: Bearer [REDACTED]"},
