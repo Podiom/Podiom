@@ -82,6 +82,29 @@ describe("loadProviderCapabilities", () => {
     );
     expect(getProviderCapabilities).toHaveBeenCalledTimes(2);
   });
+  
+  it("does not delete a newer cache entry when an older request rejects", async () => {
+    let rejectFirst!: (error: Error) => void;
+    const firstRequest = new Promise<ProviderCapabilities>((_, reject) => {
+      rejectFirst = reject;
+    });
+
+    vi.mocked(getProviderCapabilities)
+      .mockReturnValueOnce(firstRequest)
+      .mockResolvedValueOnce(capabilities("race-provider"));
+
+    const provider = "race-provider" as Provider;
+    const first = loadProviderCapabilities(provider);
+    const refreshed = loadProviderCapabilities(provider, "", true);
+
+    await refreshed;
+    rejectFirst(new Error("old request failed"));
+    await expect(first).rejects.toThrow("old request failed");
+
+    const cached = loadProviderCapabilities(provider);
+    expect(cached).toBe(refreshed);
+    expect(getProviderCapabilities).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("capabilityKey", () => {
