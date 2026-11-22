@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/config"
@@ -366,5 +367,77 @@ func TestGoalLinkedScheduleSurvivesMissingGoalProject(t *testing.T) {
 	}
 	if sess.ProjectID != "" {
 		t.Fatalf("deleted project should leave the session unbound, got %q", sess.ProjectID)
+	}
+}
+
+func TestTruncateCountsRunesNotBytes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		max  int
+		want string
+	}{
+		{"shorter than the cap", "hello", 5, "hello"},
+		{"ascii cut", "hello world", 5, "hell…"},
+		{"three runes fit a five rune budget", "ééé", 5, "ééé"},
+		{"latin cut keeps whole runes", "éééééé", 5, "éééé…"},
+		{"cjk fills the budget", "日本語テキスト", 6, "日本語テキ…"},
+		{"no cap", "日本語", 0, "日本語"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncate(tc.in, tc.max)
+			if got != tc.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("truncate(%q, %d) = %q, invalid UTF-8", tc.in, tc.max, got)
+			}
+			if tc.max > 0 && utf8.RuneCountInString(got) > tc.max {
+				t.Errorf("truncate(%q, %d) = %q, %d runes over the cap", tc.in, tc.max, got, utf8.RuneCountInString(got))
+			}
+		})
+	}
+}
+
+// TestTruncateToolInputKeepsValidUTF8 pins the two byte caps in truncateToolInput
+// to rune boundaries, and pins the ellipsis insertion to a rune count. Before,
+// both cut at an arbitrary byte: a 200-byte prefix of a non-ASCII file body, or a
+// 2048-byte prefix of the JSON, could end mid-rune, and json.Marshal turned the
+// remainder into U+FFFD on the way to storage.
+func TestTruncateToolInputKeepsValidUTF8(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "content field cut mid-rune",
+			// One ASCII byte puts byte 200 inside the second byte of a rune.
+			raw: `{"file_path":"/repo/a.txt","content":"a` + strings.Repeat("é", 300) + `"}`,
+		},
+		{
+			name: "whole input cut mid-rune",
+			// Key "xy" is 7 bytes, so the 2048-byte cap lands inside a rune.
+			raw: `{"xy":"` + strings.Repeat("é", 2000) + `"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, truncated := truncateToolInput(json.RawMessage(tc.raw))
+			if !truncated {
+				t.Fatalf("input of %d bytes should be truncated", len(tc.raw))
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("truncateToolInput returned invalid UTF-8: %q", got)
+			}
+			// The fixtures hold no U+FFFD of their own, so a replacement
+			// character here is the marshalled half of a split rune.
+			if strings.ContainsRune(got, utf8.RuneError) {
+				t.Fatalf("truncateToolInput laundered a split rune into U+FFFD: %q", got)
+			}
+			if len(got) > goalToolUseInputMax+len("…") {
+				t.Fatalf("stored input is %d bytes, over the cap", len(got))
+			}
+		})
 	}
 }
