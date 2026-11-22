@@ -392,9 +392,12 @@ type redactionPattern struct {
 }
 
 var sensitivePatterns = []redactionPattern{
-	{regexp.MustCompile(`(?i)"(api[_-]?key|token|secret|password)"\s*:\s*"[^"]*"`), `"$1":"[REDACTED]"`},
+	// The value matcher must consume backslash escapes, not stop at the first
+	// quote: a secret containing \" would otherwise be redacted only up to that
+	// escape and leak its tail.
+	{regexp.MustCompile(`(?i)"(api[_-]?key|token|secret|password)"\s*:\s*"(?:[^"\\]|\\.)*"`), `"$1":"[REDACTED]"`},
 	{regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^,\s"}]+`), "$1=[REDACTED]"},
-	{regexp.MustCompile(`(?i)(access_token|refresh_token)"\s*:\s*"[^"]+"`), `$1":"[REDACTED]"`},
+	{regexp.MustCompile(`(?i)(access_token|refresh_token)"\s*:\s*"(?:[^"\\]|\\.)*"`), `$1":"[REDACTED]"`},
 	{regexp.MustCompile(`(?i)(authorization)\s*:\s*bearer\s+[^,\s"}]+`), "$1: Bearer [REDACTED]"},
 	{regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]+`), "Bearer [REDACTED]"},
 	{regexp.MustCompile(`(?i)(sk-proj-|sk-ant-|sk-)[A-Za-z0-9_-]{8,}`), "[REDACTED]"},

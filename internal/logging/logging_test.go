@@ -123,6 +123,11 @@ func TestRedactJSONQuotedSecrets(t *testing.T) {
 		{name: "token", in: `{"token": "ghp_abcdefghijklmnop"}`, leaked: "ghp_abcdefghijklmnop"},
 		{name: "uppercase key", in: `{"API_KEY":"AKIA1234567890ABCD"}`, leaked: "AKIA1234567890ABCD"},
 		{name: "nested in rpc error", in: `{"error":{"message":"bad auth","secret":"s3cr3tvalue"}}`, leaked: "s3cr3tvalue"},
+		// A value holding an escaped quote must be consumed whole. Matching the
+		// value with [^"]* stops at the \" and leaves the rest of the secret in
+		// the log, which is a partial leak rather than a redaction.
+		{name: "escaped quote in value", in: `{"password":"hunter2\"tail3cr3t"}`, leaked: "tail3cr3t"},
+		{name: "escaped quote in access_token", in: `{"access_token":"ghp_abc\"tail3cr3t"}`, leaked: "tail3cr3t"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
