@@ -15,10 +15,15 @@ export function loadProviderCapabilities(
 ): Promise<ProviderCapabilities> {
   const key = capabilityKey(provider, profile);
   if (!refresh && cache.has(key)) return cache.get(key)!;
-  const promise = getProviderCapabilities(provider, profile, refresh).catch((err) => {
-    cache.delete(key);
+
+  let promise: Promise<ProviderCapabilities>;
+  promise = getProviderCapabilities(provider, profile, refresh).catch((err) => {
+    if (cache.get(key) === promise) {
+      cache.delete(key);
+    }
     throw err;
   });
+
   cache.set(key, promise);
   return promise;
 }
