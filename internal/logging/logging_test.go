@@ -108,6 +108,53 @@ func TestRedactTail(t *testing.T) {
 	}
 }
 
+func TestRedactJSONQuotedSecrets(t *testing.T) {
+	tests := []struct {
+		name   string
+		in     string
+		leaked string
+	}{
+		{name: "api_key spaced", in: `{"api_key": "AKIA1234567890ABCD"}`, leaked: "AKIA1234567890ABCD"},
+		{name: "api_key compact", in: `{"api_key":"AKIA1234567890ABCD"}`, leaked: "AKIA1234567890ABCD"},
+		{name: "api-key hyphen", in: `{"api-key":"AKIA1234567890ABCD"}`, leaked: "AKIA1234567890ABCD"},
+		{name: "apikey bare", in: `{"apikey":"AKIA1234567890ABCD"}`, leaked: "AKIA1234567890ABCD"},
+		{name: "password", in: `{"password": "hunter2hunter2"}`, leaked: "hunter2hunter2"},
+		{name: "secret", in: `{"secret":"s3cr3tvalue"}`, leaked: "s3cr3tvalue"},
+		{name: "token", in: `{"token": "ghp_abcdefghijklmnop"}`, leaked: "ghp_abcdefghijklmnop"},
+		{name: "uppercase key", in: `{"API_KEY":"AKIA1234567890ABCD"}`, leaked: "AKIA1234567890ABCD"},
+		{name: "nested in rpc error", in: `{"error":{"message":"bad auth","secret":"s3cr3tvalue"}}`, leaked: "s3cr3tvalue"},
+		// A value holding an escaped quote must be consumed whole. Matching the
+		// value with [^"]* stops at the \" and leaves the rest of the secret in
+		// the log, which is a partial leak rather than a redaction.
+		{name: "escaped quote in value", in: `{"password":"hunter2\"tail3cr3t"}`, leaked: "tail3cr3t"},
+		{name: "escaped quote in access_token", in: `{"access_token":"ghp_abc\"tail3cr3t"}`, leaked: "tail3cr3t"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Redact(tc.in)
+			if strings.Contains(got, tc.leaked) {
+				t.Fatalf("redacted text leaked %q: %s", tc.leaked, got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Fatalf("expected a redaction marker, got: %s", got)
+			}
+		})
+	}
+}
+
+func TestRedactPreservesNonSecrets(t *testing.T) {
+	// access_token keeps its own dedicated rule rather than being swallowed here.
+	if got := Redact(`{"access_token":"ghp_abcdefghijklmnop"}`); strings.Contains(got, "ghp_abcdefghijklmnop") {
+		t.Fatalf("access_token leaked: %s", got)
+	}
+	// A key that merely contains a sensitive word is not a secret and must survive.
+	for _, in := range []string{`{"token_count":42}`, `{"secrets_dir":"/etc/podiom"}`} {
+		if got := Redact(in); got != in {
+			t.Fatalf("Redact(%s) altered a non-secret: %s", in, got)
+		}
+	}
+}
+
 func nextEvent(t *testing.T, events <-chan FollowEvent) FollowEvent {
 	t.Helper()
 	select {
