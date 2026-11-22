@@ -97,7 +97,9 @@ func parseGitHubURL(raw string) (owner, repo, ref, sub string, err error) {
 		return "", "", "", "", fmt.Errorf("empty GitHub URL")
 	}
 	var segs []string
-	if strings.Contains(raw, "://") || strings.HasPrefix(raw, "github.com") {
+	lowered := strings.ToLower(raw)
+	if strings.Contains(raw, "://") ||
+		strings.HasPrefix(lowered, "github.com") || strings.HasPrefix(lowered, "www.github.com") {
 		u, perr := url.Parse(normalizeScheme(raw))
 		if perr != nil {
 			return "", "", "", "", fmt.Errorf("invalid URL: %w", perr)
