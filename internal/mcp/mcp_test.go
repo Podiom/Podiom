@@ -572,6 +572,43 @@ func TestAssigned(t *testing.T) {
 	})
 }
 
+func TestEnvStatusAgreesWithResolveEnvPairs(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		env     string
+		setenv  bool
+		wantSet bool
+	}{
+		{name: "exported but empty", env: "", setenv: true, wantSet: false},
+		{name: "exported with a value", env: "secret", setenv: true, wantSet: true},
+		{name: "stored value", value: "stored", env: "", setenv: true, wantSet: true},
+		{name: "absent entirely", setenv: false, wantSet: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const key = "PODIOM_TEST_ENV_STATUS"
+			if tc.setenv {
+				t.Setenv(key, tc.env)
+			} else {
+				os.Unsetenv(key)
+				t.Cleanup(func() { os.Unsetenv(key) })
+			}
+			vars := EnvVars{{Name: key, Value: tc.value}}
+			status := envStatus(vars)
+			if len(status) != 1 {
+				t.Fatalf("envStatus returned %d entries, want 1", len(status))
+			}
+			if status[0].Set != tc.wantSet {
+				t.Errorf("envStatus Set = %v, want %v", status[0].Set, tc.wantSet)
+			}
+			if injected := len(resolveEnvPairs(vars)) > 0; injected != tc.wantSet {
+				t.Errorf("resolveEnvPairs injected = %v, want %v: envStatus and resolveEnvPairs must agree", injected, tc.wantSet)
+			}
+		})
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)

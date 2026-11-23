@@ -917,10 +917,7 @@ func envStatus(vars EnvVars) []EnvStatus {
 	vars = cleanEnvVars(vars)
 	out := make([]EnvStatus, 0, len(vars))
 	for _, kv := range vars {
-		set := kv.Value != ""
-		if !set {
-			_, set = os.LookupEnv(kv.Name)
-		}
+		set := kv.Value != "" || os.Getenv(kv.Name) != ""
 		out = append(out, EnvStatus{Name: kv.Name, Set: set})
 	}
 	return out
