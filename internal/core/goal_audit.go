@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Podiom/Podiom/internal/adapter"
 	"github.com/Podiom/Podiom/internal/store"
@@ -93,7 +94,7 @@ func truncateToolInput(raw json.RawMessage) (string, bool) {
 	if err := json.Unmarshal(raw, &fields); err == nil {
 		for _, key := range goalToolContentFields {
 			if v, ok := fields[key].(string); ok && len(v) > goalToolUseContentMax {
-				fields[key] = v[:goalToolUseContentMax] + "…"
+				fields[key] = cutAtRuneBoundary(v, goalToolUseContentMax) + "…"
 				truncated = true
 			}
 		}
@@ -103,16 +104,34 @@ func truncateToolInput(raw json.RawMessage) (string, bool) {
 	}
 	s := string(raw)
 	if len(s) > goalToolUseInputMax {
-		s = s[:goalToolUseInputMax] + "…"
+		s = cutAtRuneBoundary(s, goalToolUseInputMax) + "…"
 		truncated = true
 	}
 	return s, truncated
 }
 
-// truncate shortens s to at most max runes, appending an ellipsis when it does.
+// truncate shortens s to at most max runes, appending an ellipsis to the last
+// kept rune. Runes, not bytes: a multi-byte character is never split, and a CJK
+// summary gets the same room an ASCII one does.
 func truncate(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+	if max <= 0 {
 		return s
 	}
-	return s[:max] + "…"
+	return truncateRunes(s, max)
+}
+
+// cutAtRuneBoundary returns s cut to at most max bytes, stepping back to the
+// start of the rune the cut landed in so the result stays valid UTF-8. The caps
+// above it bound stored bytes, which is the unit that matters for payload size;
+// only the cut position has to respect rune boundaries. Callers append the
+// ellipsis themselves, so it is not counted here.
+func cutAtRuneBoundary(s string, max int) string {
+	if max >= len(s) {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
