@@ -107,6 +107,10 @@ existing Svelte and TypeScript style in `web/src`.
 
 ## Pull request checklist
 
+- The pull request title follows [Conventional Commits](https://www.conventionalcommits.org),
+  for example `fix(api): reject invalid provider`. CI fails the PR otherwise.
+  Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
+  `refactor`, `revert`, `style`, `test`.
 - The change is scoped to one bug, feature, or documentation improvement.
 - Relevant docs under `README.md`, `docs/`, or `ha/addon/` are updated.
 - Tests or checks have been run, or the PR explains why they could not be run.
