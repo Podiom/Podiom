@@ -173,6 +173,17 @@ Do a thing.
 	}
 }
 
+func TestParseRejectsNonPositiveEvery(t *testing.T) {
+	for _, interval := range []string{"0s", "-1h", "-30m"} {
+		t.Run(interval, func(t *testing.T) {
+			path := writeSchedule(t, t.TempDir(), "invalid.md", "---\nagent: jared\nevery: "+interval+"\n---\nbody\n")
+			if _, err := Parse(path); err == nil {
+				t.Fatalf("Parse accepted non-positive every %q", interval)
+			}
+		})
+	}
+}
+
 func TestParseValidatesCronSpecs(t *testing.T) {
 	dir := t.TempDir()
 	invalid := []string{"not a cron", "99 99 * * *", "* * * *", "@bogus"}

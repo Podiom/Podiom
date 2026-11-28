@@ -178,8 +178,12 @@ func (s Schedule) validate() error {
 		}
 	}
 	if s.Every != "" {
-		if _, err := time.ParseDuration(s.Every); err != nil {
+		interval, err := time.ParseDuration(s.Every)
+		if err != nil {
 			return fmt.Errorf("invalid every %q: %w", s.Every, err)
+		}
+		if interval <= 0 {
+			return fmt.Errorf("invalid every %q: must be positive", s.Every)
 		}
 	}
 	// A webhook without a secret would be an open trigger. Parsing must never
