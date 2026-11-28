@@ -34,7 +34,7 @@ Keep it to three lines.
 
 - The schedule **name** is the filename without `.md`.
 - A schedule needs **at least one trigger**: `cron:`, `every:`, or `webhook:`.
-  Use either `cron:` (standard 5-field expression) **or** `every:` (a Go duration
+  Use either `cron:` (standard 5-field expression) **or** `every:` (a positive Go duration
   like `6h`, `30m`, `90s`), not both. `webhook:` is independent of the cadence —
   a schedule can be clock-driven, webhook-driven, or both. A webhook-only file
   has no cadence at all and reports no next-run time.
